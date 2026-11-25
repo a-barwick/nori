@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -1001,6 +1002,79 @@ class SuiteTests(unittest.TestCase):
             md = (run_dir / "scorecard.md").read_text(encoding="utf-8")
             self.assertIn("## Diff vs Baseline", md)
             self.assertIn("+25.0%", md)
+
+    def test_resolve_suite_env_refuses_dev_key_unless_overridden(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / ".env").write_text("OPENAI_API_KEY=sk-dev-123\nOPENROUTER_API_KEY=sk-or-dev\n", encoding="utf-8")
+            # Refuses default local dev key when no .env.vst or *_TEST_API_KEY is present.
+            with self.assertRaises(SystemExit) as cm:
+                suite.resolve_suite_env(root=root, environ={})
+            self.assertIn("refusing to run persona-sim against the default local dev key", str(cm.exception))
+
+            # Explicit --allow-dev-key allows it.
+            allowed = suite.resolve_suite_env(allow_dev_key=True, root=root, environ={})
+            self.assertEqual(allowed["OPENAI_API_KEY"], "sk-dev-123")
+
+            # Dedicated *_TEST_API_KEY succeeds without --allow-dev-key and never leaks dev keys from .env.
+            isolated = suite.resolve_suite_env(
+                root=root,
+                environ={"OPENAI_TEST_API_KEY": "sk-test-999"},
+            )
+            self.assertEqual(isolated["OPENAI_API_KEY"], "sk-test-999")
+            self.assertNotIn("OPENROUTER_API_KEY", isolated)
+
+            # Reusing the same key value as dev .env is rejected.
+            with self.assertRaises(SystemExit) as cm2:
+                suite.resolve_suite_env(
+                    root=root,
+                    environ={"OPENAI_TEST_API_KEY": "sk-dev-123"},
+                )
+            self.assertIn("matches the default local dev key", str(cm2.exception))
+
+            # .env.vst succeeds cleanly.
+            (root / ".env.vst").write_text("OPENAI_API_KEY=sk-vst-555\n", encoding="utf-8")
+            vst = suite.resolve_suite_env(root=root, environ={})
+            self.assertEqual(vst["OPENAI_API_KEY"], "sk-vst-555")
+
+    def test_gateway_child_env_strips_raw_keys_and_llm_client_routes_via_gateway(self) -> None:
+        gw = suite.LocalGateway(upstream_env={"OPENAI_TEST_API_KEY": "sk-raw-openai"})
+        gw.url = "http://127.0.0.1:19999/v1"
+        base_env = {
+            "PATH": "/usr/bin",
+            "OPENAI_API_KEY": "sk-raw-openai",
+            "OPENAI_TEST_API_KEY": "sk-raw-openai-test",
+            "OPENROUTER_API_KEY": "sk-raw-or",
+            "ANTHROPIC_API_KEY": "sk-raw-ant",
+            "SIM_JUDGE_API_KEY": "sk-raw-judge",
+        }
+        child = gw.child_env(base_env, "gpt-6.1-sol", "openai/gpt-6.1-terra")
+        for forbidden in (
+            "OPENAI_API_KEY",
+            "OPENAI_TEST_API_KEY",
+            "OPENROUTER_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "SIM_JUDGE_API_KEY",
+        ):
+            self.assertNotIn(forbidden, child)
+        self.assertEqual(child["NORI_MODEL_PROVIDER"], "gateway")
+        self.assertEqual(child["NORI_MODEL_GATEWAY_URL"], gw.url)
+        self.assertEqual(child["NORI_MODEL_GATEWAY_API_KEY"], gw.token)
+        self.assertEqual(child["SIM_GATEWAY_URL"], gw.url)
+        self.assertEqual(child["SIM_GATEWAY_TOKEN"], gw.token)
+
+        with mock.patch.dict(os.environ, child, clear=True):
+            resp_client = suite.LLMClient.from_env("responder", dotenv={"OPENAI_API_KEY": "sk-should-be-ignored"})
+            judge_client = suite.LLMClient.from_env("judge", dotenv={"OPENAI_API_KEY": "sk-should-be-ignored"})
+        self.assertIsNotNone(resp_client)
+        self.assertIsNotNone(judge_client)
+        assert resp_client is not None and judge_client is not None
+        self.assertEqual(resp_client.base_url, gw.url)
+        self.assertEqual(resp_client.api_key, gw.token)
+        self.assertEqual(resp_client.model, "gpt-4.1-mini")
+        self.assertEqual(judge_client.base_url, gw.url)
+        self.assertEqual(judge_client.api_key, gw.token)
+        self.assertEqual(judge_client.model, "gpt-4.1")
 
 
 if __name__ == "__main__":

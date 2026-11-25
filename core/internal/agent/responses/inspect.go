@@ -84,6 +84,9 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 		return out, errors.New("inspection model returned an unreadable response")
 	}
 	out.Cost, out.CostKnown = c.recordCost(&record, response.Model, response.Tier, response.Usage)
+	if out.CostKnown && out.Cost > 0 {
+		c.guard().RecordActualCost(out.Cost)
+	}
 	text := []string{}
 	for _, item := range response.Output {
 		if item.Type != "message" {

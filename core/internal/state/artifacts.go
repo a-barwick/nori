@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -79,6 +80,15 @@ func Compose(db Database, artifacts ArtifactStore) ConversationStore {
 type composed struct {
 	Database
 	artifacts ArtifactStore
+}
+
+func (s *composed) UsageWindowSummary(ctx context.Context, hourCutoff, dayCutoff time.Time) (int, float64, int, error) {
+	if r, ok := s.Database.(interface {
+		UsageWindowSummary(context.Context, time.Time, time.Time) (int, float64, int, error)
+	}); ok {
+		return r.UsageWindowSummary(ctx, hourCutoff, dayCutoff)
+	}
+	return 0, 0, 0, nil
 }
 
 func (s *composed) PutPNG(ctx context.Context, run, id string, data []byte) error {

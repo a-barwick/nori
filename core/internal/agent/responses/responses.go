@@ -32,13 +32,14 @@ const (
 )
 
 type Client struct {
-	Key        string
-	ModelName  string
-	HTTP       *http.Client
-	Guard      *llmguard.Guard
-	UserID     string
-	Meter      usage.Meter
-	gatewayURL string
+	Key          string
+	ModelName    string
+	ProviderName string
+	HTTP         *http.Client
+	Guard        *llmguard.Guard
+	UserID       string
+	Meter        usage.Meter
+	gatewayURL   string
 	// TestURL replaces the provider endpoint with a local stub (settings.Models.TestURL).
 	TestURL string
 	// DefaultReasoning sets the reasoning effort for requests that do not specify one.
@@ -84,7 +85,15 @@ func NewGateway(baseURL, key, model string, meter usage.Meter) *Client {
 	return client
 }
 
-func (c *Client) direct() bool { return c.gatewayURL == "" && c.ModelName == directModel }
+func (c *Client) direct() bool {
+	if c.gatewayURL != "" {
+		return false
+	}
+	if c.ProviderName != "" {
+		return c.ProviderName == "openai"
+	}
+	return c.ModelName == directModel
+}
 
 // SupportsNativeWebSearch reports whether this client executes web search natively
 // through OpenAI's built-in Responses API web_search tool.
@@ -131,14 +140,19 @@ func (c *Client) requestOptions(fields map[string]any) {
 	}
 	if c.direct() {
 		fields["service_tier"] = "default"
-		fields["prompt_cache_options"] = map[string]string{"mode": "explicit"}
+		// Do NOT send prompt_cache_options:{"mode":"explicit"} without explicit cache
+		// breakpoints; omitting it enables OpenAI's automatic prefix prompt caching
+		// across instructions, tools, and conversation prefix.
 		return
 	}
 	fields["provider"] = map[string]any{"max_price": map[string]float64{"prompt": 1, "completion": 5}, "require_parameters": true}
 }
 
 func (c *Client) validModel() bool {
-	return c.gatewayURL != "" || c.direct() || c.ModelName == routerModel
+	if c.gatewayURL != "" || c.direct() || c.ModelName == routerModel {
+		return strings.TrimSpace(c.ModelName) != ""
+	}
+	return c.ProviderName != "" && strings.TrimSpace(c.ModelName) != ""
 }
 
 func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Response, err error) {
@@ -226,6 +240,11 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	out.NotSent = false
 	res, err := c.doWithRetry(reqCtx, buildReq)
 	if err != nil {
+		if llmguard.IsGuardError(err) {
+			out.NotSent = true
+			record.RequestStatus = "not_sent"
+			return out, err
+		}
 		if ctx.Err() != nil {
 			return out, ctx.Err()
 		}
@@ -253,9 +272,6 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		return out, errors.New("task model returned an unreadable response")
 	}
 	out.Cost, out.CostKnown = c.recordCost(&record, response.Model, response.Tier, response.Usage)
-	if out.CostKnown && out.Cost > 0 {
-		c.guard().RecordActualCost(out.Cost)
-	}
 	if u := response.Usage; u != nil && u.Input != nil && u.Output != nil && u.Total != nil {
 		nonReasoning := max(*u.Output-u.OutputDetails.Reasoning, 0)
 		out.Usage = &agent.Usage{
@@ -381,6 +397,9 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	if len(webSearches) > 0 {
 		out.Cost = c.addWebSearchCost(&record, out.Cost, out.CostKnown, webSearches)
 		out.WebSearches = webSearches
+	}
+	if out.CostKnown && out.Cost > 0 {
+		c.guard().RecordActualCost(out.Cost)
 	}
 	if len(citations) > 0 {
 		out.Citations = citations

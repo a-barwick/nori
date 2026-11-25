@@ -22,8 +22,11 @@ func TestNoRawLLMCallsOutsideGuardedAdapters(t *testing.T) {
 
 	approvedAdapters := map[string]bool{
 		filepath.ToSlash("internal/conversation/openai.go"):       true,
+		filepath.ToSlash("internal/conversation/anthropic.go"):    true,
 		filepath.ToSlash("internal/agent/responses/responses.go"): true,
+		filepath.ToSlash("internal/agent/anthropic/anthropic.go"): true,
 		filepath.ToSlash("internal/conversation/jev.go"):          true,
+		filepath.ToSlash("internal/gateway/server.go"):            true,
 	}
 
 	providerHosts := []string{

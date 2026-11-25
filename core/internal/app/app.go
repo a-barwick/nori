@@ -123,7 +123,7 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 	}
 	tasks := &conversation.Tasks{Store: store}
 	summaryModels := cfg.Models
-	if !summaryModels.UsesGateway() && !summaryModels.UsesOpenAIForTasks() {
+	if summaryModels.EffectiveInnerProvider() == "openrouter" && summaryModels.Inner == "" {
 		summaryModels.Inner = settings.DefaultOpenRouterInnerModel
 	}
 	summarizer := platform.TaskModelForUser(summaryModels, store, user.ID)
@@ -636,14 +636,16 @@ func NewOuterModelAutoReviewer(model conversation.ReplyModel) permissions.AutoRe
 }
 
 func newAutoReviewer(outer conversation.ReplyModel, cfg settings.Settings) permissions.AutoReviewer {
-	if outer != nil && cfg.Models.TestURL == "" && (cfg.Models.UsesGateway() || cfg.Models.OpenAIKey != "") {
+	_, outerKey := cfg.Models.OuterCredential()
+	if outer != nil && cfg.Models.TestURL == "" && (cfg.Models.UsesGatewayOuter() || outerKey != "") {
 		return NewOuterModelAutoReviewer(outer)
 	}
 	return permissions.DeterministicAutoReviewer{}
 }
 
 func newMemoryNormalizer(outer conversation.ReplyModel, cfg settings.Settings) func(context.Context, conversation.ManualMemoryInput) (conversation.NormalizedMemory, error) {
-	if outer != nil && cfg.Models.TestURL == "" && (cfg.Models.UsesGateway() || cfg.Models.OpenAIKey != "") {
+	_, outerKey := cfg.Models.OuterCredential()
+	if outer != nil && cfg.Models.TestURL == "" && (cfg.Models.UsesGatewayOuter() || outerKey != "") {
 		return conversation.NewMemoryNormalizer(outer)
 	}
 	return nil

@@ -92,6 +92,64 @@ func Finish(ctx context.Context, meter Meter, u state.Usage) error {
 	return meter.RecordUsage(save, u)
 }
 
+// ErrUserQuotaExceeded is returned before provider I/O when a user's durable
+// Postgres usage history exceeds the configured per-hour call or per-day spend cap.
+var ErrUserQuotaExceeded = errors.New("usage: per-user rate or spend limit exceeded")
+
+const defaultUnknownCallEstimateUSD = 0.02
+
+// WindowReader summarizes a user's durable usage records (backed by Postgres)
+// across hourly and daily cutoffs in a single scan so multi-replica Cloud Run
+// instances enforce shared per-user rate and spend admission limits.
+type WindowReader interface {
+	UsageWindowSummary(ctx context.Context, hourCutoff, dayCutoff time.Time) (hourCalls int, daySpendUSD float64, dayUnknownCalls int, err error)
+}
+
+// WithAdmission enforces Postgres-backed pre-I/O per-user rate and spend caps
+// before persisting a "pending" usage attempt. Non-pending terminal updates
+// always pass through so completed calls are never dropped.
+func WithAdmission(local Meter, reader WindowReader, maxCallsPerHour int, maxUSDPerDay float64, now func() time.Time) Meter {
+	if reader == nil || (maxCallsPerHour <= 0 && maxUSDPerDay <= 0) {
+		return local
+	}
+	return Func(func(ctx context.Context, u state.Usage) error {
+		if u.RequestStatus == "pending" {
+			var t time.Time
+			switch {
+			case now != nil:
+				t = now().UTC()
+			case !u.CreatedAt.IsZero():
+				t = u.CreatedAt.UTC()
+			default:
+				t = time.Now().UTC()
+			}
+			hourCutoff := t.Add(-time.Hour)
+			dayCutoff := hourCutoff
+			if maxUSDPerDay > 0 {
+				dayCutoff = t.Add(-24 * time.Hour)
+			}
+			hourCalls, daySpendUSD, dayUnknownCalls, err := reader.UsageWindowSummary(ctx, hourCutoff, dayCutoff)
+			if err != nil {
+				return err
+			}
+			if maxCallsPerHour > 0 && hourCalls >= maxCallsPerHour {
+				slog.WarnContext(ctx, "per-user hourly call limit exceeded before provider I/O",
+					"calls_in_hour", hourCalls, "limit", maxCallsPerHour)
+				return ErrUserQuotaExceeded
+			}
+			if maxUSDPerDay > 0 {
+				exposure := daySpendUSD + float64(dayUnknownCalls)*defaultUnknownCallEstimateUSD
+				if exposure >= maxUSDPerDay {
+					slog.WarnContext(ctx, "per-user daily spend limit exceeded before provider I/O",
+						"spend_usd", daySpendUSD, "unknown_calls", dayUnknownCalls, "exposure_usd", exposure, "limit_usd", maxUSDPerDay)
+					return ErrUserQuotaExceeded
+				}
+			}
+		}
+		return local.RecordUsage(ctx, u)
+	})
+}
+
 // WithHost keeps Nori's durable record as the source of truth and adds a host
 // accounting sink. A host failure before I/O refuses admission. After I/O, a
 // delivery failure is logged without discarding the saved model result.

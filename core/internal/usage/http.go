@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -15,10 +16,21 @@ import (
 	"nori/internal/state"
 )
 
-// Config chooses the built-in durable meter or adds a host HTTP meter.
-type Config struct{ Mode, Endpoint, Token string }
+// Config chooses the built-in durable meter, optional host HTTP meter,
+// and optional Postgres-backed per-user pre-I/O admission limits.
+type Config struct {
+	Mode, Endpoint, Token string
+	MaxCallsPerHour       int
+	MaxUSDPerDay          float64
+}
 
 func (c Config) Validate() error {
+	if c.MaxCallsPerHour < 0 {
+		return errors.New("NORI_USER_MAX_CALLS_PER_HOUR must be a non-negative integer")
+	}
+	if math.IsNaN(c.MaxUSDPerDay) || math.IsInf(c.MaxUSDPerDay, 0) || c.MaxUSDPerDay < 0 {
+		return errors.New("NORI_USER_MAX_USD_PER_DAY must be a non-negative dollar amount")
+	}
 	switch c.Mode {
 	case "", "store":
 		if c.Endpoint != "" || c.Token != "" {
@@ -47,10 +59,14 @@ func Open(c Config, userID string, local Meter) (Meter, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
-	if c.Mode != "http" {
-		return local, nil
+	meter := local
+	if reader, ok := local.(WindowReader); ok && (c.MaxCallsPerHour > 0 || c.MaxUSDPerDay > 0) {
+		meter = WithAdmission(meter, reader, c.MaxCallsPerHour, c.MaxUSDPerDay, nil)
 	}
-	return WithHost(local, &HTTP{Endpoint: c.Endpoint, Token: c.Token, UserID: userID, Client: &http.Client{Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}), nil
+	if c.Mode != "http" {
+		return meter, nil
+	}
+	return WithHost(meter, &HTTP{Endpoint: c.Endpoint, Token: c.Token, UserID: userID, Client: &http.Client{Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}), nil
 }
 
 // HTTP posts metadata only. The receiver upserts by (user_id, usage.id), and

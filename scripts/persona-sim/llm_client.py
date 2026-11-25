@@ -10,6 +10,32 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+RAW_PROVIDER_KEY_VARS: tuple[str, ...] = (
+    "OPENAI_API_KEY",
+    "OPENAI_PROD_API_KEY",
+    "OPENAI_DEV_API_KEY",
+    "OPENAI_TEST_API_KEY",
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_PROD_API_KEY",
+    "OPENROUTER_DEV_API_KEY",
+    "OPENROUTER_TEST_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_PROD_API_KEY",
+    "ANTHROPIC_DEV_API_KEY",
+    "ANTHROPIC_TEST_API_KEY",
+    "JEV_API_KEY",
+    "SIM_RESPONDER_API_KEY",
+    "SIM_JUDGE_API_KEY",
+)
+
+
+def strip_raw_provider_keys(env: dict[str, str]) -> dict[str, str]:
+    """Return a copy of env with all raw upstream LLM provider API keys removed."""
+    cleaned = dict(env)
+    for k in RAW_PROVIDER_KEY_VARS:
+        cleaned.pop(k, None)
+    return cleaned
+
 
 def resolve_dotenv_path(root: Path, explicit: Path | None = None) -> Path:
     """Resolve .env from explicit path, NORI_ENV_FILE, root/.env, or parent git worktree root."""
@@ -66,42 +92,74 @@ class LLMClient:
         base_url: str,
         model: str,
         timeout: int = 90,
+        scope: str = "",
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
+        self.scope = scope
 
     @classmethod
     def from_env(cls, role: str, dotenv: dict[str, str] | None = None) -> "LLMClient | None":
-        """Resolve provider credentials for role ('responder' or 'judge')."""
+        """Resolve provider credentials for role ('responder' or 'judge').
+
+        When the unified local loopback gateway (SIM_GATEWAY_URL/SIM_GATEWAY_TOKEN
+        or NORI_MODEL_PROVIDER=gateway) is active, always route through it using
+        the short-lived gateway token instead of any raw provider keys.
+        """
         env = dict(dotenv or {})
         env.update(os.environ)
 
         prefix = f"SIM_{role.upper()}_"
-        api_key = env.get(prefix + "API_KEY", "").strip()
-        base_url = env.get(prefix + "BASE_URL", "").strip()
+        default_model = "gpt-4.1-mini" if role == "responder" else "gpt-4.1"
         model = env.get(prefix + "MODEL", "").strip()
 
+        sim_gw_url = env.get("SIM_GATEWAY_URL", "").strip()
+        sim_gw_tok = env.get("SIM_GATEWAY_TOKEN", "").strip()
+        if sim_gw_url and sim_gw_tok:
+            return cls(
+                api_key=sim_gw_tok,
+                base_url=sim_gw_url,
+                model=model or default_model,
+                scope=f"sim_{role}",
+            )
+
+        if env.get("NORI_MODEL_PROVIDER", "").strip().lower() == "gateway":
+            gw_url = env.get("NORI_MODEL_GATEWAY_URL", "").strip()
+            gw_tok = env.get("NORI_MODEL_GATEWAY_API_KEY", "").strip()
+            if gw_url and gw_tok:
+                return cls(
+                    api_key=gw_tok,
+                    base_url=gw_url,
+                    model=model or default_model,
+                    scope=f"sim_{role}",
+                )
+
+        api_key = env.get(prefix + "API_KEY", "").strip()
+        base_url = env.get(prefix + "BASE_URL", "").strip()
+
         if not api_key:
-            if env.get("OPENAI_API_KEY", "").strip():
-                api_key = env["OPENAI_API_KEY"].strip()
+            openai_key = env.get("OPENAI_TEST_API_KEY", "").strip() or env.get("OPENAI_API_KEY", "").strip()
+            openrouter_key = env.get("OPENROUTER_TEST_API_KEY", "").strip() or env.get("OPENROUTER_API_KEY", "").strip()
+            if openai_key:
+                api_key = openai_key
                 base_url = base_url or "https://api.openai.com/v1"
-                model = model or ("gpt-4.1-mini" if role == "responder" else "gpt-4.1")
-            elif env.get("OPENROUTER_API_KEY", "").strip():
-                api_key = env["OPENROUTER_API_KEY"].strip()
+                model = model or default_model
+            elif openrouter_key:
+                api_key = openrouter_key
                 base_url = base_url or "https://openrouter.ai/api/v1"
                 model = model or ("openai/gpt-4.1-mini" if role == "responder" else "openai/gpt-4.1")
             elif env.get("NORI_MODEL_GATEWAY_API_KEY", "").strip() and env.get("NORI_MODEL_GATEWAY_URL", "").strip():
                 api_key = env["NORI_MODEL_GATEWAY_API_KEY"].strip()
                 base_url = base_url or env["NORI_MODEL_GATEWAY_URL"].strip()
-                model = model or env.get("NORI_AGENT_MODEL", "gpt-4.1-mini").strip()
+                model = model or env.get("NORI_AGENT_MODEL", default_model).strip()
 
         if not api_key:
             return None
         base_url = base_url or "https://api.openai.com/v1"
-        model = model or "gpt-4.1-mini"
-        return cls(api_key=api_key, base_url=base_url, model=model)
+        model = model or default_model
+        return cls(api_key=api_key, base_url=base_url, model=model, scope=f"sim_{role}")
 
     def chat_json(
         self,
@@ -120,13 +178,16 @@ class LLMClient:
                 {"role": "user", "content": user_prompt},
             ],
         }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        }
+        if self.scope:
+            headers["X-Nori-Scope"] = self.scope
         req = urllib.request.Request(
             url,
             data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
-            },
+            headers=headers,
             method="POST",
         )
         try:

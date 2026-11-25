@@ -50,9 +50,11 @@ func TestGuard_CompactionRateLimitAndDuplicateStorm(t *testing.T) {
 	// 1. Duplicate storm detector: identical payload rejected on 5th attempt (allows 1 initial + 3 transient retries).
 	for i := range 4 {
 		req, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/responses", strings.NewReader(`{"same":"payload"}`))
-		if _, err := rt.RoundTrip(req); err != nil {
+		resp, err := rt.RoundTrip(req)
+		if err != nil {
 			t.Fatalf("identical call %d failed unexpectedly: %v", i+1, err)
 		}
+		_ = resp.Body.Close()
 	}
 	reqDup, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/responses", strings.NewReader(`{"same":"payload"}`))
 	if _, err := rt.RoundTrip(reqDup); !errors.Is(err, ErrDuplicateStorm) {
@@ -63,9 +65,11 @@ func TestGuard_CompactionRateLimitAndDuplicateStorm(t *testing.T) {
 	for i := range 2 {
 		body := bytes.NewBufferString(`{"distinct":` + string(rune('a'+i)) + `}`)
 		req, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/responses", body)
-		if _, err := rt.RoundTrip(req); err != nil {
+		resp, err := rt.RoundTrip(req)
+		if err != nil {
 			t.Fatalf("distinct call %d failed: %v", i, err)
 		}
+		_ = resp.Body.Close()
 	}
 	reqRate, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/responses", strings.NewReader(`{"distinct":"z"}`))
 	if _, err := rt.RoundTrip(reqRate); !errors.Is(err, ErrRateLimited) {
@@ -78,9 +82,11 @@ func TestGuard_CompactionRateLimitAndDuplicateStorm(t *testing.T) {
 	// Advancing > 1 minute restores per-minute rate budget.
 	now = now.Add(61 * time.Second)
 	reqAfter, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/responses", strings.NewReader(`{"distinct":"after"}`))
-	if _, err := rt.RoundTrip(reqAfter); err != nil {
+	respAfter, err := rt.RoundTrip(reqAfter)
+	if err != nil {
 		t.Fatalf("expected call after 1m window to succeed, got %v", err)
 	}
+	_ = respAfter.Body.Close()
 }
 
 func TestGuard_ConsecutiveAbortCircuitBreakerAndUnknownCost(t *testing.T) {
@@ -211,5 +217,57 @@ func TestGuard_ConcurrencyLimitAndRedirectRefusal(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("expected 302 without following redirect, got %d", resp.StatusCode)
+	}
+}
+
+func TestGuard_MaxTotalCallsAndInFlightEstimatedUSD(t *testing.T) {
+	now := time.Date(2026, 11, 25, 16, 0, 0, 0, time.UTC)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	g := New(Config{
+		Now:             func() time.Time { return now },
+		MaxEstimatedUSD: 0.015, // enough for 1 in-flight (~$0.0108), blocks 2nd concurrent call
+		MaxTotalCalls:   2,
+	})
+	rt := g.Transport(fakeRT{fn: func(r *http.Request) (*http.Response, error) {
+		if strings.Contains(r.URL.Path, "block") {
+			close(started)
+			<-release
+		}
+		return okResp(), nil
+	}}, CallMeta{UserID: "u-cap", Scope: ScopeTask})
+
+	done := make(chan error, 1)
+	go func() {
+		req, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/block", strings.NewReader(`{"a":1}`))
+		resp, err := rt.RoundTrip(req)
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		done <- err
+	}()
+	<-started
+
+	// Concurrent 2nd call sees in-flight worst-case USD reservation and is blocked immediately.
+	req2, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/fast", strings.NewReader(`{"a":2}`))
+	if _, err := rt.RoundTrip(req2); !errors.Is(err, ErrBudgetExceeded) {
+		t.Fatalf("expected ErrBudgetExceeded while 1st call is in flight, got %v", err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("1st call failed: %v", err)
+	}
+
+	// Raise USD cap via SetMaxEstimatedUSD; 2nd admitted call succeeds, 3rd hits MaxTotalCalls=2.
+	g.SetMaxEstimatedUSD(5.0)
+	req3, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/fast", strings.NewReader(`{"a":3}`))
+	resp3, err := rt.RoundTrip(req3)
+	if err != nil {
+		t.Fatalf("2nd admitted call failed: %v", err)
+	}
+	_ = resp3.Body.Close()
+	req4, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/fast", strings.NewReader(`{"a":4}`))
+	if _, err := rt.RoundTrip(req4); !errors.Is(err, ErrCallLimitExceeded) {
+		t.Fatalf("expected ErrCallLimitExceeded on 3rd call, got %v", err)
 	}
 }

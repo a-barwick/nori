@@ -220,9 +220,11 @@ func (s *stubOAuthIntegration) Identify(context.Context, *http.Client) (Account,
 	return Account{ProviderID: s.providerID, Label: s.label}, nil
 }
 
-func (s *stubOAuthIntegration) Revoke(context.Context, *oauth2.Token) error           { return nil }
-func (s *stubOAuthIntegration) Resources(context.Context, *http.Client) ([]Resource, error) { return nil, nil }
-func (s *stubOAuthIntegration) Definitions() []extensions.Definition                 { return nil }
+func (s *stubOAuthIntegration) Revoke(context.Context, *oauth2.Token) error { return nil }
+func (s *stubOAuthIntegration) Resources(context.Context, *http.Client) ([]Resource, error) {
+	return nil, nil
+}
+func (s *stubOAuthIntegration) Definitions() []extensions.Definition { return nil }
 
 func newTestConnectionsService(t *testing.T, tokenFail bool) (*Service, *stubOAuthIntegration, *memCredStore, *time.Time) {
 	t.Helper()

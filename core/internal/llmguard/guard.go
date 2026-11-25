@@ -40,6 +40,7 @@ var (
 	ErrDuplicateStorm        = errors.New("llmguard: repeated identical LLM request blocked (storm detected)")
 	ErrCircuitOpen           = errors.New("llmguard: LLM circuit breaker open after repeated aborts or provider errors")
 	ErrBudgetExceeded        = errors.New("llmguard: estimated LLM spend ceiling exceeded")
+	ErrCallLimitExceeded     = errors.New("llmguard: total LLM call limit exceeded")
 )
 
 // IsGuardError reports whether err was returned by llmguard admission control
@@ -50,7 +51,8 @@ func IsGuardError(err error) bool {
 		errors.Is(err, ErrConcurrencyLimited) ||
 		errors.Is(err, ErrDuplicateStorm) ||
 		errors.Is(err, ErrCircuitOpen) ||
-		errors.Is(err, ErrBudgetExceeded)
+		errors.Is(err, ErrBudgetExceeded) ||
+		errors.Is(err, ErrCallLimitExceeded)
 }
 
 // CallMeta tags an outbound LLM request with its caller scope and identity.
@@ -129,9 +131,13 @@ type Config struct {
 	BreakerMaxCooldown            time.Duration
 
 	// MaxEstimatedUSD optionally caps cumulative estimated + recorded USD spend
-	// across this Guard (including conservative worst-case estimates for aborted
-	// / unknown-status calls). Zero disables the process USD cap.
+	// across this Guard (including conservative worst-case estimates for in-flight
+	// and aborted / unknown-status calls). Zero disables the process USD cap.
 	MaxEstimatedUSD float64
+
+	// MaxTotalCalls optionally caps cumulative admitted LLM calls across this
+	// Guard's lifetime (useful for bounded simulation / gateway runs). Zero disables it.
+	MaxTotalCalls int
 
 	// AllowLiveInTests disables the automatic refusal of non-loopback hosts when
 	// testing.Testing() is true. Leave false except in explicit opt-in live tests.
@@ -206,17 +212,19 @@ func normalizeConfig(cfg Config) Config {
 
 // Snapshot exposes read-only guard telemetry for diagnostics and tests.
 type Snapshot struct {
-	TotalAdmitted       int64
-	TotalBlocked        int64
-	BlockedLiveTest     int64
-	BlockedRate         int64
-	BlockedConcurrency  int64
-	BlockedDuplicate    int64
-	BlockedCircuit      int64
-	BlockedBudget       int64
-	UnknownAborts       int64
-	EstimatedUnknownUSD float64
-	RecordedActualUSD   float64
+	TotalAdmitted        int64
+	TotalBlocked         int64
+	BlockedLiveTest      int64
+	BlockedRate          int64
+	BlockedConcurrency   int64
+	BlockedDuplicate     int64
+	BlockedCircuit       int64
+	BlockedBudget        int64
+	BlockedCallLimit     int64
+	UnknownAborts        int64
+	EstimatedUnknownUSD  float64
+	InFlightEstimatedUSD float64
+	RecordedActualUSD    float64
 }
 
 type scopeKey struct {
@@ -322,7 +330,11 @@ func (g *Guard) WrapClient(base *http.Client, timeout time.Duration, defaults Ca
 	if baseRT == nil {
 		baseRT = http.DefaultTransport
 	}
-	if gt, ok := baseRT.(*guardedTransport); ok && gt.guard == g {
+	for {
+		gt, ok := baseRT.(*guardedTransport)
+		if !ok {
+			break
+		}
 		baseRT = gt.base
 	}
 	effectiveTimeout := base.Timeout
@@ -354,6 +366,43 @@ func (g *Guard) RecordActualCost(usd float64) {
 	g.mu.Unlock()
 }
 
+// RecordUnknownCost adds a conservative estimated USD exposure for a completed
+// call whose provider did not report a verifiable cost.
+func (g *Guard) RecordUnknownCost(usd float64) {
+	if usd <= 0 {
+		return
+	}
+	g.mu.Lock()
+	g.stats.EstimatedUnknownUSD += usd
+	g.mu.Unlock()
+}
+
+// SetMaxEstimatedUSD updates the process-wide estimated spend ceiling (0 disables).
+func (g *Guard) SetMaxEstimatedUSD(usd float64) {
+	if usd < 0 {
+		usd = 0
+	}
+	g.mu.Lock()
+	g.cfg.MaxEstimatedUSD = usd
+	g.mu.Unlock()
+}
+
+// SetMaxTotalCalls updates the total admitted call cap (0 disables).
+func (g *Guard) SetMaxTotalCalls(maxCalls int) {
+	if maxCalls < 0 {
+		maxCalls = 0
+	}
+	g.mu.Lock()
+	g.cfg.MaxTotalCalls = maxCalls
+	g.mu.Unlock()
+}
+
+// EstimateWorstCaseCallUSD returns a conservative USD estimate for a request
+// based on serialized body size and max output tokens.
+func EstimateWorstCaseCallUSD(bodyBytes, maxOutputTokens int) float64 {
+	return estimateWorstCaseCallUSD(bodyBytes, maxOutputTokens)
+}
+
 // Stats returns a point-in-time snapshot of admission, block, and abort counters.
 func (g *Guard) Stats() Snapshot {
 	g.mu.Lock()
@@ -372,6 +421,9 @@ type guardedTransport struct {
 }
 
 func (t *guardedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req == nil || req.URL == nil {
+		return nil, errors.New("llmguard: request URL is nil")
+	}
 	meta := mergeMeta(t.defaults, MetaFromContext(req.Context()))
 	if meta.UserID == "" {
 		meta.UserID = "default"
@@ -403,8 +455,25 @@ func (t *guardedTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 
 	res, rtErr := t.base.RoundTrip(req)
 	t.guard.observe(req.Context(), meta, bodyBytes, res, rtErr)
+	if rtErr == nil && res != nil && res.Body != nil && res.StatusCode >= 200 && res.StatusCode < 300 {
+		res.Body = &releaseOnCloseBody{ReadCloser: res.Body, release: release}
+		return res, nil
+	}
 	release()
 	return res, rtErr
+}
+
+type releaseOnCloseBody struct {
+	io.ReadCloser
+	release func()
+}
+
+func (b *releaseOnCloseBody) Close() error {
+	err := b.ReadCloser.Close()
+	if b.release != nil {
+		b.release()
+	}
+	return err
 }
 
 func mergeMeta(base, override CallMeta) CallMeta {
@@ -497,16 +566,27 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 		return nil, fmt.Errorf("%w (%s, retry in %s)", ErrCircuitOpen, st.circuitReason, remaining)
 	}
 
-	// 2. Hard spend ceiling (includes conservative estimate for unknown/aborted calls).
+	// 2. Hard total call cap (for bounded gateway / simulation runs).
+	if g.cfg.MaxTotalCalls > 0 && g.stats.TotalAdmitted >= int64(g.cfg.MaxTotalCalls) {
+		g.stats.TotalBlocked++
+		g.stats.BlockedCallLimit++
+		slog.ErrorContext(ctx, "llmguard rejected call: total call limit exceeded",
+			"user_id", meta.UserID, "scope", meta.Scope,
+			"total_admitted", g.stats.TotalAdmitted, "max_calls", g.cfg.MaxTotalCalls)
+		return nil, fmt.Errorf("%w (admitted %d >= limit %d)", ErrCallLimitExceeded, g.stats.TotalAdmitted, g.cfg.MaxTotalCalls)
+	}
+
+	// 3. Hard spend ceiling (includes conservative estimate for in-flight and unknown/aborted calls).
+	estCallUSD := estimateWorstCaseCallUSD(bodyBytes, meta.MaxOutputTokens)
 	if g.cfg.MaxEstimatedUSD > 0 {
-		projected := g.stats.RecordedActualUSD + g.stats.EstimatedUnknownUSD + estimateWorstCaseCallUSD(bodyBytes, meta.MaxOutputTokens)
+		projected := g.stats.RecordedActualUSD + g.stats.EstimatedUnknownUSD + g.stats.InFlightEstimatedUSD + estCallUSD
 		if projected > g.cfg.MaxEstimatedUSD {
 			g.stats.TotalBlocked++
 			g.stats.BlockedBudget++
 			slog.ErrorContext(ctx, "llmguard rejected call: estimated spend ceiling exceeded",
 				"user_id", meta.UserID, "scope", meta.Scope,
 				"recorded_usd", g.stats.RecordedActualUSD, "estimated_unknown_usd", g.stats.EstimatedUnknownUSD,
-				"limit_usd", g.cfg.MaxEstimatedUSD)
+				"in_flight_estimated_usd", g.stats.InFlightEstimatedUSD, "limit_usd", g.cfg.MaxEstimatedUSD)
 			return nil, fmt.Errorf("%w (projected $%.4f > limit $%.4f)", ErrBudgetExceeded, projected, g.cfg.MaxEstimatedUSD)
 		}
 	}
@@ -572,6 +652,7 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 	// Admitted: reserve in-flight & rate-limit slots.
 	g.globalInFlight++
 	st.inFlight++
+	g.stats.InFlightEstimatedUSD += estCallUSD
 	g.globalMinute = append(g.globalMinute, now)
 	st.minuteCalls = append(st.minuteCalls, now)
 	st.hourCalls = append(st.hourCalls, now)
@@ -586,6 +667,10 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 			}
 			if st.inFlight > 0 {
 				st.inFlight--
+			}
+			g.stats.InFlightEstimatedUSD -= estCallUSD
+			if g.stats.InFlightEstimatedUSD < 1e-12 {
+				g.stats.InFlightEstimatedUSD = 0
 			}
 			g.mu.Unlock()
 		})

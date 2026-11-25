@@ -179,6 +179,36 @@ func (d *Database) RecordUsage(ctx context.Context, usage state.Usage) error {
 	return err
 }
 
+// UsageWindowSummary aggregates durable usage rows for this user in a single scan
+// since dayCutoff so multi-replica Cloud Run instances enforce shared per-user
+// hourly call and daily spend admission limits.
+func (d *Database) UsageWindowSummary(ctx context.Context, hourCutoff, dayCutoff time.Time) (hourCalls int, daySpendUSD float64, dayUnknownCalls int, err error) {
+	since := dayCutoff
+	if hourCutoff.Before(since) {
+		since = hourCutoff
+	}
+	rows, err := documents[state.Usage](d.usage().Where("created_at", ">=", since).Documents(ctx))
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	for _, r := range rows {
+		if r.RequestStatus == "not_sent" {
+			continue
+		}
+		if !r.CreatedAt.Before(hourCutoff) {
+			hourCalls++
+		}
+		if !r.CreatedAt.Before(dayCutoff) {
+			if r.CostUSD != nil && *r.CostUSD > 0 {
+				daySpendUSD += *r.CostUSD
+			} else if r.CostStatus != "provider" && r.CostStatus != "calculated" {
+				dayUnknownCalls++
+			}
+		}
+	}
+	return hourCalls, daySpendUSD, dayUnknownCalls, nil
+}
+
 func (d *Database) Artifact(ctx context.Context, runID string, artifact state.Artifact) error {
 	_, err := d.runs().Doc(runID).Update(ctx, []docstore.Update{{Path: "artifacts", Value: docstore.ArrayUnion(artifact)}})
 	return err

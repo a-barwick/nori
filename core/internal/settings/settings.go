@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"nori/internal/llmguard"
 	"nori/internal/serviceauth"
 	"nori/internal/usage"
 )
@@ -22,6 +23,8 @@ import (
 type Settings struct {
 	Features Features
 	Cloud    string
+	// EnvProfile selects key isolation profile: "prod", "dev", or "test".
+	EnvProfile string
 	// Role selects which runtime subsystems cmd/nori runs: "all" (default), "api", or "worker".
 	Role        string
 	AWS         AWS
@@ -67,31 +70,23 @@ type AWS struct {
 }
 
 type Models struct {
-	// OpenAIKey serves conversation replies and, with the direct Terra ID, tasks and summaries.
-	OpenAIKey, JevKey, OpenRouterKey string
+	// EnvProfile is the resolved key isolation profile ("prod", "dev", or "test").
+	EnvProfile string
+	// Provider keys resolved according to EnvProfile (never falling back across profiles in test mode).
+	OpenAIKey, AnthropicKey, JevKey, OpenRouterKey string
 	// Outer is the outer conversation model and Inner the task worker model.
 	Outer, Inner string
 	// OuterReasoning and InnerReasoning optionally override default reasoning effort ("low", "medium", "high").
 	OuterReasoning, InnerReasoning string
-	// Provider selects the deployment-owned gateway when set to "gateway".
-	Provider, GatewayURL, GatewayKey string
+	// Provider sets the default model provider ("openai", "anthropic", "openrouter", "gateway").
+	// OuterProvider and InnerProvider optionally override the provider per tier.
+	Provider, OuterProvider, InnerProvider string
+	GatewayURL, GatewayKey                 string
+	// MaxUSD optionally sets a process-wide hard estimated spend ceiling in llmguard (NORI_LLM_MAX_USD).
+	MaxUSD float64
 	// TestURL sends every model request to a loopback HTTP stub instead of the provider. Local development only
 	// (NORI_MODEL_TEST_URL, refused unless NORI_CLOUD=local), for checking timeouts and prompts without provider keys.
 	TestURL string
-}
-
-func (m Models) UsesGateway() bool { return m.Provider == "gateway" }
-
-func (m Models) UsesOpenAIForTasks() bool { return !m.UsesGateway() && m.Inner == DefaultInnerModel }
-
-func (m Models) TaskCredential() (name, key string) {
-	if m.UsesGateway() {
-		return "NORI_MODEL_GATEWAY_API_KEY", m.GatewayKey
-	}
-	if m.UsesOpenAIForTasks() {
-		return "OPENAI_API_KEY", m.OpenAIKey
-	}
-	return "OPENROUTER_API_KEY", m.OpenRouterKey
 }
 
 type Store struct {
@@ -170,6 +165,18 @@ func LoadDefaultCloud(defaultCloud string) (Settings, error) {
 	default:
 		return Settings{}, fmt.Errorf("NORI_CLOUD must be aws or local")
 	}
+	if !ValidEnvProfile(s.EnvProfile) {
+		return Settings{}, fmt.Errorf("NORI_ENV_PROFILE must be prod, dev, or test")
+	}
+	if s.Cloud == "aws" && s.EnvProfile != "prod" {
+		return Settings{}, fmt.Errorf("NORI_ENV_PROFILE must be prod when NORI_CLOUD=aws")
+	}
+	if s.Cloud == "local" && s.EnvProfile == "prod" {
+		return Settings{}, fmt.Errorf("NORI_ENV_PROFILE=prod is not allowed when NORI_CLOUD=local")
+	}
+	if err := validateProfileKeyIsolation(s.EnvProfile); err != nil {
+		return Settings{}, err
+	}
 	if !ValidRole(s.Role) {
 		return Settings{}, fmt.Errorf("NORI_ROLE must be all, api, or worker")
 	}
@@ -190,7 +197,7 @@ func LoadDefaultCloud(defaultCloud string) (Settings, error) {
 	if err := s.Metering.Validate(); err != nil {
 		return Settings{}, err
 	}
-	if err := s.Models.validateGateway(); err != nil {
+	if err := s.Models.validateModels(s.Cloud); err != nil {
 		return Settings{}, err
 	}
 	if s.Models.TestURL != "" {
@@ -198,6 +205,9 @@ func LoadDefaultCloud(defaultCloud string) (Settings, error) {
 		if err != nil || s.Cloud != "local" || u.Scheme != "http" || (u.Hostname() != "127.0.0.1" && u.Hostname() != "localhost") {
 			return Settings{}, fmt.Errorf("NORI_MODEL_TEST_URL is for local development only: an http loopback URL with NORI_CLOUD=local")
 		}
+	}
+	if s.Models.MaxUSD > 0 {
+		llmguard.Default().SetMaxEstimatedUSD(s.Models.MaxUSD)
 	}
 	return s, nil
 }
@@ -226,6 +236,7 @@ func fromEnvironment(defaultCloud string) Settings {
 		taskBudget = math.NaN()
 	}
 	cloud := get("NORI_CLOUD", defaultCloud)
+	envProfile := resolveEnvProfile(cloud)
 	role := get("NORI_ROLE", "all")
 	store := Store{
 		Backend:                   get("NORI_STORE_BACKEND", "postgres"),
@@ -243,8 +254,19 @@ func fromEnvironment(defaultCloud string) Settings {
 	var credentials []string
 	for _, name := range []string{
 		"NORI_MODEL_GATEWAY_API_KEY",
+		"NORI_GATEWAY_TOKEN",
 		"OPENAI_API_KEY",
+		"OPENAI_PROD_API_KEY",
+		"OPENAI_DEV_API_KEY",
+		"OPENAI_TEST_API_KEY",
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_PROD_API_KEY",
+		"ANTHROPIC_DEV_API_KEY",
+		"ANTHROPIC_TEST_API_KEY",
 		"OPENROUTER_API_KEY",
+		"OPENROUTER_PROD_API_KEY",
+		"OPENROUTER_DEV_API_KEY",
+		"OPENROUTER_TEST_API_KEY",
 		"JEV_API_KEY",
 		"BRAVE_SEARCH_API_KEY",
 		"SENTRY_AUTH_TOKEN",
@@ -257,7 +279,7 @@ func fromEnvironment(defaultCloud string) Settings {
 		"AWS_SECRET_ACCESS_KEY",
 		"AWS_SESSION_TOKEN",
 	} {
-		if value := os.Getenv(name); value != "" {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
 			credentials = append(credentials, value)
 		}
 	}
@@ -265,6 +287,7 @@ func fromEnvironment(defaultCloud string) Settings {
 		Connections: connectionsFromEnvironment(),
 		Features:    Features{DisableBackgroundTasks: os.Getenv("NORI_BACKGROUND_TASKS_ENABLED") == "false", DisableJev: os.Getenv("NORI_JEV_ENABLED") == "false"},
 		Cloud:       cloud,
+		EnvProfile:  envProfile,
 		Role:        role,
 		AWS:         AWS{Region: get("AWS_REGION", os.Getenv("AWS_DEFAULT_REGION"))},
 		ServiceAuth: serviceauth.Config{
@@ -275,9 +298,9 @@ func fromEnvironment(defaultCloud string) Settings {
 		},
 		BindHost:      get("BIND_HOST", "127.0.0.1"),
 		Port:          os.Getenv("PORT"),
-		Models:        modelsFromEnvironment(),
+		Models:        modelsFromEnvironment(envProfile),
 		Store:         store,
-		Metering:      usage.Config{Mode: get("NORI_USAGE_METER", "store"), Endpoint: os.Getenv("NORI_USAGE_ENDPOINT"), Token: os.Getenv("NORI_USAGE_TOKEN")},
+		Metering:      usage.Config{Mode: get("NORI_USAGE_METER", "store"), Endpoint: os.Getenv("NORI_USAGE_ENDPOINT"), Token: os.Getenv("NORI_USAGE_TOKEN"), MaxCallsPerHour: int(parseEnvInt32("NORI_USER_MAX_CALLS_PER_HOUR")), MaxUSDPerDay: parseOptionalNonNegativeFloat("NORI_USER_MAX_USD_PER_DAY")},
 		SearchKey:     os.Getenv("BRAVE_SEARCH_API_KEY"),
 		TaskBudgetUSD: taskBudget,
 		Observability: Observability{
@@ -385,7 +408,7 @@ func validatePostgresEnv(s Store) error {
 
 func managementCredential(name string) bool {
 	switch name {
-	case "OPENROUTER_MANAGEMENT_KEY", "TEMPORAL_BILLING_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "NORI_SPEND_SIGNING_KEY", "NORI_SPEND_FEATURE_ISSUER_TOKEN", "NORI_SPEND_CI_ISSUER_TOKEN", "SENTRY_AUTH_TOKEN":
+	case "OPENROUTER_MANAGEMENT_KEY", "TEMPORAL_BILLING_API_KEY", "ANTHROPIC_AUTH_TOKEN", "NORI_SPEND_SIGNING_KEY", "NORI_SPEND_FEATURE_ISSUER_TOKEN", "NORI_SPEND_CI_ISSUER_TOKEN", "SENTRY_AUTH_TOKEN":
 		return true
 	}
 	return strings.HasPrefix(name, "NORI_SPEND_LEASE_")

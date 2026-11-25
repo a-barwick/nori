@@ -24,6 +24,7 @@ import json
 import mimetypes
 import os
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -40,7 +41,13 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from grader import grade_run
-from llm_client import AdaptivePersonaResponder, LLMClient, load_dotenv, resolve_dotenv_path
+from llm_client import (
+    AdaptivePersonaResponder,
+    LLMClient,
+    load_dotenv,
+    resolve_dotenv_path,
+    strip_raw_provider_keys,
+)
 from mcp_sandbox import READ_ONLY_TOOL_NAMES, SandboxMCPServer
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1099,8 +1106,13 @@ def run_single_persona(
             user_id = str(uuid4())
 
             env = dict(os.environ)
-            for k, v in dotenv.items():
-                env.setdefault(k, v)
+            if env.get("NORI_MODEL_PROVIDER", "").strip().lower() == "gateway":
+                for k, v in strip_raw_provider_keys(dotenv).items():
+                    env.setdefault(k, v)
+                env = strip_raw_provider_keys(env)
+            else:
+                for k, v in dotenv.items():
+                    env.setdefault(k, v)
             env.update({
                 "NORI_ENV_FILE": os.devnull,
                 "NORI_TASK_ENV_FILE": os.devnull,
@@ -2687,6 +2699,8 @@ def main() -> int:
             "--concurrency > 1 cannot be combined with --workbench-seed (shared database and server). "
             "Use --concurrency 1 or omit --workbench-seed."
         )
+
+    signal.signal(signal.SIGTERM, lambda _sig, _frame: (_ for _ in ()).throw(SystemExit(143)))
 
     slugs = select_personas(args.preset, args.persona)
     env_file = resolve_dotenv_path(ROOT)

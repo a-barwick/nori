@@ -13,6 +13,7 @@ type responseUsage struct {
 	Cost         *float64 `json:"cost"`
 	InputDetails struct {
 		Cached int64 `json:"cached_tokens"`
+		Write  int64 `json:"cache_write_tokens"`
 	} `json:"input_tokens_details"`
 	OutputDetails struct {
 		Reasoning int64 `json:"reasoning_tokens"`
@@ -24,8 +25,10 @@ func (c *Client) recordCost(record *state.Usage, model, tier string, u *response
 		return 0, false
 	}
 	record.InputTokens, record.OutputTokens, record.TotalTokens = u.Input, u.Output, u.Total
+	cached, written := u.InputDetails.Cached, u.InputDetails.Write
+	record.CachedTokens, record.CacheWriteTokens = &cached, &written
 	if c.direct() {
-		cost, err := usage.TerraCost(model, tier, u.Input, u.Output, u.Total, u.InputDetails.Cached)
+		cost, err := usage.TerraCostWithWrites(model, tier, u.Input, u.Output, u.Total, cached, written)
 		if err != nil {
 			return 0, false
 		}

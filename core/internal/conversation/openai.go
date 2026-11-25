@@ -27,15 +27,17 @@ import (
 
 // The default outer model is GPT-6.1 Sol through OpenAI's platform API.
 const (
-	openAIChatURL   = "https://api.openai.com/v1/chat/completions"
-	openAIProvider  = "openai"
-	openAIModelName = "gpt-6.1-sol"
+	openAIChatURL     = "https://api.openai.com/v1/chat/completions"
+	openRouterChatURL = "https://openrouter.ai/api/v1/chat/completions"
+	openAIProvider    = "openai"
+	openAIModelName   = "gpt-6.1-sol"
 )
 
 type OpenAIModel struct {
 	name       string
 	key        string
 	gatewayURL string
+	openRouter bool
 	Client     *http.Client
 	Guard      *llmguard.Guard
 	UserID     string
@@ -99,11 +101,20 @@ func NewGatewayModel(baseURL, key, name string) *OpenAIModel {
 	return model
 }
 
+func NewOpenRouterModel(key, name string) *OpenAIModel {
+	model := NewOpenAIModel(key, name)
+	model.openRouter = true
+	return model
+}
+
 func (m *OpenAIModel) Name() string { return m.name }
 
 func (m *OpenAIModel) provider() string {
 	if m.gatewayURL != "" {
 		return modelgateway.Provider
+	}
+	if m.openRouter {
+		return "openrouter"
 	}
 	return openAIProvider
 }
@@ -146,6 +157,8 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 		endpoint = m.gatewayURL
 	} else if m.TestURL != "" {
 		endpoint = strings.TrimRight(m.TestURL, "/") + "/v1/chat/completions"
+	} else if m.openRouter {
+		endpoint = openRouterChatURL
 	}
 	scope := llmguard.MetaFromContext(ctx).Scope
 	if scope == "" {
@@ -167,6 +180,9 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	if request.RecordUsage != nil {
 		if err := request.RecordUsage(ctx, reply.Usage); err != nil {
 			reply.Usage.RequestStatus = "not_sent"
+			if errors.Is(err, usage.ErrUserQuotaExceeded) {
+				return reply, err
+			}
 			return reply, fmt.Errorf("usage recording unavailable; provider request was not sent")
 		}
 	}
@@ -174,6 +190,10 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	requestStarted = m.now()
 	res, err := m.doWithRetry(reqCtx, endpoint, body)
 	if err != nil {
+		if llmguard.IsGuardError(err) {
+			reply.Usage.RequestStatus = "not_sent"
+			return reply, err
+		}
 		if ctx.Err() != nil {
 			return reply, ctx.Err()
 		}
@@ -231,11 +251,11 @@ func isSupportedDirectOpenAIModel(name string) bool {
 }
 
 func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span trace.Span) ([]byte, error) {
-	if m.gatewayURL == "" && !isSupportedDirectOpenAIModel(m.name) {
+	if m.gatewayURL == "" && !m.openRouter && !isSupportedDirectOpenAIModel(m.name) {
 		return nil, errors.New("unsupported direct OpenAI conversation model")
 	}
 	var breakpoints []int
-	if m.gatewayURL == "" {
+	if m.gatewayURL == "" && !m.openRouter {
 		breakpoints = request.CacheBreakpoints
 	}
 	input, err := openAIConversation(request.Messages, breakpoints)
@@ -245,7 +265,7 @@ func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span tr
 	body := map[string]any{
 		"model": m.name, "messages": input, "max_completion_tokens": outputLimit, "store": false,
 	}
-	if m.gatewayURL == "" {
+	if m.gatewayURL == "" && !m.openRouter {
 		effort := m.ReasoningEffort
 		if effort == "" {
 			effort = "low"
