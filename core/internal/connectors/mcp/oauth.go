@@ -162,11 +162,32 @@ func (s *Service) discoverAuth(ctx context.Context, endpoint string) (*oauthex.P
 	return nil, nil, fmt.Errorf("%w: the authorization server's metadata could not be read (%v)", ErrUnsupported, lastErr)
 }
 
-func validReturnTo(returnTo string) bool {
-	if returnTo == "" || !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") {
+const iosOAuthCallbackURL = "nori://oauth/callback"
+
+func isIOSOAuthCallback(raw string) bool {
+	if raw != iosOAuthCallbackURL {
 		return false
 	}
-	if strings.ContainsAny(returnTo, `\#?`) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return u.Scheme == "nori" &&
+		u.Opaque == "" &&
+		u.User == nil &&
+		u.Host == "oauth" &&
+		u.Port() == "" &&
+		u.Path == "/callback" &&
+		u.RawPath == "" &&
+		u.RawQuery == "" &&
+		!u.ForceQuery &&
+		u.Fragment == "" &&
+		u.RawFragment == "" &&
+		u.String() == iosOAuthCallbackURL
+}
+
+func validReturnTo(returnTo string) bool {
+	if returnTo == "" || strings.ContainsAny(returnTo, `\#?`) {
 		return false
 	}
 	for i := 0; i < len(returnTo); i++ {
@@ -174,22 +195,44 @@ func validReturnTo(returnTo string) bool {
 			return false
 		}
 	}
-	u, err := url.Parse(returnTo)
-	if err != nil || u.Scheme != "" || u.Host != "" || u.Opaque != "" || u.RawQuery != "" || u.Fragment != "" {
+	if isIOSOAuthCallback(returnTo) {
+		return true
+	}
+	if !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") {
 		return false
 	}
-	return strings.HasPrefix(u.Path, "/") && !strings.HasPrefix(u.Path, "//")
+	u, err := url.Parse(returnTo)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" {
+		return false
+	}
+	return strings.HasPrefix(u.Path, "/") && !strings.HasPrefix(u.Path, "//") && !strings.Contains(u.Path, "\\")
 }
 
 func safeReturnTo(returnTo string) string {
 	if !validReturnTo(returnTo) {
 		return "/apps"
 	}
+	if isIOSOAuthCallback(returnTo) {
+		return iosOAuthCallbackURL
+	}
 	u, err := url.Parse(returnTo)
 	if err != nil || u.Path == "" {
 		return "/apps"
 	}
 	return u.Path
+}
+
+func buildReturnRedirect(returnTo string, params url.Values) string {
+	target := safeReturnTo(returnTo)
+	if isIOSOAuthCallback(target) {
+		return (&url.URL{
+			Scheme:   "nori",
+			Host:     "oauth",
+			Path:     "/callback",
+			RawQuery: params.Encode(),
+		}).String()
+	}
+	return (&url.URL{Path: target, RawQuery: params.Encode()}).String()
 }
 
 func (s *Service) pruneExpiredAttempts(ctx context.Context) {
@@ -333,7 +376,7 @@ func (s *Service) Callback(ctx context.Context, stateValue, code, providerError 
 	}
 	s.pruneExpiredAttempts(ctx)
 	redirect := func(params url.Values) string {
-		return (&url.URL{Path: safeReturnTo(attempt.ReturnTo), RawQuery: params.Encode()}).String()
+		return buildReturnRedirect(attempt.ReturnTo, params)
 	}
 	fail := func(reason string) (string, error) {
 		return redirect(url.Values{"mcp": {attempt.ServerID}, "result": {"failed"}, "reason": {reason}}), nil
@@ -354,9 +397,15 @@ func (s *Service) Callback(ctx context.Context, stateValue, code, providerError 
 	credential := attempt.Credential
 	credential.Token = token
 	if err := s.storeOAuth(ctx, attempt.ServerID, credential); err != nil {
+		if isIOSOAuthCallback(attempt.ReturnTo) {
+			return fail("credential_store")
+		}
 		return "", err
 	}
 	if err := s.setAuth(ctx, attempt.ServerID, "oauth"); err != nil {
+		if isIOSOAuthCallback(attempt.ReturnTo) {
+			return fail("save_failed")
+		}
 		return "", err
 	}
 	if _, err := s.Discover(ctx, attempt.ServerID); err != nil {

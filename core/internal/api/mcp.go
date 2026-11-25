@@ -88,7 +88,7 @@ func (a *Assistant) mcpAction(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !value.Valid() {
+	if !value.Valid() || (value.ReturnTo != "" && !validReturnTo(value.ReturnTo)) {
 		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
 		return
 	}
@@ -97,7 +97,7 @@ func (a *Assistant) mcpAction(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, err, requestID, nil)
 		return
 	}
-	receipt, err := a.MCP.Act(r.Context(), r.PathValue("id"), requestID, expected, value.Action, value.Tool, value.Exposure)
+	receipt, err := a.MCP.Act(r.Context(), r.PathValue("id"), requestID, expected, value.Action, value.Tool, value.Exposure, value.ReturnTo)
 	if err != nil {
 		mcpError(w, err, requestID, current)
 		return

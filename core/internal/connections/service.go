@@ -587,10 +587,10 @@ func (s *Service) connect(ctx context.Context, id, requestID string, expected in
 	returnTo := action.ReturnTo
 	if returnTo == "" {
 		returnTo = "/apps"
-	}
-	if !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") || strings.Contains(returnTo, "\\") {
+	} else if !ValidReturnTo(returnTo) {
 		return state.MutationReceipt{}, state.ErrInvalidResource
 	}
+	returnTo = SafeReturnTo(returnTo)
 	oauthState, verifier := randomToken(), oauth2.GenerateVerifier()
 	attemptRecord := attempt{
 		ID: stateKey(oauthState), ConnectionID: id, IntegrationID: record.IntegrationID, Scopes: scopes, Capabilities: capabilities,
@@ -653,7 +653,7 @@ func (s *Service) replay(_ context.Context, saved state.MutationReceipt, m state
 	return saved, nil
 }
 
-// Callback completes a sign-in. It returns the relative path to send the browser to.
+// Callback completes a sign-in. It returns the redirect target to send the browser or iOS session to.
 func (s *Service) Callback(ctx context.Context, oauthState, code, providerError string) (string, error) {
 	key := stateKey(oauthState)
 	r, err := s.Store.Resource(ctx, CollectionAttempts, key)
@@ -668,12 +668,7 @@ func (s *Service) Callback(ctx context.Context, oauthState, code, providerError 
 		return "", err
 	}
 	redirect := func(result string) string {
-		values := url.Values{"connection": {a.ConnectionID}, "result": {result}}
-		separator := "?"
-		if strings.Contains(a.ReturnTo, "?") {
-			separator = "&"
-		}
-		return a.ReturnTo + separator + values.Encode()
+		return BuildReturnRedirect(a.ReturnTo, url.Values{"connection": {a.ConnectionID}, "result": {result}})
 	}
 	if a.Status != "pending" {
 		// A repeated callback returns what the first one recorded.
@@ -683,9 +678,15 @@ func (s *Service) Callback(ctx context.Context, oauthState, code, providerError 
 		a.Status, a.Reason = status, reason
 		next, err := state.NewResource(CollectionAttempts, a.ID, r.Revision+1, a, r.Index, s.now())
 		if err != nil {
+			if IsIOSOAuthCallback(a.ReturnTo) {
+				return redirect(status), nil
+			}
 			return "", err
 		}
 		if _, err = s.Store.PutResource(ctx, next, r.Revision); err != nil && !errors.Is(err, state.ErrRevisionConflict) {
+			if IsIOSOAuthCallback(a.ReturnTo) {
+				return redirect(status), nil
+			}
 			return "", err
 		}
 		if status != "connected" {
@@ -722,6 +723,9 @@ func (s *Service) Callback(ctx context.Context, oauthState, code, providerError 
 	granted := grantedScopes(token, a.Scopes)
 	record, current, err := s.record(ctx, a.ConnectionID)
 	if err != nil {
+		if IsIOSOAuthCallback(a.ReturnTo) {
+			return finish("failed", "The connection could not be loaded.")
+		}
 		return "", err
 	}
 	if record.Account.ProviderID != "" && record.Account.ProviderID != account.ProviderID {
@@ -743,6 +747,9 @@ func (s *Service) Callback(ctx context.Context, oauthState, code, providerError 
 	}
 	prefs, _, err := s.Preferences(ctx)
 	if err != nil {
+		if IsIOSOAuthCallback(a.ReturnTo) {
+			return finish("failed", "Account preferences could not be loaded.")
+		}
 		return "", err
 	}
 	_, err = s.Store.Mutate(ctx, state.Mutation{
@@ -779,6 +786,9 @@ func (s *Service) Callback(ctx context.Context, oauthState, code, providerError 
 		},
 	})
 	if err != nil {
+		if IsIOSOAuthCallback(a.ReturnTo) {
+			return finish("failed", "The connection could not be saved.")
+		}
 		return "", err
 	}
 	if s.OnConnected != nil {
@@ -943,6 +953,9 @@ func (s *Service) mergeSignIn(ctx context.Context, a attempt, attemptResource st
 	}
 	prefs, _, err := s.Preferences(ctx)
 	if err != nil {
+		if IsIOSOAuthCallback(a.ReturnTo) {
+			return finish("failed", "Account preferences could not be loaded.")
+		}
 		return "", err
 	}
 	var desired []string
@@ -997,6 +1010,9 @@ func (s *Service) mergeSignIn(ctx context.Context, a attempt, attemptResource st
 		},
 	})
 	if err != nil {
+		if IsIOSOAuthCallback(a.ReturnTo) {
+			return finish("failed", "The connection could not be saved.")
+		}
 		return "", err
 	}
 	if s.OnConnected != nil {
@@ -1004,12 +1020,7 @@ func (s *Service) mergeSignIn(ctx context.Context, a attempt, attemptResource st
 		s.OnConnected(context.WithoutCancel(ctx), a.ConnectionID)
 		s.OnConnected(context.WithoutCancel(ctx), existing.ID)
 	}
-	values := url.Values{"connection": {existing.ID}, "result": {"connected"}}
-	separator := "?"
-	if strings.Contains(a.ReturnTo, "?") {
-		separator = "&"
-	}
-	return a.ReturnTo + separator + values.Encode(), nil
+	return BuildReturnRedirect(a.ReturnTo, url.Values{"connection": {existing.ID}, "result": {"connected"}}), nil
 }
 
 func (s *Service) settleFailedAttempt(ctx context.Context, connectionID, reason string) {
