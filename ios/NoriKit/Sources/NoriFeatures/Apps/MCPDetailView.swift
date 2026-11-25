@@ -235,6 +235,8 @@ public struct MCPDetailView: View {
                     }
                     .textFieldStyle(.plain)
                     .font(NoriTypography.monoSmall)
+                    .foregroundStyle(NoriColors.ink)
+                    .tint(NoriColors.accent)
                     .autocorrectionDisabled()
                     #if os(iOS)
                     .textInputAutocapitalization(.never)
@@ -276,7 +278,6 @@ public struct MCPDetailView: View {
                 }
                 .buttonStyle(NoriButtonStyle(.primary, fullWidth: true, compact: true))
                 .disabled(!canSave)
-                .opacity(canSave ? 1 : 0.5)
             }
         }
     }
@@ -321,7 +322,7 @@ public struct MCPDetailView: View {
         switch status {
         case .connected: return .ok
         case .needsSignIn, .failed: return .danger
-        case .connecting: return .accent
+        case .connecting: return .working
         default: return .neutral
         }
     }

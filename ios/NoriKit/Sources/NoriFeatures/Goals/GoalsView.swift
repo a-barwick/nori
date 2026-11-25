@@ -78,7 +78,7 @@ public struct GoalsView: View {
                                     .fill(NoriColors.fill2)
                                 if fillWidth > 0 {
                                     Capsule()
-                                        .fill(goal.status == .completed ? NoriColors.ok : NoriColors.accent)
+                                        .fill(goal.status == .completed ? NoriColors.ok : NoriColors.brandPrimary)
                                         .frame(width: min(proxy.size.width, fillWidth))
                                 }
                             }
@@ -111,21 +111,21 @@ public struct GoalsView: View {
                             .foregroundStyle(NoriColors.accent)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
-                            .background(NoriColors.surface, in: Capsule())
+                            .background(NoriColors.elevated, in: Capsule())
                             .overlay(
                                 Capsule()
-                                    .strokeBorder(Color(hex: 0xDFD4F6), lineWidth: 1)
+                                    .strokeBorder(NoriColors.accentBorder, lineWidth: 1)
                             )
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
                         .background(
-                            Color(hex: 0xFBF9FF),
+                            NoriColors.accentSubtle,
                             in: RoundedRectangle(cornerRadius: 14, style: .continuous)
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .strokeBorder(Color(hex: 0xDFD4F6), lineWidth: 1)
+                                .strokeBorder(NoriColors.accentBorder, lineWidth: 1)
                         )
                         .contentShape(Rectangle())
                     }
@@ -190,7 +190,7 @@ public struct GoalsView: View {
 
     private func statusTone(for status: GoalStatus) -> NoriTone {
         switch status {
-        case .active: return .accent
+        case .active: return .working
         case .completed: return .ok
         case .paused, .abandoned: return .neutral
         }

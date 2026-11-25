@@ -6,37 +6,44 @@ import NoriCore
 public enum NoriTone: String, Sendable, Hashable {
     case neutral
     case accent
+    case working
     case ok
     case warning
     case danger
+    case scheduled
 
     public var foreground: Color {
         switch self {
-        case .neutral: return NoriColors.ink2
+        case .neutral: return NoriColors.inactive
         case .accent: return NoriColors.accent
+        case .working: return NoriColors.working
         case .ok: return NoriColors.ok
         case .warning: return NoriColors.warning
         case .danger: return NoriColors.danger
+        case .scheduled: return NoriColors.scheduled
         }
     }
 
     public var background: Color {
         switch self {
-        case .neutral: return NoriColors.fill1
+        case .neutral: return NoriColors.inactiveBg
         case .accent: return NoriColors.accentSubtle
+        case .working: return NoriColors.workingBg
         case .ok: return NoriColors.okBg
         case .warning: return NoriColors.warningBg
         case .danger: return NoriColors.dangerBg
+        case .scheduled: return NoriColors.scheduledBg
         }
     }
 
     public var border: Color {
         switch self {
-        case .neutral: return NoriColors.hairline
-        case .accent: return NoriColors.accentMuted
-        case .ok: return NoriColors.ok.opacity(0.22)
-        case .warning: return NoriColors.warning.opacity(0.25)
-        case .danger: return NoriColors.danger.opacity(0.24)
+        case .neutral: return Color.adaptive(light: 0xE7E2EF, dark: 0x000000, darkAlpha: 0.0)
+        case .accent, .working: return Color.adaptive(light: 0xDFD4F6, dark: 0x000000, darkAlpha: 0.0)
+        case .ok: return Color.adaptive(light: 0x1C7A43, lightAlpha: 0.22, dark: 0x000000, darkAlpha: 0.0)
+        case .warning: return Color.adaptive(light: 0x946000, lightAlpha: 0.25, dark: 0x000000, darkAlpha: 0.0)
+        case .danger: return Color.adaptive(light: 0xCC1F33, lightAlpha: 0.24, dark: 0x000000, darkAlpha: 0.0)
+        case .scheduled: return Color.adaptive(light: 0x1D5BB8, lightAlpha: 0.24, dark: 0x000000, darkAlpha: 0.0)
         }
     }
 }
@@ -84,15 +91,19 @@ public struct NoriBadge: View {
 
     public var body: some View {
         if count > 0 {
+            let usesSolidAccent = tone == .accent || tone == .working
+            let usesSolidDanger = tone == .danger
+            let bg: Color = {
+                if usesSolidAccent { return NoriColors.brandPrimary }
+                if usesSolidDanger { return Color.adaptive(light: 0xCC1F33, dark: 0xD9384D) }
+                return tone.background
+            }()
             Text(count > 99 ? "99+" : "\(count)")
                 .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(tone == .accent || tone == .danger ? Color.white : tone.foreground)
+                .foregroundStyle(usesSolidAccent || usesSolidDanger ? NoriColors.onAccent : tone.foreground)
                 .padding(.horizontal, 6)
                 .frame(minWidth: 19, minHeight: 19)
-                .background(
-                    tone == .accent ? NoriColors.accent : (tone == .danger ? NoriColors.danger : tone.background),
-                    in: Capsule()
-                )
+                .background(bg, in: Capsule())
         }
     }
 }
@@ -108,7 +119,7 @@ public struct NoriCard<Content: View>: View {
     public init(
         padding: CGFloat = 14,
         backgroundColor: Color = NoriColors.surface,
-        borderColor: Color = NoriColors.hairline,
+        borderColor: Color = NoriColors.cardBorder,
         @ViewBuilder content: () -> Content
     ) {
         self.padding = padding
@@ -146,7 +157,7 @@ public struct NoriRows<Content: View>: View {
         .background(NoriColors.surface, in: RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
-                .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous))
     }
@@ -326,13 +337,17 @@ public struct NoriSegmentedTabs<Value: Hashable & Sendable>: View {
                             if let count = option.count, count > 0 {
                                 Text("\(count)")
                                     .font(.system(size: 11, weight: .bold))
-                                    .foregroundStyle(isSelected ? NoriColors.accentMuted : NoriColors.ink3)
+                                    .foregroundStyle(isSelected ? NoriColors.accent : NoriColors.ink3)
                             }
                         }
-                        .foregroundStyle(isSelected ? Color.white : NoriColors.ink2)
+                        .foregroundStyle(isSelected ? NoriColors.chipSelectedFg : NoriColors.ink2)
                         .padding(.horizontal, 12)
                         .frame(height: 34)
-                        .background(isSelected ? NoriColors.ink : NoriColors.fill1, in: Capsule())
+                        .background(isSelected ? NoriColors.chipSelectedBg : NoriColors.elevated, in: Capsule())
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(isSelected ? NoriColors.chipSelectedBorder : NoriColors.hairline, lineWidth: 1)
+                        )
                     }
                     .buttonStyle(.plain)
                 }
@@ -347,6 +362,7 @@ public struct NoriSegmentedTabs<Value: Hashable & Sendable>: View {
 public enum NoriButtonKind: Sendable {
     case primary
     case neutral
+    case tonal
     case quiet
     case danger
 }
@@ -363,48 +379,87 @@ public struct NoriButtonStyle: ButtonStyle {
     }
 
     public func makeBody(configuration: Configuration) -> some View {
-        let bg: Color
-        let fg: Color
-        let border: Color
+        StyledButtonBody(
+            configuration: configuration,
+            kind: kind,
+            fullWidth: fullWidth,
+            compact: compact
+        )
+    }
 
-        switch kind {
-        case .primary:
-            bg = configuration.isPressed ? NoriColors.accentHover : NoriColors.accent
-            fg = NoriColors.onAccent
-            border = bg
-        case .neutral:
-            bg = configuration.isPressed ? NoriColors.fill1 : NoriColors.surface
-            fg = NoriColors.ink
-            border = NoriColors.hairlineStrong
-        case .quiet:
-            bg = configuration.isPressed ? NoriColors.fill2 : NoriColors.fill1
-            fg = NoriColors.ink
-            border = Color.clear
-        case .danger:
-            bg = configuration.isPressed ? NoriColors.danger.opacity(0.18) : NoriColors.dangerBg
-            fg = NoriColors.danger
-            border = NoriColors.danger.opacity(0.32)
+    private struct StyledButtonBody: View {
+        @Environment(\.isEnabled) private var isEnabled
+        let configuration: Configuration
+        let kind: NoriButtonKind
+        let fullWidth: Bool
+        let compact: Bool
+
+        var body: some View {
+            let bg: Color
+            let fg: Color
+            let border: Color
+
+            if !isEnabled {
+                switch kind {
+                case .primary, .tonal, .quiet:
+                    bg = NoriColors.disabledBg
+                    fg = NoriColors.disabled
+                    border = NoriColors.cardBorder
+                case .neutral:
+                    bg = NoriColors.surface
+                    fg = NoriColors.disabled
+                    border = NoriColors.hairline
+                case .danger:
+                    bg = NoriColors.disabledBg
+                    fg = NoriColors.disabled
+                    border = NoriColors.cardBorder
+                }
+            } else {
+                switch kind {
+                case .primary:
+                    bg = configuration.isPressed ? NoriColors.accentHover : NoriColors.brandPrimary
+                    fg = NoriColors.onAccent
+                    border = Color.clear
+                case .neutral:
+                    bg = configuration.isPressed ? NoriColors.elevated : NoriColors.surface
+                    fg = NoriColors.ink
+                    border = NoriColors.hairlineStrong
+                case .tonal:
+                    bg = configuration.isPressed ? NoriColors.accentSubtle : NoriColors.selected
+                    fg = NoriColors.accent
+                    border = NoriColors.accentBorder
+                case .quiet:
+                    bg = configuration.isPressed ? NoriColors.selected : NoriColors.elevated
+                    fg = NoriColors.ink
+                    border = Color.clear
+                case .danger:
+                    bg = configuration.isPressed ? NoriColors.danger.opacity(0.22) : NoriColors.dangerBg
+                    fg = NoriColors.danger
+                    border = NoriColors.danger.opacity(0.34)
+                }
+            }
+
+            return configuration.label
+                .font(.system(size: compact ? 12.5 : 13.5, weight: .semibold))
+                .foregroundStyle(fg)
+                .padding(.horizontal, compact ? 12 : 15)
+                .frame(maxWidth: fullWidth ? .infinity : nil)
+                .frame(height: compact ? 32 : 38)
+                .background(bg, in: Capsule())
+                .overlay(
+                    Capsule()
+                        .strokeBorder(border, lineWidth: border == .clear ? 0 : 1)
+                )
+                .scaleEffect(isEnabled && configuration.isPressed ? 0.97 : 1.0)
+                .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
         }
-
-        return configuration.label
-            .font(.system(size: compact ? 12.5 : 13.5, weight: .semibold))
-            .foregroundStyle(fg)
-            .padding(.horizontal, compact ? 12 : 15)
-            .frame(maxWidth: fullWidth ? .infinity : nil)
-            .frame(height: compact ? 32 : 38)
-            .background(bg, in: Capsule())
-            .overlay(
-                Capsule()
-                    .strokeBorder(border, lineWidth: border == .clear ? 0 : 1)
-            )
-            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
 public extension ButtonStyle where Self == NoriButtonStyle {
     static var noriPrimary: NoriButtonStyle { NoriButtonStyle(.primary) }
     static var noriNeutral: NoriButtonStyle { NoriButtonStyle(.neutral) }
+    static var noriTonal: NoriButtonStyle { NoriButtonStyle(.tonal) }
     static var noriQuiet: NoriButtonStyle { NoriButtonStyle(.quiet) }
     static var noriDanger: NoriButtonStyle { NoriButtonStyle(.danger) }
 }
@@ -445,10 +500,14 @@ public struct NoriToast: View {
     public var body: some View {
         Text(message)
             .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(Color.white)
+            .foregroundStyle(NoriColors.toastFg)
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
-            .background(NoriColors.ink, in: Capsule())
+            .background(NoriColors.toastBg, in: Capsule())
+            .overlay(
+                Capsule()
+                    .strokeBorder(NoriColors.hairline, lineWidth: 1)
+            )
             .shadow(color: NoriColors.shadowColor, radius: 14, x: 0, y: 6)
     }
 }
@@ -594,7 +653,7 @@ public struct NoriUnderlineTabs<Value: Hashable & Sendable>: View {
                                     .foregroundStyle(isSelected ? NoriColors.accent : NoriColors.ink2)
                                     .padding(.horizontal, 5.5)
                                     .frame(minWidth: 18, minHeight: 18)
-                                    .background(NoriColors.accentSubtle, in: Capsule())
+                                    .background(isSelected ? NoriColors.selected : NoriColors.elevated, in: Capsule())
                                     .lineLimit(1)
                                     .fixedSize()
                             }
@@ -647,16 +706,16 @@ public struct NoriHeroCard<Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 LinearGradient(
-                    colors: [Color(hex: 0xFBF9FF), Color(hex: 0xF1EBFF)],
+                    colors: [NoriColors.heroStart, NoriColors.heroEnd],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 ),
                 in: shape
             )
             .overlay(
-                shape.strokeBorder(Color(hex: 0xDFD4F6), lineWidth: 1)
+                shape.strokeBorder(NoriColors.cardBorder, lineWidth: 1)
             )
-            .shadow(color: Color(hex: 0x5000FF, alpha: 0.06), radius: 14, x: 0, y: 6)
+            .shadow(color: NoriColors.accentShadow, radius: 14, x: 0, y: 6)
     }
 }
 
@@ -667,7 +726,7 @@ public struct NoriTopWash: View {
 
     public var body: some View {
         LinearGradient(
-            colors: [Color(hex: 0xFAF8FE), Color(hex: 0xFFFFFF)],
+            colors: [NoriColors.topWashStart, NoriColors.topWashEnd],
             startPoint: .top,
             endPoint: .bottom
         )

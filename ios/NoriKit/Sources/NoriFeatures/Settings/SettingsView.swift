@@ -4,12 +4,14 @@ import NoriDesign
 
 public enum SettingsSection: String, Hashable, Sendable {
     case account
+    case appearance
     case permissions
     case preferences
     case diagnostics
 }
 
 public struct SettingsView: View {
+    @AppStorage(NoriAppearance.storageKey) private var appearanceRawValue: String = NoriAppearance.system.rawValue
     @Bindable private var store: NoriStore
     public let initialSection: SettingsSection?
 
@@ -17,6 +19,11 @@ public struct SettingsView: View {
     @State private var showingAddPermissionRule = false
     @State private var rulePendingRemoval: PermissionRule?
     @State private var isPingingServer = false
+    @Namespace private var appearancePickerNamespace
+
+    private var appearance: NoriAppearance {
+        NoriAppearance(storedRawValue: appearanceRawValue)
+    }
 
     public init(store: NoriStore, initialSection: SettingsSection? = nil) {
         self.store = store
@@ -29,6 +36,9 @@ public struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     accountSection
                         .id(SettingsSection.account)
+
+                    appearanceSection
+                        .id(SettingsSection.appearance)
 
                     permissionsSection
                         .id(SettingsSection.permissions)
@@ -68,11 +78,15 @@ public struct SettingsView: View {
             EditPreferencesSheet(store: store)
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
+                .presentationBackground(NoriColors.sheetBackground)
+                .presentationCornerRadius(NoriRadius.sheet)
         }
         .sheet(isPresented: $showingAddPermissionRule) {
             AddPermissionRuleSheet(store: store)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
+                .presentationBackground(NoriColors.sheetBackground)
+                .presentationCornerRadius(NoriRadius.sheet)
         }
         .alert(
             "Remove this rule?",
@@ -124,6 +138,113 @@ public struct SettingsView: View {
         }
         .buttonStyle(NoriButtonStyle(.danger, fullWidth: true, compact: true))
         .padding(.top, 10)
+    }
+
+    // MARK: - Appearance
+
+    @ViewBuilder
+    private var appearanceSection: some View {
+        NoriSectionHeader("Appearance") {
+            Text(appearance.displayLabel)
+                .font(NoriTypography.caption)
+                .foregroundStyle(NoriColors.ink3)
+        }
+
+        NoriCard(padding: 14) {
+            VStack(alignment: .leading, spacing: 14) {
+                // Interactive appearance preview reflecting live palette & mascot
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        NoriMark(size: 26, state: .idle)
+                        HStack(spacing: 5) {
+                            Text("Nori")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(NoriColors.ink)
+                            Circle()
+                                .fill(NoriColors.markActivity)
+                                .frame(width: 6.5, height: 6.5)
+                        }
+                        Spacer(minLength: 8)
+                        NoriPill("Confirmed", tone: .ok)
+                    }
+
+                    HStack {
+                        Spacer(minLength: 32)
+                        Text("What do I have tomorrow?")
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(NoriColors.onAccent)
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 7)
+                            .background(NoriColors.brandPrimary, in: Capsule())
+                    }
+
+                    HStack(alignment: .top, spacing: 7) {
+                        NoriMark(size: 20, state: .idle)
+                            .padding(.top, 1)
+                        Text("Two morning meetings and a reminder at noon.")
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(NoriColors.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    NoriColors.canvas,
+                    in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+                        .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                )
+
+                // System / Light / Dark segmented control
+                HStack(spacing: 4) {
+                    ForEach(NoriAppearance.allCases) { option in
+                        let isSelected = appearance == option
+                        Button {
+                            withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                                appearanceRawValue = option.rawValue
+                            }
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: option.systemImage)
+                                    .font(.system(size: 12, weight: .semibold))
+                                Text(option.displayLabel)
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+                            .foregroundStyle(isSelected ? NoriColors.ink : NoriColors.ink2)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 34)
+                            .background {
+                                if isSelected {
+                                    Capsule()
+                                        .fill(Color.adaptive(light: 0xFFFFFF, dark: 0x2C253D))
+                                        .overlay(
+                                            Capsule()
+                                                .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                                        )
+                                        .matchedGeometryEffect(id: "noriAppearanceSelection", in: appearancePickerNamespace)
+                                }
+                            }
+                            .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(isSelected ? .isSelected : [])
+                    }
+                }
+                .padding(3)
+                .background(NoriColors.elevated, in: Capsule())
+                .overlay(
+                    Capsule()
+                        .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                )
+
+                Text("Interactive appearance preview · System follows iOS display settings.")
+                    .font(NoriTypography.caption)
+                    .foregroundStyle(NoriColors.ink3)
+            }
+        }
     }
 
     // MARK: - Standing Permissions
@@ -390,13 +511,15 @@ private struct EditPreferencesSheet: View {
                             .foregroundStyle(NoriColors.ink)
                         TextField("America/Los_Angeles", text: $timezone)
                             .textFieldStyle(.plain)
+                            .foregroundStyle(NoriColors.ink)
+                            .tint(NoriColors.accent)
                             .autocorrectionDisabled()
                             #if os(iOS)
                             .textInputAutocapitalization(.never)
                             #endif
                             .padding(.horizontal, 12)
                             .frame(height: 40)
-                            .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                            .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                     }
 
                     HStack(spacing: 12) {
@@ -407,12 +530,14 @@ private struct EditPreferencesSheet: View {
                             TextField("1.00", text: $taskBudgetText)
                                 .textFieldStyle(.plain)
                                 .font(NoriTypography.mono)
+                                .foregroundStyle(NoriColors.ink)
+                                .tint(NoriColors.accent)
                                 #if os(iOS)
                                 .keyboardType(.decimalPad)
                                 #endif
                                 .padding(.horizontal, 12)
                                 .frame(height: 40)
-                                .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                                .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
@@ -422,12 +547,14 @@ private struct EditPreferencesSheet: View {
                             TextField("40.00", text: $monthlyCapText)
                                 .textFieldStyle(.plain)
                                 .font(NoriTypography.mono)
+                                .foregroundStyle(NoriColors.ink)
+                                .tint(NoriColors.accent)
                                 #if os(iOS)
                                 .keyboardType(.decimalPad)
                                 #endif
                                 .padding(.horizontal, 12)
                                 .frame(height: 40)
-                                .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                                .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                         }
                     }
 
@@ -446,7 +573,7 @@ private struct EditPreferencesSheet: View {
                 }
                 .padding(16)
             }
-            .background(NoriColors.canvas)
+            .background(NoriColors.sheetBackground)
             .navigationTitle("Preferences")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -663,13 +790,15 @@ private struct AddPermissionRuleSheet: View {
                         TextField("* or gmail.send", text: $toolIDInput)
                             .textFieldStyle(.plain)
                             .font(NoriTypography.mono)
+                            .foregroundStyle(NoriColors.ink)
+                            .tint(NoriColors.accent)
                             .autocorrectionDisabled()
                             #if os(iOS)
                             .textInputAutocapitalization(.never)
                             #endif
                             .padding(.horizontal, 12)
                             .frame(height: 40)
-                            .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                            .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                     }
 
                     // Action Classes
@@ -701,7 +830,7 @@ private struct AddPermissionRuleSheet: View {
                                     .padding(.horizontal, 10)
                                     .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
                                     .background(
-                                        isSelected ? NoriColors.accentSubtle : NoriColors.surface,
+                                        isSelected ? NoriColors.selected : NoriColors.elevated,
                                         in: RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous)
                                     )
                                     .overlay(
@@ -722,6 +851,8 @@ private struct AddPermissionRuleSheet: View {
                                 .foregroundStyle(NoriColors.ink)
                             TextField("sam@example.com, team@acme.com", text: $recipientsInput)
                                 .textFieldStyle(.plain)
+                                .foregroundStyle(NoriColors.ink)
+                                .tint(NoriColors.accent)
                                 .autocorrectionDisabled()
                                 #if os(iOS)
                                 .textInputAutocapitalization(.never)
@@ -729,7 +860,7 @@ private struct AddPermissionRuleSheet: View {
                                 #endif
                                 .padding(.horizontal, 12)
                                 .frame(height: 40)
-                                .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                                .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                         }
                     }
 
@@ -740,7 +871,7 @@ private struct AddPermissionRuleSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                        .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
 
                     Button {
                         save()
@@ -756,7 +887,7 @@ private struct AddPermissionRuleSheet: View {
                 }
                 .padding(16)
             }
-            .background(NoriColors.canvas)
+            .background(NoriColors.sheetBackground)
             .navigationTitle("Add Permission Rule")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

@@ -417,14 +417,14 @@ public struct ChatView: View {
                         } else {
                             Image(systemName: "arrow.up")
                                 .font(.system(size: 16, weight: .bold))
-                                .foregroundStyle(canSend ? Color.white : NoriColors.ink3)
+                                .foregroundStyle(canSend ? NoriColors.onAccent : NoriColors.disabled)
                         }
                     }
                     .frame(width: 34, height: 34)
                     .background(
                         isSending
-                            ? NoriColors.accent.opacity(0.55)
-                            : (canSend ? NoriColors.accent : NoriColors.fill1),
+                            ? NoriColors.brandPrimary.opacity(0.6)
+                            : (canSend ? NoriColors.brandPrimary : NoriColors.disabledBg),
                         in: Circle()
                     )
                 }
@@ -440,16 +440,17 @@ public struct ChatView: View {
                     .fill(.ultraThinMaterial)
                     .overlay(
                         RoundedRectangle(cornerRadius: 24, style: .continuous)
-                            .fill(NoriColors.glass.opacity(0.76))
+                            .fill(NoriColors.glass.opacity(0.82))
                     )
             }
             .overlay(
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
                     .strokeBorder(
-                        isInputFocused ? NoriColors.accentSignal : NoriColors.hairlineStrong,
-                        lineWidth: 1
+                        isInputFocused ? NoriColors.accentSignal : NoriColors.cardBorder,
+                        lineWidth: isInputFocused ? 1.5 : 1
                     )
             )
+            .animation(.easeOut(duration: 0.16), value: isInputFocused)
             .shadow(color: NoriColors.shadowColor, radius: 14, x: 0, y: 5)
         }
         .padding(.horizontal, 12)
@@ -637,7 +638,7 @@ private struct ChatTopBar: View {
 
                         if hasPendingNeedsYou {
                             Circle()
-                                .fill(NoriColors.accent)
+                                .fill(NoriColors.markActivity)
                                 .frame(width: 7.5, height: 7.5)
                                 .transition(.scale.combined(with: .opacity))
                         }
@@ -659,8 +660,8 @@ private struct ChatTopBar: View {
             .animation(.easeInOut(duration: 0.2), value: hasPendingNeedsYou)
 
             Rectangle()
-                .fill(NoriColors.hairline)
-                .frame(height: 1)
+                .fill(NoriColors.cardBorder)
+                .frame(height: 0.5)
         }
     }
 }
@@ -721,7 +722,7 @@ private struct InlineNeedsYouBanner: View {
         Button(action: onTap) {
             HStack(spacing: 10) {
                 Circle()
-                    .fill(NoriColors.accent)
+                    .fill(NoriColors.markActivity)
                     .frame(width: 8, height: 8)
                     .padding(.leading, 2)
 
@@ -752,10 +753,10 @@ private struct InlineNeedsYouBanner: View {
                 .foregroundStyle(NoriColors.accent)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(NoriColors.surface, in: Capsule())
+                .background(NoriColors.elevated, in: Capsule())
                 .overlay(
                     Capsule()
-                        .strokeBorder(NoriColors.hairlineStrong, lineWidth: 1)
+                        .strokeBorder(NoriColors.accentBorder, lineWidth: 1)
                 )
             }
             .padding(.horizontal, 12)
@@ -765,12 +766,12 @@ private struct InlineNeedsYouBanner: View {
                     .fill(.ultraThinMaterial)
                     .overlay(
                         RoundedRectangle(cornerRadius: 15, style: .continuous)
-                            .fill(NoriColors.accentSubtle.opacity(0.88))
+                            .fill(NoriColors.accentSubtle.opacity(0.9))
                     )
             }
             .overlay(
                 RoundedRectangle(cornerRadius: 15, style: .continuous)
-                    .strokeBorder(NoriColors.hairlineStrong, lineWidth: 1)
+                    .strokeBorder(NoriColors.accentBorder, lineWidth: 1)
             )
             .shadow(color: NoriColors.shadowColor, radius: 10, x: 0, y: 4)
             .contentShape(Rectangle())
@@ -948,7 +949,7 @@ private struct UserMessageBubble: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .background(
-                NoriColors.accent,
+                NoriColors.brandPrimary,
                 in: UnevenRoundedRectangle(cornerRadii: position.userRadii, style: .continuous)
             )
         }
@@ -973,6 +974,7 @@ private struct NoriMessageBubble: View {
                 .font(NoriTypography.body)
                 .lineSpacing(2.5)
                 .foregroundStyle(NoriColors.ink)
+                .tint(NoriColors.accent)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.vertical, 4)
 
@@ -1056,8 +1058,8 @@ private struct PageBlockCard: View {
             .padding(.bottom, 10)
 
             Rectangle()
-                .fill(NoriColors.hairline)
-                .frame(height: 1)
+                .fill(NoriColors.cardBorder)
+                .frame(height: 0.5)
                 .padding(.bottom, 10)
 
             Text(title)
@@ -1108,7 +1110,7 @@ private struct PageBlockCard: View {
             RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
                 .strokeBorder(NoriColors.hairline, lineWidth: 1)
         )
-        .shadow(color: NoriColors.ink.opacity(0.03), radius: 8, x: 0, y: 2)
+        .shadow(color: NoriColors.cardShadow, radius: 8, x: 0, y: 2)
     }
 }
 
@@ -1179,11 +1181,14 @@ private struct AttachmentChipView: View {
         }
         .padding(.leading, 9)
         .padding(.trailing, 5)
-        .padding(.vertical, 5)
-        .background(NoriColors.fill1, in: Capsule())
+        .padding(.vertical, 6)
+        .background(
+            item.error != nil ? NoriColors.dangerBg : NoriColors.elevated,
+            in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+        )
         .overlay(
-            Capsule()
-                .strokeBorder(item.error != nil ? NoriColors.danger.opacity(0.4) : NoriColors.hairlineStrong, lineWidth: 1)
+            RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+                .strokeBorder(item.error != nil ? NoriColors.danger.opacity(0.4) : NoriColors.hairline, lineWidth: 1)
         )
     }
 }
@@ -1231,7 +1236,7 @@ private struct AttachSheetView: View {
                 .padding(.top, 4)
                 .padding(.bottom, 20)
             }
-            .background(NoriColors.canvas)
+            .background(NoriColors.sheetBackground)
             .navigationTitle("Attach to Nori")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -1245,7 +1250,7 @@ private struct AttachSheetView: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(NoriColors.ink)
                             .frame(width: 30, height: 30)
-                            .background(NoriColors.fill1, in: Circle())
+                            .background(NoriColors.elevated, in: Circle())
                     }
                     .buttonStyle(.plain)
                 }
@@ -1263,6 +1268,8 @@ private struct AttachSheetView: View {
         }
         .presentationDetents([.height(240), .medium])
         .presentationDragIndicator(.visible)
+        .presentationBackground(NoriColors.sheetBackground)
+        .presentationCornerRadius(NoriRadius.sheet)
     }
 }
 

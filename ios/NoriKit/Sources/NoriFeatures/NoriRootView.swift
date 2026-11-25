@@ -8,8 +8,13 @@ private struct DocumentPresentation: Identifiable, Hashable {
 
 /// Root 3-tab navigation shell for Nori iOS.
 public struct NoriRootView: View {
+    @AppStorage(NoriAppearance.storageKey) private var appearanceRawValue: String = NoriAppearance.system.rawValue
     @Environment(\.scenePhase) private var scenePhase
     @State private var store: NoriStore
+
+    private var appearance: NoriAppearance {
+        NoriAppearance(storedRawValue: appearanceRawValue)
+    }
 
     @State private var selectedTab: NoriTab = .chat
     @State private var workTabFilter: WorkTabFilter = .tasks
@@ -85,6 +90,7 @@ public struct NoriRootView: View {
                 await refresh(for: nextTab)
             }
         }
+        .preferredColorScheme(appearance.colorScheme)
     }
 
     private func refresh(for tab: NoriTab) async {
@@ -192,11 +198,15 @@ public struct NoriRootView: View {
             )
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
+            .presentationBackground(NoriColors.sheetBackground)
+            .presentationCornerRadius(NoriRadius.sheet)
         }
         .sheet(item: $presentedDocument) { doc in
             DocumentReaderSheet(store: store, itemID: doc.id)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
+                .presentationBackground(NoriColors.sheetBackground)
+                .presentationCornerRadius(NoriRadius.sheet)
         }
     }
 

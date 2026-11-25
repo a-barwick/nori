@@ -5,14 +5,25 @@ import SwiftUI
 
 @main
 struct NoriApp: App {
+    @AppStorage(NoriAppearance.storageKey) private var appearanceRawValue: String = NoriAppearance.system.rawValue
     @State private var store: NoriStore
 
     init() {
+        #if DEBUG
+        let initialStore: NoriStore = CommandLine.arguments.contains("-nori-preview")
+            ? NoriStore.makePreviewStore()
+            : NoriStore()
+        #else
         let initialStore = NoriStore()
+        #endif
         if let initialURL = Self.resolveInitialURL() {
             initialStore.handleIncomingURL(initialURL)
         }
         _store = State(initialValue: initialStore)
+    }
+
+    private var appearance: NoriAppearance {
+        NoriAppearance(storedRawValue: appearanceRawValue)
     }
 
     var body: some Scene {
@@ -21,7 +32,7 @@ struct NoriApp: App {
             // for `nori://` OAuth callbacks and deep links registered in Info.plist.
             NoriRootView(store: store)
                 .tint(NoriColors.accent)
-                .preferredColorScheme(.light)
+                .preferredColorScheme(appearance.colorScheme)
         }
     }
 

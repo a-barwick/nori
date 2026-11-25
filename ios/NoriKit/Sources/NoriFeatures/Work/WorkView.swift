@@ -26,13 +26,13 @@ enum WorkStatusPresentation {
             return PillInfo(label: "Stopping", tone: .neutral)
         }
         if item.bucket == .needsYou && item.status == .running {
-            return PillInfo(label: "Needs you", tone: .accent)
+            return PillInfo(label: "Needs you", tone: .warning)
         }
         switch item.status {
         case .running:
             return item.operations.uncertain > 0
                 ? PillInfo(label: "Checking", tone: .warning)
-                : PillInfo(label: "Working", tone: .neutral)
+                : PillInfo(label: "Working", tone: .working)
         case .completed:
             return item.operations.uncertain > 0
                 ? PillInfo(label: "Unconfirmed", tone: .warning)
@@ -321,7 +321,7 @@ public struct WorkView: View {
         } label: {
             HStack(alignment: .center, spacing: 11) {
                 PulsingStatusDot(
-                    color: item.operations.uncertain > 0 ? NoriColors.warning : NoriColors.accent,
+                    color: item.operations.uncertain > 0 ? NoriColors.warning : NoriColors.markActivity,
                     size: 7.5,
                     animated: !item.cancelRequested
                 )
@@ -356,12 +356,12 @@ public struct WorkView: View {
             .padding(.vertical, 13)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                Color(hex: 0xFAF8FE),
-                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                NoriColors.surfaceTinted,
+                in: RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(Color(hex: 0xDFD4F6), lineWidth: 1)
+                RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
+                    .strokeBorder(NoriColors.accentBorder, lineWidth: 1)
             )
             .contentShape(Rectangle())
         }

@@ -34,15 +34,15 @@ public struct OnigiriRiceShape: Shape {
     }
 }
 
-/// Animated Nori onigiri mark matching `web/src/components/mark/NoriMark.tsx`:
-/// - `#FDFCFF` soft white rice fill
-/// - `#101A30` navy nori wrap clipped cleanly to the rice silhouette
-/// - `#190936` outline (1.75pt @ 96px) & smile
+/// Animated Nori onigiri mark with appearance-aware palette:
+/// - Light mode: `#FDFCFF` soft white rice, `#101A30` navy seaweed wrap, `#190936` outline & expression
+/// - Dark mode: `#C6C4CE` soft light-gray body, `#171522` dark face & seaweed wrap, `#D1CFD8` subtle outer edge
 /// - Periodic eye blink (idle / attentive), downward glance (attentive), and 2s thinking eye sweep (thinking).
 public struct NoriMark: View {
     public let size: CGFloat
     public let state: MarkState
 
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isBlinking = false
 
@@ -86,7 +86,13 @@ public struct NoriMark: View {
     }
 
     private func markCanvas(eyeOffset: CGSize, blinkScaleY: CGFloat) -> some View {
-        Canvas { context, canvasSize in
+        let isDark = colorScheme == .dark
+        let bodyColor = isDark ? Color(hex: 0xC6C4CE) : Color(hex: 0xFDFCFF)
+        let seaweedColor = isDark ? Color(hex: 0x171522) : Color(hex: 0x101A30)
+        let faceColor = isDark ? Color(hex: 0x171522) : Color(hex: 0x190936)
+        let edgeColor = isDark ? Color(hex: 0xD1CFD8) : Color(hex: 0x190936)
+
+        return Canvas { context, canvasSize in
             let s = min(canvasSize.width, canvasSize.height) / 96.0
             let ox = (canvasSize.width - 96.0 * s) / 2.0
             let oy = (canvasSize.height - 96.0 * s) / 2.0
@@ -94,22 +100,23 @@ public struct NoriMark: View {
 
             let ricePath = OnigiriRiceShape().path(in: box)
 
-            // 1. Soft white rice body fill
-            context.fill(ricePath, with: .color(NoriColors.markFillSoft))
+            // 1. Appearance-aware rice body fill (soft white in light, #C6C4CE light-gray in dark)
+            context.fill(ricePath, with: .color(bodyColor))
 
-            // 2. Navy nori wrap clipped to rice body (x:30, y:61, w:36, h:30, rx:3)
+            // 2. Seaweed wrap clipped cleanly to rice silhouette (x:30, y:61, w:36, h:30, rx:3)
             context.drawLayer { layer in
                 layer.clip(to: ricePath)
                 let wrapRect = CGRect(x: ox + 30.0 * s, y: oy + 61.0 * s, width: 36.0 * s, height: 30.0 * s)
                 let wrapPath = Path(roundedRect: wrapRect, cornerRadius: 3.0 * s)
-                layer.fill(wrapPath, with: .color(NoriColors.markFill))
+                layer.fill(wrapPath, with: .color(seaweedColor))
             }
 
-            // 3. Rice outline stroke
+            // 3. Outer silhouette stroke (dark ink in light, subtle #D1CFD8 edge in dark)
+            let edgeWidth = isDark ? max(0.85, 1.35 * s) : max(1.0, 1.75 * s)
             context.stroke(
                 ricePath,
-                with: .color(NoriColors.markInk),
-                style: StrokeStyle(lineWidth: max(1.0, 1.75 * s), lineCap: .round, lineJoin: .round)
+                with: .color(edgeColor),
+                style: StrokeStyle(lineWidth: edgeWidth, lineCap: .round, lineJoin: .round)
             )
 
             // 4. Eyes at (38.5, 46) and (57.5, 46), rx: 3.4, ry: 4.0
@@ -122,7 +129,7 @@ public struct NoriMark: View {
                 let cx = ox + eyeCenterX * s + dx
                 let cy = oy + 46.0 * s + dy
                 let eyeRect = CGRect(x: cx - rx, y: cy - ry, width: rx * 2, height: ry * 2)
-                context.fill(Path(ellipseIn: eyeRect), with: .color(NoriColors.markInk))
+                context.fill(Path(ellipseIn: eyeRect), with: .color(faceColor))
             }
 
             // 5. Smile: M44 53.5 Q48 57.1 52 53.5
@@ -134,7 +141,7 @@ public struct NoriMark: View {
             )
             context.stroke(
                 mouth,
-                with: .color(NoriColors.markInk),
+                with: .color(faceColor),
                 style: StrokeStyle(lineWidth: max(1.1, 2.6 * s), lineCap: .round, lineJoin: .round)
             )
         }

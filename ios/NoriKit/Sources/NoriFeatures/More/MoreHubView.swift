@@ -10,10 +10,15 @@ public enum MoreRoute: Hashable, Sendable {
 }
 
 public struct MoreHubView: View {
+    @AppStorage(NoriAppearance.storageKey) private var appearanceRawValue: String = NoriAppearance.system.rawValue
     @Bindable private var store: NoriStore
 
     public init(store: NoriStore) {
         self.store = store
+    }
+
+    private var appearance: NoriAppearance {
+        NoriAppearance(storedRawValue: appearanceRawValue)
     }
 
     private var connectedAppsCount: Int {
@@ -42,7 +47,7 @@ public struct MoreHubView: View {
     private var memoryBarColor: Color {
         if store.coreMemoryRatio >= 0.98 { return NoriColors.danger }
         if store.coreMemoryRatio >= 0.85 { return NoriColors.warning }
-        return NoriColors.accent
+        return NoriColors.brandPrimary
     }
 
     private var permissionsDetail: String {
@@ -219,6 +224,18 @@ public struct MoreHubView: View {
             }
             .buttonStyle(.plain)
 
+            NavigationLink(value: MoreRoute.settings(.appearance)) {
+                NoriRow(
+                    title: "Appearance",
+                    detail: "\(appearance.displayLabel) · Theme & preview",
+                    systemImage: appearance.systemImage,
+                    iconTone: .neutral,
+                    showChevron: true,
+                    showDivider: true
+                )
+            }
+            .buttonStyle(.plain)
+
             NavigationLink(value: MoreRoute.settings(.account)) {
                 NoriRow(
                     title: "Account & Diagnostics",
@@ -298,7 +315,7 @@ private struct WorkspaceCard<Footer: View>: View {
         .background(NoriColors.surface, in: RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
-                .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
         )
     }
 }

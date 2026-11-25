@@ -149,7 +149,7 @@ public struct DocumentReaderSheet: View {
     public var body: some View {
         NavigationStack {
             contentBody
-                .background(NoriColors.canvas)
+                .background(NoriColors.sheetBackground)
                 .navigationTitle(item?.title ?? "Document")
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
@@ -315,6 +315,7 @@ public struct DocumentReaderSheet: View {
                             .foregroundStyle(NoriColors.ink)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
+        .tint(NoriColors.accent)
                     }
                 } else {
                     MarkdownBlocksView(markdown: text)
@@ -585,9 +586,11 @@ public struct DocumentReaderSheet: View {
             HStack(spacing: 8) {
                 TextField("Shorten summary, convert to EUR…", text: $revisionInstruction)
                     .textFieldStyle(.plain)
+                    .foregroundStyle(NoriColors.ink)
+                    .tint(NoriColors.accent)
                     .padding(.horizontal, 12)
                     .frame(height: 40)
-                    .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                    .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
                             .strokeBorder(NoriColors.hairline, lineWidth: 1)
@@ -1132,6 +1135,7 @@ private struct MarkdownBlocksView: View {
                             .font(NoriTypography.monoSmall)
                             .foregroundStyle(NoriColors.ink)
                             .frame(maxWidth: .infinity, alignment: .leading)
+        .tint(NoriColors.accent)
                     }
                     .padding(10)
                     .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous))
@@ -1148,6 +1152,7 @@ private struct MarkdownBlocksView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .tint(NoriColors.accent)
     }
 
     private func inlineMarkdownText(_ source: String) -> Text {
