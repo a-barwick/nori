@@ -3,9 +3,9 @@ import NoriCore
 import NoriDesign
 
 public enum MoreRoute: Hashable, Sendable {
+    case apps
+    case mcpDetail(String)
     case memory
-    case routines
-    case goals
     case settings(SettingsSection?)
 }
 
@@ -16,190 +16,27 @@ public struct MoreHubView: View {
         self.store = store
     }
 
-    private let columns = [
-        GridItem(.flexible(), spacing: 10),
-        GridItem(.flexible(), spacing: 10)
-    ]
-
-    private var enabledAutomationsCount: Int {
-        store.automations.filter { $0.status == .enabled }.count
+    private var connectedAppsCount: Int {
+        let connectedMCP = store.mcpServers.filter { $0.observed.status == .connected }.count
+        let connectedConnections = store.connections.filter { $0.status == .connected }.count
+        return connectedMCP + connectedConnections
     }
 
-    private var nextAutomationSummary: String {
-        if let next = store.automations.first(where: { $0.status == .enabled }) {
-            let when: String = {
-                if let nextAt = next.nextAt, !nextAt.isEmpty {
-                    return NoriDateFormatting.shortDateTime(nextAt)
-                }
-                return next.trigger.summaryLabel
-            }()
-            return "Next: \(next.title), \(when)"
+    private var totalAppsCount: Int {
+        store.mcpServers.count + store.connections.count
+    }
+
+    private var appsSummary: String {
+        if connectedAppsCount > 0 {
+            return "\(connectedAppsCount) connected"
         }
-        return "No active automations"
+        return "\(totalAppsCount) configured"
     }
 
-    private var blockedGoalsCount: Int {
-        store.goals.filter(\.isBlocked).count
-    }
-
-    private var activeGoalsCount: Int {
-        store.goals.filter { $0.status == .active }.count
-    }
-
-    private var serverPill: (label: String, tone: NoriTone) {
-        switch store.connectionState {
-        case .connected: return ("Live", .ok)
-        case .connecting: return ("Connecting", .neutral)
-        case .reconnecting: return ("Retrying", .warning)
-        case .offline: return ("Offline", .danger)
-        }
-    }
-
-    private var serverIconTone: NoriTone {
-        switch store.connectionState {
-        case .connected: return .ok
-        case .connecting, .reconnecting: return .warning
-        case .offline: return .danger
-        }
-    }
-
-    private var memoryBudgetString: String {
+    private var memoryRatioString: String {
         let usedKB = Double(store.coreMemoryUsedBytes) / 1024.0
         let budgetKB = Double(store.coreMemoryBudgetBytes) / 1024.0
-        return String(format: "%.1f / %.0f KB used", usedKB, budgetKB)
-    }
-
-    private var capabilitiesSummary: String {
-        let count = store.capabilities?.assistantFeatures?.values.filter { $0 }.count ?? 0
-        if let email = store.authState.email, !email.isEmpty {
-            return count > 0 ? "\(email) · \(count) capabilities" : email
-        }
-        return count > 0 ? "\(count) capabilities" : "Signed in"
-    }
-
-    public var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                LazyVGrid(columns: columns, spacing: 10) {
-                    // Memory Tile
-                    NavigationLink(value: MoreRoute.memory) {
-                        HubTileCard(
-                            icon: "brain.head.profile",
-                            iconTone: .accent,
-                            pillText: "\(store.coreMemories.count) core",
-                            pillTone: .neutral,
-                            title: "Memory",
-                            subtitle: memoryBudgetString
-                        ) {
-                            GeometryReader { proxy in
-                                ZStack(alignment: .leading) {
-                                    Capsule()
-                                        .fill(NoriColors.fill2)
-                                    Capsule()
-                                        .fill(memoryBarColor)
-                                        .frame(width: max(6, proxy.size.width * store.coreMemoryRatio))
-                                }
-                            }
-                            .frame(height: 6)
-                        }
-                    }
-                    .buttonStyle(.plain)
-
-                    // Automations Tile
-                    NavigationLink(value: MoreRoute.routines) {
-                        HubTileCard(
-                            icon: "repeat",
-                            iconTone: .accent,
-                            pillText: "\(enabledAutomationsCount) on",
-                            pillTone: enabledAutomationsCount > 0 ? .ok : .neutral,
-                            title: "Automations",
-                            subtitle: nextAutomationSummary
-                        )
-                    }
-                    .buttonStyle(.plain)
-
-                    // Goals Tile
-                    NavigationLink(value: MoreRoute.goals) {
-                        HubTileCard(
-                            icon: "target",
-                            iconTone: blockedGoalsCount > 0 ? .warning : .accent,
-                            pillText: blockedGoalsCount > 0 ? "\(blockedGoalsCount) blocked" : "\(activeGoalsCount) active",
-                            pillTone: blockedGoalsCount > 0 ? .warning : .accent,
-                            title: "Goals",
-                            subtitle: "Track multi-step outcomes & criteria"
-                        )
-                    }
-                    .buttonStyle(.plain)
-
-                    // Account Tile
-                    NavigationLink(value: MoreRoute.settings(.account)) {
-                        HubTileCard(
-                            icon: "person.crop.circle",
-                            iconTone: serverIconTone,
-                            pillText: serverPill.label,
-                            pillTone: serverPill.tone,
-                            title: "Account",
-                            subtitle: store.authState.email ?? "Signed in"
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.top, 4)
-
-                NoriSectionHeader("Settings")
-
-                NoriRows {
-                    NavigationLink(value: MoreRoute.settings(.permissions)) {
-                        NoriRow(
-                            title: "Permissions",
-                            detail: "\(store.permissions.count) standing rules (deny-wins)",
-                            systemImage: "checkmark.shield",
-                            iconTone: .neutral,
-                            showChevron: true,
-                            showDivider: true
-                        )
-                    }
-                    .buttonStyle(.plain)
-
-                    NavigationLink(value: MoreRoute.settings(.preferences)) {
-                        NoriRow(
-                            title: "Preferences & Budgets",
-                            detail: "\(store.preferences.timezone) · $\(String(format: "%.2f", store.preferences.budgets.taskUSD)) / task",
-                            systemImage: "slider.horizontal.3",
-                            iconTone: .neutral,
-                            showChevron: true,
-                            showDivider: true
-                        )
-                    }
-                    .buttonStyle(.plain)
-
-                    NavigationLink(value: MoreRoute.settings(.diagnostics)) {
-                        NoriRow(
-                            title: "Diagnostics",
-                            detail: capabilitiesSummary,
-                            systemImage: "waveform.path.ecg",
-                            iconTone: .neutral,
-                            showChevron: true,
-                            showDivider: false
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 28)
-        }
-        .background(NoriColors.canvas)
-        .navigationTitle("More")
-        #if os(iOS)
-        .navigationBarTitleDisplayMode(.large)
-        #endif
-        .refreshable {
-            async let summaryTask: Void = store.refreshSummary()
-            async let memoryTask: Void = store.refreshMemory()
-            async let routinesGoalsTask: Void = store.refreshRoutinesAndGoals()
-            _ = await (summaryTask, memoryTask, routinesGoalsTask)
-        }
+        return String(format: "%.1f / %.0f KB", usedKB, budgetKB)
     }
 
     private var memoryBarColor: Color {
@@ -207,60 +44,249 @@ public struct MoreHubView: View {
         if store.coreMemoryRatio >= 0.85 { return NoriColors.warning }
         return NoriColors.accent
     }
+
+    private var permissionsDetail: String {
+        let count = store.permissions.count
+        let noun = count == 1 ? "rule" : "rules"
+        return "\(count) \(noun) · deny-wins"
+    }
+
+    private var preferencesDetail: String {
+        "\(store.preferences.timezone) · $\(String(format: "%.2f", store.preferences.budgets.taskUSD)) / task"
+    }
+
+    public var body: some View {
+        VStack(spacing: 0) {
+            header
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    heroCard
+                        .padding(.top, 12)
+
+                    NoriSectionHeader("Workspace")
+
+                    workspacePair
+
+                    NoriSectionHeader("Controls & Account")
+
+                    controlsAndAccountRows
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 96)
+            }
+            .refreshable {
+                async let summaryTask: Void = store.refreshSummary()
+                async let appsTask: Void = store.refreshApps()
+                async let memoryTask: Void = store.refreshMemory()
+                async let permsPrefsTask: Void = store.refreshPermissionsAndPreferences()
+                _ = await (summaryTask, appsTask, memoryTask, permsPrefsTask)
+            }
+        }
+        .background(NoriColors.canvas)
+        .navigationTitle("More")
+        #if os(iOS)
+        .toolbar(.hidden, for: .navigationBar)
+        #endif
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        HStack(alignment: .center) {
+            Text("More")
+                .font(.system(size: 26, weight: .bold))
+                .foregroundStyle(NoriColors.ink)
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 10)
+        .background(
+            NoriTopWash()
+                .ignoresSafeArea(edges: .top)
+        )
+    }
+
+    // MARK: - Your Nori Hero Card
+
+    private var heroCard: some View {
+        NoriHeroCard(padding: 16) {
+            HStack(alignment: .center, spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(NoriColors.surface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                        )
+                        .shadow(color: NoriColors.shadowColor, radius: 6, x: 0, y: 2)
+
+                    NoriMark(size: 30, state: store.markState)
+                }
+                .frame(width: 50, height: 50)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Your Nori")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(NoriColors.ink)
+
+                    Text(store.authState.email ?? "Signed in")
+                        .font(.system(size: 13.5))
+                        .foregroundStyle(NoriColors.ink2)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if store.connectionState == .reconnecting {
+                    NoriPill("Reconnecting", tone: .warning)
+                } else if store.connectionState == .offline {
+                    NoriPill("Offline", tone: .danger)
+                }
+            }
+        }
+    }
+
+    // MARK: - Workspace Pair
+
+    private var workspacePair: some View {
+        HStack(alignment: .top, spacing: 12) {
+            NavigationLink(value: MoreRoute.apps) {
+                WorkspaceCard(
+                    icon: "square.grid.2x2",
+                    title: "Apps & MCP",
+                    subtitle: appsSummary,
+                    badgeText: store.appsAttentionCount > 0 ? "\(store.appsAttentionCount) attention" : nil,
+                    badgeTone: .warning
+                )
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink(value: MoreRoute.memory) {
+                WorkspaceCard(
+                    icon: "brain.head.profile",
+                    title: "Memory",
+                    subtitle: memoryRatioString
+                ) {
+                    GeometryReader { proxy in
+                        let fillWidth = store.coreMemoryUsedBytes > 0
+                            ? max(6, proxy.size.width * store.coreMemoryRatio)
+                            : 0
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(NoriColors.fill2)
+                            if fillWidth > 0 {
+                                Capsule()
+                                    .fill(memoryBarColor)
+                                    .frame(width: min(proxy.size.width, fillWidth))
+                            }
+                        }
+                    }
+                    .frame(height: 4)
+                }
+            }
+            .buttonStyle(.plain)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    // MARK: - Controls & Account
+
+    private var controlsAndAccountRows: some View {
+        NoriRows {
+            NavigationLink(value: MoreRoute.settings(.permissions)) {
+                NoriRow(
+                    title: "Standing Permissions",
+                    detail: permissionsDetail,
+                    systemImage: "checkmark.shield",
+                    iconTone: .neutral,
+                    showChevron: true,
+                    showDivider: true
+                )
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink(value: MoreRoute.settings(.preferences)) {
+                NoriRow(
+                    title: "Preferences & Budgets",
+                    detail: preferencesDetail,
+                    systemImage: "slider.horizontal.3",
+                    iconTone: .neutral,
+                    showChevron: true,
+                    showDivider: true
+                )
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink(value: MoreRoute.settings(.account)) {
+                NoriRow(
+                    title: "Account & Diagnostics",
+                    detail: "Google Sign-In · Diagnostics",
+                    systemImage: "person.crop.circle",
+                    iconTone: .neutral,
+                    showChevron: true,
+                    showDivider: false
+                )
+            }
+            .buttonStyle(.plain)
+        }
+    }
 }
 
-// MARK: - Hub Tile Card
+// MARK: - Workspace Card
 
-private struct HubTileCard<Footer: View>: View {
+private struct WorkspaceCard<Footer: View>: View {
     let icon: String
-    let iconTone: NoriTone
-    let pillText: String
-    let pillTone: NoriTone
     let title: String
     let subtitle: String
+    let badgeText: String?
+    let badgeTone: NoriTone
     private let footer: Footer
 
     init(
         icon: String,
-        iconTone: NoriTone,
-        pillText: String,
-        pillTone: NoriTone,
         title: String,
         subtitle: String,
+        badgeText: String? = nil,
+        badgeTone: NoriTone = .warning,
         @ViewBuilder footer: () -> Footer
     ) {
         self.icon = icon
-        self.iconTone = iconTone
-        self.pillText = pillText
-        self.pillTone = pillTone
         self.title = title
         self.subtitle = subtitle
+        self.badgeText = badgeText
+        self.badgeTone = badgeTone
         self.footer = footer()
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 6) {
                 Image(systemName: icon)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(iconTone.foreground)
+                    .foregroundStyle(NoriColors.accent)
                     .frame(width: 36, height: 36)
-                    .background(iconTone.background, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .background(NoriColors.accentSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
                 Spacer(minLength: 4)
 
-                NoriPill(pillText, tone: pillTone)
+                if let badgeText {
+                    NoriPill(badgeText, tone: badgeTone)
+                }
             }
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(NoriColors.ink)
+                    .lineLimit(1)
+
                 Text(subtitle)
-                    .font(.system(size: 12))
+                    .font(.system(size: 12.5))
                     .foregroundStyle(NoriColors.ink2)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.9)
             }
 
             Spacer(minLength: 0)
@@ -268,7 +294,7 @@ private struct HubTileCard<Footer: View>: View {
             footer
         }
         .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 132, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 124, maxHeight: .infinity, alignment: .topLeading)
         .background(NoriColors.surface, in: RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
@@ -277,22 +303,20 @@ private struct HubTileCard<Footer: View>: View {
     }
 }
 
-private extension HubTileCard where Footer == EmptyView {
+private extension WorkspaceCard where Footer == EmptyView {
     init(
         icon: String,
-        iconTone: NoriTone,
-        pillText: String,
-        pillTone: NoriTone,
         title: String,
-        subtitle: String
+        subtitle: String,
+        badgeText: String? = nil,
+        badgeTone: NoriTone = .warning
     ) {
         self.init(
             icon: icon,
-            iconTone: iconTone,
-            pillText: pillText,
-            pillTone: pillTone,
             title: title,
             subtitle: subtitle,
+            badgeText: badgeText,
+            badgeTone: badgeTone,
             footer: { EmptyView() }
         )
     }
