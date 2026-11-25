@@ -6,22 +6,25 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"nori/internal/prompts"
 	"nori/internal/state"
 )
 
-// Only these proposals need independent planning. Work-request subtasks retain their
-// existing exact-question admission and shared parent budget on all turns.
+// Only these proposals can be independently validated by CommandPlan. Work-request
+// subtasks retain their exact-question admission and shared parent budget on non-user turns,
+// and are never authorized through CommandPlan on coalesced turns.
 func plannedCommand(call ToolCall) bool {
-	if call.Function.Name == "steer" {
+	switch call.Function.Name {
+	case "steer", "stop", "answer", "hold":
 		return true
-	}
-	if call.Function.Name != "dispatch" {
+	case "dispatch":
+		commands, err := commandRequests([]ToolCall{call})
+		return err == nil && commands[0].ParentID == ""
+	default:
 		return false
 	}
-	commands, err := commandRequests([]ToolCall{call})
-	return err == nil && commands[0].ParentID == ""
 }
 
 func hasUntrustedTaskOutput(t *state.ConversationTurn, tasks TaskContext) bool {
@@ -65,7 +68,7 @@ func (r *Runner) planUserCommands(ctx context.Context, t *state.ConversationTurn
 		return reply, err
 	}
 	for i, command := range commands {
-		if !plannedCommand(planCmdCalls[i]) || (command.Kind == state.CommandSteer && !slices.Contains(request.TaskIDs, command.RunID)) {
+		if !plannedCommand(planCmdCalls[i]) || (command.Kind != state.CommandStart && !slices.Contains(request.TaskIDs, command.RunID)) {
 			return reply, fmt.Errorf("independent command plan returned an unsupported command")
 		}
 	}
@@ -99,7 +102,7 @@ func (r *Runner) planUserCommands(ctx context.Context, t *state.ConversationTurn
 	}
 	matched := len(original) == len(commands)
 	for i := 0; matched && i < len(original); i++ {
-		matched = original[i].Kind == commands[i].Kind && original[i].RunID == commands[i].RunID
+		matched = original[i].Kind == commands[i].Kind && original[i].RunID == commands[i].RunID && original[i].QuestionID == commands[i].QuestionID
 	}
 	if matched && len(planMemCalls) > 0 {
 		used := make([]bool, len(proposedMemCalls))
@@ -175,27 +178,106 @@ func (r *Runner) commandPlanMessages(ctx context.Context, t *state.ConversationT
 		}
 		return m
 	}
-	current, history := []userMessage{}, []userMessage{}
+	current := []userMessage{}
 	seen := map[string]bool{}
+	var currentLatest time.Time
 	for _, in := range t.Inputs {
 		if in.IsUser() {
 			current = append(current, user(in))
 			seen[in.ID] = true
-		}
-	}
-	for _, turn := range view.Turns {
-		for _, in := range turn.Inputs {
-			if in.IsUser() && !seen[in.ID] {
-				history = append(history, user(in))
-				seen[in.ID] = true
+			if in.CreatedAt.After(currentLatest) {
+				currentLatest = in.CreatedAt
 			}
 		}
 	}
+	type assistantReply struct {
+		TurnID string `json:"turn_id,omitempty"`
+		Text   string `json:"text"`
+	}
+	turnUsers := map[string]userMessage{}
+	turnOrder := []userMessage{}
+	assistantReplies := []assistantReply{}
+	for _, turn := range view.Turns {
+		hasEvent := false
+		hasUser := false
+		for _, in := range turn.Inputs {
+			if in.Event != nil {
+				hasEvent = true
+			}
+			if in.IsUser() {
+				hasUser = true
+				if !seen[in.ID] {
+					if _, ok := turnUsers[in.ID]; !ok {
+						um := user(in)
+						turnUsers[in.ID] = um
+						turnOrder = append(turnOrder, um)
+					}
+				}
+			}
+		}
+		if hasEvent || !hasUser || turn.Attempt.Status == "error" || turn.Attempt.ProtocolInvalid {
+			continue
+		}
+		if text := assistantReplyText(turn); text != "" {
+			assistantReplies = append(assistantReplies, assistantReply{TurnID: turn.ID, Text: text})
+		}
+	}
+	visibleUsers := []userMessage{}
+	visibleIDs := map[string]bool{}
 	for _, m := range visible {
+		if m.Role != "user" || m.RunID != "" || m.TurnID == t.ID {
+			continue
+		}
 		id := strings.TrimSuffix(m.ID, "-user")
-		if m.TurnID == "" && m.RunID == "" && m.Role == "user" && !seen[id] {
-			history = append(history, userMessage{ID: id, Text: m.Text})
-			seen[id] = true
+		if seen[id] || visibleIDs[id] {
+			continue
+		}
+		if !currentLatest.IsZero() && m.CreatedAt.After(currentLatest) {
+			continue
+		}
+		if um, ok := turnUsers[id]; ok {
+			visibleUsers = append(visibleUsers, um)
+		} else {
+			um := userMessage{ID: id, Text: m.Text}
+			for _, part := range m.Parts {
+				if part.Type == state.PartAttachment && part.ID != "" {
+					um.Files = append(um.Files, part.ID)
+				}
+			}
+			visibleUsers = append(visibleUsers, um)
+		}
+		visibleIDs[id] = true
+	}
+	history := []userMessage{}
+	if view.Summary != nil {
+		type summaryKey struct{ id, quote string }
+		seenSummary := map[summaryKey]bool{}
+		for _, item := range view.Summary.Items {
+			quote := strings.TrimSpace(item.Quote)
+			if item.InputID == "" || quote == "" || seen[item.InputID] || visibleIDs[item.InputID] {
+				continue
+			}
+			if _, inTurns := turnUsers[item.InputID]; inTurns {
+				continue
+			}
+			key := summaryKey{item.InputID, quote}
+			if seenSummary[key] {
+				continue
+			}
+			seenSummary[key] = true
+			history = append(history, userMessage{ID: item.InputID, Text: quote})
+		}
+	}
+	for _, um := range visibleUsers {
+		if !seen[um.ID] {
+			history = append(history, um)
+			seen[um.ID] = true
+		}
+	}
+	for _, um := range turnOrder {
+		if !seen[um.ID] {
+			history = append(history, um)
+			seen[um.ID] = true
 		}
 	}
 	type planCommand struct {
@@ -207,6 +289,7 @@ func (r *Runner) commandPlanMessages(ctx context.Context, t *state.ConversationT
 		ParentID         string          `json:"parent_id"`
 		Status           state.RunStatus `json:"status"`
 		CancelRequested  bool            `json:"cancel_requested"`
+		QuestionID       string          `json:"question_id,omitempty"`
 		QuestionKind     string          `json:"question_kind"`
 		UserSources      []userMessage   `json:"user_sources"`
 		AcceptedCommands []planCommand   `json:"accepted_commands"`
@@ -228,16 +311,17 @@ func (r *Runner) commandPlanMessages(ctx context.Context, t *state.ConversationT
 			for _, cmd := range task.Commands {
 				accepted = append(accepted, planCommand{Kind: cmd.Kind, SourceInputIDs: cmd.SourceInputIDs})
 			}
-			questionKind := ""
+			questionID, questionKind := "", ""
 			if q := task.Question; q != nil && q.ResolvedBy == "" && q.Revision == task.Revision {
 				switch q.Kind {
 				case "input", state.QuestionWork:
+					questionID = q.ID
 					questionKind = q.Kind
 				}
 			}
 			group = append(group, planTask{
 				ID: task.ID, ParentID: task.ParentID, Status: task.Status,
-				CancelRequested: task.CancelRequested, QuestionKind: questionKind,
+				CancelRequested: task.CancelRequested, QuestionID: questionID, QuestionKind: questionKind,
 				UserSources: users, AcceptedCommands: accepted,
 			})
 		}
@@ -286,14 +370,19 @@ func (r *Runner) commandPlanMessages(ctx context.Context, t *state.ConversationT
 		allTasks = append(allTasks, eventTasks...)
 		allTasks = append(allTasks, recentTasks...)
 		ctxMsg := modelMessage(map[string]string{"role": "system", "content": contextPrefix + string(modelMessage(map[string]any{
-			"history":        history,
-			"tasks":          allTasks,
-			"saved_results":  results,
-			"saved_memories": savedMemories,
+			"history":                          history,
+			"reference_only_assistant_replies": assistantReplies,
+			"tasks":                            allTasks,
+			"saved_results":                    results,
+			"saved_memories":                   savedMemories,
 		}))})
 		return ctxMsg, len(systemMsg) + len(ctxMsg) + len(currentMsg)
 	}
 	ctxMsg, size := buildContext()
+	for size > state.OuterInputBytes && len(assistantReplies) > 0 {
+		assistantReplies = assistantReplies[1:]
+		ctxMsg, size = buildContext()
+	}
 	for size > state.OuterInputBytes && len(history) > 0 {
 		history = history[1:]
 		ctxMsg, size = buildContext()
@@ -344,4 +433,35 @@ func (r *Runner) commandPlanMessages(ctx context.Context, t *state.ConversationT
 		return nil, fmt.Errorf("user command context exceeds its size limit; no commands accepted")
 	}
 	return []json.RawMessage{systemMsg, ctxMsg, currentMsg}, nil
+}
+
+// assistantReplyText extracts the clean assistant reply text from a non-event turn
+// for reference-only context resolution on coalesced turns.
+func assistantReplyText(turn state.ConversationTurn) string {
+	if text := strings.TrimSpace(turn.Attempt.Text); text != "" {
+		return text
+	}
+	for i := len(turn.Protocol) - 1; i >= 0; i-- {
+		var msg struct {
+			Role    string  `json:"role"`
+			Content *string `json:"content"`
+		}
+		if json.Unmarshal([]byte(turn.Protocol[i]), &msg) != nil || msg.Role != "assistant" || msg.Content == nil {
+			continue
+		}
+		raw := strings.TrimSpace(*msg.Content)
+		if raw == "" {
+			continue
+		}
+		if strings.HasPrefix(raw, "{") {
+			if decoded, _, err := decodeResponse(raw); err == nil {
+				if decoded != "" {
+					return decoded
+				}
+				continue
+			}
+		}
+		return raw
+	}
+	return ""
 }

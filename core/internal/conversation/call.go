@@ -231,7 +231,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	}
 	view := historyRead.view
 	view.Truncated = view.Truncated || !contextFrom.IsZero()
-	for _, memory := range view.Memories {
+	for _, memory := range userProvenanceMemories(view.Memories) {
 		request.MemoryIDs = append(request.MemoryIDs, memory.ID)
 	}
 	promptStarted := r.now()
@@ -332,7 +332,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 			return r.finishCall(ctx, callCtx, f, t, reply, modelErr, request.NoDispatch, view)
 		}
 		phase := resolvedReply
-		if fromUser && (slices.ContainsFunc(reply.Calls, plannedCommand) || (hasUntrustedTaskOutput(t, taskContext) && slices.ContainsFunc(reply.Calls, sideEffectingCall))) {
+		if fromUser && hasUntrustedTaskOutput(t, taskContext) && slices.ContainsFunc(reply.Calls, sideEffectingCall) {
 			phase = proposedReply
 		}
 		if e = r.checkpointModel(ctx, f, t, phase, reply); e != nil {
@@ -591,7 +591,7 @@ func (r *Runner) finishCall(
 		if noDispatch && len(reply.Calls) != 0 {
 			err = fmt.Errorf("a turn without user input cannot authorize task commands")
 		}
-		if requests := workRequests(t.Inputs); err == nil && len(requests) > 0 && !workCommandsAllowed(commands, requests) {
+		if requests := workRequests(t.Inputs); err == nil && len(requests) > 0 && (len(remembered) > 0 || len(shows) > 0 || !workCommandsAllowed(commands, requests)) {
 			err = fmt.Errorf("a work request's turn can only settle that request")
 		}
 		failure := prompts.Runtime("tool-calls-invalid", nil)
@@ -602,14 +602,18 @@ func (r *Runner) finishCall(
 		} else {
 			t.Attempt.Reply = string(reply.Message)
 			t.Attempt.Text = reply.Text
-			// Only a turn carrying the user's own message can show a result or hand files to a task. Task output reaches
-			// the model too, and it mustn't be able to get a file into another task.
+			// Only a turn carrying the user's own message can show a result, mutate Core Memory, or hand files to a task.
+			// Task output reaches the model too, and it mustn't be able to get a file into another task or write Core Memory.
 			fromUser := slices.ContainsFunc(t.Inputs, func(input state.ConversationInput) bool { return input.IsUser() })
 			if fromUser {
 				t.Attempt.ShowResults = shows
 			}
 			if fromUser && len(remembered) > 0 {
-				t.Attempt.Memory, _ = planMemory(t.Attempt.ID, remembered, view.Memories)
+				// INV-MEM-04: live remember/forget requires a verified user source input on this turn
+				// and must never target or accept task_outcome provenance.
+				if source := state.SourceInput(t.Inputs); source.IsUser() && source.ID != "" {
+					t.Attempt.Memory, _ = planMemory(t.Attempt.ID, remembered, userProvenanceMemories(view.Memories))
+				}
 			}
 			// A message's files go with it when it reaches one task. When it reaches several, each dispatch names its own.
 			receivers := 0
@@ -834,4 +838,17 @@ func (r *Runner) prepareAttemptTasks(
 	}
 
 	return taskContext, nil
+}
+
+// userProvenanceMemories excludes any task_outcome records so live remember/forget
+// operations strictly enforce user-provenance isolation (INV-MEM-04).
+func userProvenanceMemories(memories []state.Memory) []state.Memory {
+	filtered := make([]state.Memory, 0, len(memories))
+	for _, m := range memories {
+		if m.EffectiveProvenance() == state.ProvenanceTaskOutcome {
+			continue
+		}
+		filtered = append(filtered, m)
+	}
+	return filtered
 }
