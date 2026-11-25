@@ -135,7 +135,8 @@ public struct NoriRootView: View {
                         store: store,
                         selectedTab: $workTabFilter,
                         onOpenDocument: openDocument,
-                        onOpenTask: openWorkTask
+                        onOpenTask: openWorkTask,
+                        onStartInChat: startInChat
                     )
                     .navigationDestination(for: String.self) { taskID in
                         WorkDetailView(
@@ -238,6 +239,13 @@ public struct NoriRootView: View {
         presentedDocument = nil
         selectedTab = .work
         workPath = [taskID]
+    }
+
+    private func startInChat(draft: String) {
+        isActivitySheetPresented = false
+        presentedDocument = nil
+        store.pendingComposerDraft = draft
+        selectedTab = .chat
     }
 
     private func applyDeepLink(_ link: NoriDeepLink) {

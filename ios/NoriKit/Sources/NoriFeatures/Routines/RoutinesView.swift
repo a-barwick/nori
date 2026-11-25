@@ -31,7 +31,8 @@ public struct RoutinesView: View {
         }
     }
 
-    private var nextRunLine: String {
+    private var nextRunLine: String? {
+        guard !activeAutomations.isEmpty else { return nil }
         if let next = nextEnabledAutomation {
             let when: String = {
                 if let nextAt = next.nextAt, !nextAt.isEmpty {
@@ -41,15 +42,15 @@ public struct RoutinesView: View {
             }()
             return "Next up: \(next.title), \(when)."
         }
-        return activeAutomations.isEmpty
-            ? "No routines scheduled yet."
-            : "All routines are currently paused."
+        return "All routines are currently paused."
     }
 
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                NoriLine(nextRunLine)
+                if let nextRunLine {
+                    NoriLine(nextRunLine)
+                }
 
                 if activeAutomations.isEmpty {
                     NoriEmptyState(

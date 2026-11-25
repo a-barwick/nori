@@ -317,10 +317,6 @@ public struct AppearanceSettingsView: View {
                             Capsule()
                                 .strokeBorder(NoriColors.hairline, lineWidth: 1)
                         )
-
-                        Text("System follows your iOS display settings.")
-                            .font(NoriTypography.caption)
-                            .foregroundStyle(NoriColors.ink3)
                     }
                 }
             }
@@ -352,7 +348,6 @@ public struct AccountSettingsView: View {
                 NoriRows {
                     NoriRow(
                         title: store.authState.email ?? "Signed in",
-                        detail: "Signed in with Google",
                         systemImage: "person.crop.circle.fill",
                         iconTone: .accent,
                         showDivider: false

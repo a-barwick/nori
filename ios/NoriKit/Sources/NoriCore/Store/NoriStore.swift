@@ -129,6 +129,7 @@ public final class NoriStore {
     public var isLoading: Bool = false
     public var isThinking: Bool = false
     public var isComposerFocused: Bool = false
+    public var pendingComposerDraft: String?
     public var lastError: String?
     public var toastMessage: String?
     public var pendingDeepLink: NoriDeepLink?
