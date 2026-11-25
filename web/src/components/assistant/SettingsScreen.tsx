@@ -38,7 +38,7 @@ const SECTIONS: { id: SettingsSection | "memory"; title: string; icon: typeof Sh
 
 export function SettingsIndex() {
   const { has } = useAssistant();
-  return <Screen title="Settings">
+  return <Screen title="Settings" back="/more" backLabel="More">
     <Rows>{SECTIONS.map((section) => <Row key={section.id} href={section.href ?? `/settings/${section.id}`} leading={<section.icon size={18} className="text-ink-2" aria-hidden />} title={section.title}
       trailing={section.feature && !has(section.feature) ? <Pill>Not yet</Pill> : undefined} />)}</Rows>
   </Screen>;
@@ -47,8 +47,8 @@ export function SettingsIndex() {
 export function SettingsScreen({ section }: { section: SettingsSection }) {
   const { has } = useAssistant();
   const meta = SECTIONS.find((item) => item.id === section)!;
-  if (meta.feature && !has(meta.feature)) return <Screen title={meta.title} back="/settings"><NotYet what={meta.title} /></Screen>;
-  return <Screen title={meta.title} back="/settings">
+  if (meta.feature && !has(meta.feature)) return <Screen title={meta.title} back="/more" backLabel="More"><NotYet what={meta.title} /></Screen>;
+  return <Screen title={meta.title} back="/more" backLabel="More">
     {section === "permissions" ? <Permissions /> : section === "preferences" ? <PreferencesForm /> : section === "history" ? <ActionHistory /> : <Diagnostics />}
   </Screen>;
 }

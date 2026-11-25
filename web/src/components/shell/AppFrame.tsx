@@ -1,38 +1,44 @@
-import type { MouseEventHandler, ReactNode } from "react";
+import type { ReactNode } from "react";
 import Link from "next/link";
-import { Medallion } from "@/components/mark/NoriMark";
+import { NoriMark } from "@/components/mark/NoriMark";
 import type { MarkState } from "@/lib/types";
 
-export function AppFrame({ children, actions, state = "idle", status, onToggleActivity, activityOpen }: {
+/**
+ * Full-bleed shell with Concept C's calm 60px top bar:
+ * Nori mark + wordmark on the left, centered 3-pillar pill switcher, and clean right whitespace.
+ */
+export function AppFrame({
+  children,
+  nav,
+  footer,
+  state = "idle",
+}: {
   children: ReactNode;
-  actions?: ReactNode;
+  nav?: ReactNode;
+  footer?: ReactNode;
   state?: MarkState;
-  status?: string;
-  onToggleActivity?: MouseEventHandler<HTMLButtonElement>;
-  activityOpen?: boolean;
 }) {
-  const identity = <>
-    <Medallion size={48} state={state} watch />
-    <span className="nori-identity-text"><strong>Nori</strong>{status && <small>{status}</small>}</span>
-  </>;
   return (
-    <div className="nori-backdrop">
-      <div className="nori-window">
-        <header className="nori-header">
-          <Link href="/" className="nori-brand" aria-label="Nori home">
-            <span className="nori-logo" aria-hidden />
-            <span>Nori</span>
+    <div className="nori-shell">
+      <header className="nori-topbar">
+        <div className="flex items-center">
+          <Link
+            href="/"
+            aria-label="Nori home"
+            className="-ml-2 inline-flex items-center gap-2.5 rounded-tile px-2 py-1.5 transition-colors hover:bg-fill-1"
+          >
+            <NoriMark size={30} state={state} />
+            <span className="text-[17px] leading-none font-bold tracking-[-0.02em] text-ink">Nori</span>
           </Link>
-          <span className="nori-header-divider" aria-hidden />
-          {onToggleActivity ? (
-            <button type="button" className="nori-assistant-name" aria-label="Nori: open agent panel" aria-expanded={activityOpen} onClick={onToggleActivity}>
-              {identity}
-            </button>
-          ) : <div className="nori-assistant-name">{identity}</div>}
-          <div className="nori-header-actions">{actions}</div>
-        </header>
-        {children}
-      </div>
+        </div>
+
+        <div className="hidden justify-center sm:flex">{nav}</div>
+
+        <div aria-hidden />
+      </header>
+
+      <div className="flex min-h-0 flex-1 flex-col overflow-clip">{children}</div>
+      {footer}
     </div>
   );
 }

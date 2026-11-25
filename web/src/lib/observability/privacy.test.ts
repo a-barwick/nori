@@ -19,6 +19,7 @@ describe("observability privacy safeSpanName", () => {
 
   test("preserves other allowlisted routes and nori.submit_to_reply", () => {
     assert.equal(safeSpanName("/"), "/");
+    assert.equal(safeSpanName("/more"), "/more");
     assert.equal(safeSpanName("/library"), "/library");
     assert.equal(safeSpanName("/settings"), "/settings");
     assert.equal(safeSpanName("POST /api/v1"), "POST /api/v1");

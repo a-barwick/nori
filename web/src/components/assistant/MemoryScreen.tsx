@@ -39,7 +39,7 @@ import {
   Rows,
   Screen,
   Section,
-  Tabs,
+  UnderlineTabs,
   type Tone,
 } from "./ui";
 
@@ -262,7 +262,7 @@ export function MemoryScreen() {
 
   if (!enabled) {
     return (
-      <Screen title="Memory">
+      <Screen title="Memory" back="/more" backLabel="More">
         <NotYet what="Memory" />
       </Screen>
     );
@@ -284,6 +284,8 @@ export function MemoryScreen() {
   return (
     <Screen
       title="Memory"
+      back="/more"
+      backLabel="More"
       line={summaryLine}
       actions={
         <>
@@ -294,17 +296,19 @@ export function MemoryScreen() {
           <RefreshButton onClick={refreshAll} busy={core.refreshing || logs.refreshing || working.refreshing} />
         </>
       }
+      tabs={
+        <UnderlineTabs
+          label="Memory layers"
+          value={tab}
+          onChange={selectTab}
+          items={[
+            { id: "core", label: "Core", count: coreItems.length || undefined },
+            { id: "logs", label: "Daily Logs", count: logEntryCount || undefined },
+            { id: "working", label: "Working", count: workingItems.length || undefined },
+          ]}
+        />
+      }
     >
-      <Tabs
-        label="Memory layers"
-        value={tab}
-        onChange={selectTab}
-        items={[
-          { id: "core", label: "Core Memory", count: coreItems.length || undefined },
-          { id: "logs", label: "Daily Logs", count: logEntryCount || undefined },
-          { id: "working", label: "Working Memory", count: workingItems.length || undefined },
-        ]}
-      />
 
       {tab === "core" && (
         <CoreMemoryTab

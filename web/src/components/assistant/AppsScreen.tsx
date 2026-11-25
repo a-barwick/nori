@@ -71,9 +71,9 @@ export function AppsScreen() {
   useEffect(() => {
     if (signedInServer) router.replace(`/apps/mcp/${encodeURIComponent(signedInServer)}?result=${encodeURIComponent(signInResult ?? "")}`);
   }, [signedInServer, signInResult, router]);
-  if (!has("mcp") && !has("connections")) return <Screen title="Apps"><NotYet what="MCP servers" /></Screen>;
+  if (!has("mcp") && !has("connections")) return <Screen title="Apps & MCP" back="/more" backLabel="More"><NotYet what="MCP servers" /></Screen>;
   return (
-    <Screen title="Apps" wide>
+    <Screen title="Apps & MCP" back="/more" backLabel="More">
       {has("mcp") ? <MCPServers /> : <NotYet what="MCP servers" />}
       {has("connections") && <ActiveConnections />}
     </Screen>

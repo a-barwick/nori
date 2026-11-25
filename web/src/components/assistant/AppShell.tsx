@@ -2,18 +2,26 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { MotionConfig } from "motion/react";
-import { Dialog, Tooltip } from "radix-ui";
-import { Brain, FolderOpen, LayoutGrid, ListChecks, MessageCircle, MoreHorizontal, Repeat, Settings, Target, X } from "lucide-react";
+import { Tooltip } from "radix-ui";
+import { ListChecks, MessageCircle, MoreHorizontal } from "lucide-react";
 import { AppFrame } from "@/components/shell/AppFrame";
 import { AssistantProvider, useAssistant } from "@/lib/assistant/context";
 import { useSummary } from "@/lib/assistant/sources";
-import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "@/lib/runtime/messages";
 import { cn } from "@/lib/utils";
 import { Badge } from "./ui";
 
-type NavItem = { href: string; label: string; icon: typeof MessageCircle; badge?: number; badgeLabel?: string; match: (path: string) => boolean };
+type NavItem = {
+  href: string;
+  label: string;
+  icon: typeof MessageCircle;
+  badge?: number;
+  badgeLabel?: string;
+  dot?: boolean;
+  dotLabel?: string;
+  match: (path: string) => boolean;
+};
 
 export function AppShell({ localMode, children }: { localMode: boolean; children: ReactNode }) {
   return (
@@ -31,99 +39,146 @@ function Frame({ children }: { children: ReactNode }) {
   const { runtime } = useAssistant();
   const summary = useSummary();
   const path = usePathname();
-  const [more, setMore] = useState(false);
   const previous = useRef(path);
-  // After navigation, move focus to the new screen's title so keyboard and screen-reader users land on it.
+
   useEffect(() => {
     if (previous.current === path) return;
     previous.current = path;
     const frame = requestAnimationFrame(focusTitle);
     return () => cancelAnimationFrame(frame);
   }, [path]);
-  const waiting = summary.needs_you ?? 0;
-  const { session, loading, error, busy } = runtime;
-  const items: NavItem[] = [
-    { href: "/", label: "Chat", icon: MessageCircle, match: (p) => p === "/" },
-    { href: "/work", label: "Work", icon: ListChecks, badge: waiting, badgeLabel: "need you", match: (p) => p.startsWith("/work") },
-    { href: "/apps", label: "Apps", icon: LayoutGrid, badge: summary.apps_attention, badgeLabel: "need attention", match: (p) => p.startsWith("/apps") },
-    { href: "/library", label: "Library", icon: FolderOpen, match: (p) => p.startsWith("/library") },
-    { href: "/memory", label: "Memory", icon: Brain, match: (p) => p.startsWith("/memory") },
-    { href: "/routines", label: "Automations", icon: Repeat, match: (p) => p.startsWith("/routines") },
-    { href: "/goals", label: "Goals", icon: Target, match: (p) => p.startsWith("/goals") },
-    { href: "/settings", label: "Settings", icon: Settings, match: (p) => p.startsWith("/settings") },
-  ];
-  const status = loading ? "Connecting…" : error === SERVICE_UNAVAILABLE || error === STREAM_RECONNECTING ? "Reconnecting…" : error || !session ? "Disconnected" : waiting ? `${waiting} ${waiting === 1 ? "thing needs" : "things need"} you` : busy ? "Working…" : "Ready when you are";
-  const mobileMain = items.slice(0, 4);
-  const mobileMore = items.slice(4);
 
-  return (<>
-    <a href="#content" onClick={(event) => { event.preventDefault(); skipToContent(); }} className="sr-only z-50 rounded-full bg-surface px-4 py-2 text-row-title font-medium text-accent-text shadow-pill focus:not-sr-only focus:fixed focus:top-3 focus:left-3">Skip to content</a>
-    <AppFrame state={busy ? "thinking" : "idle"} status={status}>
-      <div className="nori-live-body flex min-h-0 flex-1 overflow-clip text-ink">
-        <nav aria-label="Main" className="nori-rail hidden shrink-0 flex-col gap-1 border-r border-hairline px-3 py-4 sm:flex">
-          {items.map((item) => <RailLink key={item.href} item={item} active={item.match(path)} />)}
-        </nav>
-        <div className="flex min-w-0 flex-1 flex-col overflow-clip">{children}</div>
-      </div>
-      <div id="nori-announcer" role="status" aria-live="polite" className="sr-only" />
-      <nav aria-label="Main" className="nori-tabbar flex shrink-0 border-t border-hairline bg-surface sm:hidden">
-        {mobileMain.map((item) => <TabLink key={item.href} item={item} active={item.match(path)} />)}
-        <Dialog.Root open={more} onOpenChange={setMore}>
-          <Dialog.Trigger asChild>
-            <button type="button" className={cn("nori-tab", mobileMore.some((item) => item.match(path)) && "text-accent-text")}>
-              <MoreHorizontal size={22} strokeWidth={1.75} aria-hidden /><span>More</span>
-            </button>
-          </Dialog.Trigger>
-          <Dialog.Portal>
-            <Dialog.Overlay className="scrim fixed inset-0 z-40 bg-overlay" />
-            <Dialog.Content aria-describedby={undefined} className="anim-pop fixed inset-x-0 bottom-0 z-50 rounded-t-sheet bg-surface p-4 pb-[max(16px,env(safe-area-inset-bottom))] shadow-pop">
-              <div className="mb-2 flex items-center justify-between"><Dialog.Title className="text-section font-semibold">More</Dialog.Title>
-                <Dialog.Close className="grid size-11 place-items-center rounded-full text-ink-2" aria-label="Close"><X size={20} /></Dialog.Close></div>
-              <ul className="grid grid-cols-2 gap-2">
-                {mobileMore.map((item) => <li key={item.href}><Link href={item.href} onClick={() => setMore(false)} className={cn("flex h-14 items-center gap-3 rounded-tile bg-fill-1 px-4 text-row font-medium", item.match(path) && "text-accent-text")}><item.icon size={20} aria-hidden />{item.label}</Link></li>)}
-              </ul>
-            </Dialog.Content>
-          </Dialog.Portal>
-        </Dialog.Root>
-      </nav>
-    </AppFrame>
-  </>);
+  const pending = summary.needs_you ?? 0;
+  const appsAttention = summary.apps_attention ?? 0;
+  const { busy } = runtime;
+
+  const items: NavItem[] = [
+    {
+      href: "/",
+      label: "Chat",
+      icon: MessageCircle,
+      match: (p) => p === "/",
+    },
+    {
+      href: "/work",
+      label: "Work",
+      icon: ListChecks,
+      badge: pending,
+      badgeLabel: "pending",
+      match: (p) =>
+        p.startsWith("/work") ||
+        p.startsWith("/library") ||
+        p.startsWith("/goals") ||
+        p.startsWith("/routines"),
+    },
+    {
+      href: "/more",
+      label: "More",
+      icon: MoreHorizontal,
+      dot: appsAttention > 0,
+      dotLabel: `${appsAttention} apps require attention`,
+      match: (p) =>
+        p.startsWith("/more") ||
+        p.startsWith("/apps") ||
+        p.startsWith("/memory") ||
+        p.startsWith("/settings"),
+    },
+  ];
+
+  const desktopNav = (
+    <nav aria-label="Main" className="nori-pill-nav">
+      {items.map((item) => {
+        const Icon = item.icon;
+        const active = item.match(path);
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            aria-current={active ? "page" : undefined}
+            className="nori-pill-nav-item"
+          >
+            <Icon size={17} strokeWidth={1.85} aria-hidden />
+            <span>{item.label}</span>
+            {item.badge ? <Badge count={item.badge} label={item.badgeLabel ?? ""} /> : null}
+            {!item.badge && item.dot ? (
+              <span
+                aria-label={item.dotLabel}
+                className="size-[6.5px] shrink-0 rounded-full bg-accent"
+              />
+            ) : null}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+
+  const mobileTabs = (
+    <nav aria-label="Main" className="nori-tabbar flex shrink-0 border-t border-hairline bg-surface sm:hidden">
+      {items.map((item) => {
+        const Icon = item.icon;
+        const active = item.match(path);
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            aria-current={active ? "page" : undefined}
+            className={cn("nori-tab", active && "text-accent-text")}
+          >
+            <span className="relative">
+              <Icon size={22} strokeWidth={1.8} aria-hidden />
+              {item.badge ? (
+                <span className="absolute -top-1.5 -right-2.5">
+                  <Badge count={item.badge} label={item.badgeLabel ?? ""} />
+                </span>
+              ) : item.dot ? (
+                <span
+                  aria-label={item.dotLabel}
+                  className="absolute -top-0.5 -right-1.5 size-2 rounded-full bg-accent"
+                />
+              ) : null}
+            </span>
+            <span>{item.label}</span>
+          </Link>
+        );
+      })}
+    </nav>
+  );
+
+  return (
+    <>
+      <a
+        href="#content"
+        onClick={(event) => {
+          event.preventDefault();
+          skipToContent();
+        }}
+        className="sr-only z-50 rounded-full bg-surface px-4 py-2 text-row-title font-medium text-accent-text shadow-pill focus:not-sr-only focus:fixed focus:top-3 focus:left-3"
+      >
+        Skip to content
+      </a>
+      <AppFrame state={busy ? "thinking" : "idle"} nav={desktopNav} footer={mobileTabs}>
+        {children}
+        <div id="nori-announcer" role="status" aria-live="polite" className="sr-only" />
+      </AppFrame>
+    </>
+  );
 }
 
 /** Skip past navigation: to the message box on Chat, otherwise to the screen's title. */
 function skipToContent() {
-  const composer = [...document.querySelectorAll<HTMLElement>('main textarea[aria-label="Message Nori"]')].find((element) => element.getClientRects().length > 0);
+  const composer = [...document.querySelectorAll<HTMLElement>('main textarea[aria-label="Message Nori"]')].find(
+    (element) => element.getClientRects().length > 0,
+  );
   if (composer) composer.focus();
   else focusTitle();
 }
 
 /** Focus the visible screen's title. Next can keep the previous route mounted but hidden. */
 function focusTitle() {
-  const heading = [...document.querySelectorAll<HTMLElement>("main h1")].find((element) => element.offsetParent !== null || element.getClientRects().length > 0);
+  const heading = [...document.querySelectorAll<HTMLElement>("main h1")].find(
+    (element) => element.offsetParent !== null || element.getClientRects().length > 0,
+  );
   if (!heading) return;
   heading.tabIndex = -1;
   heading.focus({ preventScroll: true });
-}
-
-function RailLink({ item, active }: { item: NavItem; active: boolean }) {
-  const Icon = item.icon;
-  return (
-    <Link href={item.href} aria-current={active ? "page" : undefined}
-      className={cn("relative flex h-10 items-center gap-3 rounded-tile px-3 text-row-title font-medium", active ? "bg-accent-subtle text-accent-text" : "text-ink-2 hover:bg-fill-1 hover:text-ink")}>
-      <Icon size={18} strokeWidth={1.75} aria-hidden />
-      <span className="nori-rail-label flex-1">{item.label}</span>
-      {item.badge ? <span className="nori-rail-badge"><Badge count={item.badge} label={item.badgeLabel ?? ""} /></span> : null}
-    </Link>
-  );
-}
-
-function TabLink({ item, active }: { item: NavItem; active: boolean }) {
-  const Icon = item.icon;
-  return (
-    <Link href={item.href} aria-current={active ? "page" : undefined} className={cn("nori-tab", active && "text-accent-text")}>
-      <span className="relative"><Icon size={22} strokeWidth={1.75} aria-hidden />
-        {item.badge ? <span className="absolute -top-1.5 -right-2.5"><Badge count={item.badge} label={item.badgeLabel ?? ""} /></span> : null}</span>
-      <span>{item.label}</span>
-    </Link>
-  );
 }
