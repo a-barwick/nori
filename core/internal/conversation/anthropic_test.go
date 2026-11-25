@@ -26,12 +26,10 @@ func TestAnthropicModel_StructuredResponseAndGuardAccounting(t *testing.T) {
 		respJSON := `{
 			"id": "msg_123",
 			"model": "claude-sonnet-4-5",
-			"stop_reason": "tool_use",
+			"stop_reason": "end_turn",
 			"content": [{
-				"type": "tool_use",
-				"id": "toolu_1",
-				"name": "nori_response",
-				"input": {"text": "Hello from Claude!", "actions": []}
+				"type": "text",
+				"text": "{\"text\": \"Hello from Claude!\", \"actions\": []}"
 			}],
 			"usage": {
 				"input_tokens": 1000,
@@ -65,8 +63,15 @@ func TestAnthropicModel_StructuredResponseAndGuardAccounting(t *testing.T) {
 	if seenHeaders.Get("x-api-key") != "sk-ant-test" || seenHeaders.Get("anthropic-version") != "2023-06-01" {
 		t.Fatalf("unexpected headers: %+v", seenHeaders)
 	}
-	if oc, _ := seenBody["output_config"].(map[string]any); oc["effort"] != "low" {
+	oc, _ := seenBody["output_config"].(map[string]any)
+	if oc["effort"] != "low" {
 		t.Fatalf("expected output_config.effort=low, got %+v", seenBody["output_config"])
+	}
+	if fmtCfg, _ := oc["format"].(map[string]any); fmtCfg["type"] != "json_schema" {
+		t.Fatalf("expected output_config.format.type=json_schema, got %+v", oc["format"])
+	}
+	if _, hasToolChoice := seenBody["tool_choice"]; hasToolChoice {
+		t.Fatalf("did not expect tool_choice in structured Anthropic request, got %+v", seenBody["tool_choice"])
 	}
 	if reply.Text != "Hello from Claude!" || !reply.Structured {
 		t.Fatalf("unexpected reply: %+v", reply)

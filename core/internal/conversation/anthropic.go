@@ -108,7 +108,7 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 		ID: m.newID(), Provider: "outer", Model: m.name, CostStatus: "unknown", RequestStatus: "not_sent", CreatedAt: m.now().UTC(),
 	}
 
-	body, forcedTool, err := m.buildRequestBody(request, 4096)
+	body, structured, err := m.buildRequestBody(request, 4096)
 	if err != nil {
 		return reply, err
 	}
@@ -206,40 +206,39 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 		return reply, fmt.Errorf("anthropic model did not finish normally (stop_reason=%s)", response.StopReason)
 	}
 
-	if forcedTool != "" {
-		for _, blk := range response.Content {
-			if blk.Type == "tool_use" && blk.Name == forcedTool {
-				rawJSON := string(blk.Input)
-				reply.Message = modelMessage(map[string]any{"role": "assistant", "content": rawJSON})
-				if request.Foreground && len(request.Tools) > 0 {
-					reply.Text, reply.Calls, err = decodeForeground(rawJSON)
-					if err == nil && request.Stream != nil && reply.Text != "" {
-						if streamErr := request.Stream(reply.Text); streamErr != nil {
-							return reply, streamErr
-						}
-					}
-					return reply, err
-				}
-				reply.Structured = true
-				reply.Text, reply.Calls, err = decodeResponse(rawJSON)
-				if err == nil && request.Stream != nil && reply.Text != "" {
-					if streamErr := request.Stream(reply.Text); streamErr != nil {
-						return reply, streamErr
-					}
-				}
-				return reply, err
-			}
-		}
-		return reply, errors.New("anthropic model did not return required structured tool response")
-	}
-
 	var texts []string
 	for _, blk := range response.Content {
 		if blk.Type == "text" && strings.TrimSpace(blk.Text) != "" {
 			texts = append(texts, blk.Text)
 		}
 	}
-	reply.Text = strings.TrimSpace(strings.Join(texts, "\n"))
+	rawText := strings.TrimSpace(strings.Join(texts, "\n"))
+
+	if structured {
+		if rawText == "" {
+			return reply, errors.New("anthropic model did not return required structured JSON response")
+		}
+		reply.Message = modelMessage(map[string]any{"role": "assistant", "content": rawText})
+		if request.Foreground && len(request.Tools) > 0 {
+			reply.Text, reply.Calls, err = decodeForeground(rawText)
+			if err == nil && request.Stream != nil && reply.Text != "" {
+				if streamErr := request.Stream(reply.Text); streamErr != nil {
+					return reply, streamErr
+				}
+			}
+			return reply, err
+		}
+		reply.Structured = true
+		reply.Text, reply.Calls, err = decodeResponse(rawText)
+		if err == nil && request.Stream != nil && reply.Text != "" {
+			if streamErr := request.Stream(reply.Text); streamErr != nil {
+				return reply, streamErr
+			}
+		}
+		return reply, err
+	}
+
+	reply.Text = rawText
 	reply.Message = modelMessage(map[string]any{"role": "assistant", "content": reply.Text})
 	if reply.Text == "" {
 		return reply, fmt.Errorf("model returned neither a reply nor a task command")
@@ -295,7 +294,7 @@ func (m *AnthropicModel) doWithRetry(ctx context.Context, body []byte) (*http.Re
 	}
 }
 
-func (m *AnthropicModel) buildRequestBody(request ReplyRequest, outputLimit int) ([]byte, string, error) {
+func (m *AnthropicModel) buildRequestBody(request ReplyRequest, outputLimit int) ([]byte, bool, error) {
 	marked := make(map[int]bool, len(request.CacheBreakpoints))
 	for _, i := range request.CacheBreakpoints {
 		marked[i] = true
@@ -330,7 +329,7 @@ func (m *AnthropicModel) buildRequestBody(request ReplyRequest, outputLimit int)
 			Calls   json.RawMessage `json:"tool_calls"`
 		}
 		if json.Unmarshal(raw, &message) != nil {
-			return nil, "", fmt.Errorf("invalid saved conversation message")
+			return nil, false, fmt.Errorf("invalid saved conversation message")
 		}
 		text := ""
 		if message.Content != nil {
@@ -359,7 +358,7 @@ func (m *AnthropicModel) buildRequestBody(request ReplyRequest, outputLimit int)
 			inLeadingSystem = false
 			appendMsg(message.Role, text, marked[i])
 		default:
-			return nil, "", fmt.Errorf("unsupported saved conversation role")
+			return nil, false, fmt.Errorf("unsupported saved conversation role")
 		}
 	}
 	if len(messages) == 0 {
@@ -379,21 +378,20 @@ func (m *AnthropicModel) buildRequestBody(request ReplyRequest, outputLimit int)
 	if len(systemBlocks) > 0 {
 		body["system"] = systemBlocks
 	}
+	outputConfig := map[string]any{}
 	if effort := strings.ToLower(strings.TrimSpace(m.ReasoningEffort)); effort != "" && effort != "none" {
-		body["output_config"] = map[string]string{"effort": effort}
+		outputConfig["effort"] = effort
 	}
 
-	forcedTool := ""
+	structured := false
 	if len(request.Tools) > 0 {
 		if rf, ok := foregroundFormat(request.Tools).(map[string]any); ok {
 			if js, ok := rf["json_schema"].(map[string]any); ok {
-				forcedTool = "chat_response"
-				body["tools"] = []map[string]any{{
-					"name":         forcedTool,
-					"description":  "Return the structured chat response.",
-					"input_schema": js["schema"],
-				}}
-				body["tool_choice"] = map[string]any{"type": "tool", "name": forcedTool}
+				outputConfig["format"] = map[string]any{
+					"type":   "json_schema",
+					"schema": sanitizeAnthropicSchema(js["schema"]),
+				}
+				structured = true
 			}
 		}
 	}
@@ -401,20 +399,46 @@ func (m *AnthropicModel) buildRequestBody(request ReplyRequest, outputLimit int)
 		stable := !request.CommandPlan
 		if rf, ok := responseFormat(request.TaskIDs, request.WorkRequests, request.MemoryIDs, request.CommandPlan, false, stable).(map[string]any); ok {
 			if js, ok := rf["json_schema"].(map[string]any); ok {
-				forcedTool = "nori_response"
-				body["tools"] = []map[string]any{{
-					"name":         forcedTool,
-					"description":  "Return the structured assistant reply and optional routing actions.",
-					"input_schema": js["schema"],
-				}}
-				body["tool_choice"] = map[string]any{"type": "tool", "name": forcedTool}
+				outputConfig["format"] = map[string]any{
+					"type":   "json_schema",
+					"schema": sanitizeAnthropicSchema(js["schema"]),
+				}
+				structured = true
 			}
 		}
+	}
+	if len(outputConfig) > 0 {
+		body["output_config"] = outputConfig
 	}
 
 	encoded, err := json.Marshal(body)
 	if err != nil {
-		return nil, "", err
+		return nil, false, err
 	}
-	return encoded, forcedTool, nil
+	return encoded, structured, nil
+}
+
+// sanitizeAnthropicSchema strips JSON Schema validation keywords that Anthropic's
+// output_config.format rejects (e.g. maxItems, maxLength, numeric bounds).
+func sanitizeAnthropicSchema(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			switch k {
+			case "maxItems", "minItems", "maxLength", "minLength", "maximum", "minimum", "exclusiveMaximum", "exclusiveMinimum", "multipleOf":
+				continue
+			}
+			out[k] = sanitizeAnthropicSchema(val)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, val := range t {
+			out[i] = sanitizeAnthropicSchema(val)
+		}
+		return out
+	default:
+		return v
+	}
 }
