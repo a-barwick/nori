@@ -118,10 +118,10 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
   if [[ "$DEPLOY_CORE" -eq 1 ]]; then
     CORE_URL="$(gcloud run services describe nori-core --project="${PROJECT}" --region="${REGION}" --format='value(status.url)')"
     CORE_REV="$(gcloud run services describe nori-core --project="${PROJECT}" --region="${REGION}" --format='value(status.latestReadyRevisionName)')"
-    HTTP_CODE="$(curl -sS -o /dev/null -w '%{http_code}' "${CORE_URL}/healthz")"
-    echo "    nori-core: ${CORE_REV} (${CORE_URL}/healthz -> HTTP ${HTTP_CODE})"
+    HTTP_CODE="$(curl -sS -o /dev/null -w '%{http_code}' "${CORE_URL}/readyz")"
+    echo "    nori-core: ${CORE_REV} (${CORE_URL}/readyz -> HTTP ${HTTP_CODE})"
     if [[ "$HTTP_CODE" != "200" ]]; then
-      echo "ERROR: nori-core health check failed (HTTP ${HTTP_CODE})" >&2
+      echo "ERROR: nori-core readiness check failed (HTTP ${HTTP_CODE})" >&2
       exit 1
     fi
   fi
