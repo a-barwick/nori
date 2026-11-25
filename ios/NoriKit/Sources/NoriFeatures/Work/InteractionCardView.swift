@@ -156,7 +156,7 @@ public struct InteractionCardView: View {
                 EmptyView()
             }
         } else if let expiresAt = interaction.expiresAt, !expiresAt.isEmpty {
-            NoriPill("Expires \(expiresAt)", tone: .warning)
+            NoriPill(Self.formattedExpiryBadge(expiresAt), tone: .warning, systemImage: "clock")
         } else {
             NoriPill("Waiting", tone: .accent)
         }
@@ -245,6 +245,14 @@ public struct InteractionCardView: View {
         let parsed = parseApprovalSummary(payload)
 
         return VStack(alignment: .leading, spacing: 10) {
+            if let warning = payload.warning?.trimmingCharacters(in: .whitespacesAndNewlines), !warning.isEmpty {
+                NoriNotice(
+                    title: warning,
+                    tone: .warning,
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+            }
+
             if let head = parsed.head, !head.isEmpty {
                 Text(head)
                     .font(.system(size: 13.5, weight: .medium))
@@ -312,6 +320,18 @@ public struct InteractionCardView: View {
                     }
                 }
 
+                if let toolID = payload.toolID, !toolID.isEmpty {
+                    GridRow {
+                        Text("Tool")
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(NoriColors.ink3)
+                        Text(toolID)
+                            .font(NoriTypography.monoSmall)
+                            .foregroundStyle(NoriColors.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
                 GridRow {
                     Text("Effect")
                         .font(.system(size: 12.5))
@@ -320,6 +340,18 @@ public struct InteractionCardView: View {
                         payload.effect.displayLabel,
                         tone: isSensitiveSend ? .warning : .neutral
                     )
+                }
+
+                if let expiresAt = interaction.expiresAt, !expiresAt.isEmpty {
+                    GridRow {
+                        Text("Expires")
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(NoriColors.ink3)
+                        Text(Self.formattedExpiryDetail(expiresAt))
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(NoriColors.warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
 
@@ -342,26 +374,82 @@ public struct InteractionCardView: View {
                 .padding(.top, 2)
             }
 
-            // Approve / Decline Actions
-            HStack(spacing: 8) {
-                Button {
-                    submitApprove()
-                } label: {
-                    Text(submittingAction == "approve" ? "Approving…" : "Approve")
+            // 3-Button Approval Actions: Allow once / Always allow / Deny
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    Button {
+                        submitApprove(rememberRule: false)
+                    } label: {
+                        Text(submittingAction == "approve_once" ? "Allowing…" : "Allow once")
+                    }
+                    .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
+                    .disabled(isSubmitting)
+
+                    Button {
+                        submitApprove(rememberRule: true)
+                    } label: {
+                        Text(submittingAction == "approve_always" ? "Saving rule…" : "Always allow")
+                    }
+                    .buttonStyle(NoriButtonStyle(.neutral, fullWidth: true))
+                    .disabled(isSubmitting)
                 }
-                .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
-                .disabled(isSubmitting)
 
                 Button {
                     submitDecline()
                 } label: {
-                    Text(submittingAction == "decline" ? "Declining…" : "Decline")
+                    Text(submittingAction == "decline" ? "Denying…" : "Deny")
                 }
-                .buttonStyle(NoriButtonStyle(.neutral, fullWidth: true))
+                .buttonStyle(NoriButtonStyle(.danger, fullWidth: true, compact: compact))
                 .disabled(isSubmitting)
             }
             .padding(.top, 4)
         }
+    }
+
+    private static func parseISO8601Date(_ raw: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: raw) {
+            return date
+        }
+        let standard = ISO8601DateFormatter()
+        standard.formatOptions = [.withInternetDateTime]
+        return standard.date(from: raw)
+    }
+
+    private static func formattedExpiryBadge(_ raw: String) -> String {
+        guard let date = parseISO8601Date(raw) else {
+            return "Expires \(raw)"
+        }
+        let remaining = date.timeIntervalSinceNow
+        if remaining <= 0 {
+            return "Expiring now"
+        }
+        if remaining < 3600 {
+            let mins = max(1, Int(ceil(remaining / 60)))
+            return "Expires in \(mins)m"
+        }
+        if remaining < 86_400 {
+            let hours = max(1, Int(ceil(remaining / 3600)))
+            return "Expires in \(hours)h"
+        }
+        return "Expires \(date.formatted(date: .abbreviated, time: .shortened))"
+    }
+
+    private static func formattedExpiryDetail(_ raw: String) -> String {
+        guard let date = parseISO8601Date(raw) else {
+            return raw
+        }
+        let formattedTime = date.formatted(date: .omitted, time: .shortened)
+        let remaining = date.timeIntervalSinceNow
+        if remaining <= 0 {
+            return "Expired (\(formattedTime))"
+        }
+        if remaining < 3600 {
+            let mins = max(1, Int(ceil(remaining / 60)))
+            return "In \(mins)m (\(formattedTime))"
+        }
+        return date.formatted(date: .abbreviated, time: .shortened)
     }
 
     private func parseApprovalSummary(_ payload: ApprovalPayload) -> (head: String?, quotedBody: String?) {
@@ -715,12 +803,12 @@ public struct InteractionCardView: View {
         }
     }
 
-    private func submitApprove() {
+    private func submitApprove(rememberRule: Bool = false) {
         errorMessage = nil
         isSubmitting = true
-        submittingAction = "approve"
+        submittingAction = rememberRule ? "approve_always" : "approve_once"
         Task {
-            await store.approveInteraction(interaction)
+            await store.approveInteraction(interaction, rememberRule: rememberRule)
             triggerNotificationHaptic(.success)
             isSubmitting = false
             submittingAction = nil
