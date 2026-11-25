@@ -27,6 +27,8 @@ type Input struct {
 	Message string `json:"message"`
 	// Attachments are the IDs of files already uploaded.
 	Attachments []string `json:"attachments,omitempty"`
+	// ModelSelection optionally pins approved chat/task model profiles for this input.
+	ModelSelection *state.ModelSelection `json:"model,omitempty"`
 }
 type Message = state.Message
 type Dispatch struct {
@@ -53,6 +55,8 @@ type Trace struct {
 	Attempt          int                        `json:"attempt"`
 	InputIDs         []string                   `json:"input_ids"`
 	Model            string                     `json:"model"`
+	ServedModel      string                     `json:"served_model,omitempty"`
+	ModelSelection   *state.ModelSelection      `json:"model_selection,omitempty"`
 	Status           string                     `json:"status"`
 	StartedAt        time.Time                  `json:"started_at"`
 	FinishedAt       *time.Time                 `json:"finished_at,omitempty"`
@@ -82,9 +86,11 @@ type Session struct {
 type Runner struct {
 	UserFacts string
 	// Profile, when set, supplies the user facts and clock at the time of each call instead of UserFacts and Clock.
-	Profile    users.Profile
-	model      ReplyModel
-	classifier IntentClassifier
+	Profile users.Profile
+	model   ReplyModel
+	// ModelForTurn, when set, resolves a per-turn ReplyModel from the turn's pinned ModelSelection.
+	ModelForTurn func(*state.ModelSelection) ReplyModel
+	classifier   IntentClassifier
 	// summarizer writes coupled flush/compaction, decoupled extraction, and AutoDream passes.
 	// compactAfter, extractAfter, and dreamAfter pause background maintenance after failures.
 	summarizer   SummaryModel
@@ -197,6 +203,15 @@ func New(model ReplyModel, classifier IntentClassifier, summarizer SummaryModel,
 	return &Runner{model: model, classifier: classifier, summarizer: summarizer, tasks: tasks}
 }
 
+func (r *Runner) replyModel(sel *state.ModelSelection) ReplyModel {
+	if r != nil && r.ModelForTurn != nil {
+		if m := r.ModelForTurn(sel); m != nil {
+			return m
+		}
+	}
+	return r.model
+}
+
 // HandleInput only accepts the idempotent inbox item; provider I/O is performed
 // by Process independently of the submitting HTTP request.
 func (r *Runner) HandleInput(ctx context.Context, input Input) (Session, error) {
@@ -211,7 +226,13 @@ func (r *Runner) HandleInput(ctx context.Context, input Input) (Session, error) 
 		attribute.String("nori.input.id", input.ID),
 	))
 	defer span.End()
-	if e := r.tasks.Store.AcceptConversationInput(ctx, input.ID, input.Message, input.Attachments); e != nil {
+	var e error
+	if !input.ModelSelection.IsEmpty() {
+		e = r.tasks.Store.AcceptConversationInputWithModel(ctx, input.ID, input.Message, input.Attachments, input.ModelSelection)
+	} else {
+		e = r.tasks.Store.AcceptConversationInput(ctx, input.ID, input.Message, input.Attachments)
+	}
+	if e != nil {
 		if !errors.Is(e, state.ErrConversationConflict) && !errors.Is(ctx.Err(), context.Canceled) {
 			observability.RecordErrorCategory(ctx, "conversation.accept", e)
 		}
@@ -335,8 +356,10 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 			f = fenceFor(c, t)
 		}
 		if t.Attempt.ID == "" {
+			turnModel := r.replyModel(t.ModelSelection)
 			a := state.ConversationAttempt{
-				ID: fmt.Sprintf("%s-attempt-%d", t.ID, t.Restarts+1), TurnID: t.ID, Number: t.Restarts + 1, Model: r.model.Name(),
+				ID: fmt.Sprintf("%s-attempt-%d", t.ID, t.Restarts+1), TurnID: t.ID, Number: t.Restarts + 1,
+				Model: turnModel.Name(), ModelSelection: t.ModelSelection.Clone(),
 				Status: "running", StartedAt: r.now().UTC(), Actions: []state.ConversationAction{}, Usage: []state.Usage{},
 				ModelCheckpoint: &state.ConversationModelCheckpoint{Phase: preparingReply},
 			}
@@ -531,6 +554,9 @@ func (r *Runner) dispatchPending(ctx context.Context, f state.ConversationFence,
 			// M2 checkpoints contained only dispatch requests.
 			if a.Command.ID == "" {
 				a.Command = state.Command{ID: a.ID, RunID: a.ID, Kind: "start", Text: a.Request}
+			}
+			if a.Command.Kind == state.CommandStart && a.Command.ModelSelection.IsEmpty() && !t.ModelSelection.IsEmpty() {
+				a.Command.ModelSelection = t.ModelSelection.TaskOnly()
 			}
 			commands = append(commands, a.Command)
 			indices = append(indices, i)

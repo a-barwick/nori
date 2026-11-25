@@ -152,6 +152,7 @@ type Database interface {
 
 type ConversationDatabase interface {
 	AcceptConversationInput(ctx context.Context, id, text string, attachments []string) error
+	AcceptConversationInputWithModel(ctx context.Context, id, text string, attachments []string, sel *ModelSelection) error
 	CreateUpload(ctx context.Context, upload Upload) (Upload, error)
 	MarkDelivered(ctx context.Context, ids []string) error
 	AcquireConversation(ctx context.Context, owner, turnID string) (ConversationControl, *ConversationTurn, error)

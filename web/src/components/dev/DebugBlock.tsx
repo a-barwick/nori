@@ -54,6 +54,7 @@ export function DebugBlock({ info }: { info: DebugInfo }) {
             ["started", clock(Date.parse(run.started_at))],
             ...(run.position !== undefined ? [["commands", `${run.incorporated ?? 0} applied / ${run.position} accepted`] as [string, ReactNode]] : []),
             ...(run.finished_at ? [["finished", clock(Date.parse(run.finished_at))] as [string, ReactNode]] : []),
+            ...(run.model_selection?.task_profile_id ? [["profile", `${run.model_selection.task_profile_id}${run.model_selection.task_profile_version ? `@${run.model_selection.task_profile_version}` : ""}${run.model_selection.task_reasoning ? ` · ${run.model_selection.task_reasoning}` : ""}`] as [string, ReactNode]] : []),
             ...(run.budget_usd !== undefined ? [["budget", usd(run.budget_usd)] as [string, ReactNode]] : []),
           ]} />
           {error ? <p role="status" className="text-danger">{error} <button className="text-accent-text hover:underline" onClick={() => setRetry((current) => current + 1)}>Retry trace</button></p>
@@ -71,11 +72,15 @@ function TurnRow({ turn }: { turn: ConversationTrace }) {
   const hint = turn.classification_hint;
   const usage = turn.usage ?? [];
   const knownCosts = usage.filter((item) => item.cost_usd !== undefined);
-  const unknownCost = !usage.length || knownCosts.length < usage.length;
+  const allLocal = usage.length > 0 && usage.every((item) => item.cost_status === "local");
+  const unknownCost = !allLocal && (!usage.length || knownCosts.length < usage.length);
+  const costLabel = allLocal
+    ? "Local inference"
+    : `${knownCosts.length ? usd(knownCosts.reduce((sum, item) => sum + item.cost_usd!, 0)) : ""}${unknownCost ? knownCosts.length ? " + unknown" : "unknown" : ""}`;
   return <details>
     <summary className={SUMMARY}>
       <Chevron /><span>outer</span>
-      <span className="min-w-0 truncate"><Status status={turn.status} /> · attempt {turn.attempt} · {turn.model || "model not recorded"}</span>
+      <span className="min-w-0 truncate"><Status status={turn.status} /> · attempt {turn.attempt} · {turn.served_model || turn.model || "model not recorded"}</span>
       <span>{secs(turn.duration_ms)}</span>
     </summary>
     <div className={DETAIL}>
@@ -83,8 +88,10 @@ function TurnRow({ turn }: { turn: ConversationTrace }) {
       <KV rows={[
         ["turn", turn.turn_id],
         ["inputs", turn.input_ids.join(", ")],
+        ...(turn.model_selection?.chat_profile_id ? [["profile", `${turn.model_selection.chat_profile_id}${turn.model_selection.chat_profile_version ? `@${turn.model_selection.chat_profile_version}` : ""}${turn.model_selection.chat_reasoning ? ` · ${turn.model_selection.chat_reasoning}` : ""}`] as [string, ReactNode]] : []),
+        ...(turn.served_model && turn.served_model !== turn.model ? [["served", turn.served_model] as [string, ReactNode]] : []),
         ["Jev hint", hint ? `${hint.available ? "available" : "unavailable"}${hint.intents?.length ? ` · ${hint.intents.join(" + ")}` : hint.intent ? ` · ${hint.intent}` : ""}${hint.confidence !== undefined ? ` · ${hint.confidence.toFixed(2)}` : ""}` : "not recorded"],
-        ["cost", `${knownCosts.length ? usd(knownCosts.reduce((sum, item) => sum + item.cost_usd!, 0)) : ""}${unknownCost ? knownCosts.length ? " + unknown" : "unknown" : ""}`],
+        ["cost", costLabel],
         ...(turn.error ? [["error", turn.error] as [string, ReactNode]] : []),
       ]} />
       {usage.map((item) => <UsageRow key={item.id} usage={item} />)}
@@ -102,7 +109,7 @@ function UsageRow({ usage }: { usage: Usage }) {
     {usage.input_tokens !== undefined && <> · {n(usage.input_tokens)} input</>}
     {usage.output_tokens !== undefined && <> · {n(usage.output_tokens)} output</>}
     {usage.total_tokens !== undefined && <> · {n(usage.total_tokens)} total</>}
-    {usage.cost_usd !== undefined && <> · {usd(usage.cost_usd)} ({usage.cost_status})</>}
+    {usage.cost_usd !== undefined ? <> · {usd(usage.cost_usd)} ({usage.cost_status})</> : usage.cost_status === "local" ? <> · Local inference</> : null}
   </div>;
 }
 
@@ -119,7 +126,7 @@ function StepRow({ step }: { step: TaskStep }) {
         ...(step.cached_tokens !== undefined ? [["cached", n(step.cached_tokens)] as [string, ReactNode]] : []),
         ...(step.output_tokens !== undefined ? [["output", n(step.output_tokens)] as [string, ReactNode]] : []),
         ...(step.thinking_tokens !== undefined ? [["thinking tokens", n(step.thinking_tokens)] as [string, ReactNode]] : []),
-        ["cost", step.cost_usd !== undefined ? `${usd(step.cost_usd)} (${step.cost_status})` : step.cost_status === "not_applicable" ? "not applicable" : step.cost_status === "not_sent" ? "not sent" : "unknown"],
+        ["cost", step.cost_usd !== undefined ? `${usd(step.cost_usd)} (${step.cost_status})` : step.cost_status === "local" ? "Local inference" : step.cost_status === "not_applicable" ? "not applicable" : step.cost_status === "not_sent" ? "not sent" : "unknown"],
       ]} />
       {step.calls?.map((call, index) => <div key={index}>{call.name}<Code>{call.arguments}</Code></div>)}
       {step.arguments && <><span>Arguments</span><Code>{step.arguments}</Code></>}

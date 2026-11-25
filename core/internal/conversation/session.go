@@ -52,7 +52,8 @@ func (r *Runner) SnapshotPage(ctx context.Context, before string) (Session, erro
 	}
 	for _, a := range attempts {
 		trace := Trace{
-			ID: a.ID, TurnID: a.TurnID, Attempt: a.Number, InputIDs: a.InputIDs, Model: a.Model, Status: a.Status,
+			ID: a.ID, TurnID: a.TurnID, Attempt: a.Number, InputIDs: a.InputIDs, Model: a.Model,
+			ServedModel: a.ServedModel, ModelSelection: a.ModelSelection, Status: a.Status,
 			StartedAt: a.StartedAt, FinishedAt: a.FinishedAt, DurationMS: a.DurationMS, Actions: a.Actions, Usage: a.Usage, Error: a.Error,
 			ContextTruncated: a.ContextTruncated, ContextTurns: a.ContextTurns, ContextBytes: a.ContextBytes,
 		}

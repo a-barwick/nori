@@ -338,14 +338,138 @@ function AccountSettings() {
 }
 
 function Diagnostics() {
-  const { capabilities, debug, setDebug, localMode } = useAssistant();
+  const { capabilities, debug, setDebug, localMode, modelSelection, setModelSelection } = useAssistant();
   const features = capabilities?.assistant_features ?? {};
+  const catalog = capabilities?.model_profiles;
+  const profiles = catalog?.profiles ?? [];
+  const chatProfiles = profiles.filter((p) => p.lanes.includes("chat"));
+  const taskProfiles = profiles.filter((p) => p.lanes.includes("task"));
+
+  const selectedChatId = modelSelection.chat_profile_id ?? "";
+  const activeChatProfile = chatProfiles.find((p) => p.id === (selectedChatId || catalog?.default_chat_profile_id));
+  const selectedTaskId = modelSelection.task_profile_id ?? "";
+  const activeTaskProfile = taskProfiles.find((p) => p.id === (selectedTaskId || catalog?.default_task_profile_id));
+  const hasOverride = !!(
+    modelSelection.chat_profile_id ||
+    modelSelection.chat_reasoning ||
+    modelSelection.task_profile_id ||
+    modelSelection.task_reasoning
+  );
+  const defaultChatPaid = activeChatProfile ? activeChatProfile.paid : capabilities?.provider !== "local";
+  const defaultTaskPaid = activeTaskProfile ? activeTaskProfile.paid : capabilities?.provider !== "local";
+  const nextUsesPaid = defaultChatPaid || defaultTaskPaid;
+
   return <>
     <label className="flex min-h-11 items-center gap-3 text-body"><input type="checkbox" className="accent-[var(--accent)]" checked={debug} onChange={(event) => setDebug(event.target.checked)} />Show model and tool details in Chat</label>
+    {profiles.length > 0 && (
+      <Section title="Model & Reasoning">
+        <div className="space-y-4 rounded-card border border-card-border bg-surface p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-meta text-ink-2">
+              Changes apply to your next message and any new tasks it dispatches. In-flight tasks keep their original model.
+            </p>
+            <Pill tone={nextUsesPaid ? "warning" : "ok"}>
+              {nextUsesPaid ? "Paid cloud inference" : "Local inference"}
+            </Pill>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Field label="Chat model">
+                <select
+                  aria-label="Chat model"
+                  value={selectedChatId}
+                  onChange={(event) => {
+                    const nextId = event.target.value || undefined;
+                    const nextProfile = chatProfiles.find((p) => p.id === (nextId || catalog?.default_chat_profile_id));
+                    const nextReasoning = modelSelection.chat_reasoning && nextProfile?.supported_reasoning?.includes(modelSelection.chat_reasoning)
+                      ? modelSelection.chat_reasoning
+                      : undefined;
+                    setModelSelection({ ...modelSelection, chat_profile_id: nextId, chat_reasoning: nextReasoning });
+                  }}
+                  className={inputClass}
+                >
+                  <option value="">
+                    Server default{catalog?.default_chat_profile_id ? ` (${chatProfiles.find((p) => p.id === catalog.default_chat_profile_id)?.label ?? catalog.default_chat_profile_id})` : ""}
+                  </option>
+                  {chatProfiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              {!!activeChatProfile?.supported_reasoning?.length && (
+                <Field label="Chat reasoning">
+                  <select
+                    aria-label="Chat reasoning"
+                    value={modelSelection.chat_reasoning ?? ""}
+                    onChange={(event) => setModelSelection({ ...modelSelection, chat_reasoning: event.target.value || undefined })}
+                    className={inputClass}
+                  >
+                    <option value="">Profile default{activeChatProfile.default_reasoning ? ` (${activeChatProfile.default_reasoning})` : ""}</option>
+                    {activeChatProfile.supported_reasoning.map((effort) => (
+                      <option key={effort} value={effort}>{effort}</option>
+                    ))}
+                  </select>
+                </Field>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Field label="Task model">
+                <select
+                  aria-label="Task model"
+                  value={selectedTaskId}
+                  onChange={(event) => {
+                    const nextId = event.target.value || undefined;
+                    const nextProfile = taskProfiles.find((p) => p.id === (nextId || catalog?.default_task_profile_id));
+                    const nextReasoning = modelSelection.task_reasoning && nextProfile?.supported_reasoning?.includes(modelSelection.task_reasoning)
+                      ? modelSelection.task_reasoning
+                      : undefined;
+                    setModelSelection({ ...modelSelection, task_profile_id: nextId, task_reasoning: nextReasoning });
+                  }}
+                  className={inputClass}
+                >
+                  <option value="">
+                    Server default{catalog?.default_task_profile_id ? ` (${taskProfiles.find((p) => p.id === catalog.default_task_profile_id)?.label ?? catalog.default_task_profile_id})` : ""}
+                  </option>
+                  {taskProfiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              {!!activeTaskProfile?.supported_reasoning?.length && (
+                <Field label="Task reasoning">
+                  <select
+                    aria-label="Task reasoning"
+                    value={modelSelection.task_reasoning ?? ""}
+                    onChange={(event) => setModelSelection({ ...modelSelection, task_reasoning: event.target.value || undefined })}
+                    className={inputClass}
+                  >
+                    <option value="">Profile default{activeTaskProfile.default_reasoning ? ` (${activeTaskProfile.default_reasoning})` : ""}</option>
+                    {activeTaskProfile.supported_reasoning.map((effort) => (
+                      <option key={effort} value={effort}>{effort}</option>
+                    ))}
+                  </select>
+                </Field>
+              )}
+            </div>
+          </div>
+          {hasOverride && (
+            <div className="flex items-center justify-between gap-2 border-t border-hairline pt-3">
+              <span className="text-meta text-ink-2">Custom model override active for this browser.</span>
+              <Button size="sm" variant="quiet" onClick={() => setModelSelection({})}>Reset to defaults</Button>
+            </div>
+          )}
+        </div>
+      </Section>
+    )}
     <Section title="This Nori">
       <div className="rounded-card border border-card-border bg-surface p-4">
         <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-meta">
           <dt className="text-ink-3">Runtime</dt><dd>{localMode ? "Local" : "Hosted"}</dd>
+          <dt className="text-ink-3">Provider</dt><dd className="font-mono text-mono-data">{[capabilities?.provider, capabilities?.model].filter(Boolean).join(" · ") || "unknown"}</dd>
           <dt className="text-ink-3">Contracts</dt><dd className="font-mono text-mono-data">{[capabilities?.contract, capabilities?.conversationContract, capabilities?.assistant_contract].filter(Boolean).join(" · ") || "unknown"}</dd>
           <dt className="text-ink-3">Available</dt><dd>{Object.entries(features).filter(([, on]) => on).map(([name]) => name).join(", ") || "Chat and tasks only"}</dd>
           {capabilities?.upload_accept && <><dt className="text-ink-3">Uploads</dt><dd>{capabilities.upload_accept.media_types.join(", ")}</dd></>}

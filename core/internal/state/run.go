@@ -58,9 +58,10 @@ type Run struct {
 	InterruptRevision int64 `json:"interrupt_revision,omitempty" firestore:"interrupt_revision,omitempty"`
 
 	// Model cost in USD from reported token usage. Budget is the configured ceiling recorded when the task starts.
-	Spent       float64 `json:"spent_usd,omitempty" firestore:"spent_usd,omitempty"`
-	Budget      float64 `json:"budget_usd,omitempty" firestore:"budget_usd,omitempty"`
-	CostUnknown bool    `json:"cost_unknown,omitempty" firestore:"cost_unknown,omitempty"`
+	Spent          float64         `json:"spent_usd,omitempty" firestore:"spent_usd,omitempty"`
+	Budget         float64         `json:"budget_usd,omitempty" firestore:"budget_usd,omitempty"`
+	CostUnknown    bool            `json:"cost_unknown,omitempty" firestore:"cost_unknown,omitempty"`
+	ModelSelection *ModelSelection `json:"model_selection,omitempty" firestore:"model_selection,omitempty"`
 
 	// Subtasks. ParentID names the task this one works for; an empty ParentID means an independent task owned by
 	// this user. ReadOnly is the limit inherited from a parent. Jobs always share their task's lifetime.

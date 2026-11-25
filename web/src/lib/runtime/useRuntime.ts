@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as Sentry from "@sentry/nextjs";
 import type { Span } from "@sentry/nextjs";
-import type { Attachment, DraftFile, Message, PendingTaskCommand, ReadPosition, Run, SavedResult, Session, TaskCommand, TaskCommandResponse } from "@/lib/types";
+import type { Attachment, DraftFile, Message, ModelSelection, PendingTaskCommand, ReadPosition, Run, SavedResult, Session, TaskCommand, TaskCommandResponse } from "@/lib/types";
 import { taskControlKinds } from "@/lib/types";
 import { invalidate } from "@/lib/assistant/useResource";
 import { hasSubmission, messageTooLong } from "@/lib/submission";
@@ -45,7 +45,7 @@ async function snapshot(before: string | undefined, signal: AbortSignal | undefi
 // With nothing running, a visible tab drops its stream after this long, so an open tab doesn't hold the service awake.
 const STREAM_IDLE_MS = 5 * 60_000;
 type Presence = { conversation: NonNullable<Session["conversation"]>; paused: boolean };
-type Pending = { id: string; text: string; started: number; error?: string; attachments?: Attachment[]; retryManually?: boolean };
+type Pending = { id: string; text: string; started: number; error?: string; attachments?: Attachment[]; model?: ModelSelection; retryManually?: boolean };
 const TURN_ACCEPTANCE_UNKNOWN = "Message acceptance could not be confirmed.";
 const COMMAND_ACCEPTANCE_UNKNOWN = "Task command acceptance could not be confirmed.";
 
@@ -138,7 +138,9 @@ function mergeRuns(older: Run[], newer: Run[]): Run[] {
   return [...runs.values()].sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at));
 }
 
-export function useRuntime(localMode = false) {
+export function useRuntime(localMode = false, modelSelection?: ModelSelection) {
+  const modelSelectionRef = useRef<ModelSelection | undefined>(modelSelection);
+  modelSelectionRef.current = modelSelection;
   const [session, setSession] = useState<Session>();
   // The unsent draft survives reloads and reconnects; it is cleared when the message is accepted for sending.
   const [draft, setDraftState] = useState("");
@@ -287,7 +289,12 @@ export function useRuntime(localMode = false) {
     updatePending((current) => current.map((entry) => entry.id === item.id ? { ...entry, error: undefined } : entry));
     const serial = ++requestSerial.current;
     try {
-      const data = await post<Session>("turn", { id: item.id, message: item.text, attachments: item.attachments?.map((file) => file.id) }, controller.signal, replyTimings.current.get(item.id)?.span);
+      const data = await post<Session>("turn", {
+        id: item.id,
+        message: item.text,
+        attachments: item.attachments?.map((file) => file.id),
+        ...(item.model ? { model: item.model } : {}),
+      }, controller.signal, replyTimings.current.get(item.id)?.span);
       if (!controller.signal.aborted) { applySnapshot(data, serial); setError(""); }
     } catch (err) {
       if (!controller.signal.aborted) {
@@ -609,7 +616,15 @@ export function useRuntime(localMode = false) {
     if (replacingSnapshot.current || !hasSubmission(text, draftFiles) || !session || loading || session.conversation?.introducing) return;
     if (messageTooLong(text)) { setError("Please keep the message within 8,192 UTF-8 bytes."); return; }
     if (pendingRef.current.length >= MAX_PENDING) { setError("Reconnect or retry your pending messages before sending more."); return; }
-    const item: Pending = { id: crypto.randomUUID(), text, started: Date.now(), ...(draftFiles.length ? { attachments: draftFiles.map(({ id, name, media_type, size }) => ({ id, name, media_type, size })) } : {}) };
+    const activeModel = modelSelectionRef.current;
+    const hasModel = !!(activeModel && (activeModel.chat_profile_id || activeModel.chat_reasoning || activeModel.task_profile_id || activeModel.task_reasoning));
+    const item: Pending = {
+      id: crypto.randomUUID(),
+      text,
+      started: Date.now(),
+      ...(draftFiles.length ? { attachments: draftFiles.map(({ id, name, media_type, size }) => ({ id, name, media_type, size })) } : {}),
+      ...(hasModel ? { model: activeModel } : {}),
+    };
     beginTiming(item);
     Sentry.metrics.count("nori.submissions", 1, { attributes: { mode: localMode ? "local" : "hosted" } });
     Sentry.addBreadcrumb({ category: "nori", message: "turn submitted" });

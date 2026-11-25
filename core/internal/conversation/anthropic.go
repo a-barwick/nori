@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"nori/internal/contextview"
 	"nori/internal/llmguard"
+	"nori/internal/modelgateway"
 	"nori/internal/observability"
 	"nori/internal/prompts"
 	"nori/internal/state"
@@ -32,11 +33,12 @@ const (
 // AnthropicModel implements ReplyModel using Anthropic's Messages API,
 // routed exclusively through llmguard.
 type AnthropicModel struct {
-	name   string
-	key    string
-	Client *http.Client
-	Guard  *llmguard.Guard
-	UserID string
+	name       string
+	key        string
+	gatewayURL string
+	Client     *http.Client
+	Guard      *llmguard.Guard
+	UserID     string
 	// TestURL replaces the provider endpoint with a local stub (settings.Models.TestURL).
 	TestURL string
 	// ReasoningEffort optionally sets Anthropic output_config.effort ("low", "medium", "high", "max").
@@ -55,6 +57,21 @@ func NewAnthropicModel(key, name string) *AnthropicModel {
 	}
 }
 
+// NewGatewayAnthropicModel creates an Anthropic Messages reply model routed through
+// a deployment-owned model gateway (e.g. Vercel AI Gateway /v1/messages) with Bearer auth.
+func NewGatewayAnthropicModel(baseURL, key, name string) *AnthropicModel {
+	m := NewAnthropicModel(key, name)
+	m.gatewayURL = strings.TrimRight(baseURL, "/") + "/messages"
+	return m
+}
+
+func (m *AnthropicModel) provider() string {
+	if m.gatewayURL != "" {
+		return modelgateway.Provider
+	}
+	return anthropicProvider
+}
+
 func (m *AnthropicModel) guard() *llmguard.Guard {
 	if m != nil && m.Guard != nil {
 		return m.Guard
@@ -66,7 +83,7 @@ func (m *AnthropicModel) httpClient() *http.Client {
 	return m.guard().WrapClient(m.Client, 75*time.Second, llmguard.CallMeta{
 		UserID:   m.UserID,
 		Scope:    llmguard.ScopeOuter,
-		Provider: anthropicProvider,
+		Provider: m.provider(),
 		Model:    m.name,
 	})
 }
@@ -88,6 +105,9 @@ func (m *AnthropicModel) newID() string {
 func (m *AnthropicModel) Name() string { return m.name }
 
 func (m *AnthropicModel) endpoint() string {
+	if m.gatewayURL != "" {
+		return m.gatewayURL
+	}
 	if m.TestURL != "" {
 		return strings.TrimRight(m.TestURL, "/") + "/v1/messages"
 	}
@@ -220,6 +240,9 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 	}
 	if err := json.NewDecoder(io.LimitReader(res.Body, 2<<20)).Decode(&response); err != nil {
 		return reply, fmt.Errorf("model returned an unreadable response")
+	}
+	if response.Model != "" {
+		reply.ServedModel = response.Model
 	}
 	if response.Usage != nil {
 		totalIn := response.Usage.Input + response.Usage.CacheRead + response.Usage.CacheWrite
@@ -401,6 +424,9 @@ func (m *AnthropicModel) decodeAnthropicStream(res *http.Response, reply Reply, 
 		}
 	}
 
+	if modelName != "" {
+		reply.ServedModel = modelName
+	}
 	if hasUsage {
 		totalIn := inTok + cacheRead + cacheWrite
 		total := totalIn + outTok
@@ -458,7 +484,11 @@ func (m *AnthropicModel) doWithRetry(ctx context.Context, body []byte, onRetry f
 		if err != nil {
 			return nil, fmt.Errorf("invalid model request")
 		}
-		httpReq.Header.Set("x-api-key", m.key)
+		if m.gatewayURL != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+m.key)
+		} else {
+			httpReq.Header.Set("x-api-key", m.key)
+		}
 		httpReq.Header.Set("anthropic-version", anthropicAPIVersion)
 		httpReq.Header.Set("Content-Type", "application/json")
 

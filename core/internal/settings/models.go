@@ -145,6 +145,11 @@ func modelsFromEnvironment(profile string) Models {
 		InnerProvider:  strings.ToLower(strings.TrimSpace(os.Getenv("NORI_INNER_PROVIDER"))),
 		GatewayURL:     strings.TrimSpace(os.Getenv("NORI_MODEL_GATEWAY_URL")),
 		GatewayKey:     strings.TrimSpace(os.Getenv("NORI_MODEL_GATEWAY_API_KEY")),
+		LocalURL:       strings.TrimSpace(os.Getenv("NORI_LOCAL_MODEL_URL")),
+		LocalModel:     strings.TrimSpace(os.Getenv("NORI_LOCAL_MODEL_TAG")),
+		ProfilesFile:   strings.TrimSpace(os.Getenv("NORI_MODEL_PROFILES_FILE")),
+		ProfilesJSON:   strings.TrimSpace(os.Getenv("NORI_MODEL_PROFILES")),
+		PickerUsers:    parseCSVList(os.Getenv("NORI_MODEL_PICKER_USERS")),
 		OpenAIKey:      resolveProfileKey("OPENAI", profile),
 		AnthropicKey:   resolveProfileKey("ANTHROPIC", profile),
 		OpenRouterKey:  resolveProfileKey("OPENROUTER", profile),
@@ -247,11 +252,24 @@ func isLoopbackHostname(host string) bool {
 // ValidReasoningEffort reports whether e is an accepted reasoning/thinking effort level.
 func ValidReasoningEffort(e string) bool {
 	switch e {
-	case "", "none", "low", "medium", "high", "max":
+	case "", "none", "low", "medium", "high", "xhigh", "max":
 		return true
 	default:
 		return false
 	}
+}
+
+func parseCSVList(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func (m Models) validateModels(cloud string) error {
@@ -272,6 +290,22 @@ func (m Models) validateModels(cloud string) error {
 	}
 	if math.IsNaN(m.MaxUSD) || math.IsInf(m.MaxUSD, 0) || m.MaxUSD < 0 {
 		return fmt.Errorf("NORI_LLM_MAX_USD must be a non-negative dollar amount")
+	}
+	if m.LocalURL != "" || m.LocalModel != "" {
+		if cloud != "local" {
+			return fmt.Errorf("NORI_LOCAL_MODEL_URL and NORI_LOCAL_MODEL_TAG are only allowed when NORI_CLOUD=local")
+		}
+		if m.LocalURL == "" || m.LocalModel == "" {
+			return fmt.Errorf("NORI_LOCAL_MODEL_URL and NORI_LOCAL_MODEL_TAG must both be set when configuring a local model")
+		}
+		u, err := url.Parse(m.LocalURL)
+		if err != nil || u == nil || u.Scheme != "http" || !isLoopbackHostname(u.Hostname()) || u.User != nil ||
+			strings.ContainsAny(m.LocalURL, "?#") || strings.IndexFunc(m.LocalURL, unicode.IsSpace) >= 0 {
+			return fmt.Errorf("NORI_LOCAL_MODEL_URL must be an http loopback URL without credentials, query or fragment")
+		}
+		if strings.IndexFunc(m.LocalModel, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+			return fmt.Errorf("NORI_LOCAL_MODEL_TAG must not contain whitespace or control characters")
+		}
 	}
 	return m.validateGateway(cloud)
 }

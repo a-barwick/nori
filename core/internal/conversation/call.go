@@ -312,8 +312,12 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 			}
 		}
 		var modelErr error
+		turnModel := r.replyModel(t.ModelSelection)
 		for {
-			reply, modelErr = r.model.Respond(callCtx, request)
+			reply, modelErr = turnModel.Respond(callCtx, request)
+			if reply.ServedModel != "" {
+				t.Attempt.ServedModel = reply.ServedModel
+			}
 			if modelErr == nil && len(request.WorkRequests) == 0 {
 				// The reply schema carries no ID enums (they would defeat prompt caching), so check IDs here.
 				modelErr = validateReplyIDs(reply.Calls, request.TaskIDs, request.MemoryIDs)

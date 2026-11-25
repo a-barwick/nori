@@ -25,6 +25,8 @@ type ConversationInput struct {
 	TraceContext map[string]string `json:"-" firestore:"trace_context,omitempty"`
 	// Attachments are the files sent with a user's message.
 	Attachments []Attachment `firestore:"attachments,omitempty"`
+	// ModelSelection optionally pins the approved chat/task model profiles for this input.
+	ModelSelection *ModelSelection `json:"model_selection,omitempty" firestore:"model_selection,omitempty"`
 }
 
 type ConversationControl struct {
@@ -63,6 +65,8 @@ type ConversationAttempt struct {
 	Number           int                  `firestore:"number"`
 	InputIDs         []string             `firestore:"input_ids"`
 	Model            string               `firestore:"model"`
+	ServedModel      string               `firestore:"served_model,omitempty"`
+	ModelSelection   *ModelSelection      `firestore:"model_selection,omitempty"`
 	Status           string               `firestore:"status"`
 	StartedAt        time.Time            `firestore:"started_at"`
 	FinishedAt       *time.Time           `firestore:"finished_at,omitempty"`
@@ -94,18 +98,19 @@ type ConversationModelCheckpoint struct {
 }
 
 type ConversationTurn struct {
-	ID          string              `firestore:"id"`
-	Inputs      []ConversationInput `firestore:"inputs"`
-	Through     int64               `firestore:"through"`
-	UserThrough int64               `firestore:"user_through,omitempty"`
-	Restarts    int                 `firestore:"restarts"`
-	Frozen      bool                `firestore:"frozen"`
-	StartedAt   time.Time           `firestore:"started_at"`
-	FinishedAt  *time.Time          `firestore:"finished_at,omitempty"`
-	Status      string              `firestore:"status"`
-	Protocol    []string            `firestore:"protocol"`
-	Context     []string            `firestore:"context"`
-	Attempt     ConversationAttempt `firestore:"attempt"`
+	ID             string              `firestore:"id"`
+	Inputs         []ConversationInput `firestore:"inputs"`
+	Through        int64               `firestore:"through"`
+	UserThrough    int64               `firestore:"user_through,omitempty"`
+	Restarts       int                 `firestore:"restarts"`
+	Frozen         bool                `firestore:"frozen"`
+	StartedAt      time.Time           `firestore:"started_at"`
+	FinishedAt     *time.Time          `firestore:"finished_at,omitempty"`
+	Status         string              `firestore:"status"`
+	Protocol       []string            `firestore:"protocol"`
+	Context        []string            `firestore:"context"`
+	ModelSelection *ModelSelection     `firestore:"model_selection,omitempty"`
+	Attempt        ConversationAttempt `firestore:"attempt"`
 }
 
 // ConversationFence identifies one processor's claim on the active turn.
@@ -196,7 +201,12 @@ func StaleFor(c ConversationControl, f ConversationFence) bool {
 
 // ReplayUserInput checks a repeated submission of an accepted message ID. The same text is a harmless replay.
 func ReplayUserInput(saved ConversationInput, text string, attachments []string) error {
-	if saved.Text != text || len(saved.Attachments) != len(attachments) {
+	return ReplayUserInputWithModel(saved, text, attachments, nil)
+}
+
+// ReplayUserInputWithModel checks a repeated submission including its explicit model selection.
+func ReplayUserInputWithModel(saved ConversationInput, text string, attachments []string, sel *ModelSelection) error {
+	if saved.Text != text || len(saved.Attachments) != len(attachments) || !ModelSelectionEqual(saved.ModelSelection, sel) {
 		return ErrConversationConflict
 	}
 	for i, attachment := range saved.Attachments {
@@ -212,10 +222,20 @@ func ReplayUserInput(saved ConversationInput, text string, attachments []string)
 func AdmitUserInput(
 	c ConversationControl, id, text string, attachments []Attachment, now time.Time, traceContext map[string]string,
 ) (ConversationControl, ConversationInput, Message) {
+	return AdmitUserInputWithModel(c, id, text, attachments, nil, now, traceContext)
+}
+
+// AdmitUserInputWithModel behaves like AdmitUserInput while pinning an optional approved ModelSelection.
+func AdmitUserInputWithModel(
+	c ConversationControl, id, text string, attachments []Attachment, sel *ModelSelection, now time.Time, traceContext map[string]string,
+) (ConversationControl, ConversationInput, Message) {
 	c.Received++
 	c.UserReceived = c.Received
 	c.LatestAt = now
-	input := ConversationInput{ID: id, Text: text, Position: c.Received, CreatedAt: now, TraceContext: traceContext, Attachments: attachments}
+	input := ConversationInput{
+		ID: id, Text: text, Position: c.Received, CreatedAt: now,
+		TraceContext: traceContext, Attachments: attachments, ModelSelection: sel.Clone(),
+	}
 	parts := []Part{{Type: PartText, Text: text}}
 	for _, attachment := range attachments {
 		parts = append(parts, AttachmentPart(attachment))
@@ -241,17 +261,24 @@ func Introduce(c ConversationControl, prompt string, now time.Time) (Conversatio
 	return c, ConversationInput{ID: IntroductionInputID(), Text: prompt, Position: 1, CreatedAt: now, Introduction: true}
 }
 
-// InputBatch collects the new inputs for a turn, oldest first, stopping before the turn would grow too large. The
-// first input is always taken.
+// InputBatch collects the new inputs for a turn, oldest first, stopping before the turn would grow too large
+// or cross a model-selection boundary between user inputs. The first input is always taken.
 type InputBatch struct {
-	Inputs []ConversationInput
-	bytes  int
+	Inputs    []ConversationInput
+	bytes     int
+	hasUser   bool
+	selection *ModelSelection
 }
 
 func NewInputBatch() *InputBatch { return &InputBatch{Inputs: []ConversationInput{}} }
 
 // Add takes the next input and reports whether the batch can keep growing.
 func (b *InputBatch) Add(in ConversationInput) bool {
+	if in.IsUser() {
+		if b.hasUser && !ModelSelectionEqual(b.selection, in.ModelSelection) {
+			return false
+		}
+	}
 	size := len(in.Text)
 	if in.Event != nil {
 		size += len(in.Event.Text)
@@ -261,6 +288,10 @@ func (b *InputBatch) Add(in ConversationInput) bool {
 	}
 	if b.bytes+size > TurnInputBytes && len(b.Inputs) > 0 {
 		return false
+	}
+	if in.IsUser() && !b.hasUser {
+		b.hasUser = true
+		b.selection = in.ModelSelection.Clone()
 	}
 	b.bytes += size
 	b.Inputs = append(b.Inputs, in)
@@ -310,11 +341,37 @@ func CanAcquire(c ConversationControl, now time.Time) error {
 
 func Idle(c ConversationControl) bool { return c.Active == "" && !c.Pending() }
 
+func turnModelSelection(inputs []ConversationInput) *ModelSelection {
+	for i := len(inputs) - 1; i >= 0; i-- {
+		if inputs[i].IsUser() && !inputs[i].ModelSelection.IsEmpty() {
+			return inputs[i].ModelSelection.Clone()
+		}
+	}
+	return nil
+}
+
+func hasUserInput(inputs []ConversationInput) bool {
+	for _, in := range inputs {
+		if in.IsUser() {
+			return true
+		}
+	}
+	return false
+}
+
 // NewTurn starts a turn over the waiting inputs. unresolved are earlier user inputs replayed ahead of them.
 func NewTurn(id string, inputs, unresolved []ConversationInput, c ConversationControl, now time.Time) ConversationTurn {
-	t := ConversationTurn{ID: id, Inputs: inputs, Through: inputs[len(inputs)-1].Position, StartedAt: now, Status: "running"}
+	t := ConversationTurn{
+		ID: id, Inputs: inputs, Through: inputs[len(inputs)-1].Position,
+		StartedAt: now, Status: "running", ModelSelection: turnModelSelection(inputs),
+	}
 	if len(unresolved) > 0 {
 		t.Inputs = append(unresolved, inputs...)
+		// Only inherit an earlier unresolved selection when this turn has no new user input
+		// (e.g. an explicit retry). A new user input with nil ModelSelection intentionally uses defaults.
+		if !hasUserInput(inputs) && t.ModelSelection.IsEmpty() {
+			t.ModelSelection = turnModelSelection(unresolved)
+		}
 	}
 	t.UserThrough = max(userThrough(t.Inputs), min(c.UserReceived, c.Consumed))
 	t.Frozen = t.Through < c.Received

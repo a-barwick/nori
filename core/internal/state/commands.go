@@ -50,16 +50,17 @@ type Command struct {
 	Origin *TaskOrigin `json:"origin,omitempty" firestore:"origin,omitempty"`
 	// BudgetUSD lowers a started task's spending ceiling, for example to an automation's budget. It never raises
 	// the deployment's ceiling.
-	BudgetUSD float64     `json:"budget_usd,omitempty" firestore:"budget_usd,omitempty"`
-	ID        string      `json:"id" firestore:"id"`
-	RunID     string      `json:"run_id" firestore:"run_id"`
-	ParentID  string      `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
-	Kind      CommandKind `json:"kind" firestore:"kind"`
-	Text      string      `json:"text" firestore:"text"`
-	Position  int64       `json:"position" firestore:"position"`
-	Revision  int64       `json:"revision" firestore:"revision"`
-	Delivered bool        `json:"delivered" firestore:"delivered"`
-	CreatedAt time.Time   `json:"created_at" firestore:"created_at"`
+	BudgetUSD      float64         `json:"budget_usd,omitempty" firestore:"budget_usd,omitempty"`
+	ModelSelection *ModelSelection `json:"model_selection,omitempty" firestore:"model_selection,omitempty"`
+	ID             string          `json:"id" firestore:"id"`
+	RunID          string          `json:"run_id" firestore:"run_id"`
+	ParentID       string          `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
+	Kind           CommandKind     `json:"kind" firestore:"kind"`
+	Text           string          `json:"text" firestore:"text"`
+	Position       int64           `json:"position" firestore:"position"`
+	Revision       int64           `json:"revision" firestore:"revision"`
+	Delivered      bool            `json:"delivered" firestore:"delivered"`
+	CreatedAt      time.Time       `json:"created_at" firestore:"created_at"`
 }
 
 type TaskSnapshot struct {
@@ -82,7 +83,8 @@ const (
 func SameCommand(a, b Command) bool {
 	return a.RunID == b.RunID && a.Kind == b.Kind && a.Text == b.Text && a.QuestionID == b.QuestionID &&
 		a.Interrupt == b.Interrupt && a.ParentID == b.ParentID && slices.Equal(a.SourceInputIDs, b.SourceInputIDs) &&
-		slices.Equal(a.Attachments, b.Attachments) && a.Revises == b.Revises && sameOrigin(a.Origin, b.Origin) && a.BudgetUSD == b.BudgetUSD
+		slices.Equal(a.Attachments, b.Attachments) && a.Revises == b.Revises && sameOrigin(a.Origin, b.Origin) &&
+		a.BudgetUSD == b.BudgetUSD && ModelSelectionEqual(a.ModelSelection, b.ModelSelection)
 }
 
 func sameOrigin(a, b *TaskOrigin) bool {
@@ -305,6 +307,7 @@ func (p *commandPrep) start(cmd Command) (Run, error) {
 		ID: cmd.RunID, Request: cmd.Text, Status: RunRunning,
 		StartedAt: p.now, Budget: p.taskBudgetUSD, Events: []Event{}, Artifacts: []Artifact{},
 		TraceContext: p.traceContext, OriginTraceContext: p.traceContext, Revises: cmd.Revises, Origin: cmd.Origin,
+		ModelSelection: cmd.ModelSelection.Clone(),
 	}
 	if cmd.BudgetUSD > 0 && cmd.BudgetUSD < run.Budget {
 		run.Budget = cmd.BudgetUSD
@@ -320,6 +323,9 @@ func (p *commandPrep) start(cmd Command) (Run, error) {
 			return Run{}, err
 		}
 		run.ParentID, run.ReadOnly, run.Budget = parent.ID, question.ReadOnly, parent.Budget
+		if run.ModelSelection.IsEmpty() && !parent.ModelSelection.IsEmpty() {
+			run.ModelSelection = parent.ModelSelection.TaskOnly()
+		}
 		p.change(parent)
 	}
 	p.exists[cmd.RunID] = true

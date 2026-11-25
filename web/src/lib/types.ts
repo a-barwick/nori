@@ -50,6 +50,14 @@ export type TaskCommand = { id: string; run_id: string; kind: TaskControlKind; t
 type TaskCommandReceipt = TaskCommand & { position: number; revision: number };
 export type TaskCommandResponse = { command: TaskCommandReceipt; run: Run; accepted?: boolean; retryable?: boolean; error?: string };
 export type PendingTaskCommand = { command: TaskCommand; started: number; sending?: boolean; error?: string; accepted?: boolean; position?: number; rejected?: boolean; retryManually?: boolean };
+export type ModelSelection = {
+  chat_profile_id?: string;
+  chat_profile_version?: string;
+  chat_reasoning?: string;
+  task_profile_id?: string;
+  task_profile_version?: string;
+  task_reasoning?: string;
+};
 export type Artifact = { id: string; kind: "screenshot" };
 export type Run = {
   id: string;
@@ -73,6 +81,7 @@ export type Run = {
   /** Recorded spend is partial when at least one provider cost is unknown. */
   cost_unknown?: boolean;
   budget_usd?: number;
+  model_selection?: ModelSelection;
   parent_id?: string;
   subtask_spent_usd?: number;
   started_at: string;
@@ -89,6 +98,7 @@ export type Usage = {
 type ClassificationHint = { intent?: string; intents?: string[]; confidence?: number; available: boolean };
 export type ConversationTrace = {
   id: string; turn_id: string; attempt: number; input_ids: string[]; model: string;
+  served_model?: string; model_selection?: ModelSelection;
   status: "running" | "completed" | "superseded" | "error";
   started_at: string; finished_at?: string; duration_ms?: number;
   classification_hint?: ClassificationHint;

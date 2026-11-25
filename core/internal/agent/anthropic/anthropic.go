@@ -15,6 +15,7 @@ import (
 	"nori/internal/agent"
 	"nori/internal/contextview"
 	"nori/internal/llmguard"
+	"nori/internal/modelgateway"
 	"nori/internal/transcript"
 	"nori/internal/usage"
 )
@@ -36,6 +37,7 @@ type Client struct {
 	Meter            usage.Meter
 	TestURL          string
 	DefaultReasoning string
+	gatewayURL       string
 }
 
 func New(key, model string, meter usage.Meter) *Client {
@@ -49,6 +51,14 @@ func New(key, model string, meter usage.Meter) *Client {
 	}
 }
 
+// NewGateway creates an Anthropic Messages client routed through a model gateway
+// (e.g. Vercel AI Gateway's /v1/messages endpoint) using Bearer authentication.
+func NewGateway(baseURL, key, model string, meter usage.Meter) *Client {
+	c := New(key, model, meter)
+	c.gatewayURL = strings.TrimRight(baseURL, "/") + "/messages"
+	return c
+}
+
 func (c *Client) guard() *llmguard.Guard {
 	if c != nil && c.Guard != nil {
 		return c.Guard
@@ -60,19 +70,37 @@ func (c *Client) httpClient() *http.Client {
 	return c.guard().WrapClient(c.HTTP, 2*time.Minute, llmguard.CallMeta{
 		UserID:   c.UserID,
 		Scope:    llmguard.ScopeTask,
-		Provider: provider,
+		Provider: c.Provider(),
 		Model:    c.ModelName,
 	})
 }
 
-func (c *Client) Provider() string { return provider }
-func (c *Client) Name() string     { return c.ModelName }
+func (c *Client) Provider() string {
+	if c.gatewayURL != "" {
+		return modelgateway.Provider
+	}
+	return provider
+}
+func (c *Client) Name() string { return c.ModelName }
 
 func (c *Client) endpoint() string {
+	if c.gatewayURL != "" {
+		return c.gatewayURL
+	}
 	if c.TestURL != "" {
 		return strings.TrimRight(c.TestURL, "/") + "/v1/messages"
 	}
 	return messagesURL
+}
+
+func (c *Client) setAuthHeaders(httpReq *http.Request) {
+	if c.gatewayURL != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.Key)
+	} else {
+		httpReq.Header.Set("x-api-key", c.Key)
+	}
+	httpReq.Header.Set("anthropic-version", apiVersion)
+	httpReq.Header.Set("Content-Type", "application/json")
 }
 
 func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Response, err error) {
@@ -153,11 +181,11 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	reqCtx := llmguard.WithMeta(ctx, llmguard.CallMeta{
 		UserID:          c.UserID,
 		Scope:           scope,
-		Provider:        provider,
+		Provider:        c.Provider(),
 		Model:           c.ModelName,
 		MaxOutputTokens: maxTokens,
 	})
-	record := usage.Attempt(ctx, provider, c.ModelName)
+	record := usage.Attempt(ctx, c.Provider(), c.ModelName)
 	if err := c.Meter.RecordUsage(ctx, record); err != nil {
 		return out, err
 	}
@@ -173,7 +201,7 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 			prev.RequestStatus = "unknown"
 		}
 		_ = usage.Finish(ctx, c.Meter, prev)
-		record = usage.Attempt(ctx, provider, c.ModelName)
+		record = usage.Attempt(ctx, c.Provider(), c.ModelName)
 		if err := c.Meter.RecordUsage(ctx, record); err != nil {
 			record.RequestStatus = "not_sent"
 			return err
@@ -335,11 +363,9 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 	if err != nil {
 		return out, err
 	}
-	httpReq.Header.Set("x-api-key", c.Key)
-	httpReq.Header.Set("anthropic-version", apiVersion)
-	httpReq.Header.Set("Content-Type", "application/json")
+	c.setAuthHeaders(httpReq)
 
-	record := usage.Attempt(ctx, provider, c.ModelName)
+	record := usage.Attempt(ctx, c.Provider(), c.ModelName)
 	if err := c.Meter.RecordUsage(ctx, record); err != nil {
 		return out, err
 	}
@@ -413,9 +439,7 @@ func (c *Client) doWithRetry(ctx context.Context, body []byte, onRetry func(stat
 		if err != nil {
 			return nil, err
 		}
-		httpReq.Header.Set("x-api-key", c.Key)
-		httpReq.Header.Set("anthropic-version", apiVersion)
-		httpReq.Header.Set("Content-Type", "application/json")
+		c.setAuthHeaders(httpReq)
 
 		res, err := client.Do(httpReq)
 		if err != nil {

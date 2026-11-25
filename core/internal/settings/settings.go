@@ -82,6 +82,17 @@ type Models struct {
 	// OuterProvider and InnerProvider optionally override the provider per tier.
 	Provider, OuterProvider, InnerProvider string
 	GatewayURL, GatewayKey                 string
+	// LocalURL and LocalModel optionally configure a local loopback OpenAI-compatible
+	// endpoint (e.g. standalone Ollama serving Inkling 2 Mini) alongside the cloud gateway
+	// in local dev (NORI_LOCAL_MODEL_URL, NORI_LOCAL_MODEL_TAG).
+	LocalURL, LocalModel string
+	// ProfilesFile is an optional hot-reloaded JSON file defining or overriding approved
+	// model profiles (NORI_MODEL_PROFILES_FILE). ProfilesJSON is an optional inline JSON
+	// override (NORI_MODEL_PROFILES).
+	ProfilesFile, ProfilesJSON string
+	// PickerUsers lists comma-separated user IDs or emails allowed to switch models in
+	// production (NORI_MODEL_PICKER_USERS). Local mode always allows switching.
+	PickerUsers []string
 	// MaxUSD optionally sets a process-wide hard estimated spend ceiling in llmguard (NORI_LLM_MAX_USD).
 	MaxUSD float64
 	// TestURL sends every model request to a loopback HTTP stub instead of the provider. Local development only

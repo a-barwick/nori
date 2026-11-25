@@ -41,6 +41,10 @@ func (d *Database) UserRoutingPending(ctx context.Context) (bool, error) {
 }
 
 func (d *Database) AcceptConversationInput(ctx context.Context, id, text string, attachments []string) error {
+	return d.AcceptConversationInputWithModel(ctx, id, text, attachments, nil)
+}
+
+func (d *Database) AcceptConversationInputWithModel(ctx context.Context, id, text string, attachments []string, sel *state.ModelSelection) error {
 	traceContext := observability.InjectTrace(ctx)
 	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		doc, err := tx.Get(d.conversationInputs().Doc(id))
@@ -49,7 +53,7 @@ func (d *Database) AcceptConversationInput(ctx context.Context, id, text string,
 			if err = doc.DataTo(&saved); err != nil {
 				return err
 			}
-			return state.ReplayUserInput(saved, text, attachments)
+			return state.ReplayUserInputWithModel(saved, text, attachments, sel)
 		}
 		if !notFound(err) {
 			return err
@@ -67,7 +71,7 @@ func (d *Database) AcceptConversationInput(ctx context.Context, id, text string,
 			return err
 		}
 		now := d.now()
-		c, input, message := state.AdmitUserInput(c, id, text, attached, now, traceContext)
+		c, input, message := state.AdmitUserInputWithModel(c, id, text, attached, sel, now, traceContext)
 		if err = tx.Set(d.conversation(), c); err != nil {
 			return err
 		}

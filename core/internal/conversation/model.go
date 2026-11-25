@@ -53,11 +53,12 @@ type ToolCall struct {
 }
 
 type Reply struct {
-	Usage      state.Usage
-	Message    json.RawMessage
-	Text       string
-	Calls      []ToolCall
-	Structured bool
+	Usage       state.Usage
+	Message     json.RawMessage
+	Text        string
+	Calls       []ToolCall
+	Structured  bool
+	ServedModel string
 }
 
 func modelMessage(value any) json.RawMessage {

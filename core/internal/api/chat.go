@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"nori/internal/conversation"
+	"nori/internal/modelprofiles"
 	"nori/internal/state"
 )
 
@@ -13,24 +14,29 @@ const ChatContract = "nori-chat-2"
 // capabilitiesView is the GET /v1/capabilities payload (common.schema.json#/$defs/Capabilities).
 // Assistant fields are omitted when the assistant routes are not registered, matching AssistantCapabilities.
 type capabilitiesView struct {
-	Contract             string            `json:"contract"`
-	ConversationContract string            `json:"conversationContract,omitempty"`
-	Service              string            `json:"service"`
-	Persistence          string            `json:"persistence,omitempty"`
-	Provider             string            `json:"provider,omitempty"`
-	Model                string            `json:"model,omitempty"`
-	ConversationModes    []string          `json:"conversationModes"`
-	Features             map[string]bool   `json:"features"`
-	AssistantContract    string            `json:"assistant_contract,omitempty"`
-	AssistantFeatures    map[string]bool   `json:"assistant_features,omitempty"`
-	UploadAccept         *uploadAcceptView `json:"upload_accept,omitempty"`
+	Contract             string                       `json:"contract"`
+	ConversationContract string                       `json:"conversationContract,omitempty"`
+	Service              string                       `json:"service"`
+	Persistence          string                       `json:"persistence,omitempty"`
+	Provider             string                       `json:"provider,omitempty"`
+	Model                string                       `json:"model,omitempty"`
+	ConversationModes    []string                     `json:"conversationModes"`
+	Features             map[string]bool              `json:"features"`
+	AssistantContract    string                       `json:"assistant_contract,omitempty"`
+	AssistantFeatures    map[string]bool              `json:"assistant_features,omitempty"`
+	UploadAccept         *uploadAcceptView            `json:"upload_accept,omitempty"`
+	ModelProfiles        *modelprofiles.PublicCatalog `json:"model_profiles,omitempty"`
 }
 
 func (s *server) capabilities(w http.ResponseWriter, r *http.Request) {
 	modes := []string{"assistant"}
+	provider := s.ModelProvider
+	if provider == "" {
+		provider = "openai"
+	}
 	body := capabilitiesView{
 		Contract: ChatContract, ConversationContract: "nori-conversations-1", Service: "nori",
-		Persistence: "durable", Provider: "openai", Model: s.Model, ConversationModes: modes,
+		Persistence: "durable", Provider: provider, Model: s.Model, ConversationModes: modes,
 		Features: map[string]bool{"backgroundTasks": !s.Features.DisableBackgroundTasks, "jev": !s.Features.DisableBackgroundTasks && !s.Features.DisableJev},
 	}
 	if s.Assistant != nil {
@@ -39,6 +45,12 @@ func (s *server) capabilities(w http.ResponseWriter, r *http.Request) {
 		body.AssistantFeatures = s.Assistant.Features
 		accepted := uploadAccept()
 		body.UploadAccept = &accepted
+	}
+	if s.CanPickModels && s.ModelProfiles != nil {
+		pub := s.ModelProfiles.Snapshot().Public()
+		if len(pub.Profiles) > 0 {
+			body.ModelProfiles = &pub
+		}
 	}
 	writeJSON(w, 200, body)
 }
@@ -55,12 +67,29 @@ func (s *server) assistantConversationSnapshot(w http.ResponseWriter, r *http.Re
 	}
 }
 
+func (s *server) resolveModelSelection(w http.ResponseWriter, sel *state.ModelSelection) (*state.ModelSelection, bool) {
+	if sel.IsEmpty() {
+		return nil, true
+	}
+	if !s.CanPickModels || s.ModelProfiles == nil {
+		writeJSON(w, 403, map[string]string{"error": "Model selection is not enabled for this account."})
+		return nil, false
+	}
+	resolved, err := s.ModelProfiles.ValidateAndResolve(sel)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return nil, false
+	}
+	return resolved, true
+}
+
 func (s *server) assistantConversationMessage(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		ID          string       `json:"id"`
-		Text        string       `json:"text"`
-		Attachments []string     `json:"attachments,omitempty"`
-		Parts       []state.Part `json:"parts,omitempty"`
+		ID          string                `json:"id"`
+		Text        string                `json:"text"`
+		Attachments []string              `json:"attachments,omitempty"`
+		Parts       []state.Part          `json:"parts,omitempty"`
+		Model       *state.ModelSelection `json:"model,omitempty"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -93,7 +122,11 @@ func (s *server) assistantConversationMessage(w http.ResponseWriter, r *http.Req
 			return
 		}
 	}
-	session, err := s.Runner.HandleInput(r.Context(), conversation.Input{ID: body.ID, Message: body.Text, Attachments: body.Attachments})
+	sel, ok := s.resolveModelSelection(w, body.Model)
+	if !ok {
+		return
+	}
+	session, err := s.Runner.HandleInput(r.Context(), conversation.Input{ID: body.ID, Message: body.Text, Attachments: body.Attachments, ModelSelection: sel})
 	if err != nil {
 		writeError(w, err)
 		return

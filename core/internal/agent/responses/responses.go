@@ -44,6 +44,10 @@ type Client struct {
 	TestURL string
 	// DefaultReasoning sets the reasoning effort for requests that do not specify one.
 	DefaultReasoning string
+	// AllowGatewayReasoning enables sending reasoning.effort when routing through gatewayURL.
+	AllowGatewayReasoning bool
+	// LocalOnly marks requests routed to a local-only inference server (e.g. Ollama).
+	LocalOnly bool
 	// Optional retry configuration hooks for transient provider errors (429, 5xx, network).
 	MaxRetries     int
 	RetryBaseDelay time.Duration
@@ -198,7 +202,7 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	if effort == "" {
 		effort = c.DefaultReasoning
 	}
-	if c.gatewayURL == "" && effort != "" {
+	if (c.gatewayURL == "" || c.AllowGatewayReasoning) && effort != "" && effort != "none" {
 		fields["reasoning"] = map[string]string{"effort": effort}
 	}
 	c.requestOptions(fields)
@@ -294,6 +298,10 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		return out, errors.New("task model returned an unreadable response")
 	}
 	out.Cost, out.CostKnown = c.recordCost(&record, response.Model, response.Tier, response.Usage)
+	if c.LocalOnly && !out.CostKnown {
+		record.CostStatus = "local"
+		out.CostLocal = true
+	}
 	if u := response.Usage; u != nil && u.Input != nil && u.Output != nil && u.Total != nil {
 		nonReasoning := max(*u.Output-u.OutputDetails.Reasoning, 0)
 		out.Usage = &agent.Usage{

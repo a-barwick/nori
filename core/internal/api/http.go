@@ -11,18 +11,22 @@ import (
 	"github.com/google/uuid"
 	"nori/internal/conversation"
 	"nori/internal/httpjson"
+	"nori/internal/modelprofiles"
 	"nori/internal/settings"
 	"nori/internal/state"
 	"nori/internal/wake"
 )
 
 type Deps struct {
-	Features settings.Features
-	Model    string
-	Runner   *conversation.Runner
-	Tasks    *conversation.Tasks
-	Waker    wake.Waker
-	Ops      Operations
+	Features      settings.Features
+	Model         string
+	ModelProvider string
+	ModelProfiles *modelprofiles.Registry
+	CanPickModels bool
+	Runner        *conversation.Runner
+	Tasks         *conversation.Tasks
+	Waker         wake.Waker
+	Ops           Operations
 	// Assistant serves the /v1 management routes. Nil leaves them unregistered.
 	Assistant *Assistant
 	// Deltas optionally broadcasts ephemeral action-free outer streaming text snapshots.

@@ -73,6 +73,9 @@ type Response struct {
 	Usage     *Usage
 	Cost      float64
 	CostKnown bool
+	// CostLocal is true when the call ran on a verified local-only model (e.g. Ollama)
+	// that reports no USD charge.
+	CostLocal bool
 	// NotSent confirms the adapter stopped before dispatch, so missing cost is not
 	// uncertain billing. False stays conservative for older saved activity results.
 	NotSent bool

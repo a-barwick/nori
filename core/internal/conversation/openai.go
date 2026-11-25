@@ -45,6 +45,10 @@ type OpenAIModel struct {
 	TestURL string
 	// ReasoningEffort overrides the direct OpenAI reasoning_effort (defaults to "low").
 	ReasoningEffort string
+	// AllowGatewayReasoning enables sending reasoning_effort when routing through gatewayURL.
+	AllowGatewayReasoning bool
+	// LocalOnly marks requests routed to a local-only inference server (e.g. Ollama).
+	LocalOnly bool
 	// Optional determinism hooks. Nil defaults to time.Now and uuid.NewString.
 	Now   func() time.Time
 	NewID func() string
@@ -317,6 +321,9 @@ func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span tr
 		body["reasoning_effort"], body["service_tier"] = effort, "default"
 		body["prompt_cache_options"] = map[string]string{"mode": "explicit"}
 		span.SetAttributes(attribute.String("gen_ai.request.reasoning_effort", effort), attribute.String("gen_ai.request.service_tier", "default"))
+	} else if m.gatewayURL != "" && m.AllowGatewayReasoning && m.ReasoningEffort != "" && m.ReasoningEffort != "none" {
+		body["reasoning_effort"] = m.ReasoningEffort
+		span.SetAttributes(attribute.String("gen_ai.request.reasoning_effort", m.ReasoningEffort))
 	}
 	if request.Stream != nil {
 		body["stream"] = true
@@ -362,6 +369,9 @@ func (m *OpenAIModel) decodeOpenAIReply(res *http.Response, reply Reply, noDispa
 	if err := json.NewDecoder(io.LimitReader(res.Body, 2<<20)).Decode(&response); err != nil {
 		return reply, fmt.Errorf("model returned an unreadable response")
 	}
+	if response.Model != "" {
+		reply.ServedModel = response.Model
+	}
 	if response.Usage != nil {
 		reply.Usage.InputTokens = response.Usage.Input
 		reply.Usage.OutputTokens = response.Usage.Output
@@ -372,6 +382,9 @@ func (m *OpenAIModel) decodeOpenAIReply(res *http.Response, reply Reply, noDispa
 			var cost *float64
 			if json.Unmarshal(response.Usage.Cost, &cost) == nil {
 				usage.RecordReportedCost(&reply.Usage, cost)
+			}
+			if reply.Usage.CostUSD == nil && m.LocalOnly {
+				reply.Usage.CostStatus = "local"
 			}
 		} else {
 			cost, costErr := usage.SolCostWithWrites(
@@ -386,6 +399,9 @@ func (m *OpenAIModel) decodeOpenAIReply(res *http.Response, reply Reply, noDispa
 			attribute.Int64("gen_ai.usage.cache_read.input_tokens", cached),
 			attribute.Int64("gen_ai.usage.cache_write.input_tokens", written),
 		)
+	}
+	if reply.Usage.CostUSD == nil && m.LocalOnly {
+		reply.Usage.CostStatus = "local"
 	}
 	if len(response.Choices) != 1 {
 		return reply, fmt.Errorf("model returned no single response")

@@ -15,6 +15,7 @@ import (
 	"nori/internal/connections"
 	"nori/internal/conversation"
 	"nori/internal/llmguard"
+	"nori/internal/modelprofiles"
 	"nori/internal/permissions"
 	"nori/internal/platform"
 	"nori/internal/scheduler"
@@ -37,6 +38,9 @@ type App struct {
 	Waker          wake.Waker
 	WakeRepair     *wake.Repairer
 	Model          string
+	ModelProvider  string
+	ModelProfiles  *modelprofiles.Registry
+	CanPickModels  bool
 	handler        http.Handler
 	Assistant      *api.Assistant
 	Deltas         *api.DeltaBroker
@@ -75,6 +79,12 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 	waker = wake.ForUser(waker, user.ID)
 	model := cfg.Models.Outer
 	outer := platform.ReplyModelForUser(cfg.Models, user.ID)
+	profilesReg, err := modelprofiles.NewRegistry(cfg)
+	if err != nil {
+		store.Close()
+		return nil, false, err
+	}
+	canPickModels := profilesReg.CanSelect(user.ID, user.Email)
 	location, err := time.LoadLocation(cfg.TimeZone)
 	if err != nil {
 		store.Close()
@@ -83,13 +93,16 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 	userFacts := user.Facts()
 	deltas := api.NewDeltaBroker()
 	result := &App{
-		UserID:   user.ID,
-		Store:    store,
-		Leases:   leases,
-		Features: cfg.Features,
-		Waker:    waker,
-		Model:    model,
-		Deltas:   deltas,
+		UserID:        user.ID,
+		Store:         store,
+		Leases:        leases,
+		Features:      cfg.Features,
+		Waker:         waker,
+		Model:         model,
+		ModelProvider: cfg.Models.EffectiveOuterProvider(),
+		ModelProfiles: profilesReg,
+		CanPickModels: canPickModels,
+		Deltas:        deltas,
 	}
 	services, err := platform.Assistant(cfg, user, store)
 	if err != nil {
@@ -139,6 +152,17 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 	runner.Profile = platform.Profile(user, services.Connections)
 	runner.Clock = conversation.Clock{Location: location}
 	runner.OnDelta = deltas.Publish
+	modelsCfg := cfg.Models
+	runner.ModelForTurn = func(sel *state.ModelSelection) conversation.ReplyModel {
+		p, reasoning, explicit, err := profilesReg.ResolveChat(sel)
+		if !explicit {
+			return nil
+		}
+		if err != nil {
+			return &unavailableReplyModel{name: sel.ChatProfileID, err: err}
+		}
+		return platform.ReplyModelForProfile(modelsCfg, user.ID, p, reasoning)
+	}
 
 	taskService := agent.New(store, platform.TaskModelForUser(cfg.Models, store, user.ID))
 	taskService.Capabilities = agent.Capabilities{SearchKey: cfg.SearchKey, Location: location}
@@ -156,7 +180,17 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 		return json.Unmarshal(r.Body, &overlay) == nil && overlay.DeletedAt != nil
 	}
 	result.TaskActivities = &task.Activities{
-		Agent:  taskService,
+		Agent: taskService,
+		ModelForRun: func(sel *state.ModelSelection) agent.Model {
+			p, reasoning, explicit, err := profilesReg.ResolveTask(sel)
+			if !explicit {
+				return nil
+			}
+			if err != nil {
+				return &unavailableTaskModel{name: sel.TaskProfileID, err: err}
+			}
+			return platform.TaskModelForProfile(modelsCfg, store, user.ID, p, reasoning)
+		},
 		Store:  store,
 		UserID: user.ID,
 		Executor: &task.Executor{
@@ -239,7 +273,10 @@ func (a *App) Close() {
 }
 
 func (a *App) apiDeps() api.Deps {
-	return api.Deps{Model: a.Model, Runner: a.Runner, Tasks: a.Tasks, Waker: a.Waker, Ops: a, Features: a.Features, Assistant: a.Assistant, Deltas: a.Deltas}
+	return api.Deps{
+		Model: a.Model, ModelProvider: a.ModelProvider, ModelProfiles: a.ModelProfiles, CanPickModels: a.CanPickModels,
+		Runner: a.Runner, Tasks: a.Tasks, Waker: a.Waker, Ops: a, Features: a.Features, Assistant: a.Assistant, Deltas: a.Deltas,
+	}
 }
 
 // Resume repairs this user's discovery leases/wakes (including StopPaused while globally paused)

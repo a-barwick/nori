@@ -345,6 +345,25 @@ export type Capabilities = {
     operations?: boolean;
   };
   upload_accept?: UploadAccept;
+  model_profiles?: ModelProfileCatalog;
+};
+export type ModelProfile = {
+  id: string;
+  version: string;
+  label: string;
+  backend: "local" | "gateway";
+  model: string;
+  lanes: ("chat" | "task")[];
+  supported_reasoning?: string[];
+  default_reasoning?: string;
+  paid: boolean;
+};
+export type ModelProfileCatalog = {
+  default_chat_profile_id?: string;
+  default_chat_reasoning?: string;
+  default_task_profile_id?: string;
+  default_task_reasoning?: string;
+  profiles: ModelProfile[];
 };
 export type WorkingHours = {
   day: number;

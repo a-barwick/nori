@@ -286,11 +286,12 @@ func (a *Activities) runtimeTool(ctx context.Context, in ToolInput, op *state.Op
 		}
 		return persist(outcome, map[string]any{"cost_unknown": policy.InterruptedCostUnknown, "cost_usd": policy.InterruptedCostUSD}, errors.New("the worker stopped before the operation result was saved"))
 	}
-	if _, err := a.Store.Guard(ctx, in.RunID, in.Revision); err != nil {
-		if _, saveErr := persist("skipped", nil, err); saveErr != nil {
+	run, guardErr := a.Store.Guard(ctx, in.RunID, in.Revision)
+	if guardErr != nil {
+		if _, saveErr := persist("skipped", nil, guardErr); saveErr != nil {
 			return nil, saveErr
 		}
-		return nil, err
+		return nil, guardErr
 	}
 	op.Attempt++
 	if err := a.Store.PutOperation(ctx, in.RunID, *op); err != nil {
@@ -315,7 +316,7 @@ func (a *Activities) runtimeTool(ctx context.Context, in ToolInput, op *state.Op
 		offset, _ := in.Call.Args["offset"].(string)
 		output, err = a.taskHistoryRead(ctx, in.RunID, ref, before, offset)
 	} else {
-		output, err = a.Agent.CallRuntimeTool(observability.SuppressErrorCapture(ctx), in.RunID, in.Call.Name, in.Call.Args)
+		output, err = a.agentForRun(run).CallRuntimeTool(observability.SuppressErrorCapture(ctx), in.RunID, in.Call.Name, in.Call.Args)
 	}
 	if rerunnable && errors.Is(ctx.Err(), context.Canceled) {
 		return nil, context.Cause(ctx)

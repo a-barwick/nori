@@ -25,7 +25,9 @@ import (
 
 type Activities struct {
 	Agent *agent.Service
-	Store state.TaskStore
+	// ModelForRun, when set, resolves a per-run agent.Model from run.ModelSelection.
+	ModelForRun func(*state.ModelSelection) agent.Model
+	Store       state.TaskStore
 	// Executor runs registry tools through App connectors and the MCP client. Nil leaves them
 	// unavailable.
 	Executor *Executor
@@ -361,6 +363,18 @@ func (a *Activities) bounded(parent context.Context, step Step, interruptible bo
 	return ctx, func() { cancel(nil); <-done }, run, nil
 }
 
+func (a *Activities) agentForRun(run state.Run) *agent.Service {
+	svc := a.Agent
+	if a.ModelForRun != nil && !run.ModelSelection.IsEmpty() {
+		if resolved := a.ModelForRun(run.ModelSelection); resolved != nil {
+			cp := *a.Agent
+			cp.Model = resolved
+			svc = &cp
+		}
+	}
+	return svc
+}
+
 func (a *Activities) Model(parent context.Context, in ModelInput) (ModelOutcome, error) {
 	ctx, done, run, e := a.bounded(parent, in.Step, in.Interruptible)
 	if e != nil {
@@ -373,10 +387,11 @@ func (a *Activities) Model(parent context.Context, in ModelInput) (ModelOutcome,
 	if traceID == "" {
 		traceID = uuid.NewString()
 	}
+	svc := a.agentForRun(run)
 	trace := state.TaskStep{
 		ID:   traceID,
 		Kind: "model", Status: "running", Revision: in.Revision, StartedAt: a.now().UTC(),
-		Model: a.Agent.Model.Name(), CostStatus: "unknown",
+		Model: svc.Model.Name(), CostStatus: "unknown",
 	}
 	if in.ContextRetry {
 		trace.ID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(trace.ID+":context")).String()
@@ -389,7 +404,7 @@ func (a *Activities) Model(parent context.Context, in ModelInput) (ModelOutcome,
 	// Uses the runtime clock because context.WithDeadline compares against real time.
 	modelCtx, stop := context.WithDeadline(ctx, modelRequestDeadline(ctx, time.Now()))
 	defer stop()
-	response, e := a.Agent.Decide(observability.SuppressErrorCapture(modelCtx), in.Messages, true, !in.Subtask)
+	response, e := svc.Decide(observability.SuppressErrorCapture(modelCtx), in.Messages, true, !in.Subtask)
 	span.SetAttributes(
 		attribute.Bool("nori.output.present", response.Answer != ""),
 		attribute.Int("nori.tool.call_count", len(response.Calls)),
@@ -410,9 +425,11 @@ func (a *Activities) Model(parent context.Context, in ModelInput) (ModelOutcome,
 	}
 	if response.CostKnown {
 		trace.CostUSD, trace.CostStatus = &response.Cost, "reported"
-		if a.Agent.Model.Provider() == "openai" {
+		if svc.Model.Provider() == "openai" {
 			trace.CostStatus = "calculated"
 		}
+	} else if response.CostLocal {
+		trace.CostStatus = "local"
 	} else if response.NotSent {
 		trace.CostStatus = "not_sent"
 	}

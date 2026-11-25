@@ -80,6 +80,11 @@ func (s *server) turn(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	sel, ok := s.resolveModelSelection(w, input.ModelSelection)
+	if !ok {
+		return
+	}
+	input.ModelSelection = sel
 	session, err := s.Runner.HandleInput(r.Context(), input)
 	if err != nil {
 		writeError(w, err)
