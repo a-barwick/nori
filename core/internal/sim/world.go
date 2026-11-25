@@ -186,11 +186,7 @@ func NewWorld(seed int64, cfg WorldConfig) *World {
 		}
 	}
 	if cfg.UserSends == "" {
-		if workloadRNG.IntN(2) == 0 {
-			cfg.UserSends = "ask"
-		} else {
-			cfg.UserSends = "allow"
-		}
+		cfg.UserSends = "ask"
 	}
 
 	storeFaults := cfg.StoreFaults

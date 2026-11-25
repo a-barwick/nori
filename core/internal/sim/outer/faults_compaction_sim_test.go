@@ -273,7 +273,7 @@ func TestOuterWithStoreFaultsAndDeterminism(t *testing.T) {
 
 type hookedSummaryModel struct {
 	base     *outer.FakeSummaryModel
-	onBefore func(ctx context.Context) error
+	onBefore func(ctx context.Context, req agent.Request) error
 	called   int
 }
 
@@ -284,7 +284,7 @@ func (m *hookedSummaryModel) Name() string {
 func (m *hookedSummaryModel) Respond(ctx context.Context, req agent.Request) (agent.Response, error) {
 	m.called++
 	if m.onBefore != nil {
-		if err := m.onBefore(ctx); err != nil {
+		if err := m.onBefore(ctx, req); err != nil {
 			return agent.Response{}, err
 		}
 	}
@@ -378,8 +378,12 @@ func TestOuterConcurrentReplicaCompactionMerge(t *testing.T) {
 	hookRan := false
 	hooked := &hookedSummaryModel{
 		base: baseSummarizer,
-		onBefore: func(hookCtx context.Context) error {
+		onBefore: func(hookCtx context.Context, req agent.Request) error {
 			if hookRan {
+				return nil
+			}
+			// Only race on flush_and_compact (never on extract_only calls).
+			if len(req.Tools) == 0 || req.Tools[0].Name != "flush_and_compact" {
 				return nil
 			}
 			hookRan = true

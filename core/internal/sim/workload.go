@@ -801,8 +801,15 @@ func (w *World) stepPermissions(ctx context.Context, uw *UserWorld) {
 			InstructionRevision: &rev,
 			Kind:                kind,
 			Prompt:              fmt.Sprintf("confirm %s on %s at step %d", kind, target.ID, w.step),
-			Payload:             json.RawMessage(`{"tool":"sim_send"}`),
+			Payload:             json.RawMessage(`{"tool_id":"sim_send","effect":"sensitive_send"}`),
 			ActionDigest:        digest,
+		}
+		if kind == "approval" {
+			inter.ToolID = "sim_send"
+			inter.ToolTitle = "sim_send"
+			inter.ActionClass = "sensitive_send"
+			inter.ConnectionID = "conn_1"
+			inter.Recipients = []string{"alice@example.com"}
 		}
 		if w.RNG.IntN(2) == 0 {
 			exp := w.Clock.Now().Add(time.Duration(30+w.RNG.IntN(600)) * time.Second)
@@ -845,8 +852,15 @@ func (w *World) stepPermissions(ctx context.Context, uw *UserWorld) {
 		case "approval":
 			if w.RNG.IntN(2) == 0 {
 				resp.Kind = "approve"
+				if w.RNG.IntN(3) == 0 {
+					resp.RememberRule = true
+				}
 			} else {
 				resp.Kind = "decline"
+				if w.RNG.IntN(6) == 0 {
+					// Adversarial remember_rule on decline must never create a rule.
+					resp.RememberRule = true
+				}
 			}
 			resp.ActionDigest = ti.actionDigest
 			if w.RNG.IntN(5) == 0 {
@@ -927,10 +941,7 @@ func (w *World) stepPermissions(ctx context.Context, uw *UserWorld) {
 }
 
 func (w *World) randomRuleEditable() permissions.RuleEditable {
-	effect := "allow"
-	if w.RNG.IntN(3) == 0 {
-		effect = "deny"
-	}
+	effect := []string{"allow", "ask", "deny"}[w.RNG.IntN(3)]
 	classes := [][]string{
 		{"read"},
 		{"reversible_write"},
@@ -1717,7 +1728,7 @@ func (w *World) stepTimeAndPause(ctx context.Context) {
 	}
 
 	// Curated time-jump ladder crossing RestartQuiet (1s), TaskLease/ConversationLease (30s),
-	// IdleFlushDelay (+2m), IdleExtractDelay (+5m), IdleDreamDelay (+15m),
+	// IdleExtractDelay (+2m), IdleDreamDelay (+15m), ApprovalExpiry (+30m),
 	// DreamMinInterval (+12h), repair intervals (60s), interaction expiries,
 	// and automation due slots.
 	durations := []time.Duration{
@@ -1726,10 +1737,10 @@ func (w *World) stepTimeAndPause(ctx context.Context) {
 		2 * time.Second,
 		15 * time.Second,
 		45 * time.Second,
-		state.IdleFlushDelay + 5*time.Second,
 		state.IdleExtractDelay + 5*time.Second,
 		6 * time.Minute,
 		state.IdleDreamDelay + 5*time.Second,
+		task.ApprovalExpiry + time.Minute,
 		65 * time.Minute,
 		state.DreamMinInterval + 5*time.Minute,
 	}

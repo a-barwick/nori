@@ -246,7 +246,8 @@ func hasWriteProhibition(latestLower, effect string) bool {
 		"strictly hypothetical",
 		"hypothetical only",
 		"strictly read-only",
-		"read-only",
+		"read-only only",
+		"keep it read-only",
 		"do not actually",
 		"don't actually",
 		"do not call ",
@@ -260,6 +261,9 @@ func hasWriteProhibition(latestLower, effect string) bool {
 		if strings.Contains(latestLower, phrase) {
 			return true
 		}
+	}
+	if strings.Contains(latestLower, "read-only") && !hasWriteIntent(latestLower) {
+		return true
 	}
 	if effect == "sensitive_send" || effect == "unknown" {
 		sendBans := []string{"do not send", "don't send", "do not email", "don't email", "draft only", "just a draft"}

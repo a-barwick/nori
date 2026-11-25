@@ -131,9 +131,7 @@ const (
 	MaxSummaryNote  = 200
 	MaxSummaryGist  = 4000
 	// Coupled compaction, session-idle extraction, & AutoDream scheduling parameters.
-	MaxFlushRetries = 3
-	// Deprecated: compaction no longer triggers on idle time alone; retained temporarily for sim compilation.
-	IdleFlushDelay       = 2 * time.Minute
+	MaxFlushRetries      = 3
 	IdleExtractDelay     = 2 * time.Minute
 	ExtractTurnThreshold = 3
 	IdleDreamDelay       = 15 * time.Minute

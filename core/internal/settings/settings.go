@@ -209,7 +209,7 @@ func connectionsFromEnvironment() Connections {
 		CredentialKeySecret: os.Getenv("NORI_CREDENTIAL_KEY_SECRET"),
 		CredentialKeyFile:   os.Getenv("NORI_CREDENTIAL_KEY_FILE"),
 		UnattendedWrites:    get("NORI_AUTOMATION_UNATTENDED", "confirm_writes"),
-		UserSends:           get("NORI_USER_SENDS", "allow"),
+		UserSends:           get("NORI_USER_SENDS", "ask"),
 		MCPCommands:         mcpCommands(os.Getenv("NORI_MCP_COMMANDS")),
 	}
 }

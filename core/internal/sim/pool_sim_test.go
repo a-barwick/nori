@@ -93,7 +93,11 @@ func (m *simPoolOuterModel) Respond(ctx context.Context, req conversation.ReplyR
 			return conversation.Reply{Usage: usage}, err
 		}
 	}
-	msg, _ := json.Marshal(map[string]any{"role": "assistant", "content": text})
+	msgPayload := map[string]any{"role": "assistant", "content": text}
+	if len(calls) > 0 {
+		msgPayload["tool_calls"] = calls
+	}
+	msg, _ := json.Marshal(msgPayload)
 	return conversation.Reply{
 		Usage:   usage,
 		Message: msg,

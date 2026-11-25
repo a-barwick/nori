@@ -2346,8 +2346,8 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		})
 		requireViolation(t, w2.checker.CheckQuiescence(ctx, w2.targets, w2.clock.Now()), "INV-MEM-08.stale_excerpts")
 
-		// 8e. Unextracted completed turn past IdleExtractDelay (+20m) triggers INV-MEM-08.unextracted_after_idle,
-		// while before +20m, with future LaneConversation wake, or during active extract failure backoff it passes.
+		// 8e. Unextracted completed turn past IdleExtractDelay (+2m) triggers INV-MEM-08.unextracted_after_idle,
+		// while before +2m, with future LaneConversation wake, or during active extract failure backoff it passes.
 		w3 := newTestWorld()
 		owner3 := w3.alice.user.DataOwner()
 		e0 := w3.clock.Now().UTC()
