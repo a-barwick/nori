@@ -557,3 +557,119 @@ public extension NoriNotice where Trailing == EmptyView {
         self.init(title: title, detail: detail, tone: tone, systemImage: systemImage, trailing: { EmptyView() })
     }
 }
+
+// MARK: - NoriUnderlineTabs
+
+public struct NoriUnderlineTabs<Value: Hashable & Sendable>: View {
+    public let options: [NoriSegmentOption<Value>]
+    @Binding public var selection: Value
+    @Namespace private var underlineNamespace
+
+    public init(options: [NoriSegmentOption<Value>], selection: Binding<Value>) {
+        self.options = options
+        self._selection = selection
+    }
+
+    public var body: some View {
+        HStack(spacing: 0) {
+            ForEach(options) { option in
+                let isSelected = option.value == selection
+                Button {
+                    withAnimation(.spring(response: 0.26, dampingFraction: 0.86)) {
+                        selection = option.value
+                    }
+                } label: {
+                    VStack(spacing: 0) {
+                        HStack(spacing: 4) {
+                            Text(option.label)
+                                .font(.system(size: 13.5, weight: isSelected ? .semibold : .medium))
+                                .foregroundStyle(isSelected ? NoriColors.ink : NoriColors.ink2)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.85)
+
+                            if let count = option.count, count > 0 {
+                                Text(count > 99 ? "99+" : "\(count)")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .monospacedDigit()
+                                    .foregroundStyle(isSelected ? NoriColors.accent : NoriColors.ink2)
+                                    .padding(.horizontal, 5.5)
+                                    .frame(minWidth: 18, minHeight: 18)
+                                    .background(NoriColors.accentSubtle, in: Capsule())
+                                    .lineLimit(1)
+                                    .fixedSize()
+                            }
+                        }
+                        .padding(.horizontal, 4)
+                        .padding(.top, 10)
+                        .padding(.bottom, 9)
+
+                        ZStack {
+                            Color.clear
+                                .frame(height: 2.5)
+                            if isSelected {
+                                RoundedRectangle(cornerRadius: 1.25, style: .continuous)
+                                    .fill(NoriColors.accent)
+                                    .frame(height: 2.5)
+                                    .matchedGeometryEffect(id: "noriUnderlineTabIndicator", in: underlineNamespace)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+            }
+        }
+        .background(alignment: .bottom) {
+            Rectangle()
+                .fill(NoriColors.hairline)
+                .frame(height: 1)
+        }
+    }
+}
+
+// MARK: - NoriHeroCard
+
+public struct NoriHeroCard<Content: View>: View {
+    public let padding: CGFloat
+    private let content: Content
+
+    public init(padding: CGFloat = 16, @ViewBuilder content: () -> Content) {
+        self.padding = padding
+        self.content = content()
+    }
+
+    public var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+        content
+            .padding(padding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                LinearGradient(
+                    colors: [Color(hex: 0xFBF9FF), Color(hex: 0xF1EBFF)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                in: shape
+            )
+            .overlay(
+                shape.strokeBorder(Color(hex: 0xDFD4F6), lineWidth: 1)
+            )
+            .shadow(color: Color(hex: 0x5000FF, alpha: 0.06), radius: 14, x: 0, y: 6)
+    }
+}
+
+// MARK: - NoriTopWash
+
+public struct NoriTopWash: View {
+    public init() {}
+
+    public var body: some View {
+        LinearGradient(
+            colors: [Color(hex: 0xFAF8FE), Color(hex: 0xFFFFFF)],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+}
