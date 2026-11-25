@@ -10,6 +10,7 @@ import { APIError, mutate, newRequestID } from "@/lib/assistant/api";
 import { assistantURL } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { cadence, money, relative, when } from "@/lib/assistant/format";
+import { RULE_EFFECT_META } from "@/lib/assistant/permissions";
 import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
 import type { Automation, AutomationEditable, AutomationPreview, Connection, Effect, MissedRun, Occurrence, PermissionRule, Preferences, Trigger } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
@@ -129,7 +130,10 @@ function Authority({ ids }: { ids: string[] }) {
   const rules = useResource<List<PermissionRule>>(ids.length ? "/permissions" : null, { poll: 0 });
   if (!ids.length) return <p className="text-body text-ink-2">Nothing. It asks you before every action.</p>;
   const mine = (rules.data?.items ?? []).filter((rule) => ids.includes(rule.id));
-  return rules.loading ? <Loading /> : <Rows>{mine.map((rule) => <Row key={rule.id} href={`/settings/permissions#${rule.id}`} title={rule.summary ?? rule.title ?? "Permission"} trailing={<Pill tone={rule.effect === "deny" ? "danger" : "neutral"}>{rule.effect === "deny" ? "Never" : "Allowed"}</Pill>} />)}</Rows>;
+  return rules.loading ? <Loading /> : <Rows>{mine.map((rule) => {
+    const effectMeta = RULE_EFFECT_META[rule.effect];
+    return <Row key={rule.id} href={`/settings/permissions#${rule.id}`} title={rule.summary ?? rule.title ?? "Permission"} trailing={<Pill tone={effectMeta.tone}>{effectMeta.label}</Pill>} />;
+  })}</Rows>;
 }
 
 // ── Editor ──────────────────────────────────────────────────────

@@ -2,12 +2,21 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Check, KeyRound, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Check, Clock, KeyRound, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
-import { APIError, getJSON, mutate, newRequestID } from "@/lib/assistant/api";
+import { APIError, mutate, newRequestID } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { EFFECT_LABEL, relative } from "@/lib/assistant/format";
-import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
+import {
+  buildApprovalResponse,
+  formatInteractionExpiry,
+  resolvedStatusPill,
+  resolvedSummaryText,
+  resolveInteractionLocally,
+  responseAnnouncement,
+  submitInteractionResponse,
+} from "@/lib/assistant/interactions";
+import { useAction, useResource } from "@/lib/assistant/useResource";
 import type { AccountSelectionPayload, ApprovalPayload, AuthAttempt, Connection, Integration, Interaction, InteractionResponse, MCPServer, QuestionPayload, SignInPayload } from "@/lib/contracts/assistant";
 import { MAX_MESSAGE_BYTES } from "@/lib/submission";
 import { cn } from "@/lib/utils";
@@ -15,6 +24,7 @@ import { startSignIn } from "./AppsScreen";
 import { inputClass, Notice, Pill } from "./ui";
 
 type Value = InteractionResponse["value"];
+export type OnInteractionResolved = (resolved: Interaction, meta?: { rememberRule?: boolean }) => void;
 
 export function safeAuthorizeURL(url: string) {
   if (url.startsWith("/") && !url.startsWith("//") && !url.startsWith("/\\") && !url.includes("\\")) return url;
@@ -25,7 +35,7 @@ export function safeAuthorizeURL(url: string) {
  * Answers one pending interaction. Before acting it re-reads the interaction; if the
  * task revision, action digest or status changed, it shows the current version instead.
  */
-function useRespond(interaction: Interaction, onDone?: () => void) {
+function useRespond(interaction: Interaction, onResolved?: OnInteractionResolved) {
   const { runtime } = useAssistant();
   const action = useAction();
   const [current, setCurrent] = useState<Interaction>();
@@ -35,23 +45,21 @@ function useRespond(interaction: Interaction, onDone?: () => void) {
       if (legacy) {
         if (value.kind !== "answer" || !interaction.task_id) throw new Error("This question takes a written answer.");
         await runtime.commandTask(interaction.task_id, "answer", value.text, interaction.legacy_question_id);
+        onResolved?.(resolveInteractionLocally(interaction, value));
         return;
       }
-      const latest = await getJSON<Interaction>(`/interactions/${encodeURIComponent(interaction.id)}`);
-      if (latest.status !== "pending" || latest.revision !== interaction.revision || latest.action_digest !== interaction.action_digest || latest.instruction_revision !== interaction.instruction_revision) {
-        setCurrent(latest);
-        invalidate("/interactions", "/work", "/assistant/summary");
-        throw new Error(latest.status === "pending" ? "This changed since it was shown. Review the current version." : "This was already answered or replaced.");
-      }
       try {
-        await mutate(`/interactions/${encodeURIComponent(interaction.id)}/responses`, { request_id: newRequestID(), expected_revision: interaction.revision, value });
+        const result = await submitInteractionResponse(interaction, value);
+        if (!result.ok) {
+          setCurrent(result.current);
+          throw new Error(result.message);
+        }
+        onResolved?.(result.resolved, { rememberRule: result.rememberRule });
       } catch (error) {
         if (error instanceof APIError && error.stale && error.body?.current) setCurrent(error.body.current as Interaction);
         throw error;
       }
-      invalidate("/interactions", "/work", "/assistant/summary", "/inbox");
-      onDone?.();
-    }, { approve: "Approved.", decline: "Declined.", answer: "Answer sent.", choose_account: "Account chosen." }[value.kind]);
+    }, responseAnnouncement(value));
   }
   return { respond, ...action, current, legacy };
 }
@@ -63,40 +71,101 @@ function heading(interaction: Interaction) {
   return ({ sensitive_send: "Send this?", reversible_write: "Make this change?", read: "Allow this?" } as Record<string, string>)[payload.effect ?? ""] ?? "Approve this action?";
 }
 
-export function InteractionCard({ interaction, compact }: { interaction: Interaction; compact?: boolean }) {
-  const [shown, setShown] = useState(interaction);
+export function InteractionCard({
+  interaction,
+  compact,
+  inline,
+  rememberedRule,
+  onResolved,
+}: {
+  interaction: Interaction;
+  compact?: boolean;
+  inline?: boolean;
+  rememberedRule?: boolean;
+  onResolved?: OnInteractionResolved;
+}) {
+  const [override, setOverride] = useState<{ interaction: Interaction; rememberedRule?: boolean }>();
+  const useOverride = override && override.interaction.id === interaction.id && override.interaction.revision >= interaction.revision;
+  const shown = useOverride ? override.interaction : interaction;
+  const effectiveRememberedRule = rememberedRule ?? (useOverride ? override.rememberedRule : undefined);
   const resolved = shown.status !== "pending";
+  const expiryLabel = !resolved ? formatInteractionExpiry(shown.expires_at) : undefined;
+  const statusPill = resolved ? resolvedStatusPill(shown) : undefined;
+
+  const handleResolved: OnInteractionResolved = (next, meta) => {
+    setOverride({ interaction: next, rememberedRule: meta?.rememberRule });
+    onResolved?.(next, meta);
+  };
+
   return (
-    <article aria-label={heading(shown)} className={cn("rounded-card border bg-surface p-4", resolved ? "border-hairline" : "border-hairline-strong shadow-[0_1px_0_var(--hairline)]")}>
+    <article
+      aria-label={heading(shown)}
+      data-interaction-id={shown.id}
+      data-interaction-status={shown.status}
+      className={cn(
+        "rounded-card border bg-surface",
+        inline ? (resolved ? "border-hairline bg-fill-1/60 px-3.5 py-2.5" : "border-hairline-strong p-3.5 shadow-[0_1px_2px_rgba(25,9,54,0.06)]")
+          : cn("p-4", resolved ? "border-hairline" : "border-hairline-strong shadow-[0_1px_0_var(--hairline)]"),
+      )}
+    >
       <div className="flex items-start gap-2">
-        <h3 className="min-w-0 flex-1 text-row font-semibold text-ink">{heading(shown)}</h3>
-        {resolved ? <Pill tone={shown.status === "resolved" ? "ok" : "neutral"}>{shown.status === "resolved" ? "Answered" : shown.status === "expired" ? "Expired" : "Replaced"}</Pill>
-          : shown.expires_at ? <Pill tone="warning">Expires {relative(shown.expires_at)}</Pill> : null}
+        <h3 className={cn("min-w-0 flex-1 font-semibold text-ink", inline ? "text-row-title" : "text-row")}>{heading(shown)}</h3>
+        {statusPill ? (
+          <Pill tone={statusPill.tone}>{statusPill.label}</Pill>
+        ) : expiryLabel ? (
+          <Pill tone="warning">
+            <Clock size={12} className="mr-1 shrink-0" aria-hidden />
+            {expiryLabel}
+          </Pill>
+        ) : null}
       </div>
-      {!compact && shown.task_title && shown.task_id && <Link href={`/work/${encodeURIComponent(shown.task_id)}`} className="mt-0.5 inline-block text-meta text-ink-2 hover:underline">{shown.task_title}</Link>}
-      <div className="mt-3">
-        {resolved ? <Resolved interaction={shown} /> : <Body interaction={shown} onReplaced={setShown} />}
+      {!compact && shown.task_title && shown.task_id && (
+        <Link href={`/work/${encodeURIComponent(shown.task_id)}`} className="mt-0.5 inline-block text-meta text-ink-2 hover:underline">
+          {shown.task_title}
+        </Link>
+      )}
+      <div className={cn(inline && resolved ? "mt-1.5" : "mt-3")}>
+        {resolved ? (
+          <Resolved interaction={shown} rememberedRule={effectiveRememberedRule} />
+        ) : (
+          <Body
+            interaction={shown}
+            inline={inline}
+            onReplaced={(next) => setOverride({ interaction: next })}
+            onResolved={handleResolved}
+          />
+        )}
       </div>
     </article>
   );
 }
 
-function Resolved({ interaction }: { interaction: Interaction }) {
+function Resolved({ interaction, rememberedRule }: { interaction: Interaction; rememberedRule?: boolean }) {
   const r = interaction.resolution;
   if (interaction.status === "superseded") return <p className="text-meta text-ink-2">A newer version replaced this.{interaction.superseded_by ? " It’s in Needs you." : ""}</p>;
   if (!r) return null;
-  const text = r.kind === "approve" ? "Approved" : r.kind === "signed_in" ? "Signed in" : r.kind === "decline" ? (interaction.kind === "sign_in" ? "Not now" : "Declined") : r.kind === "choose_account" ? "Account chosen" : r.text ? `“${r.text}”` : "Answered";
+  const text = resolvedSummaryText(interaction, rememberedRule);
   return <p className="flex items-center gap-1.5 text-meta text-ink-2"><Check size={14} aria-hidden />{text}{r.at ? ` · ${relative(r.at)}` : ""}</p>;
 }
 
-function Body({ interaction, onReplaced }: { interaction: Interaction; onReplaced: (next: Interaction) => void }) {
-  const state = useRespond(interaction);
+function Body({
+  interaction,
+  inline,
+  onReplaced,
+  onResolved,
+}: {
+  interaction: Interaction;
+  inline?: boolean;
+  onReplaced: (next: Interaction) => void;
+  onResolved: OnInteractionResolved;
+}) {
+  const state = useRespond(interaction, onResolved);
   const replaced = state.current && <Notice tone="warning" action={<Button size="sm" onClick={() => onReplaced(state.current!)}>Show current</Button>}>{state.error}</Notice>;
   const error = !state.current && state.error && <Notice tone="danger">{state.error}</Notice>;
   const extra = <div className="mt-3 space-y-2 empty:hidden">{replaced}{error}</div>;
   switch (interaction.kind) {
     case "question": return <><Question payload={interaction.payload} state={state} />{extra}</>;
-    case "approval": return <><Approval interaction={interaction} payload={interaction.payload} state={state} />{extra}</>;
+    case "approval": return <><Approval interaction={interaction} payload={interaction.payload} state={state} inline={inline} />{extra}</>;
     case "account_selection": return <><AccountChoice payload={interaction.payload} state={state} />{extra}</>;
     case "sign_in": return <><SignIn interaction={interaction} payload={interaction.payload} state={state} />{extra}</>;
   }
@@ -131,21 +200,44 @@ function Question({ payload, state }: { payload: QuestionPayload; state: State }
   </form>;
 }
 
-function Approval({ interaction, payload, state }: { interaction: Interaction; payload: ApprovalPayload; state: State }) {
+function Approval({
+  interaction,
+  payload,
+  state,
+  inline,
+}: {
+  interaction: Interaction;
+  payload: ApprovalPayload;
+  state: State;
+  inline?: boolean;
+}) {
   const busy = !!state.pending;
   const digest = interaction.action_digest!;
   const send = payload.effect === "sensitive_send";
   // A send's summary is `Send "subject" from … to …:` then the message on the following lines, with
   // a trailing "…" when core shortened it. Show the message as its own block so it reads as exactly what is sent.
   const cut = send ? payload.summary.indexOf("\n") : -1;
-  const heading = cut >= 0 ? payload.summary.slice(0, cut) : payload.summary;
+  const summaryHeading = cut >= 0 ? payload.summary.slice(0, cut) : payload.summary;
   const message = cut >= 0 ? payload.summary.slice(cut + 1) : "";
+  const warning = payload.warning?.trim();
+  const buttonSize = inline ? "sm" : "md";
   return <div>
-    <p className="whitespace-pre-line text-body text-ink [overflow-wrap:anywhere]">{heading}</p>
+    <p className={cn("whitespace-pre-line text-ink [overflow-wrap:anywhere]", inline ? "text-row" : "text-body")}>{summaryHeading}</p>
     {cut >= 0 && <>
       <blockquote aria-label="Message to be sent" className="mt-2 rounded-tile border border-hairline bg-fill-1 px-3 py-2 text-body whitespace-pre-line text-ink [overflow-wrap:anywhere]">{message.trim() || "(No message text)"}</blockquote>
       {message.trimEnd().endsWith("…") && <p className="mt-1 text-meta text-ink-2">Only the start of the message is shown here. The rest is sent too.</p>}
     </>}
+    {warning && (
+      <div
+        role="note"
+        aria-label="Warning"
+        data-approval-warning
+        className="mt-3 flex items-start gap-2 rounded-tile border border-warning/25 bg-warning-bg px-3 py-2.5 text-meta font-medium text-warning"
+      >
+        <AlertTriangle size={15} className="mt-0.5 shrink-0" aria-hidden />
+        <p className="min-w-0 flex-1 whitespace-pre-line [overflow-wrap:anywhere]">{warning}</p>
+      </div>
+    )}
     <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-meta">
       {send && !!payload.recipients?.length && <><dt className="text-ink-3">To</dt><dd className="font-medium text-ink [overflow-wrap:anywhere]">{payload.recipients.join(", ")}</dd></>}
       <dt className="text-ink-3">{send ? "From" : "Account"}</dt><dd className="text-ink">{payload.account.label}</dd>
@@ -153,9 +245,32 @@ function Approval({ interaction, payload, state }: { interaction: Interaction; p
       <dt className="text-ink-3">Effect</dt><dd><Pill tone={payload.effect === "sensitive_send" ? "warning" : "neutral"}>{EFFECT_LABEL[payload.effect]}</Pill></dd>
     </dl>
     {!!payload.material_effects?.length && <ul className="mt-3 space-y-1 text-meta text-ink-2">{payload.material_effects.map((effect) => <li key={effect} className="flex gap-2"><ShieldCheck size={14} className="mt-0.5 shrink-0 text-ink-3" aria-hidden />{effect}</li>)}</ul>}
-    <div className="mt-4 flex flex-wrap gap-2">
-      <Button variant="primary" disabled={busy} onClick={() => void state.respond({ kind: "approve", action_digest: digest }, "approve")}>{state.pending === "approve" ? "Approving…" : "Approve"}</Button>
-      <Button disabled={busy} onClick={() => void state.respond({ kind: "decline", action_digest: digest }, "decline")}>{state.pending === "decline" ? "Declining…" : "Decline"}</Button>
+    <div className={cn("flex flex-wrap gap-2", inline ? "mt-3" : "mt-4")}>
+      <Button
+        variant="primary"
+        size={buttonSize}
+        disabled={busy}
+        onClick={() => void state.respond(buildApprovalResponse("allow_once", digest), "allow_once")}
+      >
+        {state.pending === "allow_once" ? "Allowing…" : "Allow once"}
+      </Button>
+      <Button
+        variant="neutral"
+        size={buttonSize}
+        disabled={busy}
+        onClick={() => void state.respond(buildApprovalResponse("always_allow", digest), "always_allow")}
+      >
+        {state.pending === "always_allow" ? "Saving rule…" : "Always allow"}
+      </Button>
+      <Button
+        variant="neutral"
+        size={buttonSize}
+        className="text-danger hover:bg-danger-bg"
+        disabled={busy}
+        onClick={() => void state.respond(buildApprovalResponse("deny", digest), "deny")}
+      >
+        {state.pending === "deny" ? "Denying…" : "Deny"}
+      </Button>
     </div>
   </div>;
 }
