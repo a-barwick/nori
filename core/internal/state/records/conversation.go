@@ -378,12 +378,36 @@ func (d *Database) PublishConversation(ctx context.Context, f state.Conversation
 		if err != nil {
 			return err
 		}
+		var supersededFailed []state.Message
+		if t.Attempt.Status != "error" && len(c.FailedMessageIDs) > 0 {
+			ids := append([]string(nil), c.FailedMessageIDs...)
+			slices.Sort(ids)
+			for _, id := range ids {
+				doc, err := tx.Get(d.messages().Doc(id))
+				if notFound(err) {
+					continue
+				}
+				if err != nil {
+					return err
+				}
+				var failed state.Message
+				if err := doc.DataTo(&failed); err != nil {
+					return err
+				}
+				if failed.Status == state.MessageStatusFailed {
+					supersededFailed = append(supersededFailed, failed)
+				}
+			}
+		}
 		now := d.now()
 		if err = d.writeMemoryChanges(tx, t, memories, now); err != nil {
 			return err
 		}
 		wasRoutingPending := c.RoutingPending()
 		c, completed, message := state.CompleteTurn(c, t, text, now)
+		if t.Attempt.Status != "error" && !c.RoutingPending() {
+			c.FailedMessageIDs = nil
+		}
 		marked, parts := state.ReportResults(results, t.Attempt.ShowResults, message.ID, now)
 		message.Parts = append(message.Parts, parts...)
 		for _, result := range marked {
@@ -407,6 +431,17 @@ func (d *Database) PublishConversation(ctx context.Context, f state.Conversation
 			}
 			if err = log.add(state.EventTask, id); err != nil {
 				return err
+			}
+		}
+		if t.Attempt.Status != "error" && !c.RoutingPending() {
+			for _, failed := range supersededFailed {
+				failed.Status = state.MessageStatusSuperseded
+				if err = tx.Set(d.messages().Doc(failed.ID), failed); err != nil {
+					return err
+				}
+				if err = log.add(state.EventMessage, failed.ID); err != nil {
+					return err
+				}
 			}
 		}
 		if err = log.add(state.EventMessage, message.ID); err != nil {
@@ -614,5 +649,82 @@ func (d *Database) CancelConversation(ctx context.Context, turnID string) error 
 			}
 		}
 		return nil
+	})
+}
+
+// RetryConversation enqueues a synthetic retry input when a previous user turn failed without advancing UserRouted.
+// It marks prior failed error messages as superseded and replays the unrouted user inputs without duplicating visible
+// user messages. Repeated calls while a retry is already pending/active or after routing succeeded are idempotent.
+func (d *Database) RetryConversation(ctx context.Context, turnID, messageID string) error {
+	traceContext := observability.InjectTrace(ctx)
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
+		c, err := d.readConversation(tx)
+		if err != nil {
+			return err
+		}
+		if c.Active != "" || c.Pending() || !c.RoutingPending() {
+			return nil
+		}
+		candidateSet := map[string]bool{}
+		for _, id := range c.FailedMessageIDs {
+			if id != "" {
+				candidateSet[id] = true
+			}
+		}
+		if messageID != "" {
+			candidateSet[messageID] = true
+		}
+		if turnID != "" {
+			candidateSet[state.AssistantMessageID(turnID)] = true
+		}
+		candidateIDs := make([]string, 0, len(candidateSet))
+		for id := range candidateSet {
+			candidateIDs = append(candidateIDs, id)
+		}
+		slices.Sort(candidateIDs)
+		var superseded []state.Message
+		for _, id := range candidateIDs {
+			doc, err := tx.Get(d.messages().Doc(id))
+			if notFound(err) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			var m state.Message
+			if err := doc.DataTo(&m); err != nil {
+				return err
+			}
+			if m.Status == state.MessageStatusFailed {
+				superseded = append(superseded, m)
+			}
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
+		now := d.now()
+		retryID := fmt.Sprintf("retry-%d", c.Received+1)
+		c, input := state.AdmitRetryInput(c, retryID, now, traceContext)
+		c.FailedMessageIDs = nil
+		for _, m := range superseded {
+			m.Status = state.MessageStatusSuperseded
+			if err = tx.Set(d.messages().Doc(m.ID), m); err != nil {
+				return err
+			}
+			if err = log.add(state.EventMessage, m.ID); err != nil {
+				return err
+			}
+		}
+		if err = tx.Set(d.conversation(), c); err != nil {
+			return err
+		}
+		if err = tx.Create(d.conversationInputs().Doc(input.ID), input); err != nil {
+			return err
+		}
+		if err = log.add(state.EventConversation, ""); err != nil {
+			return err
+		}
+		return tx.WakeUser(d.user.ID, docstore.LaneConversation, now)
 	})
 }

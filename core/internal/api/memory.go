@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"nori/internal/conversation"
 	"nori/internal/state"
 	"nori/internal/state/docstore"
 )
@@ -427,13 +429,75 @@ func (a *Assistant) createMemory(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
 		return
 	}
+	text := value.Text
+	about := value.About
+	section := value.Section
+	var replacesID, sourceText, binding string
+	if a.NormalizeMemory != nil {
+		rawBinding, err := state.MutationBinding(state.Mutation{
+			Method:           http.MethodPost,
+			Target:           "/v1/memory",
+			ExpectedRevision: expected,
+			Payload:          value,
+		})
+		if err != nil {
+			writeAPIError(w, err, requestID, nil)
+			return
+		}
+		if existing, err := a.Store.Receipt(r.Context(), requestID); err == nil {
+			if existing.Binding != rawBinding {
+				writeAPIError(w, state.ErrIdempotencyConflict, requestID, nil)
+				return
+			}
+			writeReceipt(w, existing)
+			return
+		} else if !errors.Is(err, state.ErrNotFound) {
+			writeAPIError(w, err, requestID, nil)
+			return
+		}
+		binding = rawBinding
+		existingMemories, err := a.Store.Memories(r.Context())
+		if err != nil {
+			slog.WarnContext(r.Context(), "could not load existing memories for normalizer", "err", err)
+		}
+		normalized, err := a.NormalizeMemory(r.Context(), conversation.ManualMemoryInput{
+			Text:     value.Text,
+			About:    value.About,
+			Section:  value.Section,
+			Existing: existingMemories,
+		})
+		if err != nil {
+			slog.WarnContext(r.Context(), "manual memory normalizer failed; storing raw memory", "err", err)
+		} else {
+			if trimmed := strings.TrimSpace(normalized.Text); trimmed != "" && len(trimmed) <= state.MaxMemoryText && utf8.ValidString(trimmed) {
+				if trimmed != strings.TrimSpace(value.Text) {
+					sourceText = value.Text
+				}
+				text = trimmed
+			}
+			if strings.TrimSpace(value.About) == "" {
+				if candidate := strings.TrimSpace(normalized.About); candidate != "" && len(candidate) <= state.MaxMemoryAbout && utf8.ValidString(candidate) {
+					about = candidate
+				}
+			}
+			if strings.TrimSpace(value.Section) == "" {
+				if candidate := strings.TrimSpace(normalized.Section); candidate != "" && len(candidate) <= state.MaxMemorySection && utf8.ValidString(candidate) {
+					section = candidate
+				}
+			}
+			replacesID = strings.TrimSpace(normalized.ReplacesID)
+		}
+	}
 	receipt, err := a.Store.MutateMemory(r.Context(), state.MemoryMutationRequest{
 		RequestID:        requestID,
 		ExpectedRevision: 0,
 		Kind:             state.MemoryMutateCreateCore,
-		Text:             value.Text,
-		About:            value.About,
-		Section:          value.Section,
+		ReplacesID:       replacesID,
+		Text:             text,
+		About:            about,
+		Section:          section,
+		SourceText:       sourceText,
+		Binding:          binding,
 		Pinned:           value.Pinned,
 		FormatResource: func(res state.MemoryMutationResult) (json.RawMessage, error) {
 			if res.Memory == nil {

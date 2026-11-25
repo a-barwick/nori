@@ -13,17 +13,18 @@ import (
 // These are HTTP projections, not a second persistence model. Typed parts retain
 // files and pages; text/attachments remain for existing clients.
 type messageView struct {
-	ID          string             `json:"id"`
-	Role        string             `json:"role"`
-	Text        string             `json:"text"`
-	Status      string             `json:"status"`
-	Parts       []state.Part       `json:"parts"`
-	Sequence    int64              `json:"sequence,omitempty"`
-	TurnID      string             `json:"turnId,omitempty"`
-	CreatedAt   *time.Time         `json:"createdAt,omitempty"`
-	Attachments []state.Attachment `json:"attachments,omitempty"`
-	Operations  []operationView    `json:"operations,omitempty"`
-	ResultIDs   []string           `json:"resultIds,omitempty"`
+	ID          string              `json:"id"`
+	Role        string              `json:"role"`
+	Text        string              `json:"text"`
+	Status      string              `json:"status"`
+	Parts       []state.Part        `json:"parts"`
+	Sequence    int64               `json:"sequence,omitempty"`
+	TurnID      string              `json:"turnId,omitempty"`
+	CreatedAt   *time.Time          `json:"createdAt,omitempty"`
+	Attachments []state.Attachment  `json:"attachments,omitempty"`
+	Operations  []operationView     `json:"operations,omitempty"`
+	ResultIDs   []string            `json:"resultIds,omitempty"`
+	Error       *state.MessageError `json:"error,omitempty"`
 }
 type operationOwner struct {
 	Type string `json:"type"`
@@ -76,7 +77,7 @@ func assistantMessage(m state.Message) messageView {
 	if status == "" {
 		status = "completed"
 	}
-	return messageView{ID: m.ID, Role: m.Role, Text: m.Text, Status: status, Parts: m.Parts, TurnID: m.TurnID, CreatedAt: &m.CreatedAt, ResultIDs: m.ResultIDs}
+	return messageView{ID: m.ID, Role: m.Role, Text: m.Text, Status: status, Parts: m.Parts, TurnID: m.TurnID, CreatedAt: &m.CreatedAt, ResultIDs: m.ResultIDs, Error: m.Error}
 }
 
 func (s *server) assistantSnapshot(ctx context.Context, before string) (conversationView, error) {

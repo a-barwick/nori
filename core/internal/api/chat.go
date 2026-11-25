@@ -127,6 +127,24 @@ func (s *server) assistantConversationCancel(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, 200, view)
 }
 
+func (s *server) assistantConversationRetry(w http.ResponseWriter, r *http.Request) {
+	var body retryRequest
+	if !decode(w, r, &body) {
+		return
+	}
+	turnID, messageID, ok := body.resolved()
+	if !ok {
+		writeJSON(w, 400, map[string]string{"error": "Invalid turn or message ID."})
+		return
+	}
+	session, err := s.Runner.Retry(r.Context(), turnID, messageID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"conversation": assistantView(session)})
+}
+
 func (s *server) assistantConversationHistory(w http.ResponseWriter, r *http.Request) {
 	view, err := s.assistantSnapshot(r.Context(), r.URL.Query().Get("before"))
 	if err != nil {

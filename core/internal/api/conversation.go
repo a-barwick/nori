@@ -89,6 +89,49 @@ func (s *server) turn(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, session)
 }
 
+type retryRequest struct {
+	TurnID         string `json:"turn_id"`
+	TurnIDCamel    string `json:"turnId"`
+	MessageID      string `json:"message_id"`
+	MessageIDCamel string `json:"messageId"`
+}
+
+func (r retryRequest) resolved() (turnID, messageID string, ok bool) {
+	turnID = strings.TrimSpace(r.TurnID)
+	if turnID == "" {
+		turnID = strings.TrimSpace(r.TurnIDCamel)
+	}
+	messageID = strings.TrimSpace(r.MessageID)
+	if messageID == "" {
+		messageID = strings.TrimSpace(r.MessageIDCamel)
+	}
+	if turnID != "" && !state.ValidEvidenceID(turnID) {
+		return "", "", false
+	}
+	if messageID != "" && !state.ValidEvidenceID(messageID) {
+		return "", "", false
+	}
+	return turnID, messageID, true
+}
+
+func (s *server) retry(w http.ResponseWriter, r *http.Request) {
+	var body retryRequest
+	if !decode(w, r, &body) {
+		return
+	}
+	turnID, messageID, ok := body.resolved()
+	if !ok {
+		writeJSON(w, 400, map[string]string{"error": "Invalid turn or message ID."})
+		return
+	}
+	session, err := s.Runner.Retry(r.Context(), turnID, messageID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, session)
+}
+
 func (s *server) process(w http.ResponseWriter, r *http.Request) {
 	var body struct{}
 	if !decode(w, r, &body) {

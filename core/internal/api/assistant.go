@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"nori/internal/connections"
 	"nori/internal/connectors/mcp"
+	"nori/internal/conversation"
 	"nori/internal/extensions"
 	"nori/internal/httpjson"
 	"nori/internal/permissions"
@@ -58,7 +59,10 @@ type Assistant struct {
 	InboxUnread   func(ctx context.Context) int
 	// ConsolidateMemory runs an on-demand AutoDream memory consolidation pass.
 	ConsolidateMemory func(ctx context.Context) (state.ConversationSummary, error)
-	Extra             []func(mux *http.ServeMux, a *Assistant)
+	// NormalizeMemory optionally normalizes a manually added Core memory (phrasing, section,
+	// about, and deduplication against existing Core memories). Nil falls back to raw storage.
+	NormalizeMemory func(ctx context.Context, input conversation.ManualMemoryInput) (conversation.NormalizedMemory, error)
+	Extra           []func(mux *http.ServeMux, a *Assistant)
 }
 
 type apiError struct {

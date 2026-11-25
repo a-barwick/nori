@@ -151,10 +151,13 @@ type MemoryMutationRequest struct {
 	ExpectedRevision int64
 	Kind             string
 	TargetID         string
+	ReplacesID       string
 	Date             string
 	Text             string
 	About            string
 	Section          string
+	SourceText       string
+	Binding          string
 	Pinned           *bool
 	FormatResource   func(result MemoryMutationResult) (json.RawMessage, error)
 }

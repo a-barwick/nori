@@ -172,6 +172,7 @@ type ConversationDatabase interface {
 	ConversationMessages(ctx context.Context, before string) (messages []Message, next string, err error)
 	ConversationProjection(ctx context.Context) (Session, error)
 	CancelConversation(ctx context.Context, turnID string) error
+	RetryConversation(ctx context.Context, turnID, messageID string) error
 	ConversationStatus(ctx context.Context) (ConversationControl, *ConversationTurn, error)
 	ConversationTraces(ctx context.Context) ([]ConversationAttempt, error)
 	EnsureConversationIntroduction(ctx context.Context, prompt string) error

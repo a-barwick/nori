@@ -370,14 +370,69 @@ func (r *Runner) checkpointModel(ctx context.Context, f state.ConversationFence,
 	return r.checkpoint(ctx, f, *t)
 }
 
-func (r *Runner) modelFailureText(ctx context.Context, inputs []state.ConversationInput, modelErr error) string {
-	text := prompts.Runtime("reply-failed", nil) + modelErr.Error()
-	for _, input := range inputs {
-		if input.IsUser() {
-			text += prompts.Runtime("reply-retry", nil)
-			break
+func classifyModelFailure(modelErr error, fromUser bool) state.MessageError {
+	suffix := ""
+	if fromUser {
+		suffix = " Your message is saved — tap Retry to try again."
+	}
+	if errors.Is(modelErr, contextview.ErrOverflow) {
+		msg := "This conversation grew too long for one reply."
+		if fromUser {
+			msg = "This conversation grew too long for one reply. Try sending a shorter follow-up."
+		}
+		return state.MessageError{
+			Code:      "context_too_long",
+			Message:   msg,
+			Retryable: false,
 		}
 	}
+	var statusErr interface{ HTTPStatusCode() int }
+	if errors.As(modelErr, &statusErr) {
+		code := statusErr.HTTPStatusCode()
+		switch {
+		case code == 429:
+			msg := "Nori is handling too many requests right now."
+			if fromUser {
+				msg = "Nori is handling too many requests right now. Your message is saved — tap Retry in a moment."
+			}
+			return state.MessageError{
+				Code:      "rate_limited",
+				Message:   msg,
+				Retryable: fromUser,
+			}
+		case code >= 500 && code <= 599:
+			return state.MessageError{
+				Code:      "provider_overloaded",
+				Message:   "Nori's model service is temporarily busy." + suffix,
+				Retryable: fromUser,
+			}
+		case code == 401 || code == 403:
+			return state.MessageError{
+				Code:      "provider_unavailable",
+				Message:   "Nori's model service isn't available right now.",
+				Retryable: false,
+			}
+		}
+	}
+	if modelErr != nil {
+		lower := strings.ToLower(modelErr.Error())
+		if strings.Contains(lower, "interrupted") || strings.Contains(lower, "unavailable") || strings.Contains(lower, "timeout") {
+			return state.MessageError{
+				Code:      "provider_unavailable",
+				Message:   "Couldn't reach Nori's model service right now." + suffix,
+				Retryable: fromUser,
+			}
+		}
+	}
+	return state.MessageError{
+		Code:      "reply_failed",
+		Message:   "Nori couldn't finish replying right now." + suffix,
+		Retryable: fromUser,
+	}
+}
+
+func (r *Runner) modelFailureText(ctx context.Context, inputs []state.ConversationInput, failure state.MessageError) string {
+	text := failure.Message
 	seen := map[string]bool{}
 	for _, input := range inputs {
 		if input.Event == nil || seen[input.Event.RunID] {
@@ -466,6 +521,9 @@ func (r *Runner) watchLease(callCtx context.Context, done <-chan struct{}, watch
 func classifyHistory(visible []Message, t *state.ConversationTurn) []Message {
 	classificationHistory := []Message{}
 	for _, message := range visible {
+		if message.Status == state.MessageStatusFailed || message.Status == state.MessageStatusSuperseded {
+			continue
+		}
 		if message.TurnID == t.ID || (message.Role == "user" && !message.CreatedAt.Before(t.Inputs[0].CreatedAt)) {
 			continue
 		}
@@ -516,6 +574,9 @@ func buildMessages(t *state.ConversationTurn, visible []Message, view historyVie
 		if m.TurnID != "" || !m.CreatedAt.After(since) {
 			continue
 		}
+		if m.Status == state.MessageStatusFailed || m.Status == state.MessageStatusSuperseded {
+			continue
+		}
 		if m.RunID != "" && m.ID == state.UserMessageID(m.RunID) {
 			continue
 		}
@@ -539,6 +600,9 @@ func buildMessages(t *state.ConversationTurn, visible []Message, view historyVie
 		recordIndex--
 	}
 	for _, turn := range history {
+		if turn.Attempt.Status == "error" {
+			continue
+		}
 		for recordIndex >= 0 && !records[recordIndex].CreatedAt.After(turn.StartedAt) {
 			appendRecord()
 		}
@@ -559,6 +623,9 @@ func buildMessages(t *state.ConversationTurn, visible []Message, view historyVie
 	t.Attempt.ContextTruncated = truncated
 	t.Attempt.ContextTurns = len(history)
 	for _, in := range t.Inputs {
+		if in.Retry {
+			continue
+		}
 		messages = append(messages, inputMessage(in))
 	}
 	for _, p := range t.Context {
@@ -575,11 +642,13 @@ func (r *Runner) finishCall(
 	ctx, callCtx context.Context, f state.ConversationFence, t *state.ConversationTurn, reply Reply, modelErr error, noDispatch bool,
 	view historyView,
 ) error {
+	fromUser := slices.ContainsFunc(t.Inputs, state.ConversationInput.IsUser)
 	if modelErr != nil {
 		if callCtx.Err() != nil {
 			return callCtx.Err()
 		}
-		failureText := r.modelFailureText(callCtx, t.Inputs, modelErr)
+		failure := classifyModelFailure(modelErr, fromUser)
+		failureText := r.modelFailureText(callCtx, t.Inputs, failure)
 		stale, err := r.tasks.Store.RenewConversation(ctx, f)
 		if err != nil {
 			return err
@@ -593,6 +662,7 @@ func (r *Runner) finishCall(
 		t.Attempt.StructuredReply = reply.Structured
 		t.Attempt.ProtocolInvalid = len(reply.Message) > 0
 		r.attemptEnd(&t.Attempt, "error", modelErr.Error())
+		t.Attempt.Failure = &failure
 		t.Attempt.Text = failureText
 	} else {
 		t.Attempt.Reply = string(reply.Message)
@@ -612,11 +682,13 @@ func (r *Runner) finishCall(
 		if requests := workRequests(t.Inputs); err == nil && len(requests) > 0 && (len(remembered) > 0 || len(shows) > 0 || !workCommandsAllowed(commands, requests)) {
 			err = fmt.Errorf("a work request's turn can only settle that request")
 		}
-		failure := prompts.Runtime("tool-calls-invalid", nil)
 		if err != nil {
-			r.attemptEnd(&t.Attempt, "error", failure)
+			rawFailure := prompts.Runtime("tool-calls-invalid", nil)
+			typedFailure := classifyModelFailure(err, fromUser)
+			r.attemptEnd(&t.Attempt, "error", rawFailure)
+			t.Attempt.Failure = &typedFailure
 			t.Attempt.ProtocolInvalid = true
-			t.Attempt.Text = failure
+			t.Attempt.Text = typedFailure.Message
 		} else {
 			t.Attempt.Reply = string(reply.Message)
 			t.Attempt.Text = reply.Text
@@ -723,7 +795,12 @@ func (r *Runner) startHint(
 		}
 		// Exclude this batch and any subsequently queued inputs from Jev's history.
 		classificationHistory := classifyHistory(visible, t)
-		inputs := append([]state.ConversationInput(nil), t.Inputs...)
+		inputs := make([]state.ConversationInput, 0, len(t.Inputs))
+		for _, in := range t.Inputs {
+			if !in.Retry {
+				inputs = append(inputs, in)
+			}
+		}
 		r.runWork(work, func() {
 			classifyStarted := r.now()
 			hint, err := r.classifier.Classify(callCtx, ClassifyRequest{Inputs: inputs, History: classificationHistory, RecordUsage: record})

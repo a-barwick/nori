@@ -221,6 +221,26 @@ func (r *Runner) HandleInput(ctx context.Context, input Input) (Session, error) 
 	}
 	return session, err
 }
+
+// Retry replays unrouted user input(s) from a failed turn without duplicating the visible user message.
+func (r *Runner) Retry(ctx context.Context, turnID, messageID string) (Session, error) {
+	ctx, span := conversationTracer.Start(ctx, "conversation.retry", trace.WithAttributes(
+		attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()),
+	))
+	defer span.End()
+	if e := r.tasks.Store.RetryConversation(ctx, turnID, messageID); e != nil {
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			observability.RecordErrorCategory(ctx, "conversation.retry", e)
+		}
+		return Session{}, e
+	}
+	observability.Event(ctx, "conversation.retried")
+	session, err := r.Snapshot(ctx)
+	if err != nil && !errors.Is(ctx.Err(), context.Canceled) {
+		observability.RecordErrorCategory(ctx, "conversation.snapshot", err)
+	}
+	return session, err
+}
 func fenceFor(c state.ConversationControl, t state.ConversationTurn) state.ConversationFence {
 	return state.ConversationFence{Owner: c.Owner, Fence: c.Fence, TurnID: t.ID, Through: t.Through, UserThrough: t.UserThrough, Frozen: t.Frozen}
 }
@@ -550,7 +570,7 @@ func (r *Runner) dispatchPending(ctx context.Context, f state.ConversationFence,
 func buildProtocol(t *state.ConversationTurn, text string) {
 	t.Protocol = []string{}
 	for _, in := range t.Inputs {
-		if in.Introduction {
+		if in.Introduction || in.Retry {
 			continue
 		}
 		t.Protocol = append(t.Protocol, string(inputMessage(in)))
