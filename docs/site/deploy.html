@@ -29,7 +29,7 @@
 </ul></section>
 <section><h2>Container images and rolling deploys</h2>
 <ul class="pts">
-<li><code>make deploy-gcp</code> can run a configured Cloud Run migration job, checks the core readiness endpoint before rolling out web, and checks web health and configured authenticated smoke access. See the infrastructure runbook for traffic rollback.</li>
+<li>CI releases changed services after its checks pass on <code>main</code>: it runs migrations, stages each Cloud Run revision with no traffic behind an HTTP health probe, promotes it, and reverts automatically on errors during a ten-minute bake. <code>scripts/release.sh rollback</code> returns a group to its previous revision.</li>
 <li><code>core/infrastructure/Dockerfile</code> builds the static <code>CGO_ENABLED=0</code> <code>nori</code> binary onto <code>gcr.io/distroless/static-debian12:nonroot</code>.</li>
 <li>Because inner tasks checkpoint explicit state and receipts in Postgres rather than replaying workflow code, rolling deploys do not require pinned workflow build IDs; parked tasks resume cleanly on the new binary.</li>
 <li><code>docs/Dockerfile</code> and <code>docs/deploy.sh</code> package the static Dokyu output into an unprivileged nginx container serving <code>X-Robots-Tag: noindex</code> and <code>Disallow: /</code>.</li>

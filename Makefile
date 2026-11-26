@@ -1,4 +1,4 @@
-.PHONY: contracts contracts-check dev web web-build web-start core local-web local-core check sim-deep sim-pg sim-personas-validate sim-personas-smoke sim-personas-quick sim-personas-core sim-personas-memory sim-personas-full deps deps-stop deploy-gcp
+.PHONY: contracts contracts-check dev web web-build web-start core local-web local-core check sim-deep sim-pg sim-personas-validate sim-personas-smoke sim-personas-quick sim-personas-core sim-personas-memory sim-personas-full deps deps-stop release
 
 NORI_ENV_FILE ?= $(abspath .env)
 NORI_TASK_ENV_FILE ?= $(NORI_ENV_FILE)
@@ -71,5 +71,5 @@ deps:
 deps-stop:
 	docker compose -f core/infrastructure/local/compose.yaml stop
 
-deploy-gcp:
-	./scripts/deploy-gcp.sh
+release:
+	./scripts/release.sh

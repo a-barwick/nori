@@ -9,8 +9,20 @@ Nori targets **GCP + Postgres + GCS** (`NORI_CLOUD=gcp`) or **AWS + Postgres + S
 
 ## Cloud Run release
 
-`make deploy-gcp` builds and deploys the core and web images to Cloud Run. With `NORI_CLOUD=gcp`, Cloud Run uses native GCS JSON API storage via Application Default Credentials (Workload Identity) and Cloud KMS, with no AWS credentials required (`NORI_CLOUD=aws` remains supported for AWS S3 / Secrets Manager deployments). Configure a Cloud Run job with the core service's Postgres connectivity and set `NORI_GCP_MIGRATION_JOB` to run schema changes before the core rollout. The script checks core readiness before updating web and checks the web health route afterward. Set `NORI_DEPLOY_SMOKE_TOKEN_FILE` to a file containing a short-lived ID token for a provisioned account to also verify authenticated routing to core.
+CI releases on every green push to `main`. After the checks pass, the **Build images** job pushes `nori-core:<sha>` and `nori-web:<sha>` to Artifact Registry. The **Release** job then runs [`scripts/release.sh`](../../scripts/release.sh), using keyless GitHub-to-GCP auth (Workload Identity Federation, pool `github`, limited to `a-barwick/nori` on `main`).
 
-For the release that introduces issuer-and-subject account binding, promote Web first with `./scripts/deploy-gcp.sh --web-only`. If the separate Mac Web service is deployed, prepare its [pilot identity allowlist](home-ai.md#rollout) and promote it with `./scripts/deploy-gcp-mac-web.sh` before updating Core. Promote Core with `./scripts/deploy-gcp.sh --core-only` to activate account binding. Keep the gap short because the Web services bypass their account-resolution caches until Core confirms the binding. After the Core migration, bind existing users that require operator verification using [`nori-user bind-identity`](../README.md#users). Verify sign-in with a provisioned account on each deployed client.
+- **Only what changed ships.** Each revision carries a `nori-commit` label. The script compares it with the new commit and releases the **core** group (the `nori-migrate` job, then `nori-core` and `nori-worker`) when `core/` or `contracts/` changed, and the **web** group (`nori-web` and `nori-web-mac`, same image) when `web/` or `contracts/` changed.
+- **Staged, then promoted.** Each service is deployed with no traffic and must pass its HTTP startup probe (`/readyz` or `/api/health`). `nori-core` must also answer `/readyz` on its tagged URL, and `nori-web-mac` must reject anonymous requests. Then the service moves to 100%.
+- **Bake and auto-revert.** For 10 minutes after promotion, any 5xx or container crash from a new revision sends that group back to the revision recorded in its `nori-prev` label.
+- **Migrations only add schema.** `TestMigrationsOnlyAddSchema` enforces it, so a revert always runs against a compatible schema. Ship removals and renames later, in a `*_cleanup.sql` migration.
 
-To roll back a failed release, direct traffic to the last healthy revision of each affected service with `gcloud run services update-traffic SERVICE --to-revisions REVISION=100`. Check core readiness and authenticated web access again. Schema migrations are forward-only. Verify the previous application revision is compatible with the applied schema before shifting traffic.
+Manual operations:
+
+- `scripts/release.sh --dry-run` shows what would ship. It refuses commits that aren't on `origin/main` or whose CI checks haven't passed; `--force-unverified` overrides that in an emergency. `--core` and `--web` force a group.
+- `scripts/release.sh rollback core|web|all` returns each service in the group to its previous revision.
+- `scripts/configure-core.sh` changes optional Core settings (the Google Workspace beta, Home AI, the LISTEN URL secret). Releases keep existing settings.
+- Set the repository variable `NORI_AUTO_RELEASE=false` to pause automatic releases.
+
+For the release that introduces issuer-and-subject account binding, Web must go first. Release it with `scripts/release.sh --web` before the Core change lands, then let CI release Core. Keep the gap short, because the Web services bypass their account-resolution caches until Core confirms the binding. After the Core migration, bind existing users that require operator verification using [`nori-user bind-identity`](../README.md#users). Verify sign-in with a provisioned account on each deployed client.
+
+[`scripts/deploy-gcp-mac-web.sh`](../../scripts/deploy-gcp-mac-web.sh) creates the `nori-web-mac` service, its identity, and its IAP policy access the first time. After that, CI releases it with Web.

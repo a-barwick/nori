@@ -30,6 +30,9 @@ jobs:
     runs-on: xcode-27
     timeout-minutes: 30
     environment: ios-testflight
+    permissions:
+      contents: read
+      actions: read
     concurrency:
       group: ios-testflight-upload
       cancel-in-progress: false
@@ -52,6 +55,12 @@ jobs:
           else
             echo 'A newer iOS revision superseded this build.'
           fi
+
+      - name: Wait for CI to pass on this commit
+        if: steps.freshness.outputs.current == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/ci-status.sh "$GITHUB_SHA" --wait
 
       - name: Archive release build
         if: steps.freshness.outputs.current == 'true'

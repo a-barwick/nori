@@ -2,8 +2,7 @@
 name: wrap-up
 description: >-
   Run Nori's full end-of-thread closeout: verify with make check, commit and
-  merge to main, push origin/main, deploy core/web to GCP Cloud Run if changed,
-  verify /readyz, clean up finished worktrees and branches, and confirm no
+  merge to main, push origin/main, confirm CI released core/web if changed, clean up finished worktrees and branches, and confirm no
   background processes remain. Use when the user says "wrap up", "send it",
   "merge and deploy", or "good to close thread?".
 ---
@@ -23,13 +22,13 @@ Execute Nori's complete closeout checklist in order.
    - Commit any remaining changes on the current worktree branch with a clear commit message.
    - Fast-forward or cleanly merge the branch into `main` in the primary repo, then push `origin/main`.
 
-3. **Deploy to GCP Cloud Run (when `core/`, `web/`, or `contracts/` changed)**
-   - Run `./scripts/deploy-gcp.sh` from `main` (use `--core-only` or `--web-only` when only one service changed).
-   - Verify the active Cloud Run revisions serve 100% traffic and `nori-core` `/readyz` returns HTTP `200`.
+3. **Confirm the release (when `core/`, `web/`, or `contracts/` changed)**
+   - CI releases changed services after the checks pass on `main`. Follow the run with `gh run watch` and confirm its Release job succeeded (staging, checks, bake).
+   - If the Release job reverted, read its log, fix forward, and push again.
 
 4. **Clean up worktrees, branches, and processes**
    - Remove the finished worktree and delete its merged local branch (`git worktree prune`).
    - Confirm no local dev servers, test DBs, or background worker processes remain running.
 
 5. **Report concisely**
-   - Summarize: `main` & `origin/main` commit SHA, deployed Cloud Run revision(s) and `/readyz` status (if deployed), worktree/branch cleanup status, and confirmation that nothing is left running.
+   - Summarize: `main` & `origin/main` commit SHA, the CI release result (if core/web changed), worktree/branch cleanup status, and confirmation that nothing is left running.
