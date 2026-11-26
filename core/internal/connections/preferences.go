@@ -19,6 +19,7 @@ type Preferences struct {
 	AccountDefaults       map[string]string `json:"account_defaults"`
 	Budgets               Budgets           `json:"budgets"`
 	Input                 *InputPreferences `json:"input,omitempty"`
+	OnboardingCompletedAt *time.Time        `json:"onboarding_completed_at,omitempty"`
 	UpdatedAt             *time.Time        `json:"updated_at,omitempty"`
 }
 
@@ -53,6 +54,7 @@ type PreferencesEditable struct {
 	AccountDefaults       map[string]string `json:"account_defaults"`
 	Budgets               Budgets           `json:"budgets"`
 	Input                 *InputPreferences `json:"input,omitempty"`
+	OnboardingCompletedAt *time.Time        `json:"onboarding_completed_at,omitempty"`
 }
 
 var (
@@ -125,13 +127,21 @@ func (s *Service) SavePreferences(ctx context.Context, requestID string, expecte
 				}
 			}
 			revision := int64(1)
+			onboardingCompletedAt := value.OnboardingCompletedAt
 			if current != nil {
 				revision = current.Revision + 1
+				if onboardingCompletedAt == nil {
+					var existing Preferences
+					if err := current.Decode(&existing); err == nil {
+						onboardingCompletedAt = existing.OnboardingCompletedAt
+					}
+				}
 			}
 			prefs := Preferences{
 				Revision: revision, Timezone: value.Timezone, Locale: value.Locale, WorkingHours: value.WorkingHours,
 				QuietHours: value.QuietHours, DefaultDestinationIDs: nonNil(value.DefaultDestinationIDs),
 				AccountDefaults: value.AccountDefaults, Budgets: value.Budgets, Input: value.Input,
+				OnboardingCompletedAt: onboardingCompletedAt,
 			}
 			if prefs.AccountDefaults == nil {
 				prefs.AccountDefaults = map[string]string{}

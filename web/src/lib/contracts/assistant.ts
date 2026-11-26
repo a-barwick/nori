@@ -355,6 +355,7 @@ export type Preferences = {
   input?: {
     dictation_language?: string;
   };
+  onboarding_completed_at?: Instant;
   updated_at?: Instant;
 };
 export type PreferencesEditable = {
@@ -374,6 +375,7 @@ export type PreferencesEditable = {
   input?: {
     dictation_language?: string;
   };
+  onboarding_completed_at?: Instant;
 };
 export type PreferencesChange = {
   request_id: UUID;

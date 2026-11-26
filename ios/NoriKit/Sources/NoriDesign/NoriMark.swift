@@ -31,14 +31,16 @@ public struct OnigiriRiceShape: Shape {
 public struct NoriMark: View {
     public let size: CGFloat
     public let state: MarkState
+    public let happy: Bool
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isBlinking = false
 
-    public init(size: CGFloat = 32, state: MarkState = .idle) {
+    public init(size: CGFloat = 32, state: MarkState = .idle, happy: Bool = false) {
         self.size = size
         self.state = state
+        self.happy = happy
     }
 
     public var body: some View {
@@ -111,11 +113,27 @@ public struct NoriMark: View {
             let dx = eyeOffset.width * s
             let dy = eyeOffset.height * s
 
-            for eyeCenterX in [38.5, 57.5] as [CGFloat] {
-                let cx = ox + eyeCenterX * s + dx
-                let cy = oy + 46.0 * s + dy
-                let eyeRect = CGRect(x: cx - rx, y: cy - ry, width: rx * 2, height: ry * 2)
-                context.fill(Path(ellipseIn: eyeRect), with: .color(faceColor))
+            if happy {
+                for (x1, cx, x2) in [(35.0, 38.5, 42.0), (54.0, 57.5, 61.0)] as [(CGFloat, CGFloat, CGFloat)] {
+                    var arc = Path()
+                    arc.move(to: CGPoint(x: ox + x1 * s + dx, y: oy + 47.0 * s + dy))
+                    arc.addQuadCurve(
+                        to: CGPoint(x: ox + x2 * s + dx, y: oy + 47.0 * s + dy),
+                        control: CGPoint(x: ox + cx * s + dx, y: oy + 42.5 * s + dy)
+                    )
+                    context.stroke(
+                        arc,
+                        with: .color(faceColor),
+                        style: StrokeStyle(lineWidth: max(1.1, 2.6 * s), lineCap: .round, lineJoin: .round)
+                    )
+                }
+            } else {
+                for eyeCenterX in [38.5, 57.5] as [CGFloat] {
+                    let cx = ox + eyeCenterX * s + dx
+                    let cy = oy + 46.0 * s + dy
+                    let eyeRect = CGRect(x: cx - rx, y: cy - ry, width: rx * 2, height: ry * 2)
+                    context.fill(Path(ellipseIn: eyeRect), with: .color(faceColor))
+                }
             }
 
             var mouth = Path()

@@ -19,6 +19,7 @@ public enum NoriDeepLink: Sendable, Hashable {
     case routines
     case goals
     case settings
+    case onboarding
     case workDetail(String)
     case document(String)
     case oauthCallback(URL)
@@ -62,6 +63,7 @@ public enum NoriDeepLink: Sendable, Hashable {
         case "routines", "automations": return .routines
         case "goals": return .goals
         case "settings": return .settings
+        case "onboarding": return .onboarding
         case "oauth", "callback": return .oauthCallback(url)
         default:
             break
@@ -164,6 +166,88 @@ public final class NoriStore {
     public var memoryRefreshError: String?
     public var toastMessage: String?
     public var pendingDeepLink: NoriDeepLink?
+    public var hasLoadedSnapshot: Bool = false
+    public var isShowingOnboardingReplay: Bool = false
+
+    private static let onboardingDoneKeyPrefix = "nori.onboarding.done."
+
+    private var onboardingDoneKey: String? {
+        guard case .signedIn(let email) = authState else { return nil }
+        return Self.onboardingDoneKeyPrefix + email.lowercased()
+    }
+
+    public var isOnboardingLocallyCompleted: Bool {
+        guard let key = onboardingDoneKey else { return false }
+        return UserDefaults.standard.bool(forKey: key)
+    }
+
+    public var shouldShowOnboarding: Bool {
+        if isShowingOnboardingReplay { return true }
+        guard authState.isSignedIn, hasLoadedSnapshot else { return false }
+        if isOnboardingLocallyCompleted { return false }
+        if let completedAt = preferences.onboardingCompletedAt, !completedAt.isEmpty { return false }
+        if !session.messages.isEmpty { return false }
+        return true
+    }
+
+    public func completeOnboarding(
+        name: String,
+        replyStyle: String,
+        focus: [String],
+        workingOn: String,
+        saveAboutYou: Bool
+    ) async {
+        let generation = sessionGeneration
+        if let key = onboardingDoneKey {
+            UserDefaults.standard.set(true, forKey: key)
+        }
+        isShowingOnboardingReplay = false
+
+        if saveAboutYou {
+            var seeds: [(section: String, text: String)] = []
+            let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedStyle = replyStyle.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedWorking = workingOn.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedName.isEmpty {
+                seeds.append(("Preferences", "The user's name is \(trimmedName)."))
+            }
+            if !trimmedStyle.isEmpty {
+                seeds.append(("Preferences", "Prefers \(trimmedStyle.lowercased()) replies."))
+            }
+            if !focus.isEmpty {
+                let joined = focus.map { $0.lowercased() }.joined(separator: ", ")
+                seeds.append(("Context", "Uses Nori for \(joined)."))
+            }
+            if !trimmedWorking.isEmpty {
+                seeds.append(("Context", "Currently working on: \(trimmedWorking)"))
+            }
+            for seed in seeds {
+                if let receipt = try? await transport.createMemory(
+                    text: seed.text,
+                    section: seed.section,
+                    about: nil,
+                    pinned: false,
+                    requestID: UUID().uuidString.lowercased()
+                ), generation == sessionGeneration {
+                    if !coreMemories.contains(where: { $0.id == receipt.resource.id }) {
+                        coreMemories.insert(receipt.resource, at: 0)
+                    }
+                }
+            }
+        }
+
+        var nextPrefs = preferences
+        nextPrefs.timezone = TimeZone.current.identifier
+        nextPrefs.onboardingCompletedAt = ISO8601DateFormatter().string(from: Date())
+        if let receipt = try? await transport.savePreferences(
+            nextPrefs,
+            requestID: UUID().uuidString.lowercased()
+        ), generation == sessionGeneration {
+            preferences = receipt.resource
+        } else if generation == sessionGeneration {
+            preferences = nextPrefs
+        }
+    }
 
     private let authProvider: AuthTokenProvider
     private let liveTransport: LiveNoriTransport?
@@ -380,6 +464,8 @@ public final class NoriStore {
         authState = .signedOut
         authError = nil
         connectionState = .offline
+        hasLoadedSnapshot = false
+        isShowingOnboardingReplay = false
         capabilities = nil
         assistantSummary = nil
         lastPing = nil
@@ -658,6 +744,7 @@ public final class NoriStore {
         self.permissions = snapshot.permissions
         self.preferences = snapshot.preferences
         self.modelKeys = snapshot.modelKeys
+        self.hasLoadedSnapshot = true
         self.isThinking = snapshot.session.conversation?.processing == true
         finishObservedReplies(in: snapshot.session.messages)
         reportFailedWorkItemsIfNeeded(snapshot.workItems)
