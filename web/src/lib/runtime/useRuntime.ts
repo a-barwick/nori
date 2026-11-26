@@ -8,7 +8,7 @@ import { taskControlKinds } from "@/lib/types";
 import { parseModelSelection } from "@/lib/assistant/modelSelection";
 import { useResourceInvalidation } from "@/lib/assistant/useResource";
 import { getJSON } from "@/lib/assistant/api";
-import { browserResetChanged, syncBrowserReset } from "@/lib/assistant/resetState";
+import { browserResetChanged, requestResetCheck, syncBrowserReset } from "@/lib/assistant/resetState";
 import type { Preferences } from "@/lib/contracts/assistant";
 import { hasSubmission, messageTooLong } from "@/lib/submission";
 import { useDraftFiles, type UploadContext } from "@/lib/useDraftFiles";
@@ -21,7 +21,10 @@ class RequestError extends Error {
 async function readJSON<T>(response: Response, failure = "Request failed"): Promise<T> {
   const data = await response.json().catch(() => null);
   if (data === null) throw new RequestError("Nori returned an unreadable response.", response.status);
-  if (!response.ok) throw new RequestError(data.error || `${failure} (${response.status}).`, response.status, data, data.code);
+  if (!response.ok) {
+    if (data.code === "data_reset_pending") requestResetCheck();
+    throw new RequestError(data.error || `${failure} (${response.status}).`, response.status, data, data.code);
+  }
   return data as T;
 }
 

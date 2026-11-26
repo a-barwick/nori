@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { installTestDOM } from "./test-dom";
-import { browserResetChanged, resetMarkerKey, syncBrowserReset } from "./resetState";
+import { acknowledgeResetCompletion, browserResetChanged, resetCompletionPending, resetMarkerKey, syncBrowserReset } from "./resetState";
 
 describe("browser reset state", () => {
   test("clears this tab's pending work when another tab already observed the reset", () => {
@@ -35,6 +35,22 @@ describe("browser reset state", () => {
       assert.equal(localStorage.getItem("nori-draft-assistant-v1:alice"), null);
       assert.equal(localStorage.getItem("nori-diagnostics-model-selection-v1:alice"), null);
       assert.equal(localStorage.getItem("nori-draft-assistant-v1:bob"), "bob draft");
+    } finally { restore(); }
+  });
+
+  test("keeps a reset confirmation across reload checks until acknowledged", () => {
+    const restore = installTestDOM();
+    try {
+      syncBrowserReset("alice", "first-reset");
+      assert.equal(resetCompletionPending("alice", "first-reset"), true);
+      syncBrowserReset("alice", "first-reset");
+      assert.equal(resetCompletionPending("alice", "first-reset"), true);
+      acknowledgeResetCompletion("alice");
+      syncBrowserReset("alice", "first-reset");
+      assert.equal(resetCompletionPending("alice", "first-reset"), false);
+      syncBrowserReset("alice", "second-reset");
+      assert.equal(resetCompletionPending("alice", "second-reset"), true);
+      assert.equal(resetCompletionPending("bob", "second-reset"), false);
     } finally { restore(); }
   });
 });

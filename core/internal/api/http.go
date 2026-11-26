@@ -140,7 +140,7 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, state.ErrBusy), errors.Is(err, state.ErrDuplicate), errors.Is(err, state.ErrQuestionStale),
 		errors.Is(err, state.ErrSuperseded), errors.Is(err, state.ErrCancelled), errors.Is(err, state.ErrConversationBusy),
 		errors.Is(err, state.ErrConversationConflict), errors.Is(err, state.ErrConversationStale),
-		errors.Is(err, docstore.ErrUserDataBusy), errors.Is(err, docstore.ErrUserDataResetPending):
+		errors.Is(err, docstore.ErrUserDataBusy), errors.Is(err, docstore.ErrUserDataResetPending), errors.Is(err, docstore.ErrUserDataResetNotPending):
 		status = 409
 	}
 	if status >= 500 {
@@ -152,5 +152,12 @@ func writeError(w http.ResponseWriter, err error) {
 	if status == 502 {
 		message = "Nori could not finish this request. Check service configuration and logs."
 	}
-	writeJSON(w, status, map[string]string{"error": message})
+	body := map[string]string{"error": message}
+	switch {
+	case errors.Is(err, docstore.ErrUserDataResetPending):
+		body["code"] = dataResetPendingCode
+	case errors.Is(err, docstore.ErrUserDataResetNotPending):
+		body["code"] = dataResetNotPendingCode
+	}
+	writeJSON(w, status, body)
 }

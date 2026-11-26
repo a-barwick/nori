@@ -11,6 +11,7 @@ import (
 	"nori/internal/httpjson"
 	"nori/internal/observability"
 	"nori/internal/serviceauth"
+	"nori/internal/state"
 	"nori/internal/state/docstore"
 	"nori/internal/users"
 )
@@ -27,8 +28,13 @@ type UserHandlerOptions struct {
 	ReadyTimeout time.Duration
 	Metrics      http.Handler
 	UserActivity func(context.Context, users.User) (context.Context, users.User, func(), error)
-	ResetData    func(context.Context, users.User) error
+	ResetData    func(context.Context, users.User, bool) error
 }
+
+const (
+	dataResetPendingCode    = "data_reset_pending"
+	dataResetNotPendingCode = "data_reset_not_pending"
+)
 
 type userDataResetPendingKey struct{}
 
@@ -104,7 +110,7 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 			}
 			row, err := directory.FindEmail(r.Context(), lookupEmail)
 			if err != nil {
-				writeJSON(w, 403, map[string]string{"error": "No user for this sign-in."})
+				writeUserLookupError(w, r, err, "No user for this sign-in.")
 				return
 			}
 			observability.BindHTTPUser(r.Context(), row.ID)
@@ -172,7 +178,7 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 		}
 		row, err := directory.Get(r.Context(), id)
 		if err != nil {
-			writeJSON(w, 403, map[string]string{"error": "A known user is required."})
+			writeUserLookupError(w, r, err, "A known user is required.")
 			return
 		}
 		if isUserToken && !strings.EqualFold(row.Email, verifiedEmail) {
@@ -218,9 +224,19 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 	})
 }
 
-func resetUserData(w http.ResponseWriter, r *http.Request, user users.User, reset func(context.Context, users.User) error) {
+func writeUserLookupError(w http.ResponseWriter, r *http.Request, err error, missing string) {
+	if errors.Is(err, state.ErrNotFound) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": missing})
+		return
+	}
+	slog.WarnContext(r.Context(), "account lookup unavailable", "err", err)
+	writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Nori could not check your account. Try again shortly."})
+}
+
+func resetUserData(w http.ResponseWriter, r *http.Request, user users.User, reset func(context.Context, users.User, bool) error) {
 	var body struct {
-		Confirmation string `json:"confirmation"`
+		Confirmation  string `json:"confirmation"`
+		ResumePending bool   `json:"resume_pending,omitempty"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -229,15 +245,21 @@ func resetUserData(w http.ResponseWriter, r *http.Request, user users.User, rese
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Type RESET to confirm."})
 		return
 	}
-	if err := reset(r.Context(), user); err != nil {
-		if errors.Is(err, docstore.ErrUserDataBusy) {
+	if err := reset(r.Context(), user, body.ResumePending); err != nil {
+		if errors.Is(err, docstore.ErrUserDataBusy) || errors.Is(err, docstore.ErrUserDataResetNotPending) {
 			writeError(w, err)
 			return
 		}
 		slog.ErrorContext(r.Context(), "user data reset failed", "err", err)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "Nori could not finish your data reset. Try again."})
+		body := map[string]string{"error": "Nori could not finish your data reset. Try again."}
+		if errors.Is(err, docstore.ErrUserDataResetPending) {
+			body["code"] = dataResetPendingCode
+			body["error"] = docstore.ErrUserDataResetPending.Error()
+		}
+		writeJSON(w, http.StatusBadGateway, body)
 		return
 	}
+	slog.InfoContext(r.Context(), "user data reset completed")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusNoContent)
 }

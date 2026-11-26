@@ -25,6 +25,8 @@ for arg in "$@"; do
 Test and deploy Nori Core and Nori Web to GCP Cloud Run.
 
 Usage: ./scripts/deploy-gcp.sh [--skip-tests] [--core-only | --web-only] [--allow-branch] [--dry-run]
+
+Set NORI_POSTGRES_MAX_CONNS to update the Core database pool limit with the release.
 USAGE
       exit 0
       ;;
@@ -139,9 +141,14 @@ if [[ "$DEPLOY_CORE" -eq 1 ]]; then
     run gcloud run jobs update "$NORI_GCP_MIGRATION_JOB" --project="$PROJECT" --region="$REGION" --image="$CORE_IMAGE" --args=--migrate-only --quiet
     run gcloud run jobs execute "$NORI_GCP_MIGRATION_JOB" --project="$PROJECT" --region="$REGION" --wait --quiet
   fi
-  deploy_checked nori-core "$CORE_IMAGE" /readyz \
-    --remove-secrets=OPENAI_API_KEY,ANTHROPIC_API_KEY,OPENROUTER_API_KEY,NORI_MODEL_GATEWAY_API_KEY \
+  core_args=(
+    --remove-secrets=OPENAI_API_KEY,ANTHROPIC_API_KEY,OPENROUTER_API_KEY,NORI_MODEL_GATEWAY_API_KEY
     --remove-env-vars=NORI_MODEL_PROVIDER,NORI_MODEL_GATEWAY_URL,NORI_MODEL_PICKER_USERS,NORI_BYOK_REQUIRED,NORI_AGENT_MODEL,MODEL_NAME,NORI_OUTER_REASONING_EFFORT,NORI_INNER_REASONING_EFFORT
+  )
+  if [[ -n "${NORI_POSTGRES_MAX_CONNS:-}" ]]; then
+    core_args+=(--update-env-vars="NORI_POSTGRES_MAX_CONNS=$NORI_POSTGRES_MAX_CONNS")
+  fi
+  deploy_checked nori-core "$CORE_IMAGE" /readyz "${core_args[@]}"
 fi
 
 if [[ "$DEPLOY_WEB" -eq 1 ]]; then

@@ -379,6 +379,7 @@ func (a *Assistant) preferences(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, err, "", nil)
 		return
 	}
+	prefs.DataResetPending = userDataResetPending(r.Context())
 	writeJSON(w, 200, prefs)
 }
 

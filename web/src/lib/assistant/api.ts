@@ -2,6 +2,7 @@
 
 import type { APIError as APIErrorBody, MutationReceipt } from "@/lib/contracts/assistant";
 import type { ModelSelection } from "@/lib/types";
+import { beginReset, finishReset, requestResetCheck } from "./resetState";
 
 export const assistantURL = (path: string) => `/api/v1${path}`;
 
@@ -17,9 +18,10 @@ export async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T>
   return readJSON<T>(response);
 }
 
-async function readJSON<T>(response: Response): Promise<T> {
+async function readJSON<T>(response: Response, signalReset = true): Promise<T> {
   const data = await response.json().catch(() => null);
   if (!response.ok) {
+    if (signalReset && data?.code === "data_reset_pending") requestResetCheck();
     const message = data?.error || (response.status === 404 ? "This is no longer available." : response.status >= 500 ? "Nori could not be reached." : `Request failed (${response.status}).`);
     throw new APIError(message, response.status, data ?? undefined);
   }
@@ -154,18 +156,29 @@ export async function deleteModelKey(provider: string): Promise<ModelKeyProvider
   return readJSON<ModelKeyProvider>(response);
 }
 
-export async function resetUserData(): Promise<void> {
-  let response: Response;
+export async function resetUserData(resumePending = false): Promise<void> {
+  const started = performance.now();
+  let failure: unknown;
+  beginReset();
   try {
-    response = await fetch(assistantURL("/settings/reset"), {
+    const response = await fetch(assistantURL("/settings/reset"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confirmation: "RESET" }),
+      body: JSON.stringify({ confirmation: "RESET", ...(resumePending ? { resume_pending: true } : {}) }),
       cache: "no-store",
       redirect: "error",
     });
-  } catch {
-    throw new APIError("Nori could not confirm the reset. Reload to check whether onboarding starts.", 0);
+    if (!response.ok) await readJSON(response, false);
+  } catch (error) {
+    failure = error instanceof APIError ? error : new APIError("Nori could not confirm the reset. Try again.", 0);
+  } finally {
+    const remaining = Math.max(0, 2_000 - (performance.now() - started));
+    if (remaining) await new Promise<void>((resolve) => setTimeout(resolve, remaining));
+    finishReset();
   }
-  if (!response.ok) await readJSON(response);
+  if (failure) {
+    const noLongerPending = failure instanceof APIError && failure.code === "data_reset_not_pending";
+    requestResetCheck({ resetFailed: !resumePending && !noLongerPending, suppressCompletion: noLongerPending });
+    throw failure;
+  }
 }

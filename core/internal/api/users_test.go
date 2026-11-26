@@ -10,24 +10,32 @@ import (
 	"testing"
 
 	"nori/internal/api"
+	"nori/internal/state"
 	"nori/internal/users"
 )
 
 type mapDirectory struct {
-	users    map[string]users.User
-	getCalls atomic.Int32
+	users     map[string]users.User
+	getCalls  atomic.Int32
+	lookupErr error
 }
 
 func (d *mapDirectory) Get(_ context.Context, id string) (users.User, error) {
 	d.getCalls.Add(1)
+	if d.lookupErr != nil {
+		return users.User{}, d.lookupErr
+	}
 	u, ok := d.users[id]
 	if !ok {
-		return users.User{}, errors.New("not found")
+		return users.User{}, state.ErrNotFound
 	}
 	return u, nil
 }
 func (d *mapDirectory) FindEmail(context.Context, string) (users.User, error) {
-	return users.User{}, errors.New("not found")
+	if d.lookupErr != nil {
+		return users.User{}, d.lookupErr
+	}
+	return users.User{}, state.ErrNotFound
 }
 func (d *mapDirectory) Create(context.Context, users.User) error   { return nil }
 func (d *mapDirectory) List(context.Context) ([]users.User, error) { return nil, nil }
@@ -88,5 +96,30 @@ func TestUnprefixedAPIProcessReturns403(t *testing.T) {
 	}
 	if openCalls.Load() != 1 || seenPath != "/api/process" || seenUserID != users.LegacyID {
 		t.Fatalf("prefixed route saw openCalls=%d path=%q userID=%q, want 1 /api/process %q", openCalls.Load(), seenPath, seenUserID, users.LegacyID)
+	}
+}
+
+func TestUserLookupOutageIsRetryable(t *testing.T) {
+	dir := &mapDirectory{}
+	handler := api.UserHandler(dir, func(context.Context, users.User) (api.UserRoutes, func(), error) {
+		t.Fatal("missing account unexpectedly opened routes")
+		return api.UserRoutes{}, nil, nil
+	}, false, "test-model")
+	for _, request := range []struct{ method, path, body string }{
+		{"GET", "/users/owner/v1/preferences", ""},
+		{"POST", "/api/users/resolve", `{"email":"owner@example.com"}`},
+	} {
+		dir.lookupErr = errors.New("connection capacity exceeded")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(request.method, request.path, strings.NewReader(request.body)))
+		if w.Code != http.StatusServiceUnavailable || strings.Contains(w.Body.String(), dir.lookupErr.Error()) {
+			t.Fatalf("outage response = %d %s", w.Code, w.Body)
+		}
+		dir.lookupErr = nil
+		w = httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(request.method, request.path, strings.NewReader(request.body)))
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("unknown account response = %d %s", w.Code, w.Body)
+		}
 	}
 }

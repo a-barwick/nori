@@ -21,6 +21,7 @@ type Preferences struct {
 	Input                 *InputPreferences `json:"input,omitempty"`
 	OnboardingCompletedAt *time.Time        `json:"onboarding_completed_at,omitempty"`
 	DataResetAt           string            `json:"data_reset_at,omitempty"`
+	DataResetPending      bool              `json:"data_reset_pending,omitempty"`
 	UpdatedAt             *time.Time        `json:"updated_at,omitempty"`
 }
 

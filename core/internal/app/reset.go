@@ -31,7 +31,7 @@ func (s *Service) userDataActivity(ctx context.Context, row users.User) (context
 	return context.WithValue(ctx, userActivityKey{}, current), current, release, nil
 }
 
-func (s *Service) resetUserData(ctx context.Context, row users.User) error {
+func (s *Service) resetUserData(ctx context.Context, row users.User, resumePending bool) error {
 	store, ok := s.Backend().(docstore.UserDataResetter)
 	if !ok {
 		return fmt.Errorf("user data reset requires a reset-capable store")
@@ -47,14 +47,17 @@ func (s *Service) resetUserData(ctx context.Context, row users.User) error {
 	if err != nil {
 		return err
 	}
+	if resumePending && !row.ResetPending {
+		return docstore.ErrUserDataResetNotPending
+	}
 	if err := store.BeginUserDataReset(ctx, row.ID); err != nil {
 		return err
 	}
 	if err := s.storage.PurgeUserArtifacts(ctx, s.cfg, row); err != nil {
-		return fmt.Errorf("purge user artifacts: %w", err)
+		return fmt.Errorf("%w: purge user artifacts: %w", docstore.ErrUserDataResetPending, err)
 	}
 	if err := store.FinishUserDataReset(users.WithID(ctx, row.DataOwner()), row.ID, row.DataOwner()); err != nil {
-		return err
+		return fmt.Errorf("%w: clear account records: %w", docstore.ErrUserDataResetPending, err)
 	}
 	s.storage.EvictUserArtifactKey(row)
 	release()

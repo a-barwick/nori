@@ -15,6 +15,8 @@ const streams = new Map();
 const preferences = new Map();
 const modelKeys = new Map();
 const modelSelections = new Map();
+const resetPending = new Set();
+const failNextReset = new Set();
 const modelProviders = [
   { provider: "openai", label: "OpenAI" },
   { provider: "anthropic", label: "Anthropic" },
@@ -65,17 +67,24 @@ const upstream = createServer(async (req, res) => {
   });
   if (path === "v1/preferences") {
     if (req.method === "PUT") {
+      if (resetPending.has(id)) return json({ code: "data_reset_pending", error: "Finish the reset to continue." }, 409);
       const change = await input();
       const current = preferences.get(id);
       const updated = { ...change.value, revision: current.revision + 1, ...(current.data_reset_at ? { data_reset_at: current.data_reset_at } : {}) };
       preferences.set(id, updated);
       return json({ request_id: change.request_id, accepted: true, status: "applied", resource: updated });
     }
-    return json(preferences.get(id));
+    return json({ ...preferences.get(id), ...(resetPending.has(id) ? { data_reset_pending: true } : {}) });
   }
   if (path === "v1/settings/reset" && req.method === "POST") {
     const body = await input();
     if (body.confirmation !== "RESET") return json({ error: "Type RESET to confirm." }, 400);
+    if (body.resume_pending && !resetPending.has(id)) return json({ code: "data_reset_not_pending", error: "There is no reset to resume." }, 409);
+    if (failNextReset.delete(id)) {
+      resetPending.add(id);
+      return json({ code: "data_reset_pending", error: "Finish the reset to continue." }, 502);
+    }
+    resetPending.delete(id);
     const position = state.position + 1;
     sessions.delete(id);
     modelKeys.delete(id);
@@ -91,6 +100,9 @@ const upstream = createServer(async (req, res) => {
     for (const stream of streams.get(id) ?? []) stream.write(`id: ${position}\nevent: reset\ndata: ${JSON.stringify({ position })}\n\n`);
     res.writeHead(204).end();
     return;
+  }
+  if (resetPending.has(id) && req.method !== "GET" && req.method !== "HEAD") {
+    return json({ code: "data_reset_pending", error: "Finish the reset to continue." }, 409);
   }
   if (path === "v1/settings/model-keys") return json({
     byok_required: true,
@@ -173,6 +185,37 @@ const upstream = createServer(async (req, res) => {
 
 await new Promise(resolve => upstream.listen(0, "127.0.0.1", resolve));
 const control = createServer((req, res) => {
+  if (req.method === "POST" && req.url === "/prepare-reset-alternate") {
+    preferences.set(alternate, {
+      revision: 1, timezone: "UTC", working_hours: [], default_destination_ids: [], account_defaults: {},
+      budgets: { task_usd: 5 }, onboarding_completed_at: "2026-01-01T00:00:00Z",
+    });
+    sessions.delete(alternate);
+    modelKeys.delete(alternate);
+    modelSelections.delete(alternate);
+    resetPending.delete(alternate);
+    failNextReset.delete(alternate);
+    res.writeHead(204).end();
+    return;
+  }
+  if (req.method === "POST" && req.url === "/interrupt-reset-alternate") {
+    failNextReset.add(alternate);
+    res.writeHead(204).end();
+    return;
+  }
+  if (req.method === "POST" && req.url === "/pending-reset-alternate") {
+    resetPending.add(alternate);
+    res.writeHead(204).end();
+    return;
+  }
+  if (req.method === "POST" && req.url === "/finish-reset-alternate-with-new-data") {
+    resetPending.delete(alternate);
+    preferences.set(alternate, { ...preferences.get(alternate), data_reset_at: new Date().toISOString() });
+    modelKeys.set(alternate, new Set(["google"]));
+    modelSelections.set(alternate, { chat_profile_id: "google-neon", task_profile_id: "google-hydrogen" });
+    res.writeHead(204).end();
+    return;
+  }
   if (req.method === "POST" && req.url === "/seed-models") {
     modelKeys.set(identity, new Set(modelProviders.map((provider) => provider.provider)));
     modelSelections.set(identity, {

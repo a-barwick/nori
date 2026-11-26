@@ -205,6 +205,7 @@ func TestUserDataResetPostgres(t *testing.T) {
 
 	resetPath := "/v1/settings/reset"
 	confirm := `{"confirmation":"RESET"}`
+	resume := `{"confirmation":"RESET","resume_pending":true}`
 	api(svc, "POST", alice, alice, resetPath, `{"confirmation":"reset"}`, 400)
 	api(svc, "POST", alice, bob, resetPath, confirm, 403)
 	guard := otherReplica.Backend().(docstore.UserDataResetter)
@@ -233,18 +234,32 @@ func TestUserDataResetPostgres(t *testing.T) {
 	}
 
 	offline = true
-	api(svc, "POST", alice, alice, resetPath, confirm, 502)
-	if p := prefs(otherReplica, alice); p.OnboardingCompletedAt == nil || p.DataResetAt != "" {
+	assertCode := func(w *httptest.ResponseRecorder, want string) {
+		t.Helper()
+		var body struct {
+			Code string `json:"code"`
+		}
+		if err := json.NewDecoder(w.Body).Decode(&body); err != nil || body.Code != want {
+			t.Fatalf("reset code = %q, want %q: %v", body.Code, want, err)
+		}
+	}
+	assertCode(api(svc, "POST", alice, alice, resetPath, confirm, 502), "data_reset_pending")
+	if p := prefs(otherReplica, alice); p.OnboardingCompletedAt == nil || p.DataResetAt != "" || !p.DataResetPending {
 		t.Fatalf("interrupted reset changed preferences: %+v", p)
 	}
 	api(otherReplica, "GET", alice, alice, "/v1/snapshot", "", 200)
 	savePrefs(otherReplica, alice, 409)
+	gatewayKeyPath := "/v1/settings/model-keys/" + modelkeys.ProviderVercelAIGateway
+	assertCode(api(otherReplica, "PUT", alice, alice, gatewayKeyPath, `{"api_key":"blocked_fixture_1234"}`, 409), "data_reset_pending")
+	if p := prefs(otherReplica, bob); p.DataResetPending {
+		t.Fatal("another user's reset was marked pending")
+	}
 	if _, _, err := otherReplica.AcquireByID(ctx, alice.ID); !errors.Is(err, docstore.ErrUserDataResetPending) {
 		t.Fatalf("worker can acquire resetting account: %v", err)
 	}
 
 	offline = false
-	api(otherReplica, "POST", alice, alice, resetPath, confirm, 204)
+	api(otherReplica, "POST", alice, alice, resetPath, resume, 204)
 	identity := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/users/resolve", strings.NewReader(`{}`))
 	req = req.WithContext(serviceauth.WithVerifiedEmail(ctx, alice.Email))
@@ -257,7 +272,7 @@ func TestUserDataResetPostgres(t *testing.T) {
 		t.Fatalf("reset did not clear the old profile while preserving sign-in: %+v, %v", current, err)
 	}
 	fresh := prefs(svc, alice)
-	if fresh.Revision != 0 || fresh.Timezone != "UTC" || fresh.OnboardingCompletedAt != nil || fresh.DataResetAt == "" {
+	if fresh.Revision != 0 || fresh.Timezone != "UTC" || fresh.OnboardingCompletedAt != nil || fresh.DataResetAt == "" || fresh.DataResetPending {
 		t.Fatalf("preferences after reset: %+v", fresh)
 	}
 	if _, err := backend.Get(ctx, markerPath(alice)); !errors.Is(err, docstore.ErrNotFound) {
@@ -310,6 +325,12 @@ func TestUserDataResetPostgres(t *testing.T) {
 		}
 	}
 	savePrefs(svc, alice, 200)
+	api(svc, "PUT", alice, alice, gatewayKeyPath, `{"api_key":"after_reset_fixture_4321"}`, 200)
+	assertCode(api(otherReplica, "POST", alice, alice, resetPath, resume, 409), "data_reset_not_pending")
+	modelKeys := api(otherReplica, "GET", alice, alice, "/v1/settings/model-keys", "", 200)
+	if !strings.Contains(modelKeys.Body.String(), `"last4":"4321"`) {
+		t.Fatal("a stale resume request deleted a key saved after the reset")
+	}
 	if p := prefs(otherReplica, alice); p.DataResetAt != fresh.DataResetAt || p.OnboardingCompletedAt == nil {
 		t.Fatalf("onboarding could not finish again: %+v", p)
 	}

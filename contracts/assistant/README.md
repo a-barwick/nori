@@ -39,7 +39,7 @@ Core paths after the user-scoping wrapper; the browser reaches them as `/api/v1/
 | Command action | `POST /v1/{family}/{id}/actions` with `ActionRequest` | `200` applied or `202` queued receipt |
 | Answer an interaction | `POST /v1/interactions/{id}/responses` with `InteractionResponse` | `200` receipt |
 | Preferences | `PUT /v1/preferences` with `PreferencesChange` | `200` receipt |
-| Reset account data | `POST /v1/settings/reset` with `{"confirmation":"RESET"}` | `204` |
+| Reset account data | `POST /v1/settings/reset` with `{"confirmation":"RESET"}`. Set `resume_pending` to `true` to finish a previously confirmed reset. | `204` on completion. A stale resume returns `409 data_reset_not_pending`. |
 | Automation preview | `POST /v1/automations/preview` with an `AutomationEditable` body, no request id | `200` `AutomationPreview` |
 | OAuth callback | `GET /v1/connections/oauth/callback?state&code\|error` | `303` to the attempt's relative `return_to` |
 | Receipt lookup | `GET /v1/mutations/{request_id}` | `200` receipt or `404` |

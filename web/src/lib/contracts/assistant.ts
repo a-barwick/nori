@@ -357,6 +357,7 @@ export type Preferences = {
   };
   onboarding_completed_at?: Instant;
   data_reset_at?: Instant;
+  data_reset_pending?: boolean;
   updated_at?: Instant;
 };
 export type PreferencesEditable = {

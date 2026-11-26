@@ -5,21 +5,34 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { MotionConfig } from "motion/react";
 import { Tooltip } from "radix-ui";
-import { ListChecks, MoreHorizontal } from "lucide-react";
+import { ListChecks, LoaderCircle, MoreHorizontal } from "lucide-react";
 import { NoriTabIcon } from "@/components/mark/NoriMark";
 import { AppFrame } from "@/components/shell/AppFrame";
 import { Button } from "@/components/ui/primitives";
 import { useAppearance } from "@/lib/appearance";
 import { AssistantProvider, useAssistant } from "@/lib/assistant/context";
-import { getJSON } from "@/lib/assistant/api";
-import { browserResetChanged, resetMarkerKey, syncBrowserReset } from "@/lib/assistant/resetState";
+import { APIError, getJSON, resetUserData } from "@/lib/assistant/api";
+import {
+  acknowledgeResetCompletion,
+  browserResetChanged,
+  markBrowserReset,
+  requestResetCheck,
+  resetCompletionPending,
+  resetInProgress,
+  resetMarkerKey,
+  RESET_CHECK_EVENT,
+  RESET_CHECK_KEY,
+  RESET_STARTED_EVENT,
+  syncBrowserReset,
+  type ResetCheckOptions,
+} from "@/lib/assistant/resetState";
 import { useSummary } from "@/lib/assistant/sources";
 import { useResource } from "@/lib/assistant/useResource";
 import { SIGNED_OUT_EVENT_KEY } from "@/lib/runtime/session";
 import type { Preferences } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
 import { OnboardingFlow, shouldShowOnboarding } from "./OnboardingFlow";
-import { Badge, Failure, Loading } from "./ui";
+import { Badge, Failure, Loading, Notice } from "./ui";
 
 type NavItem = {
   href: string;
@@ -50,42 +63,110 @@ export function AppShell({ localMode, scope, children }: { localMode: boolean; s
 }
 
 const ONBOARDING_STORAGE_PREFIX = "nori.onboarding.done:";
+type AccountGateState = { status: "checking" | "ready" | "resetting" | "pending" | "complete" | "reset-error" | "error"; error?: Error };
 
 function AccountStateGate({ scope, localMode, children }: { scope: string; localMode: boolean; children: ReactNode }) {
-  const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<{ ready: boolean; error?: Error }>({ ready: false });
+  const [state, setState] = useState<AccountGateState>({ status: "checking" });
+  const [finishing, setFinishing] = useState(false);
+  const [resumeError, setResumeError] = useState("");
+  const activeCheck = useRef<AbortController | undefined>(undefined);
+  const lastCheck = useRef<ResetCheckOptions>({});
 
-  useEffect(() => {
+  const checkReset = useCallback((options: ResetCheckOptions = {}) => {
+    activeCheck.current?.abort();
     const controller = new AbortController();
+    activeCheck.current = controller;
+    lastCheck.current = options;
     void getJSON<Preferences>("/preferences", controller.signal).then((preferences) => {
       if (controller.signal.aborted) return;
       syncBrowserReset(scope, preferences.data_reset_at);
-      setState({ ready: true });
+      if (preferences.data_reset_pending) {
+        setState({ status: "pending" });
+      } else if (options.suppressCompletion) {
+        acknowledgeResetCompletion(scope);
+        setState({ status: "ready" });
+      } else if (!preferences.onboarding_completed_at && resetCompletionPending(scope, preferences.data_reset_at)) {
+        setState({ status: "complete" });
+      } else if (options.resetFailed) {
+        setState({ status: "reset-error" });
+      } else {
+        setState({ status: "ready" });
+      }
     }).catch((error: Error) => {
-      if (!controller.signal.aborted) setState({ ready: false, error });
+      if (!controller.signal.aborted) setState({ status: "error", error });
     });
-    return () => controller.abort();
-  }, [scope, attempt]);
+  }, [scope]);
+
+  const beginCheck = useCallback((options: ResetCheckOptions = {}) => {
+    setState({ status: "checking" });
+    checkReset(options);
+  }, [checkReset]);
 
   useEffect(() => {
-    const reload = () => window.location.replace("/");
+    checkReset();
+    const reload = () => { if (!resetInProgress()) window.location.replace("/"); };
+    const onResetStarted = () => { activeCheck.current?.abort(); setState({ status: "resetting" }); };
+    const onResetCheck = (event: Event) => { if (!resetInProgress()) beginCheck((event as CustomEvent<ResetCheckOptions>).detail); };
     const onStorage = (event: StorageEvent) => {
       if (event.key === resetMarkerKey(scope) && event.oldValue !== event.newValue) reload();
       if (event.key === SIGNED_OUT_EVENT_KEY && event.oldValue !== event.newValue) window.location.replace("/signed-out");
+      if (event.key === RESET_CHECK_KEY && event.oldValue !== event.newValue && !resetInProgress()) beginCheck();
     };
     window.addEventListener("nori:data-reset", reload);
+    window.addEventListener(RESET_CHECK_EVENT, onResetCheck);
+    window.addEventListener(RESET_STARTED_EVENT, onResetStarted);
     window.addEventListener("storage", onStorage);
     return () => {
+      activeCheck.current?.abort();
       window.removeEventListener("nori:data-reset", reload);
+      window.removeEventListener(RESET_CHECK_EVENT, onResetCheck);
+      window.removeEventListener(RESET_STARTED_EVENT, onResetStarted);
       window.removeEventListener("storage", onStorage);
     };
-  }, [scope]);
+  }, [beginCheck, checkReset, scope]);
 
-  if (state.error) return <main className="mx-auto max-w-xl space-y-4 p-6">
-    <Failure error={state.error} onRetry={() => { setState({ ready: false }); setAttempt((value) => value + 1); }} />
+  const finishReset = async () => {
+    if (finishing) return;
+    setFinishing(true);
+    setResumeError("");
+    try {
+      await resetUserData(true);
+      markBrowserReset(scope);
+      window.location.replace("/");
+    } catch (error) {
+      if (!(error instanceof APIError && error.code === "data_reset_not_pending")) {
+        setResumeError("Nori couldn’t finish the reset. Try again.");
+      }
+      setFinishing(false);
+    }
+  };
+
+  if (state.status === "error") return <main className="mx-auto max-w-xl space-y-4 p-6">
+    <Failure error={state.error} onRetry={() => beginCheck(lastCheck.current)} />
     {!localMode && <form action="/api/auth/sign-out" method="post"><Button type="submit" variant="quiet">Sign out</Button></form>}
   </main>;
-  if (!state.ready) return <main className="mx-auto max-w-xl p-6"><Loading /></main>;
+  if (state.status === "checking") return <main className="mx-auto max-w-xl p-6"><Loading /></main>;
+  if (state.status === "resetting") return <main className="mx-auto max-w-xl p-6">
+    <div role="status" className="flex items-center gap-3 text-body text-ink">
+      <LoaderCircle className="size-5 animate-spin motion-reduce:animate-none" aria-hidden />Resetting data…
+    </div>
+  </main>;
+  if (state.status === "pending") return <main className="mx-auto max-w-xl space-y-4 p-6">
+    <h1 className="text-section font-semibold text-ink">Finish your data reset</h1>
+    <p className="text-body text-ink-2">Your data reset is waiting to finish.</p>
+    {resumeError && <Notice tone="danger">{resumeError}</Notice>}
+    <Button variant="primary" disabled={finishing} onClick={() => void finishReset()}>{finishing ? "Finishing…" : "Finish reset"}</Button>
+  </main>;
+  if (state.status === "complete") return <main className="mx-auto max-w-xl space-y-4 p-6">
+    <h1 className="text-section font-semibold text-ink">Data reset complete</h1>
+    <p className="text-body text-ink-2">Your previous saved API keys and model choices were cleared. Continue to set up Nori.</p>
+    <Button variant="primary" onClick={() => { acknowledgeResetCompletion(scope); setState({ status: "ready" }); }}>Continue</Button>
+  </main>;
+  if (state.status === "reset-error") return <main className="mx-auto max-w-xl space-y-4 p-6">
+    <h1 className="text-section font-semibold text-ink">Data reset could not start</h1>
+    <p className="text-body text-ink-2">Return to Reset data to try again.</p>
+    <Button variant="primary" onClick={() => window.location.replace("/settings/reset")}>Return to Reset data</Button>
+  </main>;
   return children;
 }
 
@@ -122,7 +203,9 @@ function Frame({ scope, children }: { scope: string; children: ReactNode }) {
   }, [forceReplay, preferences.data?.data_reset_at, router, scope]);
 
   useEffect(() => {
-    if (preferences.data && browserResetChanged(scope, preferences.data.data_reset_at)) {
+    if (preferences.data?.data_reset_pending) {
+      requestResetCheck();
+    } else if (preferences.data && browserResetChanged(scope, preferences.data.data_reset_at)) {
       syncBrowserReset(scope, preferences.data.data_reset_at);
       window.dispatchEvent(new Event("nori:data-reset"));
     }
