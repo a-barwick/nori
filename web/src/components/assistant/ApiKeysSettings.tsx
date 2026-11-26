@@ -21,10 +21,10 @@ export function needsByokSetup(data?: ModelKeysResponse): boolean {
 }
 
 export function byokPromptLabel(data?: ModelKeysResponse): string {
-  return data?.providers[0]?.label || "Vercel AI Gateway";
+  return data?.providers.length === 1 ? data.providers[0].label : "model provider";
 }
 
-export function ApiKeysSettings() {
+export function ApiKeysSettings({ onKeySaved }: { onKeySaved?: (provider: ModelKeyProvider) => void }) {
   const keys = useResource<ModelKeysResponse>("/settings/model-keys", { poll: 0, versioned: false });
   const invalidate = useResourceInvalidation();
 
@@ -39,7 +39,7 @@ export function ApiKeysSettings() {
       ...keys.data,
       providers: keys.data.providers.map((item) => (item.provider === updated.provider ? updated : item)),
     });
-    invalidate("/settings/model-keys", "/capabilities");
+    invalidate("/settings/model-keys", "/settings/models", "/capabilities");
   };
 
   return (
@@ -48,6 +48,7 @@ export function ApiKeysSettings() {
       error={keys.error}
       onRetry={() => void keys.reload()}
       onProviderUpdated={updateProvider}
+      onKeySaved={onKeySaved}
     />
   );
 }
@@ -57,12 +58,14 @@ export function ApiKeysContent({
   error,
   onRetry,
   onProviderUpdated,
+  onKeySaved,
   initialEditingProvider,
 }: {
   data: ModelKeysResponse;
   error?: unknown;
   onRetry?: () => void;
   onProviderUpdated: (updated: ModelKeyProvider) => void;
+  onKeySaved?: (provider: ModelKeyProvider) => void;
   initialEditingProvider?: string | null;
 }) {
   const [editingProvider, setEditingProvider] = useState<string | null>(initialEditingProvider ?? null);
@@ -113,6 +116,7 @@ export function ApiKeysContent({
       setDraftKey("");
       setEditingProvider(null);
       onProviderUpdated(updated);
+      onKeySaved?.(updated);
       announce(`${provider.label} key saved`);
     } catch (err) {
       setProviderErrors((prev) => ({ ...prev, [provider.provider]: errorText(err) }));
@@ -164,7 +168,7 @@ export function ApiKeysContent({
       {data.providers.length === 0 ? (
         <Empty>No model key providers are available.</Empty>
       ) : (
-        <Section title="Model Providers">
+        <Section title="API Keys">
           <ul
             aria-label="Model providers"
             className="divide-y divide-hairline overflow-hidden rounded-card border border-card-border bg-surface"
@@ -191,26 +195,20 @@ export function ApiKeysContent({
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-row font-semibold text-ink">{provider.label}</span>
-                        <Pill tone={provider.configured ? "ok" : data.byok_required ? "warning" : "neutral"}>
-                          {provider.configured ? "Configured" : data.byok_required ? "Required" : "Not configured"}
+                        <Pill tone={provider.configured ? "ok" : "neutral"}>
+                          {provider.configured ? "Configured" : "Not configured"}
                         </Pill>
                       </div>
-                      <p className="mt-0.5 text-meta text-ink-2">
-                        {provider.configured ? (
+                      {provider.configured && (provider.last4 || provider.updated_at) && <p className="mt-0.5 text-meta text-ink-2">
                           <>
-                            <span>Configured</span>
                             {provider.last4 && (
                               <>
-                                {" "}
                                 <span className="font-mono text-mono-data text-ink">••••{provider.last4}</span>
                               </>
                             )}
-                            {provider.updated_at && <span> · Updated {relative(provider.updated_at)}</span>}
+                            {provider.updated_at && <span>{provider.last4 && " · "}Updated {relative(provider.updated_at)}</span>}
                           </>
-                        ) : (
-                          "Not configured"
-                        )}
-                      </p>
+                      </p>}
                     </div>
 
                     {!isEditing && (
@@ -227,11 +225,7 @@ export function ApiKeysContent({
                           <Confirm
                             danger
                             title={`Remove ${provider.label} key?`}
-                            body={
-                              data.byok_required
-                                ? "Nori will not be able to run models until you add a new key."
-                                : "Your saved key will be permanently deleted."
-                            }
+                            body="Models using this key will require another key or model selection."
                             confirm="Remove"
                             onConfirm={() => void handleDelete(provider)}
                             trigger={

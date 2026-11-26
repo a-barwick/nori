@@ -68,7 +68,7 @@ export function MoreScreen() {
           <Notice
             tone="warning"
             action={
-              <Link href="/settings/api-keys" className="font-semibold underline underline-offset-2">
+              <Link href="/settings/models" className="font-semibold underline underline-offset-2">
                 Add key
               </Link>
             }
@@ -136,13 +136,13 @@ export function MoreScreen() {
             detail={appearanceLabel(appearance)}
           />
           <Row
-            href="/settings/api-keys"
+            href="/settings/models"
             leading={
               <span className="grid size-9 place-items-center rounded-[10px] bg-fill-1 text-ink-2">
                 <KeyRound size={18} strokeWidth={1.85} aria-hidden />
               </span>
             }
-            title="API Keys"
+            title="Models"
             detail={configuredKeysCount > 0 ? plural(configuredKeysCount, "configured") : undefined}
             trailing={requiresByok ? <Pill tone="warning">Required</Pill> : undefined}
           />

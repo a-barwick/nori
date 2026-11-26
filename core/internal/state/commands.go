@@ -97,9 +97,11 @@ func ValidateCommandBatch(commands []Command) error {
 }
 
 type CommandBatch struct {
-	Prior  map[string]*Command
-	Runs   map[string]Run
-	Exists map[string]bool
+	Prior                 map[string]*Command
+	Runs                  map[string]Run
+	Exists                map[string]bool
+	AccountModels         bool
+	AccountModelSelection *ModelSelection
 }
 
 func NewCommandBatch() CommandBatch {
@@ -149,8 +151,8 @@ func (b CommandBatch) Prepare(commands []Command, control Control, now time.Time
 		taskBudgetUSD = TaskBudgetUSD
 	}
 	p := commandPrep{
-		taskBudgetUSD: taskBudgetUSD,
-		runs:          b.Runs, exists: b.Exists, opened: map[string]bool{}, now: now, traceContext: traceContext,
+		taskBudgetUSD: taskBudgetUSD, accountModels: b.AccountModels, accountModelSelection: b.AccountModelSelection,
+		runs: b.Runs, exists: b.Exists, opened: map[string]bool{}, now: now, traceContext: traceContext,
 		prepared: PreparedCommands{
 			Receipts: make([]CommandReceipt, 0, len(commands)), Accepted: []Command{}, ReadyEvents: []TaskEvent{}, Changed: map[string]bool{},
 		},
@@ -222,14 +224,16 @@ func (b CommandBatch) Prepare(commands []Command, control Control, now time.Time
 }
 
 type commandPrep struct {
-	taskBudgetUSD float64
-	runs          map[string]Run
-	exists        map[string]bool
-	opened        map[string]bool
-	now           time.Time
-	traceContext  map[string]string
-	prepared      PreparedCommands
-	cascaded      []CommandReceipt
+	accountModels         bool
+	accountModelSelection *ModelSelection
+	taskBudgetUSD         float64
+	runs                  map[string]Run
+	exists                map[string]bool
+	opened                map[string]bool
+	now                   time.Time
+	traceContext          map[string]string
+	prepared              PreparedCommands
+	cascaded              []CommandReceipt
 }
 
 func (p *commandPrep) change(run Run) {
@@ -283,6 +287,9 @@ func (p *commandPrep) start(cmd Command) (Run, error) {
 		TraceContext: p.traceContext, OriginTraceContext: p.traceContext, Revises: cmd.Revises, Origin: cmd.Origin,
 		ModelSelection: cmd.ModelSelection.Clone(),
 	}
+	if p.accountModels {
+		run.ModelSelection = nil
+	}
 	if cmd.BudgetUSD > 0 && cmd.BudgetUSD < run.Budget {
 		run.Budget = cmd.BudgetUSD
 	}
@@ -299,6 +306,9 @@ func (p *commandPrep) start(cmd Command) (Run, error) {
 			run.ModelSelection = parent.ModelSelection.TaskOnly()
 		}
 		p.change(parent)
+	}
+	if p.accountModels && run.ModelSelection.IsEmpty() {
+		run.ModelSelection = p.accountModelSelection.Clone()
 	}
 	p.exists[cmd.RunID] = true
 	return run, nil

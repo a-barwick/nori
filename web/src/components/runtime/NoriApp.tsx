@@ -218,6 +218,9 @@ export function ChatScreen() {
               <div role="alert" className="max-w-[680px] rounded-tile border border-hairline bg-surface p-3 text-meta text-ink-2">
                 Could not confirm “{label.slice(0, 80)}
                 {label.length > 80 ? "…" : ""}”. {item.error}{" "}
+                {(item.errorCode === "model_key_required" || item.errorCode === "missing_api_key") && (
+                  <><Link href="/settings/models" className="font-semibold text-accent-text hover:underline">Open Models</Link>{" "}</>
+                )}
                 <button
                   type="button"
                   className="font-semibold text-accent-text hover:underline"
@@ -244,7 +247,7 @@ export function ChatScreen() {
             <Notice
               tone="warning"
               action={
-                <Link href="/settings/api-keys" className="font-semibold underline underline-offset-2">
+                <Link href="/settings/models" className="font-semibold underline underline-offset-2">
                   Add API key
                 </Link>
               }

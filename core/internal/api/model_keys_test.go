@@ -61,10 +61,8 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 func TestModelKeysAPI_CRUDAndErrorCodes(t *testing.T) {
 	now := time.Date(2026, 11, 26, 1, 30, 0, 0, time.UTC)
 	svc := &modelkeys.Service{
-		Store:        newMemModelKeyStore(),
-		GatewayURL:   "https://ai-gateway.vercel.sh/v1",
-		BYOKRequired: true,
-		Now:          func() time.Time { return now },
+		Store: newMemModelKeyStore(),
+		Now:   func() time.Time { return now },
 		HTTPClient: &http.Client{
 			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 				if r.Header.Get("Authorization") == "Bearer vck_invalid_0000000000000000" {
@@ -99,7 +97,7 @@ func TestModelKeysAPI_CRUDAndErrorCodes(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &listResp); err != nil {
 		t.Fatalf("decode list: %v", err)
 	}
-	if !listResp.BYOKRequired || len(listResp.Providers) != 1 || listResp.Providers[0].Provider != modelkeys.ProviderVercelAIGateway || listResp.Providers[0].Configured {
+	if !listResp.BYOKRequired || len(listResp.Providers) != 5 || listResp.Providers[3].Provider != modelkeys.ProviderVercelAIGateway || listResp.Providers[3].Configured {
 		t.Fatalf("unexpected initial list: %+v", listResp)
 	}
 
@@ -162,7 +160,7 @@ func TestModelKeysAPI_CRUDAndErrorCodes(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &listResp); err != nil {
 		t.Fatalf("decode list after PUT: %v", err)
 	}
-	if !listResp.Providers[0].Configured || listResp.Providers[0].Last4 != "7890" {
+	if !listResp.Providers[3].Configured || listResp.Providers[3].Last4 != "7890" {
 		t.Fatalf("unexpected list after PUT: %+v", listResp)
 	}
 
@@ -196,9 +194,7 @@ func (unavailableModelKeyStore) Delete(context.Context, string) error {
 func TestModelKeysAPI_ServiceUnavailableErrors(t *testing.T) {
 	// 1. Upstream provider validation outage -> 503 provider_unavailable (retryable).
 	svcProviderDown := &modelkeys.Service{
-		Store:        newMemModelKeyStore(),
-		GatewayURL:   "https://ai-gateway.vercel.sh/v1",
-		BYOKRequired: true,
+		Store: newMemModelKeyStore(),
 		HTTPClient: &http.Client{
 			Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 				return &http.Response{
@@ -227,9 +223,7 @@ func TestModelKeysAPI_ServiceUnavailableErrors(t *testing.T) {
 
 	// 2. Credential store outage -> 503 credential_store_unavailable (retryable).
 	svcStoreDown := &modelkeys.Service{
-		Store:        unavailableModelKeyStore{},
-		GatewayURL:   "https://ai-gateway.vercel.sh/v1",
-		BYOKRequired: true,
+		Store: unavailableModelKeyStore{},
 	}
 	h2 := Handler(Deps{Assistant: &Assistant{ModelKeys: svcStoreDown}})
 	rec2 := httptest.NewRecorder()

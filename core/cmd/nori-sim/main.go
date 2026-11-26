@@ -117,7 +117,7 @@ func main() {
 		return
 	}
 
-	s, err := settings.LoadDefaultCloud("local")
+	s, err := settings.LoadSimulation()
 	if err != nil {
 		slog.Error("failed to load settings", "err", err)
 		os.Exit(1)

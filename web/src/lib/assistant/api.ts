@@ -1,6 +1,7 @@
 "use client";
 
 import type { APIError as APIErrorBody, MutationReceipt } from "@/lib/contracts/assistant";
+import type { ModelSelection } from "@/lib/types";
 
 export const assistantURL = (path: string) => `/api/v1${path}`;
 
@@ -95,6 +96,36 @@ export type ModelKeysResponse = {
   byok_required: boolean;
   providers: ModelKeyProvider[];
 };
+
+export type ModelProfile = {
+  id: string;
+  version: string;
+  label: string;
+  backend: string;
+  model: string;
+  lanes: string[];
+  supported_reasoning?: string[];
+  default_reasoning?: string;
+  paid: boolean;
+};
+
+export type ModelSettings = {
+  model_profiles: { profiles: ModelProfile[] };
+  selection: ModelSelection;
+  revision: number;
+  recommendations: Record<string, ModelSelection>;
+};
+
+export async function saveModelSettings(selection: ModelSelection, expectedRevision: number): Promise<ModelSettings> {
+  const response = await fetch(assistantURL("/settings/models"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ selection, expected_revision: expectedRevision }),
+    cache: "no-store",
+    redirect: "error",
+  });
+  return readJSON<ModelSettings>(response);
+}
 
 export function fetchModelKeys(signal?: AbortSignal): Promise<ModelKeysResponse> {
   return getJSON<ModelKeysResponse>("/settings/model-keys", signal);

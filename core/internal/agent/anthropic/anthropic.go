@@ -27,15 +27,16 @@ const (
 )
 
 type Client struct {
-	Key              string
-	ModelName        string
-	HTTP             *http.Client
-	Guard            *llmguard.Guard
-	UserID           string
-	Meter            usage.Meter
-	TestURL          string
-	DefaultReasoning string
-	gatewayURL       string
+	Key               string
+	ModelName         string
+	HTTP              *http.Client
+	Guard             *llmguard.Guard
+	UserID            string
+	Meter             usage.Meter
+	TestURL           string
+	DefaultReasoning  string
+	BYOKProviderLabel string
+	gatewayURL        string
 }
 
 func New(key, model string, meter usage.Meter) *Client {
@@ -105,7 +106,7 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		return out, errors.New("anthropic task model name must be configured")
 	}
 
-	messages, err := anthropicMessages(req.Messages)
+	messages, err := anthropicMessages(req.Messages, c.BYOKProviderLabel != "")
 	if err != nil {
 		return out, err
 	}
@@ -174,14 +175,19 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	if scope == "" {
 		scope = llmguard.ScopeTask
 	}
-	reqCtx := llmguard.WithMeta(ctx, llmguard.CallMeta{
+	meta := llmguard.CallMeta{
 		UserID:          c.UserID,
 		Scope:           scope,
 		Provider:        c.Provider(),
 		Model:           c.ModelName,
 		MaxOutputTokens: maxTokens,
-	})
+		BYOK:            c.BYOKProviderLabel != "",
+	}
+	reqCtx := llmguard.WithMeta(ctx, meta)
 	record := usage.Attempt(ctx, c.Provider(), c.ModelName)
+	if c.BYOKProviderLabel != "" {
+		record.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
+	}
 	if err := c.Meter.RecordUsage(ctx, record); err != nil {
 		return out, err
 	}
@@ -198,6 +204,9 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		}
 		_ = usage.Finish(ctx, c.Meter, prev)
 		record = usage.Attempt(ctx, c.Provider(), c.ModelName)
+		if c.BYOKProviderLabel != "" {
+			record.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
+		}
 		if err := c.Meter.RecordUsage(ctx, record); err != nil {
 			record.RequestStatus = "not_sent"
 			return err
@@ -225,6 +234,11 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
+		if c.BYOKProviderLabel != "" {
+			if err := llmguard.ModelAccessError(res, c.BYOKProviderLabel); err != nil {
+				return out, err
+			}
+		}
 		if (res.StatusCode == 400 || res.StatusCode == 413) && contextview.Refusal(res.Body) {
 			return out, contextview.ErrOverflow
 		}
@@ -232,16 +246,10 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	}
 
 	var response struct {
-		Model      string `json:"model"`
-		StopReason string `json:"stop_reason"`
-		Content    []struct {
-			Type  string         `json:"type"`
-			Text  string         `json:"text"`
-			ID    string         `json:"id"`
-			Name  string         `json:"name"`
-			Input map[string]any `json:"input"`
-		} `json:"content"`
-		Usage *struct {
+		Model      string            `json:"model"`
+		StopReason string            `json:"stop_reason"`
+		Content    []json.RawMessage `json:"content"`
+		Usage      *struct {
 			Input      int64 `json:"input_tokens"`
 			Output     int64 `json:"output_tokens"`
 			CacheRead  int64 `json:"cache_read_input_tokens"`
@@ -285,9 +293,26 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	}
 
 	message := &transcript.Message{Role: transcript.RoleModel}
+	if c.BYOKProviderLabel != "" {
+		saved, err := json.Marshal(response.Content)
+		if err != nil {
+			return out, errors.New("task model returned invalid content")
+		}
+		message.Parts = append(message.Parts, transcript.Part{Provider: &transcript.ProviderState{Format: "nori.anthropic.messages", Data: saved}})
+	}
 	var calls []transcript.ToolCall
 	var texts []string
-	for _, blk := range response.Content {
+	for _, raw := range response.Content {
+		var blk struct {
+			Type  string         `json:"type"`
+			Text  string         `json:"text"`
+			ID    string         `json:"id"`
+			Name  string         `json:"name"`
+			Input map[string]any `json:"input"`
+		}
+		if json.Unmarshal(raw, &blk) != nil {
+			return out, errors.New("task model returned invalid content")
+		}
 		switch blk.Type {
 		case "text":
 			if blk.Text != "" {
@@ -344,17 +369,22 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 	if strings.TrimSpace(req.Instructions) != "" {
 		fields["system"] = req.Instructions
 	}
+	if c.BYOKProviderLabel != "" && c.DefaultReasoning != "" {
+		fields["output_config"] = map[string]string{"effort": c.DefaultReasoning}
+	}
 	body, err := json.Marshal(fields)
 	if err != nil {
 		return out, errors.New("inspection request could not be encoded")
 	}
-	reqCtx := llmguard.WithMeta(ctx, llmguard.CallMeta{
+	meta := llmguard.CallMeta{
 		UserID:          c.UserID,
 		Scope:           llmguard.ScopeTask,
-		Provider:        provider,
+		Provider:        c.Provider(),
 		Model:           c.ModelName,
 		MaxOutputTokens: maxTokens,
-	})
+		BYOK:            c.BYOKProviderLabel != "",
+	}
+	reqCtx := llmguard.WithMeta(ctx, meta)
 	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.endpoint(), bytes.NewReader(body))
 	if err != nil {
 		return out, err
@@ -362,6 +392,9 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 	c.setAuthHeaders(httpReq)
 
 	record := usage.Attempt(ctx, c.Provider(), c.ModelName)
+	if c.BYOKProviderLabel != "" {
+		record.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
+	}
 	if err := c.Meter.RecordUsage(ctx, record); err != nil {
 		return out, err
 	}
@@ -380,6 +413,11 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
+		if c.BYOKProviderLabel != "" {
+			if err := llmguard.ModelAccessError(res, c.BYOKProviderLabel); err != nil {
+				return out, err
+			}
+		}
 		return out, fmt.Errorf("inspection model returned HTTP %d", res.StatusCode)
 	}
 	var response struct {
@@ -458,7 +496,7 @@ func (c *Client) doWithRetry(ctx context.Context, body []byte, onRetry func(stat
 		retryable := res.StatusCode == http.StatusTooManyRequests ||
 			res.StatusCode == 529 ||
 			res.StatusCode >= 500
-		if !retryable || attempt >= maxRetries {
+		if !retryable || attempt >= maxRetries || (c.BYOKProviderLabel != "" && llmguard.ModelAccessError(res, c.BYOKProviderLabel) != nil) {
 			return res, nil
 		}
 		status := res.StatusCode
@@ -499,7 +537,7 @@ func sanitizeAnthropicToolID(id string, mapping map[string]string, seq *int) str
 	return clean
 }
 
-func anthropicMessages(messages []transcript.Message) ([]map[string]any, error) {
+func anthropicMessages(messages []transcript.Message, preserveState bool) ([]map[string]any, error) {
 	var out []map[string]any
 	appendBlock := func(role string, blk map[string]any) {
 		if len(out) > 0 && out[len(out)-1]["role"] == role {
@@ -517,6 +555,25 @@ func anthropicMessages(messages []transcript.Message) ([]map[string]any, error) 
 		role := "user"
 		if msg.Role == transcript.RoleModel {
 			role = "assistant"
+		}
+		if saved := msg.Provider(); preserveState && saved != nil && saved.Format == "nori.anthropic.messages" {
+			var blocks []map[string]any
+			if json.Unmarshal(saved.Data, &blocks) != nil {
+				return nil, errors.New("invalid saved Anthropic response")
+			}
+			for _, block := range blocks {
+				if block["type"] == "tool_use" {
+					id, _ := block["id"].(string)
+					name, _ := block["name"].(string)
+					if id == "" || name == "" {
+						return nil, errors.New("invalid saved Anthropic tool call")
+					}
+					idMap[id] = id
+					pending[name] = append(pending[name], id)
+				}
+				appendBlock("assistant", block)
+			}
+			continue
 		}
 		for j, part := range msg.Parts {
 			switch {
@@ -573,7 +630,7 @@ func anthropicMessages(messages []transcript.Message) ([]map[string]any, error) 
 			"content": []map[string]any{{"type": "text", "text": "[Task resumed]"}},
 		}}, out...)
 	}
-	if len(out) >= 2 {
+	if !preserveState && len(out) >= 2 {
 		if blocks, ok := out[len(out)-2]["content"].([]map[string]any); ok && len(blocks) > 0 {
 			blocks[len(blocks)-1]["cache_control"] = map[string]string{"type": "ephemeral"}
 		}

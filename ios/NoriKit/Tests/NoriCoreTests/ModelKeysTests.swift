@@ -102,6 +102,40 @@ struct ModelKeysTests {
         #expect(providerURL.absoluteString == "https://api.nori.test/users/usr-7/v1/settings/model-keys/vercel_ai_gateway")
     }
 
+    @Test("Model settings decode and use the account revision on save")
+    @MainActor
+    func accountModelSettings() async throws {
+        let empty = #"{"model_profiles":{"profiles":[]},"selection":{},"revision":0,"recommendations":{}}"#
+        let decoded = try JSONDecoder().decode(ModelSettingsResponse.self, from: Data(empty.utf8))
+        #expect(decoded.selection.isEmpty)
+        #expect(decoded.recommendations.isEmpty)
+
+        let mock = MockModelKeysTransport()
+        let store = NoriStore(transport: mock)
+        try await store.refreshModelSettings()
+        let selection = ModelSelection(chatProfileID: "anthropic-opus", chatReasoning: "low", taskProfileID: "anthropic-haiku", taskReasoning: "low")
+        try await store.saveModelSettings(selection)
+        #expect(store.modelSettings?.selection == selection)
+        #expect(store.modelSettings?.revision == 1)
+
+        let changedElsewhere = ModelSelection(chatProfileID: "openai-sol", chatReasoning: "high")
+        await mock.changeModelsElsewhere(changedElsewhere)
+        try await store.refreshModelSettings()
+        do {
+            try await store.saveModelSettings(selection, expectedRevision: 1)
+            Issue.record("Expected a revision conflict")
+        } catch let error as NoriAPIError {
+            #expect(error.isRevisionConflict)
+        }
+        #expect(store.modelSettings?.selection == changedElsewhere)
+        #expect(store.modelSettings?.revision == 2)
+
+        let encoded = try JSONEncoder().encode(SaveModelSettingsRequest(selection: selection, expectedRevision: 2))
+        let object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        #expect(object?["expected_revision"] as? Int == 2)
+        #expect((object?["selection"] as? [String: String])?["chat_profile_id"] == "anthropic-opus")
+    }
+
     @Test("NoriStore tracks BYOK setup state across refresh, save, error, and delete")
     @MainActor
     func storeModelKeyLifecycle() async throws {
@@ -141,6 +175,47 @@ struct ModelKeysTests {
         #expect(store.hasConfiguredModelKey == false)
         #expect(store.needsModelKeySetup == true)
     }
+
+    @Test("Reset clears model state and ignores model reads that began earlier")
+    @MainActor
+    func resetClearsModelState() async throws {
+        let mock = MockModelKeysTransport()
+        let store = NoriStore(transport: mock)
+        let email = "model-reset-\(UUID().uuidString)@example.com"
+        let legacySelectionKey = "nori.diagnostics.modelSelection.v1." + email.lowercased()
+        defer { UserDefaults.standard.removeObject(forKey: legacySelectionKey) }
+
+        store.authState = .signedIn(email: email)
+        UserDefaults.standard.set(Data("old choice".utf8), forKey: legacySelectionKey)
+        try await store.refreshModelSettings()
+        try await store.saveModelSettings(ModelSelection(chatProfileID: "vercel_ai_gateway-opus", taskProfileID: "vercel_ai_gateway-haiku"))
+        _ = try await store.saveModelKey(provider: "vercel_ai_gateway", apiKey: "vck_test_a1b2")
+        store.modelKeyError = "Old key error"
+        #expect(store.hasConfiguredModelKey)
+        #expect(store.modelSettings?.selection.chatProfileID == "vercel_ai_gateway-opus")
+
+        await mock.suspendNextModelReads()
+        let oldSettings = Task { try? await store.refreshModelSettings() }
+        let oldKeys = Task { try? await store.refreshModelKeysThrowing() }
+        await mock.waitForSuspendedModelReads()
+
+        try await store.resetUserData(confirmation: "RESET")
+        #expect(store.authState == .signedIn(email: email))
+        #expect(store.modelSettings == nil)
+        #expect(store.modelKeyError == nil)
+        #expect(!store.hasConfiguredModelKey)
+        #expect(UserDefaults.standard.object(forKey: legacySelectionKey) == nil)
+
+        await mock.resumeModelReads()
+        await oldSettings.value
+        await oldKeys.value
+        #expect(store.modelSettings == nil)
+        #expect(!store.hasConfiguredModelKey)
+        try await store.refreshModelSettings()
+        #expect(store.modelSettings?.selection.isEmpty == true)
+        #expect(store.modelSettings?.revision == 0)
+        await store.signOut()
+    }
 }
 
 private actor MockModelKeysTransport: NoriTransport {
@@ -155,13 +230,87 @@ private actor MockModelKeysTransport: NoriTransport {
         ]
     )
     private var nextSaveError: Error?
+    private var models = ModelSettingsResponse(
+        modelProfiles: ModelProfileCatalog(), selection: ModelSelection(), revision: 0, recommendations: [:]
+    )
+    private var suspendSettingsRead = false
+    private var suspendKeysRead = false
+    private var blockedSettings: CheckedContinuation<Void, Never>?
+    private var blockedKeys: CheckedContinuation<Void, Never>?
+    private var readsStarted: CheckedContinuation<Void, Never>?
+
+    func fetchModelSettings() async throws -> ModelSettingsResponse {
+        let snapshot = models
+        if suspendSettingsRead {
+            suspendSettingsRead = false
+            await withCheckedContinuation { continuation in
+                blockedSettings = continuation
+                signalModelReadsStarted()
+            }
+        }
+        return snapshot
+    }
+
+    func suspendNextModelReads() {
+        suspendSettingsRead = true
+        suspendKeysRead = true
+    }
+
+    func waitForSuspendedModelReads() async {
+        if blockedSettings != nil && blockedKeys != nil { return }
+        await withCheckedContinuation { readsStarted = $0 }
+    }
+
+    private func signalModelReadsStarted() {
+        if blockedSettings != nil && blockedKeys != nil {
+            readsStarted?.resume()
+            readsStarted = nil
+        }
+    }
+
+    func resumeModelReads() {
+        blockedSettings?.resume()
+        blockedKeys?.resume()
+        blockedSettings = nil
+        blockedKeys = nil
+    }
+
+    func resetUserData(confirmation: String) async throws {
+        guard confirmation == "RESET" else { throw NoriAPIError(message: "Confirmation required.") }
+        response.providers = response.providers.map { ModelKeyProvider(provider: $0.provider, label: $0.label) }
+        models = ModelSettingsResponse(
+            modelProfiles: ModelProfileCatalog(), selection: ModelSelection(), revision: 0, recommendations: [:]
+        )
+    }
+
+    func saveModelSettings(_ request: SaveModelSettingsRequest) async throws -> ModelSettingsResponse {
+        guard request.expectedRevision == models.revision else {
+            throw NoriAPIError(message: "Models changed elsewhere.", statusCode: 409)
+        }
+        models.selection = request.selection
+        models.revision += 1
+        return models
+    }
+
+    func changeModelsElsewhere(_ selection: ModelSelection) {
+        models.selection = selection
+        models.revision += 1
+    }
 
     func setNextSaveError(_ error: Error?) {
         nextSaveError = error
     }
 
     func fetchModelKeys() async throws -> ModelKeysResponse {
-        response
+        let snapshot = response
+        if suspendKeysRead {
+            suspendKeysRead = false
+            await withCheckedContinuation { continuation in
+                blockedKeys = continuation
+                signalModelReadsStarted()
+            }
+        }
+        return snapshot
     }
 
     func saveModelKey(provider: String, apiKey: String) async throws -> ModelKeyProvider {

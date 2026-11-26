@@ -48,7 +48,7 @@ async function snapshot(before: string | undefined, signal: AbortSignal | undefi
 
 const STREAM_IDLE_MS = 5 * 60_000;
 type Presence = { conversation: NonNullable<Session["conversation"]>; paused: boolean };
-type Pending = { id: string; text: string; started: number; error?: string; attachments?: Attachment[]; model?: ModelSelection; retryManually?: boolean };
+type Pending = { id: string; text: string; started: number; error?: string; errorCode?: string; attachments?: Attachment[]; model?: ModelSelection; retryManually?: boolean };
 const TURN_ACCEPTANCE_UNKNOWN = "Message acceptance could not be confirmed.";
 const COMMAND_ACCEPTANCE_UNKNOWN = "Task command acceptance could not be confirmed.";
 
@@ -142,10 +142,8 @@ function mergeRuns(older: Run[], newer: Run[]): Run[] {
   return [...runs.values()].sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at));
 }
 
-export function useRuntime(localMode = false, modelSelection?: ModelSelection, scope = "local", refreshCapabilities?: () => void) {
+export function useRuntime(localMode = false, scope = "local", refreshCapabilities?: () => void) {
   const invalidate = useResourceInvalidation();
-  const modelSelectionRef = useRef<ModelSelection | undefined>(modelSelection);
-  modelSelectionRef.current = modelSelection;
   const [session, setSession] = useState<Session>();
   const [draft, setDraftState] = useState("");
   const { files: draftFiles, attach, retry, clear: clearFiles, remove: removeFile, invalidateUploads } = useDraftFiles();
@@ -289,7 +287,7 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection, s
     submissions.current.add(item.id);
     const controller = new AbortController();
     controllers.current.add(controller);
-    updatePending((current) => current.map((entry) => entry.id === item.id ? { ...entry, error: undefined } : entry));
+    updatePending((current) => current.map((entry) => entry.id === item.id ? { ...entry, error: undefined, errorCode: undefined } : entry));
     const serial = ++requestSerial.current;
     try {
       const payload = { id: item.id, message: item.text, attachments: item.attachments?.map((file) => file.id) };
@@ -311,6 +309,7 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection, s
         updatePending((current) => current.map((entry) => entry.id === item.id ? {
           ...entry, retryManually: entry.retryManually || rejected,
           error: err instanceof Error ? err.message : TURN_ACCEPTANCE_UNKNOWN,
+          errorCode: err instanceof RequestError ? err.code : undefined,
         } : entry));
         await refresh(controller.signal).catch(() => undefined);
       }
@@ -644,14 +643,11 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection, s
     if (replacingSnapshot.current || !hasSubmission(text, draftFiles) || !session || loading || session.conversation?.introducing) return;
     if (messageTooLong(text)) { setError("Please keep the message within 8,192 UTF-8 bytes."); return; }
     if (pendingRef.current.length >= MAX_PENDING) { setError("Reconnect or retry your pending messages before sending more."); return; }
-    const activeModel = modelSelectionRef.current;
-    const hasModel = !!(activeModel && (activeModel.chat_profile_id || activeModel.chat_reasoning || activeModel.task_profile_id || activeModel.task_reasoning));
     const item: Pending = {
       id: crypto.randomUUID(),
       text,
       started: Date.now(),
       ...(draftFiles.length ? { attachments: draftFiles.map(({ id, name, media_type, size }) => ({ id, name, media_type, size })) } : {}),
-      ...(hasModel ? { model: activeModel } : {}),
     };
     beginTiming(item);
     Sentry.metrics.count("nori.submissions", 1, { attributes: { mode: localMode ? "local" : "hosted" } });

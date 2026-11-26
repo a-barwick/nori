@@ -31,16 +31,17 @@ const (
 )
 
 type AnthropicModel struct {
-	name            string
-	key             string
-	gatewayURL      string
-	Client          *http.Client
-	Guard           *llmguard.Guard
-	UserID          string
-	TestURL         string
-	ReasoningEffort string
-	Now             func() time.Time
-	NewID           func() string
+	name              string
+	key               string
+	gatewayURL        string
+	Client            *http.Client
+	Guard             *llmguard.Guard
+	UserID            string
+	TestURL           string
+	ReasoningEffort   string
+	BYOKProviderLabel string
+	Now               func() time.Time
+	NewID             func() string
 }
 
 func NewAnthropicModel(key, name string) *AnthropicModel {
@@ -135,13 +136,18 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 	if scope == "" {
 		scope = llmguard.ScopeOuter
 	}
-	reqCtx := llmguard.WithMeta(ctx, llmguard.CallMeta{
+	meta := llmguard.CallMeta{
 		UserID:          m.UserID,
 		Scope:           scope,
 		Provider:        anthropicProvider,
 		Model:           m.name,
 		MaxOutputTokens: 4096,
-	})
+		BYOK:            m.BYOKProviderLabel != "",
+	}
+	reqCtx := llmguard.WithMeta(ctx, meta)
+	if m.BYOKProviderLabel != "" {
+		reply.Usage.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
+	}
 
 	reply.Usage.RequestStatus = "pending"
 	if request.RecordUsage != nil {
@@ -172,7 +178,9 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 		nextUsage.RequestStatus = "pending"
 		nextUsage.CostStatus = "unknown"
 		nextUsage.CostUSD = nil
-		nextUsage.EstimatedExposureUSD = 0
+		if m.BYOKProviderLabel == "" {
+			nextUsage.EstimatedExposureUSD = 0
+		}
 		nextUsage.InputTokens = nil
 		nextUsage.OutputTokens = nil
 		nextUsage.TotalTokens = nil
@@ -206,6 +214,11 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
+		if m.BYOKProviderLabel != "" {
+			if err := llmguard.ModelAccessError(res, m.BYOKProviderLabel); err != nil {
+				return reply, err
+			}
+		}
 		if logRefusal(ctx, res) && (res.StatusCode == 400 || res.StatusCode == 413) {
 			return reply, contextview.ErrOverflow
 		}
@@ -504,7 +517,7 @@ func (m *AnthropicModel) doWithRetry(ctx context.Context, body []byte, onRetry f
 		retryable := res.StatusCode == http.StatusTooManyRequests ||
 			res.StatusCode == 529 ||
 			res.StatusCode >= 500
-		if !retryable || attempt >= maxRetries {
+		if !retryable || attempt >= maxRetries || (m.BYOKProviderLabel != "" && llmguard.ModelAccessError(res, m.BYOKProviderLabel) != nil) {
 			return res, nil
 		}
 		status := res.StatusCode

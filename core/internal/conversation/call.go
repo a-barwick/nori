@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"nori/internal/contextview"
+	"nori/internal/modelkeys"
 	"nori/internal/observability"
 	"nori/internal/prompts"
 	"nori/internal/state"
@@ -301,7 +302,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 			}
 		}
 		var modelErr error
-		turnModel := r.replyModel(t.ModelSelection)
+		turnModel := r.replyModelForTurn(callCtx, t)
 		for {
 			reply, modelErr = turnModel.Respond(callCtx, request)
 			if reply.ServedModel != "" {
@@ -396,6 +397,9 @@ func classifyModelFailure(modelErr error, fromUser bool) state.MessageError {
 			Message:   msg,
 			Retryable: false,
 		}
+	}
+	if errors.Is(modelErr, modelkeys.ErrMissingAPIKey) || errors.Is(modelErr, modelkeys.ErrModelAccess) {
+		return state.MessageError{Code: modelkeys.AccessFailureCode, Message: modelErr.Error(), Retryable: fromUser}
 	}
 	var statusErr interface{ HTTPStatusCode() int }
 	if errors.As(modelErr, &statusErr) {

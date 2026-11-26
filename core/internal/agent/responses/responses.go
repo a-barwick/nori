@@ -39,6 +39,8 @@ type Client struct {
 	TestURL               string
 	DefaultReasoning      string
 	AllowGatewayReasoning bool
+	Byok                  bool
+	BYOKProviderLabel     string
 	LocalOnly             bool
 	MaxRetries            int
 	RetryBaseDelay        time.Duration
@@ -96,6 +98,9 @@ func (c *Client) Provider() string {
 	if c.gatewayURL != "" {
 		return modelgateway.Provider
 	}
+	if c.ProviderName != "" {
+		return c.ProviderName
+	}
 	if c.direct() {
 		return "openai"
 	}
@@ -133,6 +138,10 @@ func (c *Client) requestOptions(fields map[string]any) {
 	}
 	if c.direct() {
 		fields["service_tier"] = "default"
+		return
+	}
+	if c.Byok {
+		fields["provider"] = map[string]any{"require_parameters": true}
 		return
 	}
 	fields["provider"] = map[string]any{"max_price": map[string]float64{"prompt": 1, "completion": 5}, "require_parameters": true}
@@ -188,7 +197,7 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	if effort == "" {
 		effort = c.DefaultReasoning
 	}
-	if (c.gatewayURL == "" || c.AllowGatewayReasoning) && effort != "" && effort != "none" {
+	if (c.gatewayURL == "" || c.AllowGatewayReasoning) && effort != "" {
 		fields["reasoning"] = map[string]string{"effort": effort}
 	}
 	c.requestOptions(fields)
@@ -203,13 +212,15 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	if scope == "" {
 		scope = llmguard.ScopeTask
 	}
-	reqCtx := llmguard.WithMeta(ctx, llmguard.CallMeta{
+	meta := llmguard.CallMeta{
 		UserID:          c.UserID,
 		Scope:           scope,
 		Provider:        c.Provider(),
 		Model:           c.ModelName,
 		MaxOutputTokens: req.MaxOutputTokens,
-	})
+		BYOK:            c.Byok,
+	}
+	reqCtx := llmguard.WithMeta(ctx, meta)
 	buildReq := func() (*http.Request, error) {
 		httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.endpoint(), bytes.NewReader(body))
 		if err != nil {
@@ -223,6 +234,9 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		return out, err
 	}
 	record := usage.Attempt(ctx, c.Provider(), c.ModelName)
+	if c.Byok {
+		record.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
+	}
 	if err := c.Meter.RecordUsage(ctx, record); err != nil {
 		return out, err
 	}
@@ -238,6 +252,9 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		}
 		_ = usage.Finish(ctx, c.Meter, prev)
 		record = usage.Attempt(ctx, c.Provider(), c.ModelName)
+		if c.Byok {
+			record.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
+		}
 		if err := c.Meter.RecordUsage(ctx, record); err != nil {
 			record.RequestStatus = "not_sent"
 			return err
@@ -264,6 +281,11 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	record.RequestStatus = "received"
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
+		if c.BYOKProviderLabel != "" {
+			if err := llmguard.ModelAccessError(res, c.BYOKProviderLabel); err != nil {
+				return out, err
+			}
+		}
 		if (res.StatusCode == 400 || res.StatusCode == 413) && contextview.Refusal(res.Body) {
 			return out, contextview.ErrOverflow
 		}

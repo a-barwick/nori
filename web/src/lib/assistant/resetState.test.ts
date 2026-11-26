@@ -28,10 +28,12 @@ describe("browser reset state", () => {
     try {
       localStorage.setItem("nori.onboarding.done:alice", "1");
       localStorage.setItem("nori-draft-assistant-v1:alice", "old draft");
+      localStorage.setItem("nori-diagnostics-model-selection-v1:alice", '{"chat_profile_id":"old"}');
       localStorage.setItem("nori-draft-assistant-v1:bob", "bob draft");
       syncBrowserReset("alice", "new-reset");
       assert.equal(localStorage.getItem("nori.onboarding.done:alice"), null);
       assert.equal(localStorage.getItem("nori-draft-assistant-v1:alice"), null);
+      assert.equal(localStorage.getItem("nori-diagnostics-model-selection-v1:alice"), null);
       assert.equal(localStorage.getItem("nori-draft-assistant-v1:bob"), "bob draft");
     } finally { restore(); }
   });

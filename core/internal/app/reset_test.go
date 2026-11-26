@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,8 @@ import (
 	"github.com/google/uuid"
 	"nori/internal/app"
 	"nori/internal/connections"
+	"nori/internal/modelkeys"
+	"nori/internal/modelprofiles"
 	"nori/internal/platform"
 	"nori/internal/serviceauth"
 	"nori/internal/settings"
@@ -47,7 +50,7 @@ func TestUserDataResetPostgres(t *testing.T) {
 	cfg := settings.Settings{
 		Cloud: "local", Role: "all", TaskBudgetUSD: 1,
 		Features: settings.Features{DisableJev: true},
-		Models:   settings.Models{Provider: "openai", OpenAIKey: "unused-test-key"},
+		Models:   settings.Models{BYOKRequired: true},
 		Connections: settings.Connections{
 			CredentialStore: "database", CredentialKey: strings.Repeat("42", 32),
 		},
@@ -68,6 +71,14 @@ func TestUserDataResetPostgres(t *testing.T) {
 			return resetTestArtifacts{Store: fs, failPurge: &offline}
 		})
 		svc := app.OpenServiceWithStorage(storage, nil, cfg)
+		svc.ConfigureApp = func(_ users.User, a *app.App) {
+			a.Assistant.ModelKeys.HTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if r.Method != http.MethodGet {
+					return nil, errors.New("unexpected inference request")
+				}
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("{}"))}, nil
+			})}
+		}
 		t.Cleanup(svc.Close)
 		return svc, backend
 	}
@@ -126,9 +137,42 @@ func TestUserDataResetPostgres(t *testing.T) {
 			"account_defaults":{},"budgets":{"task_usd":3},"onboarding_completed_at":"2026-11-25T12:00:00Z"}}`
 		api(svc, "PUT", u, u, "/v1/preferences", body, want)
 	}
+	checkModels := func(svc *app.Service, u users.User, configured bool) {
+		t.Helper()
+		w := api(svc, "GET", u, u, "/v1/settings/model-keys", "", 200)
+		var keys modelkeys.ListResponse
+		if err := json.NewDecoder(w.Body).Decode(&keys); err != nil {
+			t.Fatal(err)
+		}
+		if len(keys.Providers) != 5 {
+			t.Fatalf("wrong provider count: %d", len(keys.Providers))
+		}
+		for _, provider := range keys.Providers {
+			if provider.Configured != configured {
+				t.Fatalf("unexpected %s key state for %s: configured=%t", provider.Provider, u.ID, provider.Configured)
+			}
+		}
+		w = api(svc, "GET", u, u, "/v1/settings/models", "", 200)
+		var models modelprofiles.AccountView
+		if err := json.NewDecoder(w.Body).Decode(&models); err != nil {
+			t.Fatal(err)
+		}
+		if configured {
+			if models.Revision == 0 || models.Selection.IsEmpty() || len(models.Recommendations) != 5 {
+				t.Fatalf("account model settings were lost: %+v", models)
+			}
+		} else if models.Revision != 0 || !models.Selection.IsEmpty() || len(models.ModelProfiles.Profiles) != 0 ||
+			len(models.Recommendations) != 0 {
+			t.Fatalf("account model settings survived reset: %+v", models)
+		}
+	}
 	markerPath := func(u users.User) string { return "owners/" + u.DataOwner() + "/records_for_reset_test/record" }
 	for _, u := range []users.User{alice, bob} {
 		savePrefs(svc, u, 200)
+		for _, provider := range modelkeys.Providers() {
+			api(svc, "PUT", u, u, "/v1/settings/model-keys/"+provider.ID, `{"api_key":"reset_fixture_1234"}`, 200)
+		}
+		checkModels(svc, u, true)
 		a, release, err := svc.AcquireByID(ctx, u.ID)
 		if err != nil {
 			t.Fatal(err)
@@ -233,6 +277,8 @@ func TestUserDataResetPostgres(t *testing.T) {
 		t.Fatalf("event history was not replaced by a reset signal at the next sequence: %+v, %v", rows, err)
 	}
 	for _, replica := range []*app.Service{svc, otherReplica} {
+		checkModels(replica, alice, false)
+		checkModels(replica, bob, true)
 		a, release, err := replica.AcquireByID(ctx, alice.ID)
 		if err != nil {
 			t.Fatal(err)

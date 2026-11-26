@@ -143,12 +143,8 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 	servers := &mcp.Service{Store: store, Credentials: credentials, LocalProcesses: s.Cloud == "local", Commands: localCommands(s), RedirectURL: s.Connections.RedirectURL}
 	adapters.Register(extensions.AdapterMCP, "", mcp.Adapter{Service: servers})
 	var mk *modelkeys.Service
-	if s.Connections.CredentialStore == "database" {
-		mk = &modelkeys.Service{
-			Store:        credentials,
-			GatewayURL:   s.Models.GatewayURL,
-			BYOKRequired: s.Models.BYOKRequired,
-		}
+	if s.Models.BYOKRequired && s.Connections.CredentialStore == "database" {
+		mk = &modelkeys.Service{Store: credentials}
 	}
 	return &AssistantServices{
 		Connections: conn, Permissions: perms, Adapters: adapters, Scheduler: sched, MCP: servers, ModelKeys: mk,

@@ -188,7 +188,7 @@ func (m *OpenAIModel) doWithRetry(ctx context.Context, endpoint string, body []b
 			continue
 		}
 
-		if res.StatusCode == http.StatusOK || !isRetryableHTTPStatus(res.StatusCode) || attempt >= retries {
+		if res.StatusCode == http.StatusOK || !isRetryableHTTPStatus(res.StatusCode) || attempt >= retries || (m.BYOKProviderLabel != "" && llmguard.ModelAccessError(res, m.BYOKProviderLabel) != nil) {
 			return res, nil
 		}
 

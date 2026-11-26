@@ -24,15 +24,16 @@ import (
 )
 
 type Activities struct {
-	Agent       *agent.Service
-	ModelForRun func(*state.ModelSelection) agent.Model
-	Store       state.TaskStore
-	Executor    *Executor
-	UserID      string
-	Wakes       WakeNotifier
-	Now         func() time.Time
-	Sleep       func(context.Context, time.Duration) error
-	NewTicker   func(time.Duration) (<-chan time.Time, func())
+	Agent        *agent.Service
+	ModelForRun  func(*state.ModelSelection) agent.Model
+	AccountModel func(context.Context, *state.ModelSelection) agent.Model
+	Store        state.TaskStore
+	Executor     *Executor
+	UserID       string
+	Wakes        WakeNotifier
+	Now          func() time.Time
+	Sleep        func(context.Context, time.Duration) error
+	NewTicker    func(time.Duration) (<-chan time.Time, func())
 }
 
 type receiptDeadlineKey struct{}
@@ -342,8 +343,13 @@ func (a *Activities) bounded(parent context.Context, step Step, interruptible bo
 	return ctx, func() { cancel(nil); <-done }, run, nil
 }
 
-func (a *Activities) agentForRun(run state.Run) *agent.Service {
+func (a *Activities) agentForRun(ctx context.Context, run state.Run) *agent.Service {
 	svc := a.Agent
+	if a.AccountModel != nil {
+		cp := *svc
+		cp.Model = a.AccountModel(ctx, run.ModelSelection)
+		return &cp
+	}
 	if a.ModelForRun != nil && !run.ModelSelection.IsEmpty() {
 		if resolved := a.ModelForRun(run.ModelSelection); resolved != nil {
 			cp := *a.Agent
@@ -366,7 +372,7 @@ func (a *Activities) Model(parent context.Context, in ModelInput) (ModelOutcome,
 	if traceID == "" {
 		traceID = uuid.NewString()
 	}
-	svc := a.agentForRun(run)
+	svc := a.agentForRun(ctx, run)
 	trace := state.TaskStep{
 		ID:   traceID,
 		Kind: "model", Status: "running", Revision: in.Revision, StartedAt: a.now().UTC(),

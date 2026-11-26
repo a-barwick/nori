@@ -10,8 +10,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"nori/internal/secret"
@@ -19,9 +19,13 @@ import (
 )
 
 const (
+	ProviderOpenAI          = "openai"
+	ProviderAnthropic       = "anthropic"
+	ProviderGoogle          = "google"
 	ProviderVercelAIGateway = "vercel_ai_gateway"
+	ProviderOpenRouter      = "openrouter"
+	AccessFailureCode       = "model_key_required"
 
-	defaultCacheTTL          = 5 * time.Second
 	defaultValidationTimeout = 10 * time.Second
 )
 
@@ -29,9 +33,14 @@ var (
 	ErrUnknownProvider  = errors.New("unknown model provider")
 	ErrEmptyAPIKey      = errors.New("api_key is required")
 	ErrInvalidAPIKey    = errors.New("invalid API key")
-	ErrMissingAPIKey    = errors.New("missing_api_key: configure a Vercel AI Gateway API key in Settings")
+	ErrMissingAPIKey    = errors.New("Add an API key in More → Models to use Chat and Work.")
+	ErrModelAccess      = errors.New("Model access needs attention.")
 	ErrValidationFailed = errors.New("could not validate API key with provider")
 )
+
+func IsAccessFailure(message string) bool {
+	return strings.HasPrefix(message, ErrModelAccess.Error()) || strings.HasPrefix(message, ErrMissingAPIKey.Error())
+}
 
 // ProviderDef describes a supported BYOK model provider.
 type ProviderDef struct {
@@ -40,9 +49,12 @@ type ProviderDef struct {
 }
 
 // providerRegistry is the ordered list of supported BYOK providers.
-// Add future providers (e.g. "anthropic", "openai", "openrouter") here.
 var providerRegistry = []ProviderDef{
+	{ID: ProviderOpenAI, Label: "OpenAI"},
+	{ID: ProviderAnthropic, Label: "Anthropic"},
+	{ID: ProviderGoogle, Label: "Google"},
 	{ID: ProviderVercelAIGateway, Label: "Vercel AI Gateway"},
+	{ID: ProviderOpenRouter, Label: "OpenRouter"},
 }
 
 var providerByID = func() map[string]ProviderDef {
@@ -96,23 +108,10 @@ type storedKey struct {
 	ValidatedAt *time.Time `json:"validated_at,omitempty"`
 }
 
-type cacheEntry struct {
-	found     bool
-	record    storedKey
-	fetchedAt time.Time
-}
-
-// Service manages a single user's BYOK model keys.
 type Service struct {
-	Store        secret.CredentialStore
-	GatewayURL   string
-	BYOKRequired bool
-	HTTPClient   *http.Client
-	Now          func() time.Time
-
-	mu    sync.RWMutex
-	cache map[string]cacheEntry
-	gen   map[string]uint64
+	Store      secret.CredentialStore
+	HTTPClient *http.Client
+	Now        func() time.Time
 }
 
 func (s *Service) now() time.Time {
@@ -129,70 +128,13 @@ func (s *Service) httpClient() *http.Client {
 	return &http.Client{Timeout: defaultValidationTimeout}
 }
 
-func (s *Service) getCachedOrGen(provider string) (cacheEntry, bool, uint64) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	gen := s.gen[provider]
-	if s.cache == nil {
-		return cacheEntry{}, false, gen
-	}
-	entry, ok := s.cache[provider]
-	if !ok {
-		return cacheEntry{}, false, gen
-	}
-	if s.now().Sub(entry.fetchedAt) > defaultCacheTTL {
-		return cacheEntry{}, false, gen
-	}
-	return entry, true, gen
-}
-
-func (s *Service) setCachedIfGen(provider string, expectedGen uint64, entry cacheEntry) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.gen[provider] != expectedGen {
-		return
-	}
-	if s.cache == nil {
-		s.cache = make(map[string]cacheEntry, len(providerRegistry))
-	}
-	s.cache[provider] = entry
-}
-
-func (s *Service) bumpAndSetCache(provider string, entry cacheEntry) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.gen == nil {
-		s.gen = make(map[string]uint64, len(providerRegistry))
-	}
-	s.gen[provider]++
-	if s.cache == nil {
-		s.cache = make(map[string]cacheEntry, len(providerRegistry))
-	}
-	s.cache[provider] = entry
-}
-
-func (s *Service) bumpAndInvalidateCache(provider string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.gen == nil {
-		s.gen = make(map[string]uint64, len(providerRegistry))
-	}
-	s.gen[provider]++
-	delete(s.cache, provider)
-}
-
-func (s *Service) loadRecord(ctx context.Context, provider string) (storedKey, bool, error) {
-	entry, hit, gen := s.getCachedOrGen(provider)
-	if hit {
-		return entry.record, entry.found, nil
-	}
-	if s.Store == nil {
+func (s *Service) readRecord(ctx context.Context, provider string) (storedKey, bool, error) {
+	if s == nil || s.Store == nil {
 		return storedKey{}, false, nil
 	}
 	credID := CredentialID(provider)
 	cred, err := s.Store.Get(ctx, credID)
 	if errors.Is(err, secret.ErrCredentialNotFound) {
-		s.setCachedIfGen(provider, gen, cacheEntry{found: false, fetchedAt: s.now()})
 		return storedKey{}, false, nil
 	}
 	if err != nil {
@@ -203,21 +145,19 @@ func (s *Service) loadRecord(ctx context.Context, provider string) (storedKey, b
 		return storedKey{}, false, fmt.Errorf("decode stored model key: %w", err)
 	}
 	if strings.TrimSpace(rec.APIKey) == "" {
-		s.setCachedIfGen(provider, gen, cacheEntry{found: false, fetchedAt: s.now()})
 		return storedKey{}, false, nil
 	}
-	s.setCachedIfGen(provider, gen, cacheEntry{found: true, record: rec, fetchedAt: s.now()})
 	return rec, true, nil
 }
 
 // List returns the BYOK requirement flag and status for every registered provider.
 func (s *Service) List(ctx context.Context) (ListResponse, error) {
 	out := ListResponse{
-		BYOKRequired: s.BYOKRequired,
+		BYOKRequired: true,
 		Providers:    make([]ProviderStatus, 0, len(providerRegistry)),
 	}
 	for _, def := range providerRegistry {
-		rec, found, err := s.loadRecord(ctx, def.ID)
+		rec, found, err := s.readRecord(ctx, def.ID)
 		if err != nil {
 			return ListResponse{}, err
 		}
@@ -261,14 +201,10 @@ func (s *Service) Set(ctx context.Context, provider, apiKey string) (ProviderSta
 	}
 
 	now := s.now()
-	var validatedAt *time.Time
-	if provider == ProviderVercelAIGateway && strings.TrimSpace(s.GatewayURL) != "" {
-		if err := s.validateGatewayKey(ctx, apiKey); err != nil {
-			return ProviderStatus{}, err
-		}
-		t := now
-		validatedAt = &t
+	if err := s.validateKey(ctx, provider, apiKey); err != nil {
+		return ProviderStatus{}, err
 	}
+	validatedAt := &now
 
 	rec := storedKey{
 		APIKey:      apiKey,
@@ -284,7 +220,6 @@ func (s *Service) Set(ctx context.Context, provider, apiKey string) (ProviderSta
 	if err := s.saveCredential(ctx, credID, payload); err != nil {
 		return ProviderStatus{}, err
 	}
-	s.bumpAndSetCache(provider, cacheEntry{found: true, record: rec, fetchedAt: now})
 
 	updated := rec.UpdatedAt
 	return ProviderStatus{
@@ -297,7 +232,7 @@ func (s *Service) Set(ctx context.Context, provider, apiKey string) (ProviderSta
 	}, nil
 }
 
-// Delete removes the user's stored API key for provider and clears the cache.
+// Delete removes the user's stored API key for provider.
 func (s *Service) Delete(ctx context.Context, provider string) (ProviderStatus, error) {
 	def, ok := LookupProvider(provider)
 	if !ok {
@@ -309,7 +244,6 @@ func (s *Service) Delete(ctx context.Context, provider string) (ProviderStatus, 
 	if err := s.Store.Delete(ctx, CredentialID(provider)); err != nil {
 		return ProviderStatus{}, err
 	}
-	s.bumpAndInvalidateCache(provider)
 	return ProviderStatus{
 		Provider:   def.ID,
 		Label:      def.Label,
@@ -317,25 +251,21 @@ func (s *Service) Delete(ctx context.Context, provider string) (ProviderStatus, 
 	}, nil
 }
 
-// ResolveGatewayKey returns the user's decrypted Vercel AI Gateway API key if configured.
-// If not configured, it returns ErrMissingAPIKey when BYOKRequired is true (never falling back
-// to fallbackKey), or fallbackKey when BYOKRequired is false (or ErrMissingAPIKey if fallbackKey is empty).
-func (s *Service) ResolveGatewayKey(ctx context.Context, fallbackKey string) (string, error) {
-	rec, found, err := s.loadRecord(ctx, ProviderVercelAIGateway)
+// ResolveKey reads the user's current credential so revocations and rotations
+// take effect across API and worker processes.
+func (s *Service) ResolveKey(ctx context.Context, provider string) (string, error) {
+	def, ok := LookupProvider(provider)
+	if !ok {
+		return "", ErrUnknownProvider
+	}
+	rec, found, err := s.readRecord(ctx, provider)
 	if err != nil {
 		return "", err
 	}
-	if found && rec.APIKey != "" {
-		return rec.APIKey, nil
+	if !found {
+		return "", fmt.Errorf("%w Add a %s key or choose another model in More → Models.", ErrModelAccess, def.Label)
 	}
-	if s.BYOKRequired {
-		return "", ErrMissingAPIKey
-	}
-	fallbackKey = strings.TrimSpace(fallbackKey)
-	if fallbackKey == "" {
-		return "", ErrMissingAPIKey
-	}
-	return fallbackKey, nil
+	return rec.APIKey, nil
 }
 
 func (s *Service) saveCredential(ctx context.Context, credID string, payload []byte) error {
@@ -358,28 +288,58 @@ func (s *Service) saveCredential(ctx context.Context, credID string, payload []b
 	return secret.ErrCredentialConflict
 }
 
-func (s *Service) validateGatewayKey(ctx context.Context, apiKey string) error {
+var apiKeyValue = regexp.MustCompile(`^[A-Za-z0-9._~+/-]+=*$`)
+
+func (s *Service) validateKey(ctx context.Context, provider, apiKey string) error {
+	if !apiKeyValue.MatchString(apiKey) || len(apiKey) > 2048 {
+		return ErrInvalidAPIKey
+	}
 	valCtx, cancel := context.WithTimeout(ctx, defaultValidationTimeout)
 	defer cancel()
 
-	endpoint := strings.TrimRight(strings.TrimSpace(s.GatewayURL), "/") + "/models"
+	endpoint := ""
+	header, value := "Authorization", "Bearer "+apiKey
+	switch provider {
+	case ProviderOpenAI:
+		endpoint = "https://api.openai.com/v1/me"
+	case ProviderAnthropic:
+		endpoint = "https://api.anthropic.com/v1/models?limit=1"
+		header, value = "x-api-key", apiKey
+	case ProviderGoogle:
+		endpoint = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1"
+		header, value = "x-goog-api-key", apiKey
+	case ProviderVercelAIGateway:
+		endpoint = "https://ai-gateway.vercel.sh/v1/credits"
+	case ProviderOpenRouter:
+		endpoint = "https://openrouter.ai/api/v1/key"
+	}
 	req, err := http.NewRequestWithContext(valCtx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrValidationFailed, err)
+		return ErrValidationFailed
 	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set(header, value)
+	if provider == ProviderAnthropic {
+		req.Header.Set("anthropic-version", "2023-06-01")
+	}
 
-	resp, err := s.httpClient().Do(req)
+	client := *s.httpClient()
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrValidationFailed, err)
+		return ErrValidationFailed
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		_ = resp.Body.Close()
 	}()
 
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	switch resp.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
 		return ErrInvalidAPIKey
+	case http.StatusBadRequest:
+		if provider == ProviderGoogle {
+			return ErrInvalidAPIKey
+		}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("%w: provider returned HTTP %d", ErrValidationFailed, resp.StatusCode)

@@ -8,7 +8,7 @@ public enum MoreRoute: Hashable, Sendable {
     case memory
     case permissions
     case preferences
-    case apiKeys
+    case models
     case appearance
     case account
     case diagnostics
@@ -59,7 +59,7 @@ public struct MoreHubView: View {
         return "\(tz) · $\(String(format: "%.2f", store.preferences.budgets.taskUSD)) / task"
     }
 
-    private var apiKeysDetail: String? {
+    private var modelsDetail: String? {
         let configuredCount = store.modelKeys.providers.filter(\.configured).count
         if configuredCount > 0 {
             return "\(configuredCount) configured"
@@ -176,11 +176,11 @@ public struct MoreHubView: View {
             }
             .buttonStyle(.plain)
 
-            NavigationLink(value: MoreRoute.apiKeys) {
+            NavigationLink(value: MoreRoute.models) {
                 NoriRow(
-                    title: "API Keys",
-                    detail: apiKeysDetail,
-                    systemImage: "key.fill",
+                    title: "Models",
+                    detail: modelsDetail,
+                    systemImage: "sparkles",
                     iconTone: store.needsModelKeySetup ? .warning : .neutral,
                     showChevron: true,
                     showDivider: true

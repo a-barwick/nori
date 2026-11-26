@@ -34,6 +34,9 @@ public struct OnboardingView: View {
     @State private var isReplacingKey = false
     @State private var isValidatingKey = false
     @State private var keyError: String?
+    @State private var selectedProviderID = ""
+    @State private var suggestedProvider: String?
+    @State private var showingModelSuggestion = false
     @FocusState private var isKeyFocused: Bool
 
     // Step 4 (About you)
@@ -55,7 +58,9 @@ public struct OnboardingView: View {
     }
 
     private var primaryProvider: ModelKeyProvider? {
-        store.modelKeys.providers.first
+        store.modelKeys.providers.first { $0.provider == selectedProviderID }
+            ?? store.modelKeys.providers.first { $0.configured }
+            ?? store.modelKeys.providers.first
     }
 
     private var byokRequired: Bool {
@@ -67,7 +72,7 @@ public struct OnboardingView: View {
     }
 
     private var canContinueStep3: Bool {
-        !byokRequired || keyConfigured
+        !byokRequired || (store.hasConfiguredModelKey && !isReplacingKey)
     }
 
     private var step3MarkState: MarkState {
@@ -112,6 +117,22 @@ public struct OnboardingView: View {
         }
         .onDisappear {
             happyTask?.cancel()
+        }
+        .alert("Use recommended models?", isPresented: $showingModelSuggestion) {
+            Button("Use recommended models") {
+                guard let provider = suggestedProvider,
+                      let recommendation = store.modelSettings?.recommendations[provider] else { return }
+                Task {
+                    do {
+                        try await store.saveModelSettings(recommendation)
+                    } catch {
+                        keyError = error.localizedDescription
+                    }
+                }
+            }
+            Button("Keep current models", role: .cancel) { suggestedProvider = nil }
+        } message: {
+            Text(recommendationSummary)
         }
     }
 
@@ -394,9 +415,21 @@ public struct OnboardingView: View {
                             .frame(width: 36, height: 36)
                             .background(NoriColors.accentSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-                        Text(primaryProvider?.label ?? "Vercel AI Gateway")
-                            .font(NoriTypography.rowTitle)
-                            .foregroundStyle(NoriColors.ink)
+                        Picker("Provider", selection: Binding(
+                            get: { primaryProvider?.provider ?? "" },
+                            set: { provider in
+                                selectedProviderID = provider
+                                isReplacingKey = false
+                                keyInput = ""
+                                keyError = nil
+                            }
+                        )) {
+                            ForEach(store.modelKeys.providers) { provider in
+                                Text(provider.label).tag(provider.provider)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
 
                         Spacer()
 
@@ -428,7 +461,7 @@ public struct OnboardingView: View {
                                         Task { await verifyKey() }
                                     }
 
-                                Button(isValidatingKey ? "Checking…" : "Verify") {
+                                Button(isValidatingKey ? "Saving…" : "Save") {
                                     Task { await verifyKey() }
                                 }
                                 .font(.system(size: 12.5, weight: .semibold))
@@ -493,9 +526,24 @@ public struct OnboardingView: View {
 
     private var verifiedKeyLabel: String {
         if let last4 = primaryProvider?.last4, !last4.isEmpty {
-            return "Key verified · ••••\(last4)"
+            return "Key saved · ••••\(last4)"
         }
-        return "Key verified"
+        return "Key saved"
+    }
+
+    private var recommendationSummary: String {
+        guard let settings = store.modelSettings, let provider = suggestedProvider,
+              let recommendation = settings.recommendations[provider] else {
+            return "Choose models for Chat and Work."
+        }
+        func label(_ id: String?, effort: String?) -> String {
+            let name = settings.modelProfiles.profiles.first { $0.id == id }?.label ?? "Model"
+            guard let effort, !effort.isEmpty else { return name }
+            return "\(name) · \(effort.capitalized)"
+        }
+        let chat = label(recommendation.chatProfileID, effort: recommendation.chatReasoning)
+        let work = label(recommendation.taskProfileID, effort: recommendation.taskReasoning)
+        return "Chat: \(chat)\nWork: \(work)"
     }
 
     // MARK: - Step 4: About you
@@ -637,7 +685,10 @@ public struct OnboardingView: View {
             triggerMood(.shake)
             return
         }
-        let providerID = primaryProvider?.provider ?? "vercel_ai_gateway"
+        guard let providerID = primaryProvider?.provider else {
+            keyError = "Could not load model providers."
+            return
+        }
         keyError = nil
         isValidatingKey = true
         defer { isValidatingKey = false }
@@ -648,6 +699,15 @@ public struct OnboardingView: View {
             isKeyFocused = false
             triggerHaptic(.success)
             triggerMood(.hop, happy: true, sparkles: true, duration: 0.85)
+            do {
+                try await store.refreshModelSettings()
+                if store.modelSettings?.recommendations[providerID] != nil {
+                    suggestedProvider = providerID
+                    showingModelSuggestion = true
+                }
+            } catch {
+                keyError = "Key saved. Could not load recommended models: \(error.localizedDescription)"
+            }
         } catch {
             keyError = error.localizedDescription
             triggerMood(.shake)

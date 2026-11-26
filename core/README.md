@@ -136,9 +136,9 @@ New background tasks record `NORI_TASK_BUDGET_USD` (default `$1`) at acceptance,
 
 Keep credentials in a private `.env` file or the deployment's secret manager. From a worktree, set `NORI_ENV_FILE` to the absolute path of the private file. `NORI_TASK_ENV_FILE` defaults to the same file. With `make deps`, the local Postgres URL is `postgres://nori@127.0.0.1:15432/nori?sslmode=disable`. If the main connection uses a transaction pooler, set `NORI_POSTGRES_LISTEN_URL` to a direct Postgres connection for wake notifications.
 
-`NORI_ENV_PROFILE` selects provider keys. `prod` and `dev` prefer their matching `*_PROD_API_KEY` or `*_DEV_API_KEY` for OpenAI, Anthropic, and OpenRouter, with the unprefixed provider key as a fallback. `test` requires `*_TEST_API_KEY` for live provider calls. `NORI_MODEL_PROVIDER` sets both model lanes. `NORI_OUTER_PROVIDER` and `NORI_INNER_PROVIDER` override their respective lanes.
+Users add keys from **More → Models** for OpenAI, Anthropic, Google, Vercel AI Gateway, or OpenRouter. Nori encrypts each key in the user's credential store. Chat and Work use account-wide model and reasoning settings. A missing key stops calls for that lane until the user replaces it or chooses another configured model.
 
-The Diagnostics model picker is available to local users and to hosted user IDs or emails listed in `NORI_MODEL_PICKER_USERS`. Set both `NORI_LOCAL_MODEL_URL` and `NORI_LOCAL_MODEL_TAG` for a loopback model in local mode. Use `NORI_MODEL_PROFILES` for inline JSON overrides or `NORI_MODEL_PROFILES_FILE` for a file watched by the runtime.
+Configure the encrypted credential store in both API and worker deployments. Existing user-owned Vercel AI Gateway keys continue to work. Accounts using deployment credentials need to save a user-owned key.
 
 Postgres records migrations by filename and checksum. Applied migrations keep their original filenames, including `002_indexes.sql` and `002_sequences.sql`, which run in lexical order. Run `nori --migrate-only` before rolling out a new image when using an explicit migration job. Existing ledgers receive their first checksums on upgrade. New unattached uploads expire after seven days and incomplete uploads are eligible for cleanup after one day. Attached files and uploads saved before this change retain their existing lifecycle.
 
@@ -148,32 +148,13 @@ Postgres records migrations by filename and checksum. Applied migrations keep th
 | `NORI_STORE_BACKEND`, `NORI_POSTGRES_URL` | Postgres (`postgres`) is the sole database backend; numbered migrations run automatically on startup. |
 | `ARTIFACT_BUCKET`, `NORI_LOCAL_ARTIFACT_DIR` | Private S3 bucket (`aws`) or local private directory (`local`, requires loopback Postgres). |
 | `NORI_SERVICE_TOKEN_KEY`, `NORI_SERVICE_AUDIENCE` | Shared HS256 secret (>= 32 bytes) and audience (default `nori`) authenticating hosted web/API calls. |
-| `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `JEV_API_KEY`, `NORI_AGENT_MODEL`, `MODEL_NAME` | Model credentials and model IDs (`gpt-6.1-sol` outer, `gpt-6.1-terra` or `openai/gpt-6.1-terra` inner). |
-| `NORI_MODEL_PROVIDER`, `NORI_MODEL_GATEWAY_URL`, `NORI_MODEL_GATEWAY_API_KEY`, `NORI_MODEL_TEST_URL` | Deployment-owned OpenAI-compatible gateway profile, or loopback test stub (`NORI_CLOUD=local` only). |
+| `JEV_API_KEY`, `EXA_API_KEY` | Deployment credentials for Jev classification and Exa search. |
 | `NORI_BACKGROUND_TASKS_ENABLED`, `NORI_JEV_ENABLED`, `NORI_TASK_BUDGET_USD` | Feature toggles and per-task USD spending ceiling (default `1`). |
-| `NORI_CREDENTIAL_STORE`, `NORI_CREDENTIAL_KEY`, `NORI_CREDENTIAL_KEY_SECRET`, `NORI_CREDENTIAL_KEY_FILE`, `NORI_OAUTH_REDIRECT_URL`, `NORI_MCP_COMMANDS` | Encrypted Postgres credential store (`database`), OAuth callback URL, and local-only stdio MCP command map. |
+| `NORI_CREDENTIAL_STORE`, `NORI_CREDENTIAL_KMS_KEY`, `NORI_CREDENTIAL_KEY`, `NORI_CREDENTIAL_KEY_SECRET`, `NORI_CREDENTIAL_KEY_FILE`, `NORI_OAUTH_REDIRECT_URL`, `NORI_MCP_COMMANDS` | Encrypted Postgres credential store (`database`), OAuth callback URL, and local-only stdio MCP command map. |
 | `NORI_AUTOMATION_UNATTENDED`, `NORI_USER_SENDS` | Permission policies (`confirm_writes` / `require_rule`; `allow` / `ask`). |
 | `NORI_USAGE_METER`, `NORI_USAGE_ENDPOINT`, `NORI_USAGE_TOKEN` | Usage metering (`store` or `http` webhook). |
 | `BRAVE_SEARCH_API_KEY` | Enables built-in `web_search`; omitted reports search unavailable. |
 | `BIND_HOST`, `PORT` | Hosted API bind address (default `127.0.0.1:8080`); `nori-local` always binds `127.0.0.1`. |
-
-### Deployment-owned model gateway
-
-Apply the same profile to both API and worker processes:
-
-```dotenv
-NORI_MODEL_PROVIDER=gateway
-NORI_MODEL_GATEWAY_URL=https://models.example.invalid/v1
-NORI_AGENT_MODEL=approved-conversation-alias
-MODEL_NAME=approved-task-alias
-NORI_JEV_ENABLED=false
-```
-
-Inject `NORI_MODEL_GATEWAY_API_KEY` as a runtime secret (raw bearer token) and leave `NORI_MODEL_TEST_URL` unset:
-
-- Conversation alias: `POST /chat/completions` with strict `response_format: json_schema`, `max_completion_tokens`, `store: false`, and SSE `stream_options.include_usage`.
-- Task alias: `POST /responses` with `instructions`, `max_output_tokens`, JSON object function tools, stateless continuation (`store: false`, `function_call_output`, `include: ["reasoning.encrypted_content"]`), `complete`, and `save_summary`.
-- Return standard token usage fields; optional `usage.cost` is USD cost (missing cost stays unknown).
 
 ## API routes
 
@@ -182,6 +163,7 @@ User-scoped routes are mounted under `/users/{id}/` (resolved by the trusted web
 | Route group | Purpose |
 | --- | --- |
 | `GET /v1/capabilities` | Advertises live contracts, features, and upload limits. |
+| `/v1/settings/models`, `/v1/settings/model-keys*` | Account-wide model settings and encrypted provider key management. |
 | `/v1/conversations/assistant` (`GET`, `messages`, `operations`, `cancel`, `events`, `uploads`) | Durable assistant conversation snapshot, history pagination, message submission, cancellation, SSE events, and uploads. |
 | `GET /v1/snapshot`, `GET /v1/events`, `/v1/uploads*`, `/v1/results*` | Assistant session snapshot, SSE stream, uploads, and saved result files. |
 | `/v1/mcp*` | Register/update HTTP or local stdio MCP servers, run `connect`/`reconnect`/`set_exposure`/`sign_in`/`sign_out`, store bearer credentials, and list discovered tools. |

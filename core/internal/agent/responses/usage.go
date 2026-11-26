@@ -28,7 +28,7 @@ func (c *Client) recordCost(record *state.Usage, model, tier string, u *response
 	cached, written := u.InputDetails.Cached, u.InputDetails.Write
 	record.CachedTokens, record.CacheWriteTokens = &cached, &written
 	if c.direct() {
-		cost, err := usage.TerraCostWithWrites(model, tier, u.Input, u.Output, u.Total, cached, written)
+		cost, err := usage.OpenAICostWithWrites(model, tier, u.Input, u.Output, u.Total, cached, written)
 		if err != nil {
 			return 0, false
 		}

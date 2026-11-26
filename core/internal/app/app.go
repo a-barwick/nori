@@ -15,7 +15,6 @@ import (
 	"nori/internal/connections"
 	"nori/internal/conversation"
 	"nori/internal/llmguard"
-	"nori/internal/modelkeys"
 	"nori/internal/modelprofiles"
 	"nori/internal/permissions"
 	"nori/internal/platform"
@@ -76,13 +75,18 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 		waker = platform.Waker(leases)
 	}
 	waker = wake.ForUser(waker, user.ID)
-	model := cfg.Models.Outer
-	profilesReg, err := modelprofiles.NewRegistry(cfg)
-	if err != nil {
-		store.Close()
-		return nil, false, err
+	var profilesReg *modelprofiles.Registry
+	var canPickModels bool
+	model, provider := "", ""
+	if !cfg.Models.BYOKRequired {
+		model, provider = cfg.Models.Outer, cfg.Models.EffectiveOuterProvider()
+		profilesReg, err = modelprofiles.NewRegistry(cfg)
+		if err != nil {
+			store.Close()
+			return nil, false, err
+		}
+		canPickModels = profilesReg.CanSelect(user.ID, user.Email)
 	}
-	canPickModels := profilesReg.CanSelect(user.ID, user.Email)
 	location, err := time.LoadLocation(cfg.TimeZone)
 	if err != nil {
 		store.Close()
@@ -97,7 +101,7 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 		Features:      cfg.Features,
 		Waker:         waker,
 		Model:         model,
-		ModelProvider: cfg.Models.EffectiveOuterProvider(),
+		ModelProvider: provider,
 		ModelProfiles: profilesReg,
 		CanPickModels: canPickModels,
 		Deltas:        deltas,
@@ -123,38 +127,29 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 	}
 	toolSource := &agent.Service{Extensions: services.Tools}
 	result.Scheduler = services.Scheduler
+	var account *modelprofiles.Account
 	var outer conversation.ReplyModel
-	if cfg.Models.UsesGatewayOuter() {
+	var summarizer, defaultTaskModel agent.Model
+	if cfg.Models.BYOKRequired {
 		if services.ModelKeys != nil {
-			outer = &byokReplyModel{keys: services.ModelKeys, models: cfg.Models, userID: user.ID}
-		} else if cfg.Models.BYOKRequired {
-			outer = &unavailableReplyModel{name: cfg.Models.Outer, err: modelkeys.ErrMissingAPIKey}
-		} else {
-			outer = platform.ReplyModelForUser(cfg.Models, user.ID)
+			account = &modelprofiles.Account{Store: store, Keys: services.ModelKeys}
 		}
+		outer = &accountReplyModel{account: account, models: cfg.Models, userID: user.ID}
+		defaultTaskModel = &accountTaskModel{account: account, models: cfg.Models, meter: store, userID: user.ID}
+		summarizer = defaultTaskModel
 	} else {
 		outer = platform.ReplyModelForUser(cfg.Models, user.ID)
-	}
-	summaryModels := cfg.Models
-	if summaryModels.EffectiveInnerProvider() == "openrouter" && summaryModels.Inner == "" {
-		summaryModels.Inner = settings.DefaultOpenRouterInnerModel
-	}
-	var summarizer agent.Model
-	if summaryModels.UsesGatewayInner() {
-		if services.ModelKeys != nil {
-			summarizer = &byokTaskModel{keys: services.ModelKeys, models: summaryModels, meter: store, userID: user.ID}
-		} else if summaryModels.BYOKRequired {
-			summarizer = &unavailableTaskModel{name: summaryModels.Inner, err: modelkeys.ErrMissingAPIKey}
-		} else {
-			summarizer = platform.TaskModelForUser(summaryModels, store, user.ID)
+		defaultTaskModel = platform.TaskModelForUser(cfg.Models, store, user.ID)
+		summaryModels := cfg.Models
+		if summaryModels.EffectiveInnerProvider() == "openrouter" && summaryModels.Inner == "" {
+			summaryModels.Inner = settings.DefaultOpenRouterInnerModel
 		}
-	} else {
 		summarizer = platform.TaskModelForUser(summaryModels, store, user.ID)
 	}
 	result.Assistant = &api.Assistant{
 		Store: store, Connections: services.Connections, Permissions: services.Permissions, Tools: toolSource.Tools,
 		Scheduler: services.Scheduler, UnattendedWrites: cfg.Connections.UnattendedWrites, MCP: services.MCP,
-		ModelKeys:     services.ModelKeys,
+		ModelKeys: services.ModelKeys, Models: account, AccountBYOK: cfg.Models.BYOKRequired,
 		Features:      AssistantFeatures(services.Connections, cfg.Features.DisableBackgroundTasks),
 		NextScheduled: services.Scheduler.NextScheduled, InboxUnread: services.Scheduler.UnreadCount,
 		NormalizeMemory: newMemoryNormalizer(summarizer, outer, store, cfg),
@@ -173,60 +168,22 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 	runner.Profile = platform.Profile(user, services.Connections)
 	runner.Clock = conversation.Clock{Location: location}
 	runner.OnDelta = deltas.Publish
-	modelsCfg := cfg.Models
-	resolveGatewayModels := func(base settings.Models) (settings.Models, error) {
-		if services.ModelKeys == nil {
-			if base.BYOKRequired {
-				return base, modelkeys.ErrMissingAPIKey
+	if cfg.Models.BYOKRequired {
+		runner.AccountModel = outer.(*accountReplyModel).resolve
+		runner.AccountSelection = account.CurrentSelection
+	} else {
+		runner.ModelForTurn = func(sel *state.ModelSelection) conversation.ReplyModel {
+			p, reasoning, explicit, err := profilesReg.ResolveChat(sel)
+			if !explicit {
+				return nil
 			}
-			return base, nil
-		}
-		rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		key, err := services.ModelKeys.ResolveGatewayKey(rctx, base.GatewayKey)
-		if err != nil {
-			return base, err
-		}
-		base.GatewayKey = key
-		return base, nil
-	}
-	runner.ModelForTurn = func(sel *state.ModelSelection) conversation.ReplyModel {
-		p, reasoning, explicit, err := profilesReg.ResolveChat(sel)
-		if !explicit {
-			if modelsCfg.UsesGatewayOuter() && (services.ModelKeys != nil || modelsCfg.BYOKRequired) {
-				resolvedCfg, rerr := resolveGatewayModels(modelsCfg)
-				if rerr != nil {
-					return &unavailableReplyModel{name: modelsCfg.Outer, err: rerr}
-				}
-				return platform.ReplyModelForUser(resolvedCfg, user.ID)
+			if err != nil {
+				return &unavailableReplyModel{name: sel.ChatProfileID, err: err}
 			}
-			return nil
+			return platform.ReplyModelForProfile(cfg.Models, user.ID, p, reasoning)
 		}
-		if err != nil {
-			return &unavailableReplyModel{name: sel.ChatProfileID, err: err}
-		}
-		if p.Backend != modelprofiles.BackendLocal {
-			resolvedCfg, rerr := resolveGatewayModels(modelsCfg)
-			if rerr != nil {
-				return &unavailableReplyModel{name: p.Model, err: rerr}
-			}
-			return platform.ReplyModelForProfile(resolvedCfg, user.ID, p, reasoning)
-		}
-		return platform.ReplyModelForProfile(modelsCfg, user.ID, p, reasoning)
 	}
 
-	var defaultTaskModel agent.Model
-	if cfg.Models.UsesGatewayInner() {
-		if services.ModelKeys != nil {
-			defaultTaskModel = &byokTaskModel{keys: services.ModelKeys, models: cfg.Models, meter: store, userID: user.ID}
-		} else if cfg.Models.BYOKRequired {
-			defaultTaskModel = &unavailableTaskModel{name: cfg.Models.Inner, err: modelkeys.ErrMissingAPIKey}
-		} else {
-			defaultTaskModel = platform.TaskModelForUser(cfg.Models, store, user.ID)
-		}
-	} else {
-		defaultTaskModel = platform.TaskModelForUser(cfg.Models, store, user.ID)
-	}
 	taskService := agent.New(store, defaultTaskModel)
 	taskService.Capabilities = agent.Capabilities{ExaSearchKey: cfg.ExaSearchKey, SearchKey: cfg.SearchKey, Location: location}
 	taskService.UserFacts = userFacts
@@ -243,24 +200,7 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 		return json.Unmarshal(r.Body, &overlay) == nil && overlay.DeletedAt != nil
 	}
 	result.TaskActivities = &task.Activities{
-		Agent: taskService,
-		ModelForRun: func(sel *state.ModelSelection) agent.Model {
-			p, reasoning, explicit, err := profilesReg.ResolveTask(sel)
-			if !explicit {
-				return nil
-			}
-			if err != nil {
-				return &unavailableTaskModel{name: sel.TaskProfileID, err: err}
-			}
-			if p.Backend != modelprofiles.BackendLocal {
-				resolvedCfg, rerr := resolveGatewayModels(modelsCfg)
-				if rerr != nil {
-					return &unavailableTaskModel{name: p.Model, err: rerr}
-				}
-				return platform.TaskModelForProfile(resolvedCfg, store, user.ID, p, reasoning)
-			}
-			return platform.TaskModelForProfile(modelsCfg, store, user.ID, p, reasoning)
-		},
+		Agent:  taskService,
 		Store:  store,
 		UserID: user.ID,
 		Executor: &task.Executor{
@@ -269,6 +209,21 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 			Permissions:  services.Permissions,
 			AutoReviewer: newAutoReviewer(outer, store, cfg),
 		},
+	}
+
+	if cfg.Models.BYOKRequired {
+		result.TaskActivities.AccountModel = defaultTaskModel.(*accountTaskModel).resolve
+	} else {
+		result.TaskActivities.ModelForRun = func(sel *state.ModelSelection) agent.Model {
+			p, reasoning, explicit, err := profilesReg.ResolveTask(sel)
+			if !explicit {
+				return nil
+			}
+			if err != nil {
+				return &unavailableTaskModel{name: sel.TaskProfileID, err: err}
+			}
+			return platform.TaskModelForProfile(cfg.Models, store, user.ID, p, reasoning)
+		}
 	}
 
 	result.Runner, result.Tasks = runner, tasks
@@ -761,7 +716,7 @@ func newAutoReviewer(outer conversation.ReplyModel, meter interface {
 	RecordUsage(context.Context, state.Usage) error
 }, cfg settings.Settings) permissions.AutoReviewer {
 	_, outerKey := cfg.Models.OuterCredential()
-	if outer != nil && cfg.Models.TestURL == "" && (cfg.Models.UsesGatewayOuter() || outerKey != "") {
+	if outer != nil && cfg.Models.TestURL == "" && (cfg.Models.BYOKRequired || cfg.Models.UsesGatewayOuter() || outerKey != "") {
 		return NewOuterModelAutoReviewerWithMeter(outer, meter)
 	}
 	return permissions.DeterministicAutoReviewer{}
@@ -774,11 +729,11 @@ func newMemoryNormalizer(inner conversation.SummaryModel, outer conversation.Rep
 		return nil
 	}
 	_, innerKey := cfg.Models.TaskCredential()
-	if inner != nil && (cfg.Models.UsesGatewayInner() || innerKey != "") {
+	if inner != nil && (cfg.Models.BYOKRequired || cfg.Models.UsesGatewayInner() || innerKey != "") {
 		return conversation.NewSummaryModelMemoryNormalizer(inner)
 	}
 	_, outerKey := cfg.Models.OuterCredential()
-	if outer != nil && (cfg.Models.UsesGatewayOuter() || outerKey != "") {
+	if outer != nil && (cfg.Models.BYOKRequired || cfg.Models.UsesGatewayOuter() || outerKey != "") {
 		return conversation.NewMemoryNormalizerWithMeter(outer, meter)
 	}
 	return nil
@@ -786,52 +741,48 @@ func newMemoryNormalizer(inner conversation.SummaryModel, outer conversation.Rep
 
 var _ api.Operations = (*App)(nil)
 
-type byokReplyModel struct {
-	keys   *modelkeys.Service
-	models settings.Models
-	userID string
+type accountReplyModel struct {
+	account *modelprofiles.Account
+	models  settings.Models
+	userID  string
 }
 
-func (m *byokReplyModel) Name() string { return m.models.Outer }
+func (m *accountReplyModel) Name() string { return "account" }
 
-func (m *byokReplyModel) Respond(ctx context.Context, req conversation.ReplyRequest) (conversation.Reply, error) {
-	key, err := m.keys.ResolveGatewayKey(ctx, m.models.GatewayKey)
+func (m *accountReplyModel) resolve(ctx context.Context, sel *state.ModelSelection) conversation.ReplyModel {
+	p, effort, key, err := m.account.Resolve(ctx, modelprofiles.LaneChat, sel)
 	if err != nil {
-		return conversation.Reply{
-			Usage: state.Usage{Provider: "outer", Model: m.models.Outer, CostStatus: "unknown", RequestStatus: "not_sent"},
-		}, err
+		return &unavailableReplyModel{name: p.Model, err: err}
 	}
-	resolved := m.models
-	resolved.GatewayKey = key
-	return platform.ReplyModelForUser(resolved, m.userID).Respond(ctx, req)
+	return platform.ReplyModelForBYOK(m.models, m.userID, p, effort, key)
 }
 
-type byokTaskModel struct {
-	keys   *modelkeys.Service
-	models settings.Models
-	meter  usage.Meter
-	userID string
+func (m *accountReplyModel) Respond(ctx context.Context, req conversation.ReplyRequest) (conversation.Reply, error) {
+	return m.resolve(ctx, nil).Respond(ctx, req)
 }
 
-func (m *byokTaskModel) Provider() string { return m.models.EffectiveInnerProvider() }
-func (m *byokTaskModel) Name() string     { return m.models.Inner }
+type accountTaskModel struct {
+	account *modelprofiles.Account
+	models  settings.Models
+	meter   usage.Meter
+	userID  string
+}
 
-func (m *byokTaskModel) Respond(ctx context.Context, req agent.Request) (agent.Response, error) {
-	key, err := m.keys.ResolveGatewayKey(ctx, m.models.GatewayKey)
+func (m *accountTaskModel) Provider() string { return "account" }
+func (m *accountTaskModel) Name() string     { return "account" }
+
+func (m *accountTaskModel) resolve(ctx context.Context, sel *state.ModelSelection) agent.Model {
+	p, effort, key, err := m.account.Resolve(ctx, modelprofiles.LaneTask, sel)
 	if err != nil {
-		return agent.Response{NotSent: true}, err
+		return &unavailableTaskModel{name: p.Model, err: err}
 	}
-	resolved := m.models
-	resolved.GatewayKey = key
-	return platform.TaskModelForUser(resolved, m.meter, m.userID).Respond(ctx, req)
+	return platform.TaskModelForBYOK(m.models, m.meter, m.userID, p, effort, key)
 }
 
-func (m *byokTaskModel) Inspect(ctx context.Context, req agent.InspectRequest) (agent.Inspection, error) {
-	key, err := m.keys.ResolveGatewayKey(ctx, m.models.GatewayKey)
-	if err != nil {
-		return agent.Inspection{}, err
-	}
-	resolved := m.models
-	resolved.GatewayKey = key
-	return platform.TaskModelForUser(resolved, m.meter, m.userID).Inspect(ctx, req)
+func (m *accountTaskModel) Respond(ctx context.Context, req agent.Request) (agent.Response, error) {
+	return m.resolve(ctx, nil).Respond(ctx, req)
+}
+
+func (m *accountTaskModel) Inspect(ctx context.Context, req agent.InspectRequest) (agent.Inspection, error) {
+	return m.resolve(ctx, nil).Inspect(ctx, req)
 }

@@ -178,7 +178,7 @@ func (c *Client) doWithRetry(ctx context.Context, buildReq func() (*http.Request
 			continue
 		}
 
-		if res.StatusCode == http.StatusOK || !isRetryableStatus(res.StatusCode) || attempt >= retries {
+		if res.StatusCode == http.StatusOK || !isRetryableStatus(res.StatusCode) || attempt >= retries || (c.BYOKProviderLabel != "" && llmguard.ModelAccessError(res, c.BYOKProviderLabel) != nil) {
 			return res, nil
 		}
 

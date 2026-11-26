@@ -397,7 +397,7 @@ struct ResetDataSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("This permanently clears your chats, memories, work, files, schedules, preferences, and API keys from Nori and disconnects your apps. You’ll stay signed in with Google and start onboarding again.")
+                    Text("This permanently clears your chats, memories, work, files, schedules, preferences, model selections, and saved API keys from Nori and disconnects your apps. You’ll stay signed in with Google and start onboarding again.")
                         .font(NoriTypography.body)
                         .foregroundStyle(NoriColors.ink2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -527,10 +527,6 @@ public struct DiagnosticsSettingsView: View {
                     }
                 }
 
-                if let catalog = store.capabilities?.modelProfiles, !catalog.profiles.isEmpty {
-                    modelSelectionCard(catalog: catalog)
-                }
-
                 telemetryAndLogsCard
             }
             .padding(.horizontal, 16)
@@ -645,181 +641,6 @@ public struct DiagnosticsSettingsView: View {
     }
 
     @ViewBuilder
-    private func modelSelectionCard(catalog: ModelProfileCatalog) -> some View {
-        let chatProfiles = catalog.profiles.filter { $0.lanes.contains("chat") }
-        let taskProfiles = catalog.profiles.filter { $0.lanes.contains("task") }
-        let selection = store.effectiveModelSelection
-        let activeChatProfile = chatProfiles.first { $0.id == (selection.chatProfileID ?? catalog.defaultChatProfileID) }
-        let activeTaskProfile = taskProfiles.first { $0.id == (selection.taskProfileID ?? catalog.defaultTaskProfileID) }
-        let defaultChatPaid = activeChatProfile?.paid ?? (store.capabilities?.provider != "local")
-        let defaultTaskPaid = activeTaskProfile?.paid ?? (store.capabilities?.provider != "local")
-        let nextUsesPaid = defaultChatPaid || defaultTaskPaid
-
-        NoriCard {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .center) {
-                    Text("Model & Reasoning")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(NoriColors.ink)
-                    Spacer()
-                    NoriPill(
-                        nextUsesPaid ? "Paid cloud" : "Local",
-                        tone: nextUsesPaid ? .warning : .ok
-                    )
-                }
-
-                Text("Applies to your next message and any new tasks it dispatches. In-flight tasks keep their original model.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(NoriColors.ink3)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Chat model")
-                            .font(.system(size: 13))
-                            .foregroundStyle(NoriColors.ink2)
-                        Spacer()
-                        Picker(
-                            "Chat model",
-                            selection: Binding(
-                                get: { selection.chatProfileID ?? "" },
-                                set: { nextID in
-                                    var updated = selection
-                                    updated.chatProfileID = nextID.isEmpty ? nil : nextID
-                                    let target = chatProfiles.first { $0.id == (updated.chatProfileID ?? catalog.defaultChatProfileID) }
-                                    if let cur = updated.chatReasoning, target?.supportedReasoning?.contains(cur) != true {
-                                        updated.chatReasoning = nil
-                                    }
-                                    store.setModelSelection(updated)
-                                }
-                            )
-                        ) {
-                            Text(defaultProfileLabel(id: catalog.defaultChatProfileID, profiles: chatProfiles)).tag("")
-                            ForEach(chatProfiles) { profile in
-                                Text(profile.label).tag(profile.id)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                    }
-
-                    if let efforts = activeChatProfile?.supportedReasoning, !efforts.isEmpty {
-                        HStack {
-                            Text("Chat reasoning")
-                                .font(.system(size: 13))
-                                .foregroundStyle(NoriColors.ink2)
-                            Spacer()
-                            Picker(
-                                "Chat reasoning",
-                                selection: Binding(
-                                    get: { selection.chatReasoning ?? "" },
-                                    set: { nextEffort in
-                                        var updated = selection
-                                        updated.chatReasoning = nextEffort.isEmpty ? nil : nextEffort
-                                        store.setModelSelection(updated)
-                                    }
-                                )
-                            ) {
-                                Text(defaultReasoningLabel(activeChatProfile?.defaultReasoning)).tag("")
-                                ForEach(efforts, id: \.self) { effort in
-                                    Text(effort).tag(effort)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .labelsHidden()
-                        }
-                    }
-
-                    Divider()
-
-                    HStack {
-                        Text("Task model")
-                            .font(.system(size: 13))
-                            .foregroundStyle(NoriColors.ink2)
-                        Spacer()
-                        Picker(
-                            "Task model",
-                            selection: Binding(
-                                get: { selection.taskProfileID ?? "" },
-                                set: { nextID in
-                                    var updated = selection
-                                    updated.taskProfileID = nextID.isEmpty ? nil : nextID
-                                    let target = taskProfiles.first { $0.id == (updated.taskProfileID ?? catalog.defaultTaskProfileID) }
-                                    if let cur = updated.taskReasoning, target?.supportedReasoning?.contains(cur) != true {
-                                        updated.taskReasoning = nil
-                                    }
-                                    store.setModelSelection(updated)
-                                }
-                            )
-                        ) {
-                            Text(defaultProfileLabel(id: catalog.defaultTaskProfileID, profiles: taskProfiles)).tag("")
-                            ForEach(taskProfiles) { profile in
-                                Text(profile.label).tag(profile.id)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                    }
-
-                    if let efforts = activeTaskProfile?.supportedReasoning, !efforts.isEmpty {
-                        HStack {
-                            Text("Task reasoning")
-                                .font(.system(size: 13))
-                                .foregroundStyle(NoriColors.ink2)
-                            Spacer()
-                            Picker(
-                                "Task reasoning",
-                                selection: Binding(
-                                    get: { selection.taskReasoning ?? "" },
-                                    set: { nextEffort in
-                                        var updated = selection
-                                        updated.taskReasoning = nextEffort.isEmpty ? nil : nextEffort
-                                        store.setModelSelection(updated)
-                                    }
-                                )
-                            ) {
-                                Text(defaultReasoningLabel(activeTaskProfile?.defaultReasoning)).tag("")
-                                ForEach(efforts, id: \.self) { effort in
-                                    Text(effort).tag(effort)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .labelsHidden()
-                        }
-                    }
-                }
-
-                if !selection.isEmpty {
-                    Divider()
-                    HStack {
-                        Text("Custom override active")
-                            .font(.system(size: 12))
-                            .foregroundStyle(NoriColors.ink3)
-                        Spacer()
-                        Button("Reset to defaults") {
-                            store.setModelSelection(ModelSelection())
-                        }
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(NoriColors.accent)
-                    }
-                }
-            }
-        }
-    }
-
-    private func defaultProfileLabel(id: String?, profiles: [ModelProfile]) -> String {
-        if let id, let match = profiles.first(where: { $0.id == id }) {
-            return "Server default (\(match.label))"
-        }
-        return "Server default"
-    }
-
-    private func defaultReasoningLabel(_ effort: String?) -> String {
-        if let effort, !effort.isEmpty {
-            return "Profile default (\(effort))"
-        }
-        return "Profile default"
-    }
-
     private func diagRow(_ label: String, value: String, monospaced: Bool = false) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(label)

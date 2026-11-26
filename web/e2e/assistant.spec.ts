@@ -6,7 +6,7 @@ function signInURL(account: string, path = "/") {
   return `http://127.0.0.1:9445/sign-in?account=${account}&to=${encodeURIComponent(app + path)}`;
 }
 
-test("verifies authentication, queued turns, reconnect, approvals, model access, and downloads", async ({ page }) => {
+test("verifies authentication, queued turns, reconnect, approvals, account model selection, and downloads", async ({ page }) => {
   const signIn = (account: string) => page.goto(signInURL(account));
   await signIn("first");
   await page.evaluate((id) => localStorage.setItem("nori-diagnostics-model-selection-v1:" + id, JSON.stringify({ chat_profile_id: "browser-chat" })), first);
@@ -17,12 +17,12 @@ test("verifies authentication, queued turns, reconnect, approvals, model access,
   await expect(composer).toBeEnabled();
   await composer.fill("First account draft");
   await page.getByRole("button", { name: "Send", exact: true }).click();
-  await expect(page.getByText("Reply on browser-chat", { exact: true })).toBeVisible();
+  await expect(page.getByText("Reply on default", { exact: true })).toBeVisible();
   const reconnected = page.waitForResponse(response => response.url().includes("/api/v1/events?after=") && response.ok());
   await composer.fill("Reconnect after acceptance");
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await reconnected;
-  await expect(page.getByText("Reply on browser-chat", { exact: true })).toHaveCount(2);
+  await expect(page.getByText("Reply on default", { exact: true })).toHaveCount(2);
 
   await page.goto("/work");
   const allow = page.getByRole("button", { name: "Allow once", exact: true });
@@ -35,7 +35,7 @@ test("verifies authentication, queued turns, reconnect, approvals, model access,
   await page.goto("/");
   await composer.fill("Send after access was revoked");
   await page.getByRole("button", { name: "Send", exact: true }).click();
-  await expect(page.getByText("Reply on default", { exact: true })).toBeVisible();
+  await expect(page.getByText("Reply on default", { exact: true })).toHaveCount(3);
   await composer.fill("Private unsent draft");
 
   await signIn("second");
@@ -50,6 +50,76 @@ test("verifies authentication, queued turns, reconnect, approvals, model access,
     return { status: response.status, disposition: response.headers.get("content-disposition"), text: await response.text() };
   });
   expect(file).toEqual({ status: 200, disposition: 'attachment; filename="fixture.txt"', text: "fixture download" });
+});
+
+test("Models offers recommendations after key setup and saves account choices", async ({ page }) => {
+  let anthropicConfigured = false;
+  let revision = 1;
+  let selection = { chat_profile_id: "openai-sol", chat_reasoning: "low", task_profile_id: "openai-sol", task_reasoning: "medium" };
+  const profiles = [
+    { id: "openai-sol", version: "v1", label: "GPT-6.2 Sol", backend: "openai", model: "gpt-6.2-sol", lanes: ["chat", "task"], supported_reasoning: ["low", "medium", "high"], default_reasoning: "low", paid: true },
+    { id: "anthropic-opus", version: "v1", label: "Claude Opus 5.5", backend: "anthropic", model: "claude-opus-5-5", lanes: ["chat", "task"], supported_reasoning: ["low", "high"], default_reasoning: "low", paid: true },
+    { id: "anthropic-haiku", version: "v1", label: "Claude Haiku 5.5", backend: "anthropic", model: "claude-haiku-5-5", lanes: ["chat", "task"], supported_reasoning: ["low", "high"], default_reasoning: "low", paid: true },
+  ];
+  const recommended = { chat_profile_id: "anthropic-opus", chat_reasoning: "low", task_profile_id: "anthropic-haiku", task_reasoning: "low" };
+  const writes: unknown[] = [];
+
+  await page.route("**/api/v1/settings/model-keys**", async (route) => {
+    if (route.request().method() === "PUT") {
+      anthropicConfigured = true;
+      await route.fulfill({ json: { provider: "anthropic", label: "Anthropic", configured: true, last4: "test" } });
+      return;
+    }
+    await route.fulfill({ json: { byok_required: true, providers: [
+      { provider: "openai", label: "OpenAI", configured: true },
+      { provider: "anthropic", label: "Anthropic", configured: anthropicConfigured },
+      { provider: "google", label: "Google", configured: false },
+      { provider: "vercel_ai_gateway", label: "Vercel AI Gateway", configured: false },
+      { provider: "openrouter", label: "OpenRouter", configured: false },
+    ] } });
+  });
+  await page.route("**/api/v1/settings/models", async (route) => {
+    if (route.request().method() === "PUT") {
+      const body = route.request().postDataJSON();
+      writes.push(body);
+      expect(body.expected_revision).toBe(revision);
+      selection = body.selection;
+      revision++;
+    }
+    await route.fulfill({ json: {
+      model_profiles: { profiles: profiles.filter((profile) => profile.backend === "openai" || anthropicConfigured) },
+      selection,
+      revision,
+      recommendations: anthropicConfigured ? { anthropic: recommended } : {},
+    } });
+  });
+
+  await page.goto(signInURL("first", "/settings/models"));
+  await expect(page.getByRole("heading", { name: "Models", exact: true }).first()).toBeVisible();
+  const anthropic = page.locator("li").filter({ hasText: "Anthropic" });
+  await anthropic.getByRole("button", { name: "Add key" }).click();
+  await anthropic.getByLabel("Anthropic API key").fill("sk-test");
+  await anthropic.getByRole("button", { name: "Save", exact: true }).click();
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Claude Opus 5.5 · Low");
+  await expect(dialog).toContainText("Claude Haiku 5.5 · Low");
+  await dialog.getByRole("button", { name: "Keep current models" }).click();
+  await expect(page.getByLabel("Chat model")).toHaveValue("openai-sol");
+  expect(writes).toHaveLength(0);
+
+  await page.getByLabel("Chat model").selectOption("anthropic-opus");
+  await page.getByRole("button", { name: "Save models" }).click();
+  await expect.poll(() => writes.length).toBe(1);
+  await anthropic.getByRole("button", { name: "Replace" }).click();
+  await anthropic.getByLabel("New Anthropic API key").fill("sk-new-test");
+  await anthropic.getByRole("button", { name: "Save", exact: true }).click();
+  await dialog.getByRole("button", { name: "Use recommended models" }).click();
+  await expect.poll(() => writes.length).toBe(2);
+  await expect(page.getByLabel("Work model")).toHaveValue("anthropic-haiku");
+  await page.reload();
+  await expect(page.getByLabel("Chat model")).toHaveValue("anthropic-opus");
+  await expect(page.getByLabel("Work model")).toHaveValue("anthropic-haiku");
 });
 
 test("Work waits for pending approvals and offers a retry after a failed read", async ({ page, request }) => {
@@ -215,12 +285,21 @@ test("sign out closes other tabs and sign in restores the workspace", async ({ p
   await secondTab.close();
 });
 
-test("reset clears the browser session and opens onboarding in both tabs", async ({ page, context }) => {
+test("reset clears saved model keys and choices and opens onboarding in both tabs", async ({ page, context, request }) => {
+  expect((await request.post("http://127.0.0.1:4318/seed-models")).status()).toBe(204);
   await page.goto(signInURL("first", "/more"));
+  const before = await page.evaluate(async () => ({
+    keys: await (await fetch("/api/v1/settings/model-keys")).json(),
+    models: await (await fetch("/api/v1/settings/models")).json(),
+  }));
+  expect(before.keys.providers).toHaveLength(5);
+  expect(before.keys.providers.every((provider: { configured: boolean }) => provider.configured)).toBe(true);
+  expect(before.models.selection.chat_profile_id).toBe("anthropic-opus");
   const secondTab = await context.newPage();
   await secondTab.goto(`${app}/more`);
   await expect(secondTab.getByText("Settings", { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Reset data" }).click();
+  await expect(page.getByText(/saved API keys, and model choices/)).toBeVisible();
   const confirm = page.getByLabel("Type RESET to confirm");
   const reset = page.getByRole("button", { name: "Reset data" });
   await expect(reset).toBeDisabled();
@@ -232,5 +311,21 @@ test("reset clears the browser session and opens onboarding in both tabs", async
   await expect(secondTab.getByRole("button", { name: "Get started" })).toBeVisible();
   await expect(page.getByLabel("Step 1 of 4")).toBeVisible();
   await expect(secondTab.getByLabel("Step 1 of 4")).toBeVisible();
+  for (const tab of [page, secondTab]) {
+    const after = await tab.evaluate(async () => ({
+      keys: await (await fetch("/api/v1/settings/model-keys")).json(),
+      models: await (await fetch("/api/v1/settings/models")).json(),
+    }));
+    expect(after.keys.providers).toHaveLength(5);
+    expect(after.keys.providers.every((provider: { configured: boolean }) => !provider.configured)).toBe(true);
+    expect(after.models.selection).toEqual({});
+  }
+  await page.getByRole("button", { name: "Get started" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByLabel("Step 3 of 4")).toBeVisible();
+  for (const provider of ["openai", "anthropic", "google", "vercel_ai_gateway", "openrouter"]) {
+    await page.getByLabel("Model provider").selectOption(provider);
+    await expect(page.getByText("Not configured", { exact: true })).toBeVisible();
+  }
   await secondTab.close();
 });

@@ -104,14 +104,34 @@ service_url() {
   gcloud run services describe "$1" --project="$PROJECT" --region="$REGION" --format='value(status.url)'
 }
 
-probe() {
+probe_url() {
+  curl --silent --show-error --fail --output /dev/null --max-time 15 --retry 5 --retry-all-errors "$1"
+}
+
+deploy_checked() {
+  local service="$1" image="$2" path="$3" tag="release-${SHA}"
+  shift 3
+  run gcloud run deploy "$service" --project="$PROJECT" --region="$REGION" \
+    --image="$image" --no-traffic --tag="$tag" --quiet "$@"
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "+ check $1 $2"
+    echo "+ check tagged $service $path"
+    echo "+ promote tagged $service to 100% and remove $tag"
     return
   fi
-  local url
-  url="$(service_url "$1")"
-  curl --silent --show-error --fail --output /dev/null --max-time 15 --retry 5 --retry-all-errors "${url}$2"
+
+  local candidate revision url
+  candidate="$(gcloud run services describe "$service" --project="$PROJECT" --region="$REGION" \
+    --flatten='status.traffic[]' --format='value(status.traffic.tag,status.traffic.revisionName,status.traffic.url)' |
+    awk -F '\t' -v tag="$tag" '$1 == tag { print $2 "\t" $3 }')"
+  IFS=$'\t' read -r revision url <<< "$candidate"
+  if [[ -z "$revision" || -z "$url" ]] || ! probe_url "${url}${path}"; then
+    echo "Tagged $service revision failed readiness. Existing traffic was preserved." >&2
+    run gcloud run services update-traffic "$service" --project="$PROJECT" --region="$REGION" --remove-tags="$tag" --quiet || true
+    return 1
+  fi
+  run gcloud run services update-traffic "$service" --project="$PROJECT" --region="$REGION" \
+    --to-revisions="$revision=100" --remove-tags="$tag" --quiet
+  probe_url "$(service_url "$service")$path"
 }
 
 if [[ "$DEPLOY_CORE" -eq 1 ]]; then
@@ -119,13 +139,13 @@ if [[ "$DEPLOY_CORE" -eq 1 ]]; then
     run gcloud run jobs update "$NORI_GCP_MIGRATION_JOB" --project="$PROJECT" --region="$REGION" --image="$CORE_IMAGE" --args=--migrate-only --quiet
     run gcloud run jobs execute "$NORI_GCP_MIGRATION_JOB" --project="$PROJECT" --region="$REGION" --wait --quiet
   fi
-  run gcloud run deploy nori-core --project="$PROJECT" --region="$REGION" --image="$CORE_IMAGE" --quiet
-  probe nori-core /readyz
+  deploy_checked nori-core "$CORE_IMAGE" /readyz \
+    --remove-secrets=OPENAI_API_KEY,ANTHROPIC_API_KEY,OPENROUTER_API_KEY,NORI_MODEL_GATEWAY_API_KEY \
+    --remove-env-vars=NORI_MODEL_PROVIDER,NORI_MODEL_GATEWAY_URL,NORI_MODEL_PICKER_USERS,NORI_BYOK_REQUIRED,NORI_AGENT_MODEL,MODEL_NAME,NORI_OUTER_REASONING_EFFORT,NORI_INNER_REASONING_EFFORT
 fi
 
 if [[ "$DEPLOY_WEB" -eq 1 ]]; then
-  run gcloud run deploy nori-web --project="$PROJECT" --region="$REGION" --image="$WEB_IMAGE" --quiet
-  probe nori-web /api/health
+  deploy_checked nori-web "$WEB_IMAGE" /api/health
   if [[ -n "${NORI_DEPLOY_SMOKE_TOKEN_FILE:-}" && "$DRY_RUN" -eq 0 ]]; then
     web_url="$(service_url nori-web)"
     smoke_token="$(<"$NORI_DEPLOY_SMOKE_TOKEN_FILE")"

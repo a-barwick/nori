@@ -130,30 +130,44 @@ func parseOptionalNonNegativeFloatDefault(name string, fallback float64) float64
 	return parseOptionalNonNegativeFloat(name)
 }
 
-func modelsFromEnvironment(profile string) Models {
+func modelsFromEnvironment(profile, cloud string, simulation bool) Models {
+	testURL := strings.TrimSpace(os.Getenv("NORI_MODEL_TEST_URL"))
+	if !simulation && !(cloud == "local" && testURL != "") {
+		return Models{
+			EnvProfile: profile, BYOKRequired: true, TestURL: testURL,
+			JevKey: strings.TrimSpace(os.Getenv("JEV_API_KEY")),
+			MaxUSD: parseOptionalNonNegativeFloat("NORI_LLM_MAX_USD"),
+		}
+	}
 	models := Models{
 		EnvProfile:     profile,
 		Provider:       strings.ToLower(strings.TrimSpace(os.Getenv("NORI_MODEL_PROVIDER"))),
 		OuterProvider:  strings.ToLower(strings.TrimSpace(os.Getenv("NORI_OUTER_PROVIDER"))),
 		InnerProvider:  strings.ToLower(strings.TrimSpace(os.Getenv("NORI_INNER_PROVIDER"))),
 		GatewayURL:     strings.TrimSpace(os.Getenv("NORI_MODEL_GATEWAY_URL")),
-		GatewayKey:     strings.TrimSpace(os.Getenv("NORI_MODEL_GATEWAY_API_KEY")),
-		BYOKRequired:   strings.EqualFold(strings.TrimSpace(os.Getenv("NORI_BYOK_REQUIRED")), "true"),
 		LocalURL:       strings.TrimSpace(os.Getenv("NORI_LOCAL_MODEL_URL")),
 		LocalModel:     strings.TrimSpace(os.Getenv("NORI_LOCAL_MODEL_TAG")),
 		ProfilesFile:   strings.TrimSpace(os.Getenv("NORI_MODEL_PROFILES_FILE")),
 		ProfilesJSON:   strings.TrimSpace(os.Getenv("NORI_MODEL_PROFILES")),
 		PickerUsers:    parseCSVList(os.Getenv("NORI_MODEL_PICKER_USERS")),
-		OpenAIKey:      resolveProfileKey("OPENAI", profile),
-		AnthropicKey:   resolveProfileKey("ANTHROPIC", profile),
-		OpenRouterKey:  resolveProfileKey("OPENROUTER", profile),
 		JevKey:         strings.TrimSpace(os.Getenv("JEV_API_KEY")),
 		Outer:          strings.TrimSpace(os.Getenv("NORI_AGENT_MODEL")),
 		Inner:          strings.TrimSpace(os.Getenv("MODEL_NAME")),
-		TestURL:        strings.TrimSpace(os.Getenv("NORI_MODEL_TEST_URL")),
+		TestURL:        testURL,
 		OuterReasoning: strings.ToLower(strings.TrimSpace(os.Getenv("NORI_OUTER_REASONING_EFFORT"))),
 		InnerReasoning: strings.ToLower(strings.TrimSpace(os.Getenv("NORI_INNER_REASONING_EFFORT"))),
 		MaxUSD:         parseOptionalNonNegativeFloat("NORI_LLM_MAX_USD"),
+	}
+	if simulation {
+		models.OpenAIKey = resolveProfileKey("OPENAI", profile)
+		models.AnthropicKey = resolveProfileKey("ANTHROPIC", profile)
+		models.OpenRouterKey = resolveProfileKey("OPENROUTER", profile)
+		models.GatewayKey = strings.TrimSpace(os.Getenv("NORI_MODEL_GATEWAY_API_KEY"))
+	} else {
+		// App fixtures can use only the explicit, validated loopback endpoint.
+		models.Provider, models.OuterProvider, models.InnerProvider = "openai", "", ""
+		models.GatewayURL, models.LocalURL, models.LocalModel = "", "", ""
+		models.ProfilesJSON, models.ProfilesFile = "", ""
 	}
 	if models.InnerReasoning == "" {
 		models.InnerReasoning = "low"

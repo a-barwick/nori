@@ -53,6 +53,7 @@ public struct WorkView: View {
     private let onOpenDocument: (NoriCore.LibraryItem) -> Void
     private let onOpenTask: ((String) -> Void)?
     private let onStartInChat: (String) -> Void
+    private let onOpenModels: () -> Void
 
     @State private var internalTab: WorkTabFilter = .tasks
     @State private var selectedTaskDestination: String?
@@ -65,7 +66,8 @@ public struct WorkView: View {
         isLoadingOverview: Bool = false,
         onOpenDocument: @escaping (NoriCore.LibraryItem) -> Void = { _ in },
         onOpenTask: ((String) -> Void)? = nil,
-        onStartInChat: @escaping (String) -> Void = { _ in }
+        onStartInChat: @escaping (String) -> Void = { _ in },
+        onOpenModels: @escaping () -> Void = {}
     ) {
         self.store = store
         self.externalSelection = selectedTab
@@ -73,6 +75,7 @@ public struct WorkView: View {
         self.onOpenDocument = onOpenDocument
         self.onOpenTask = onOpenTask
         self.onStartInChat = onStartInChat
+        self.onOpenModels = onOpenModels
     }
 
     private var activeTabBinding: Binding<WorkTabFilter> {
@@ -142,7 +145,8 @@ public struct WorkView: View {
             WorkDetailView(
                 store: store,
                 taskID: taskID,
-                onOpenDocument: onOpenDocument
+                onOpenDocument: onOpenDocument,
+                onOpenModels: onOpenModels
             )
         }
         #if os(iOS)

@@ -522,7 +522,7 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     ]);
   });
 
-  test("settings route allows model keys and only POST to reset", async () => {
+  test("settings route forwards model settings and only POST to reset", async () => {
     assert.equal(typeof settingsRoute.GET, "function");
     assert.equal(typeof settingsRoute.PUT, "function");
     assert.equal(typeof settingsRoute.DELETE, "function");
@@ -560,6 +560,18 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
       { params: Promise.resolve({ path: ["model-keys"] }) },
     );
     assert.equal(okRes.status, 200);
+
+    const modelsRes = await settingsRoute.GET(
+      new Request(`${APP_ORIGIN}/api/v1/settings/models`, { method: "GET", headers: await authHeaders(email) }),
+      { params: Promise.resolve({ path: ["models"] }) },
+    );
+    assert.equal(modelsRes.status, 200);
+
+    const nestedModelsRes = await settingsRoute.GET(
+      new Request(`${APP_ORIGIN}/api/v1/settings/models/extra`, { method: "GET", headers }),
+      { params: Promise.resolve({ path: ["models", "extra"] }) },
+    );
+    assert.equal(nestedModelsRes.status, 404);
   });
 
   test("settings reset forwards the confirmation to the signed-in user and relays 204", async () => {

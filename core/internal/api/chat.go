@@ -32,7 +32,7 @@ func (s *server) capabilities(w http.ResponseWriter, r *http.Request) {
 		modes = append(modes, "assistant")
 	}
 	provider := s.ModelProvider
-	if provider == "" {
+	if provider == "" && (s.Assistant == nil || !s.Assistant.AccountBYOK) {
 		provider = "openai"
 	}
 	body := capabilitiesView{
@@ -67,6 +67,10 @@ func (s *server) assistantConversationSnapshot(w http.ResponseWriter, r *http.Re
 }
 
 func (s *server) resolveModelSelection(w http.ResponseWriter, sel *state.ModelSelection) (*state.ModelSelection, bool) {
+	if s.Assistant != nil && s.Assistant.AccountBYOK {
+		// Older clients can still send their device-local picker state.
+		return nil, true
+	}
 	if sel.IsEmpty() {
 		return nil, true
 	}

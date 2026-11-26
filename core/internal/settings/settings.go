@@ -104,18 +104,30 @@ func Load() (Settings, error) {
 }
 
 func LoadDefaultCloud(defaultCloud string) (Settings, error) {
+	return load(defaultCloud, false)
+}
+
+// LoadSimulation handles provider configuration for the standalone, isolated simulator.
+func LoadSimulation() (Settings, error) {
+	return load("local", true)
+}
+
+func load(defaultCloud string, simulation bool) (Settings, error) {
+	excluded := func(name string) bool {
+		return managementCredential(name) || (!simulation && installationModelCredential(name))
+	}
 	for _, entry := range os.Environ() {
 		name, _, _ := strings.Cut(entry, "=")
-		if managementCredential(name) {
+		if excluded(name) {
 			_ = os.Unsetenv(name)
 		}
 	}
 	file := get("NORI_ENV_FILE", "../.env")
-	if err := loadFile(file); err != nil && !os.IsNotExist(err) {
+	if err := loadFile(file, excluded); err != nil && !os.IsNotExist(err) {
 		return Settings{}, fmt.Errorf("could not load %s; check its syntax and permissions", file)
 	}
 	if task := get("NORI_TASK_ENV_FILE", file); task != file {
-		if err := loadFile(task); err != nil && !os.IsNotExist(err) {
+		if err := loadFile(task, excluded); err != nil && !os.IsNotExist(err) {
 			return Settings{}, fmt.Errorf("could not load task configuration %s", task)
 		}
 	}
@@ -124,7 +136,7 @@ func LoadDefaultCloud(defaultCloud string) (Settings, error) {
 			return Settings{}, fmt.Errorf("%s must be true or false", name)
 		}
 	}
-	s := fromEnvironment(defaultCloud)
+	s := fromEnvironment(defaultCloud, simulation)
 	switch s.Cloud {
 	case "aws", "local":
 	default:
@@ -139,8 +151,13 @@ func LoadDefaultCloud(defaultCloud string) (Settings, error) {
 	if s.Cloud == "local" && s.EnvProfile == "prod" {
 		return Settings{}, fmt.Errorf("NORI_ENV_PROFILE=prod is not allowed when NORI_CLOUD=local")
 	}
-	if err := validateProfileKeyIsolation(s.EnvProfile); err != nil {
-		return Settings{}, err
+	if simulation {
+		if s.Cloud != "local" {
+			return Settings{}, fmt.Errorf("the simulation executable requires NORI_CLOUD=local")
+		}
+		if err := validateProfileKeyIsolation(s.EnvProfile); err != nil {
+			return Settings{}, err
+		}
 	}
 	if !ValidRole(s.Role) {
 		return Settings{}, fmt.Errorf("NORI_ROLE must be all, api, or worker")
@@ -164,9 +181,6 @@ func LoadDefaultCloud(defaultCloud string) (Settings, error) {
 	}
 	if err := s.Models.validateModels(s.Cloud); err != nil {
 		return Settings{}, err
-	}
-	if s.Models.BYOKRequired && s.Connections.CredentialStore != "database" {
-		return Settings{}, fmt.Errorf("NORI_BYOK_REQUIRED=true requires NORI_CREDENTIAL_STORE=database")
 	}
 	if s.Models.TestURL != "" {
 		u, err := url.Parse(s.Models.TestURL)
@@ -194,7 +208,7 @@ func connectionsFromEnvironment() Connections {
 	}
 }
 
-func fromEnvironment(defaultCloud string) Settings {
+func fromEnvironment(defaultCloud string, simulation bool) Settings {
 	taskBudget, err := strconv.ParseFloat(get("NORI_TASK_BUDGET_USD", "1"), 64)
 	if err != nil {
 		taskBudget = math.NaN()
@@ -263,7 +277,7 @@ func fromEnvironment(defaultCloud string) Settings {
 		},
 		BindHost:      get("BIND_HOST", "127.0.0.1"),
 		Port:          os.Getenv("PORT"),
-		Models:        modelsFromEnvironment(envProfile),
+		Models:        modelsFromEnvironment(envProfile, cloud, simulation),
 		Store:         store,
 		Metering:      usage.Config{Mode: get("NORI_USAGE_METER", "store"), Endpoint: os.Getenv("NORI_USAGE_ENDPOINT"), Token: os.Getenv("NORI_USAGE_TOKEN"), MaxCallsPerHour: int(parseEnvInt32Default("NORI_USER_MAX_CALLS_PER_HOUR", 300)), MaxUSDPerDay: parseOptionalNonNegativeFloatDefault("NORI_USER_MAX_USD_PER_DAY", 15.0)},
 		ExaSearchKey:  strings.TrimSpace(os.Getenv("EXA_API_KEY")),
@@ -385,13 +399,28 @@ func managementCredential(name string) bool {
 	return strings.HasPrefix(name, "NORI_SPEND_LEASE_")
 }
 
-func loadFile(path string) error {
+func installationModelCredential(name string) bool {
+	switch name {
+	case "NORI_MODEL_GATEWAY_API_KEY", "NORI_GATEWAY_TOKEN", "GOOGLE_API_KEY", "GEMINI_API_KEY", "AI_GATEWAY_API_KEY":
+		return true
+	}
+	for _, provider := range []string{"OPENAI", "ANTHROPIC", "OPENROUTER", "GOOGLE", "GEMINI"} {
+		for _, profile := range []string{"", "_PROD", "_DEV", "_TEST"} {
+			if name == provider+profile+"_API_KEY" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func loadFile(path string, excluded func(string) bool) error {
 	values, err := godotenv.Read(path)
 	if err != nil {
 		return err
 	}
 	for name, value := range values {
-		if _, exists := os.LookupEnv(name); !exists && !managementCredential(name) {
+		if _, exists := os.LookupEnv(name); !exists && !excluded(name) {
 			if err := os.Setenv(name, value); err != nil {
 				return err
 			}

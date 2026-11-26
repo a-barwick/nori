@@ -43,6 +43,8 @@ type OpenAIModel struct {
 	TestURL               string
 	ReasoningEffort       string
 	AllowGatewayReasoning bool
+	GoogleCompatibility   bool
+	BYOKProviderLabel     string
 	LocalOnly             bool
 	Now                   func() time.Time
 	NewID                 func() string
@@ -161,13 +163,18 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	if scope == "" {
 		scope = llmguard.ScopeOuter
 	}
-	reqCtx := llmguard.WithMeta(ctx, llmguard.CallMeta{
+	meta := llmguard.CallMeta{
 		UserID:          m.UserID,
 		Scope:           scope,
 		Provider:        m.provider(),
 		Model:           m.name,
 		MaxOutputTokens: 4096,
-	})
+		BYOK:            m.BYOKProviderLabel != "",
+	}
+	reqCtx := llmguard.WithMeta(ctx, meta)
+	if m.BYOKProviderLabel != "" {
+		reply.Usage.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
+	}
 	if _, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, bytes.NewReader(body)); err != nil {
 		return reply, fmt.Errorf("invalid model request")
 	}
@@ -200,7 +207,9 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 		nextUsage.RequestStatus = "pending"
 		nextUsage.CostStatus = "unknown"
 		nextUsage.CostUSD = nil
-		nextUsage.EstimatedExposureUSD = 0
+		if m.BYOKProviderLabel == "" {
+			nextUsage.EstimatedExposureUSD = 0
+		}
 		nextUsage.InputTokens = nil
 		nextUsage.OutputTokens = nil
 		nextUsage.TotalTokens = nil
@@ -237,6 +246,11 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 		res.Body.Close()
 	}()
 	if res.StatusCode != http.StatusOK {
+		if m.BYOKProviderLabel != "" {
+			if err := llmguard.ModelAccessError(res, m.BYOKProviderLabel); err != nil {
+				return reply, err
+			}
+		}
 		if m.gatewayURL != "" {
 			if (res.StatusCode == 400 || res.StatusCode == 413) && contextview.Refusal(res.Body) {
 				return reply, contextview.ErrOverflow
@@ -289,7 +303,7 @@ func logRefusal(ctx context.Context, res *http.Response) bool {
 }
 
 func isSupportedDirectOpenAIModel(name string) bool {
-	return name == openAIModelName || name == "gpt-6.2-sol"
+	return name == openAIModelName || name == "gpt-6.2-sol" || name == "gpt-6.1-terra" || name == "gpt-6-luna"
 }
 
 func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span trace.Span) ([]byte, error) {
@@ -307,6 +321,11 @@ func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span tr
 	body := map[string]any{
 		"model": m.name, "messages": input, "max_completion_tokens": outputLimit, "store": false,
 	}
+	if m.GoogleCompatibility {
+		delete(body, "store")
+		delete(body, "max_completion_tokens")
+		body["max_tokens"] = outputLimit
+	}
 	if m.gatewayURL == "" && !m.openRouter {
 		effort := m.ReasoningEffort
 		if effort == "" {
@@ -315,7 +334,7 @@ func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span tr
 		body["reasoning_effort"], body["service_tier"] = effort, "default"
 		body["prompt_cache_options"] = map[string]string{"mode": "explicit"}
 		span.SetAttributes(attribute.String("gen_ai.request.reasoning_effort", effort), attribute.String("gen_ai.request.service_tier", "default"))
-	} else if m.gatewayURL != "" && m.AllowGatewayReasoning && m.ReasoningEffort != "" && m.ReasoningEffort != "none" {
+	} else if (m.gatewayURL != "" || m.openRouter) && m.AllowGatewayReasoning && m.ReasoningEffort != "" {
 		body["reasoning_effort"] = m.ReasoningEffort
 		span.SetAttributes(attribute.String("gen_ai.request.reasoning_effort", m.ReasoningEffort))
 	}
@@ -369,7 +388,7 @@ func (m *OpenAIModel) decodeOpenAIReply(res *http.Response, reply Reply, noDispa
 		reply.Usage.TotalTokens = response.Usage.Total
 		cached, written := response.Usage.InputDetails.Cached, response.Usage.InputDetails.Write
 		reply.Usage.CachedTokens, reply.Usage.CacheWriteTokens = &cached, &written
-		if m.gatewayURL != "" {
+		if m.gatewayURL != "" || m.openRouter {
 			var cost *float64
 			if json.Unmarshal(response.Usage.Cost, &cost) == nil {
 				usage.RecordReportedCost(&reply.Usage, cost)
@@ -378,7 +397,7 @@ func (m *OpenAIModel) decodeOpenAIReply(res *http.Response, reply Reply, noDispa
 				reply.Usage.CostStatus = "local"
 			}
 		} else {
-			cost, costErr := usage.SolCostWithWrites(
+			cost, costErr := usage.OpenAICostWithWrites(
 				response.Model, response.Tier, response.Usage.Input, response.Usage.Output, response.Usage.Total, cached, written,
 			)
 			if costErr == nil {

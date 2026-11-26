@@ -26,18 +26,18 @@ import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant
 import type { Connection, MCPServer, OperationProjection as Operation, PermissionRule, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
 import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "@/lib/runtime/messages";
 import { cn } from "@/lib/utils";
-import { ApiKeysSettings } from "./ApiKeysSettings";
+import { ModelsSettings } from "./ModelsSettings";
 import { OperationRows, shownOperations } from "./WorkScreen";
 import { Confirm, Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, Row, Rows, Screen, Section, Tabs } from "./ui";
 
 type List<T> = { items: T[] };
-export type SettingsSection = "permissions" | "preferences" | "appearance" | "api-keys" | "reset" | "account" | "history" | "diagnostics";
+export type SettingsSection = "permissions" | "preferences" | "appearance" | "models" | "reset" | "account" | "history" | "diagnostics";
 
 const SECTIONS: { id: SettingsSection | "memory"; title: string; icon: typeof ShieldCheck; href?: string; feature?: Parameters<ReturnType<typeof useAssistant>["has"]>[0] }[] = [
   { id: "permissions", title: "Standing Permissions", icon: ShieldCheck, feature: "permissions" },
   { id: "preferences", title: "Preferences & Budgets", icon: SlidersHorizontal, feature: "preferences" },
   { id: "appearance", title: "Appearance", icon: Monitor },
-  { id: "api-keys", title: "API Keys", icon: KeyRound },
+  { id: "models", title: "Models", icon: KeyRound },
   { id: "reset", title: "Reset data", icon: RotateCcw },
   { id: "memory", title: "Memory", icon: Brain, href: "/memory", feature: "memory" },
   { id: "account", title: "Account", icon: UserCircle },
@@ -64,8 +64,8 @@ export function SettingsScreen({ section }: { section: SettingsSection }) {
         ? <PreferencesForm />
         : section === "appearance"
           ? <AppearanceSettings />
-          : section === "api-keys"
-            ? <ApiKeysSettings />
+          : section === "models"
+            ? <ModelsSettings />
             : section === "reset"
               ? <ResetData />
               : section === "account"
@@ -371,7 +371,7 @@ function ResetData() {
   };
 
   return <form onSubmit={(event) => void reset(event)} className="max-w-xl space-y-5">
-    <p className="text-body text-ink-2">This permanently clears your chats, memories, work, files, schedules, preferences, and API keys from Nori and disconnects your apps. You’ll stay signed in with Google and start onboarding again.</p>
+    <p className="text-body text-ink-2">This permanently clears your chats, memories, work, files, schedules, preferences, saved API keys, and model choices from Nori and disconnects your apps. You’ll stay signed in with Google and start onboarding again.</p>
     <Field label="Type RESET to confirm">
       <input autoComplete="off" className={inputClass} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={pending} />
     </Field>
@@ -381,133 +381,11 @@ function ResetData() {
 }
 
 function Diagnostics() {
-  const { capabilities, debug, setDebug, localMode, modelSelection, setModelSelection } = useAssistant();
+  const { capabilities, debug, setDebug, localMode } = useAssistant();
   const features = capabilities?.assistant_features ?? {};
-  const catalog = capabilities?.model_profiles;
-  const profiles = catalog?.profiles ?? [];
-  const chatProfiles = profiles.filter((p) => p.lanes.includes("chat"));
-  const taskProfiles = profiles.filter((p) => p.lanes.includes("task"));
-
-  const selectedChatId = modelSelection.chat_profile_id ?? "";
-  const activeChatProfile = chatProfiles.find((p) => p.id === (selectedChatId || catalog?.default_chat_profile_id));
-  const selectedTaskId = modelSelection.task_profile_id ?? "";
-  const activeTaskProfile = taskProfiles.find((p) => p.id === (selectedTaskId || catalog?.default_task_profile_id));
-  const hasOverride = !!(
-    modelSelection.chat_profile_id ||
-    modelSelection.chat_reasoning ||
-    modelSelection.task_profile_id ||
-    modelSelection.task_reasoning
-  );
-  const defaultChatPaid = activeChatProfile ? activeChatProfile.paid : capabilities?.provider !== "local";
-  const defaultTaskPaid = activeTaskProfile ? activeTaskProfile.paid : capabilities?.provider !== "local";
-  const nextUsesPaid = defaultChatPaid || defaultTaskPaid;
 
   return <>
     <label className="flex min-h-11 items-center gap-3 text-body"><input type="checkbox" className="accent-[var(--accent)]" checked={debug} onChange={(event) => setDebug(event.target.checked)} />Show model and tool details in Chat</label>
-    {profiles.length > 0 && (
-      <Section title="Model & Reasoning">
-        <div className="space-y-4 rounded-card border border-card-border bg-surface p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-meta text-ink-2">
-              Changes apply to your next message and any new tasks it dispatches. In-flight tasks keep their original model.
-            </p>
-            <Pill tone={nextUsesPaid ? "warning" : "ok"}>
-              {nextUsesPaid ? "Paid cloud inference" : "Local inference"}
-            </Pill>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Field label="Chat model">
-                <select
-                  aria-label="Chat model"
-                  value={selectedChatId}
-                  onChange={(event) => {
-                    const nextId = event.target.value || undefined;
-                    const nextProfile = chatProfiles.find((p) => p.id === (nextId || catalog?.default_chat_profile_id));
-                    const nextReasoning = modelSelection.chat_reasoning && nextProfile?.supported_reasoning?.includes(modelSelection.chat_reasoning)
-                      ? modelSelection.chat_reasoning
-                      : undefined;
-                    setModelSelection({ ...modelSelection, chat_profile_id: nextId, chat_reasoning: nextReasoning });
-                  }}
-                  className={inputClass}
-                >
-                  <option value="">
-                    Server default{catalog?.default_chat_profile_id ? ` (${chatProfiles.find((p) => p.id === catalog.default_chat_profile_id)?.label ?? catalog.default_chat_profile_id})` : ""}
-                  </option>
-                  {chatProfiles.map((profile) => (
-                    <option key={profile.id} value={profile.id}>
-                      {profile.label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              {!!activeChatProfile?.supported_reasoning?.length && (
-                <Field label="Chat reasoning">
-                  <select
-                    aria-label="Chat reasoning"
-                    value={modelSelection.chat_reasoning ?? ""}
-                    onChange={(event) => setModelSelection({ ...modelSelection, chat_reasoning: event.target.value || undefined })}
-                    className={inputClass}
-                  >
-                    <option value="">Profile default{activeChatProfile.default_reasoning ? ` (${activeChatProfile.default_reasoning})` : ""}</option>
-                    {activeChatProfile.supported_reasoning.map((effort) => (
-                      <option key={effort} value={effort}>{effort}</option>
-                    ))}
-                  </select>
-                </Field>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Field label="Task model">
-                <select
-                  aria-label="Task model"
-                  value={selectedTaskId}
-                  onChange={(event) => {
-                    const nextId = event.target.value || undefined;
-                    const nextProfile = taskProfiles.find((p) => p.id === (nextId || catalog?.default_task_profile_id));
-                    const nextReasoning = modelSelection.task_reasoning && nextProfile?.supported_reasoning?.includes(modelSelection.task_reasoning)
-                      ? modelSelection.task_reasoning
-                      : undefined;
-                    setModelSelection({ ...modelSelection, task_profile_id: nextId, task_reasoning: nextReasoning });
-                  }}
-                  className={inputClass}
-                >
-                  <option value="">
-                    Server default{catalog?.default_task_profile_id ? ` (${taskProfiles.find((p) => p.id === catalog.default_task_profile_id)?.label ?? catalog.default_task_profile_id})` : ""}
-                  </option>
-                  {taskProfiles.map((profile) => (
-                    <option key={profile.id} value={profile.id}>
-                      {profile.label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              {!!activeTaskProfile?.supported_reasoning?.length && (
-                <Field label="Task reasoning">
-                  <select
-                    aria-label="Task reasoning"
-                    value={modelSelection.task_reasoning ?? ""}
-                    onChange={(event) => setModelSelection({ ...modelSelection, task_reasoning: event.target.value || undefined })}
-                    className={inputClass}
-                  >
-                    <option value="">Profile default{activeTaskProfile.default_reasoning ? ` (${activeTaskProfile.default_reasoning})` : ""}</option>
-                    {activeTaskProfile.supported_reasoning.map((effort) => (
-                      <option key={effort} value={effort}>{effort}</option>
-                    ))}
-                  </select>
-                </Field>
-              )}
-            </div>
-          </div>
-          {hasOverride && (
-            <div className="flex items-center justify-between gap-2 border-t border-hairline pt-3">
-              <span className="text-meta text-ink-2">Custom model override active for this browser.</span>
-              <Button size="sm" variant="quiet" onClick={() => setModelSelection({})}>Reset to defaults</Button>
-            </div>
-          )}
-        </div>
-      </Section>
-    )}
     <Section title="This Nori">
       <div className="rounded-card border border-card-border bg-surface p-4">
         <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-meta">

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Check, Copy, FileText, RefreshCw } from "lucide-react";
 import { InteractionCard, type OnInteractionResolved } from "@/components/assistant/InteractionCard";
@@ -157,6 +158,9 @@ function ErrorCard({
             <span className="text-caption text-ink-3">· {clock(item.at)}</span>
           </div>
           <p className="mt-1 whitespace-pre-line text-body text-ink-2 [overflow-wrap:anywhere]">{message}</p>
+          {(item.error?.code === "model_key_required" || item.error?.code === "missing_api_key") && (
+            <Link href="/settings/models" className="mt-2 inline-block text-meta font-semibold text-accent-text hover:underline">Open Models</Link>
+          )}
           {retryable && onRetry && (
             <div className="mt-3">
               <Button size="sm" variant="primary" disabled={retrying} onClick={() => onRetry(item)}>

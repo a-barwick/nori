@@ -1,5 +1,11 @@
 package state
 
+const (
+	ModelSettingsCollection = "model_settings"
+	ModelSettingsID         = "models"
+	ModelSettingsVersion    = "account-v1"
+)
+
 type PinnedProfile struct {
 	Backend            string   `json:"backend,omitempty" firestore:"backend,omitempty"`
 	Model              string   `json:"model,omitempty" firestore:"model,omitempty"`

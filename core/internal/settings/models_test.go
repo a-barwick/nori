@@ -37,7 +37,7 @@ func TestProfileKeyIsolation_TestNeverFallsBackToDevOrBase(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-dev")
 	t.Setenv("OPENROUTER_API_KEY", "sk-or-dev")
 
-	s, err := LoadDefaultCloud("local")
+	s, err := LoadSimulation()
 	if err != nil {
 		t.Fatalf("LoadDefaultCloud: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestProfileKeyIsolation_TestNeverFallsBackToDevOrBase(t *testing.T) {
 	t.Setenv("OPENAI_TEST_API_KEY", "sk-test-openai")
 	t.Setenv("ANTHROPIC_TEST_API_KEY", "sk-test-ant")
 	t.Setenv("OPENROUTER_TEST_API_KEY", "sk-test-or")
-	s, err = LoadDefaultCloud("local")
+	s, err = LoadSimulation()
 	if err != nil {
 		t.Fatalf("LoadDefaultCloud with test keys: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestProfileKeyIsolation_RejectsSharedKeysAcrossProfiles(t *testing.T) {
 	t.Setenv("OPENAI_DEV_API_KEY", "sk-shared-key")
 	t.Setenv("OPENAI_TEST_API_KEY", "sk-shared-key")
 
-	_, err := LoadDefaultCloud("local")
+	_, err := LoadSimulation()
 	if err == nil || !strings.Contains(err.Error(), "must be distinct keys") {
 		t.Fatalf("expected distinct-key error, got %v", err)
 	}
@@ -81,7 +81,7 @@ func TestAnthropicAPIKeyNotStrippedAndRedacted(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-secret-value")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "should-be-stripped")
 
-	s, err := LoadDefaultCloud("local")
+	s, err := LoadSimulation()
 	if err != nil {
 		t.Fatalf("LoadDefaultCloud: %v", err)
 	}
@@ -115,12 +115,12 @@ func TestGatewayLoopbackAllowedInLocalRefusedInAWS(t *testing.T) {
 	t.Setenv("MODEL_NAME", "openai/gpt-6.1-terra")
 
 	t.Setenv("NORI_CLOUD", "local")
-	if _, err := LoadDefaultCloud("local"); err != nil {
+	if _, err := LoadSimulation(); err != nil {
 		t.Fatalf("expected loopback http gateway allowed in local mode, got %v", err)
 	}
 
 	t.Setenv("NORI_CLOUD", "aws")
-	if _, err := LoadDefaultCloud("aws"); err == nil {
+	if _, err := LoadSimulation(); err == nil {
 		t.Fatalf("expected loopback http gateway rejected in aws mode")
 	}
 }
@@ -132,7 +132,7 @@ func TestProviderSwitchingAndMaxUSD(t *testing.T) {
 	t.Setenv("NORI_INNER_PROVIDER", "openai")
 	t.Setenv("NORI_LLM_MAX_USD", "12.50")
 
-	s, err := LoadDefaultCloud("local")
+	s, err := LoadSimulation()
 	if err != nil {
 		t.Fatalf("LoadDefaultCloud: %v", err)
 	}
@@ -147,39 +147,40 @@ func TestProviderSwitchingAndMaxUSD(t *testing.T) {
 	}
 }
 
-func TestBYOKRequiredAllowsEmptyDeploymentGatewayKey(t *testing.T) {
-	clearModelEnv(t)
-	t.Setenv("NORI_CLOUD", "local")
-	t.Setenv("NORI_MODEL_PROVIDER", "gateway")
-	t.Setenv("NORI_MODEL_GATEWAY_URL", "https://ai-gateway.vercel.sh/v1")
-	t.Setenv("NORI_BYOK_REQUIRED", "true")
-	t.Setenv("NORI_CREDENTIAL_STORE", "database")
-	t.Setenv("NORI_AGENT_MODEL", "anthropic/claude-haiku-4.5")
-	t.Setenv("MODEL_NAME", "anthropic/claude-haiku-4.5")
+func TestRuntimeIgnoresDeploymentLLMKeys(t *testing.T) {
+	for _, cloud := range []string{"local", "aws"} {
+		t.Run(cloud, func(t *testing.T) {
+			clearModelEnv(t)
+			t.Setenv("NORI_CLOUD", cloud)
+			if cloud == "aws" {
+				t.Setenv("NORI_POSTGRES_URL", "postgres://nori@cloud-db/byok?sslmode=require")
+			}
+			t.Setenv("NORI_CREDENTIAL_STORE", "database")
+			t.Setenv("NORI_MODEL_PROVIDER", "gateway")
+			t.Setenv("NORI_MODEL_GATEWAY_URL", "https://example.test/v1")
+			t.Setenv("NORI_BYOK_REQUIRED", "false")
+			t.Setenv("NORI_MODEL_GATEWAY_API_KEY", "unused-gateway-key")
+			t.Setenv("OPENAI_API_KEY", "unused-openai-key")
+			t.Setenv("ANTHROPIC_API_KEY", "unused-anthropic-key")
+			t.Setenv("OPENROUTER_API_KEY", "unused-openrouter-key")
+			t.Setenv("GEMINI_API_KEY", "unused-gemini-key")
+			t.Setenv("JEV_API_KEY", "jev-test-fixture")
+			t.Setenv("EXA_API_KEY", "exa-test-fixture")
 
-	s, err := LoadDefaultCloud("local")
-	if err != nil {
-		t.Fatalf("LoadDefaultCloud with BYOK required: %v", err)
-	}
-	if !s.Models.BYOKRequired {
-		t.Fatal("expected BYOKRequired=true")
-	}
-	if s.Models.GatewayKey != "" {
-		t.Fatalf("expected empty deployment GatewayKey, got %q", s.Models.GatewayKey)
-	}
-}
-
-func TestBYOKRequiredRejectsMissingCredentialStore(t *testing.T) {
-	clearModelEnv(t)
-	t.Setenv("NORI_CLOUD", "local")
-	t.Setenv("NORI_MODEL_PROVIDER", "gateway")
-	t.Setenv("NORI_MODEL_GATEWAY_URL", "https://ai-gateway.vercel.sh/v1")
-	t.Setenv("NORI_BYOK_REQUIRED", "true")
-	t.Setenv("NORI_AGENT_MODEL", "anthropic/claude-haiku-4.5")
-	t.Setenv("MODEL_NAME", "anthropic/claude-haiku-4.5")
-
-	_, err := LoadDefaultCloud("local")
-	if err == nil || !strings.Contains(err.Error(), "NORI_CREDENTIAL_STORE=database") {
-		t.Fatalf("expected NORI_CREDENTIAL_STORE=database error, got %v", err)
+			s, err := LoadDefaultCloud(cloud)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := s.Models
+			if !m.BYOKRequired || m.GatewayKey != "" || m.OpenAIKey != "" || m.AnthropicKey != "" || m.OpenRouterKey != "" || m.GatewayURL != "" {
+				t.Fatal("runtime configuration retained a deployment model key or gateway")
+			}
+			if os.Getenv("GEMINI_API_KEY") != "" || os.Getenv("NORI_MODEL_GATEWAY_API_KEY") != "" {
+				t.Fatal("the application inherited deployment model credentials")
+			}
+			if m.JevKey != "jev-test-fixture" || s.ExaSearchKey != "exa-test-fixture" {
+				t.Fatal("Jev or Exa credential was removed")
+			}
+		})
 	}
 }

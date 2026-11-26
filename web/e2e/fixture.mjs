@@ -13,6 +13,15 @@ const fixture = await mkdtemp(join(tmpdir(), "nori-browser-"));
 const sessions = new Map();
 const streams = new Map();
 const preferences = new Map();
+const modelKeys = new Map();
+const modelSelections = new Map();
+const modelProviders = [
+  { provider: "openai", label: "OpenAI" },
+  { provider: "anthropic", label: "Anthropic" },
+  { provider: "google", label: "Google" },
+  { provider: "vercel_ai_gateway", label: "Vercel AI Gateway" },
+  { provider: "openrouter", label: "OpenRouter" },
+];
 const pendingApproval = JSON.parse(await readFile("../contracts/assistant/fixtures/permissions/interaction.approval.valid.json", "utf8"));
 pendingApproval.expires_at = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 const approvals = new Map([[identity, pendingApproval]]);
@@ -69,6 +78,8 @@ const upstream = createServer(async (req, res) => {
     if (body.confirmation !== "RESET") return json({ error: "Type RESET to confirm." }, 400);
     const position = state.position + 1;
     sessions.delete(id);
+    modelKeys.delete(id);
+    modelSelections.delete(id);
     const cleared = snapshot(id);
     cleared.position = position;
     cleared.messages.push({ id: "intro", role: "assistant", text: "Hello from Nori", created_at: new Date().toISOString() });
@@ -81,7 +92,14 @@ const upstream = createServer(async (req, res) => {
     res.writeHead(204).end();
     return;
   }
-  if (path === "v1/settings/model-keys") return json({ byok_required: false, providers: [] });
+  if (path === "v1/settings/model-keys") return json({
+    byok_required: true,
+    providers: modelProviders.map((provider) => ({ ...provider, configured: modelKeys.get(id)?.has(provider.provider) ?? false })),
+  });
+  if (path === "v1/settings/models") return json({
+    model_profiles: { profiles: [] }, selection: modelSelections.get(id) ?? {},
+    revision: modelSelections.has(id) ? 1 : 0, recommendations: {},
+  });
   if (path === "v1/capabilities") return json({
     contract: "nori-chat-2", service: "nori", conversationModes: ["assistant"], features: { backgroundTasks: true },
     assistant_features: { work: true, interactions: true, library: true, automations: true },
@@ -155,6 +173,15 @@ const upstream = createServer(async (req, res) => {
 
 await new Promise(resolve => upstream.listen(0, "127.0.0.1", resolve));
 const control = createServer((req, res) => {
+  if (req.method === "POST" && req.url === "/seed-models") {
+    modelKeys.set(identity, new Set(modelProviders.map((provider) => provider.provider)));
+    modelSelections.set(identity, {
+      chat_profile_id: "anthropic-opus", chat_reasoning: "low",
+      task_profile_id: "anthropic-haiku", task_reasoning: "low",
+    });
+    res.writeHead(204).end();
+    return;
+  }
   if (req.method === "POST" && req.url === "/reset-alternate") {
     approvals.delete(alternate);
     sessions.delete(alternate);

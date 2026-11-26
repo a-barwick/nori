@@ -1,6 +1,8 @@
 package platform
 
 import (
+	"context"
+	"errors"
 	"nori/internal/agent"
 	"nori/internal/agent/anthropic"
 	"nori/internal/agent/responses"
@@ -9,7 +11,131 @@ import (
 	"nori/internal/modelprofiles"
 	"nori/internal/settings"
 	"nori/internal/usage"
+	"strings"
 )
+
+const vercelGatewayBaseURL = "https://ai-gateway.vercel.sh/v1"
+
+type unavailableBYOKModel struct{ name string }
+
+func (m unavailableBYOKModel) Name() string { return m.name }
+func (m unavailableBYOKModel) Respond(context.Context, conversation.ReplyRequest) (conversation.Reply, error) {
+	return conversation.Reply{}, errors.New("selected model provider is unavailable")
+}
+
+type unavailableBYOKTask struct{ name string }
+
+func (m unavailableBYOKTask) Name() string     { return m.name }
+func (m unavailableBYOKTask) Provider() string { return "" }
+func (m unavailableBYOKTask) Respond(context.Context, agent.Request) (agent.Response, error) {
+	return agent.Response{NotSent: true}, errors.New("selected model provider is unavailable")
+}
+func (m unavailableBYOKTask) Inspect(context.Context, agent.InspectRequest) (agent.Inspection, error) {
+	return agent.Inspection{}, errors.New("selected model provider is unavailable")
+}
+
+func ReplyModelForBYOK(models settings.Models, userID string, p modelprofiles.Profile, reasoning, key string) conversation.ReplyModel {
+	if p.Backend == "anthropic" || (p.Backend == "vercel_ai_gateway" && strings.HasPrefix(p.Model, "anthropic/")) {
+		model := conversation.NewAnthropicModel(key, p.Model)
+		label := "Anthropic"
+		if p.Backend == "vercel_ai_gateway" {
+			base := p.Endpoint
+			if base == "" {
+				base = vercelGatewayBaseURL
+			}
+			model = conversation.NewGatewayAnthropicModel(base, key, p.Model)
+			label = "Vercel AI Gateway"
+		} else if p.Endpoint != "" {
+			model = conversation.NewGatewayAnthropicModel(p.Endpoint, key, p.Model)
+		}
+		model.TestURL = models.TestURL
+		model.Guard, model.UserID, model.ReasoningEffort, model.BYOKProviderLabel = modelGuard(models, userID), userID, reasoning, label
+		return model
+	}
+	var model *conversation.OpenAIModel
+	var label string
+	switch p.Backend {
+	case "openai":
+		model, label = conversation.NewOpenAIModel(key, p.Model), "OpenAI"
+	case "google":
+		base := p.Endpoint
+		if base == "" {
+			base = "https://generativelanguage.googleapis.com/v1beta/openai"
+		}
+		model, label = conversation.NewGatewayModel(base, key, p.Model), "Google"
+		model.GoogleCompatibility = true
+	case "vercel_ai_gateway":
+		base := p.Endpoint
+		if base == "" {
+			base = vercelGatewayBaseURL
+		}
+		model, label = conversation.NewGatewayModel(base, key, p.Model), "Vercel AI Gateway"
+	case "openrouter":
+		model, label = conversation.NewOpenRouterModel(key, p.Model), "OpenRouter"
+		if p.Endpoint != "" {
+			model = conversation.NewGatewayModel(p.Endpoint, key, p.Model)
+		}
+	default:
+		return unavailableBYOKModel{name: p.Model}
+	}
+	model.TestURL = models.TestURL
+	model.Guard, model.UserID, model.ReasoningEffort = modelGuard(models, userID), userID, reasoning
+	model.BYOKProviderLabel, model.AllowGatewayReasoning = label, true
+	return model
+}
+
+func TaskModelForBYOK(models settings.Models, meter usage.Meter, userID string, p modelprofiles.Profile, reasoning, key string) agent.Model {
+	if p.Backend == "anthropic" || (p.Backend == "vercel_ai_gateway" && strings.HasPrefix(p.Model, "anthropic/")) {
+		model := anthropic.New(key, p.Model, meter)
+		label := "Anthropic"
+		if p.Backend == "vercel_ai_gateway" {
+			base := p.Endpoint
+			if base == "" {
+				base = vercelGatewayBaseURL
+			}
+			model = anthropic.NewGateway(base, key, p.Model, meter)
+			label = "Vercel AI Gateway"
+		} else if p.Endpoint != "" {
+			model = anthropic.NewGateway(p.Endpoint, key, p.Model, meter)
+		}
+		model.TestURL = models.TestURL
+		model.Guard, model.UserID, model.DefaultReasoning, model.BYOKProviderLabel = modelGuard(models, userID), userID, reasoning, label
+		return model
+	}
+	if p.Backend == "google" {
+		model := responses.NewGoogle(p.Endpoint, key, p.Model, meter)
+		model.Guard, model.UserID, model.DefaultReasoning = modelGuard(models, userID), userID, reasoning
+		return model
+	}
+	var model *responses.Client
+	var label string
+	switch p.Backend {
+	case "openai":
+		model, label = responses.New(key, p.Model, meter), "OpenAI"
+		model.ProviderName = "openai"
+	case "vercel_ai_gateway":
+		base := p.Endpoint
+		if base == "" {
+			base = vercelGatewayBaseURL
+		}
+		model, label = responses.NewGateway(base, key, p.Model, meter), "Vercel AI Gateway"
+	case "openrouter":
+		model, label = responses.New(key, p.Model, meter), "OpenRouter"
+		model.ProviderName = "openrouter"
+		if p.Endpoint != "" {
+			model = responses.NewGateway(p.Endpoint, key, p.Model, meter)
+		}
+	default:
+		return unavailableBYOKTask{name: p.Model}
+	}
+	model.TestURL = models.TestURL
+	model.Guard, model.UserID, model.DefaultReasoning = modelGuard(models, userID), userID, reasoning
+	model.BYOKProviderLabel, model.AllowGatewayReasoning, model.Byok = label, true, true
+	if strings.TrimSpace(key) == "" {
+		return unavailableBYOKTask{name: p.Model}
+	}
+	return model
+}
 
 func modelGuard(models settings.Models, userID string) *llmguard.Guard {
 	if models.Guard != nil {

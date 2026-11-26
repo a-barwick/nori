@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"nori/internal/modelkeys"
 	"nori/internal/state"
 )
 
@@ -355,7 +356,11 @@ func (s *Service) finish(ctx context.Context, r state.Resource, o occurrenceDoc,
 	summary := strings.TrimSpace(run.Result)
 	var failure *ErrorDetail
 	if status != "completed" {
-		failure = &ErrorDetail{Code: "task_" + status, Message: clip(run.Error, 1000)}
+		code := "task_" + status
+		if status == "failed" && modelkeys.IsAccessFailure(run.Error) {
+			code = modelkeys.AccessFailureCode
+		}
+		failure = &ErrorDetail{Code: code, Message: clip(run.Error, 1000)}
 	}
 	quiet := o.Monitor && status == "completed" && (strings.HasPrefix(summary, NoChange) || sameFinding(summary, a.Checkpoint))
 	if !quiet {
@@ -402,7 +407,7 @@ func (s *Service) recordOutcomeHealth(ctx context.Context, id, status, errText s
 	if status != "completed" && status != "failed" {
 		return
 	}
-	if status == "failed" && isTransientAutomationFailure(errText) {
+	if status == "failed" && (modelkeys.IsAccessFailure(errText) || isTransientAutomationFailure(errText)) {
 		return
 	}
 	r, err := s.Store.Resource(ctx, CollectionAutomations, id)

@@ -105,38 +105,8 @@ public final class NoriStore {
     public var capabilities: Capabilities?
     public var assistantSummary: AssistantSummary?
     public var lastPing: HealthCheckResult?
-    public private(set) var modelSelection = ModelSelection()
-
-    private static let modelSelectionStorageKey = "nori.diagnostics.modelSelection.v1"
-
-    private var modelSelectionKey: String? {
-        guard case .signedIn(let email) = authState else { return nil }
-        return Self.modelSelectionStorageKey + "." + email.lowercased()
-    }
-
-    private func loadStoredModelSelection() -> ModelSelection {
-        guard let key = modelSelectionKey,
-              let data = UserDefaults.standard.data(forKey: key),
-              let decoded = try? JSONDecoder().decode(ModelSelection.self, from: data)
-        else {
-            return ModelSelection()
-        }
-        return decoded
-    }
-
-    public func setModelSelection(_ next: ModelSelection) {
-        guard let key = modelSelectionKey else { return }
-        modelSelection = next
-        if next.isEmpty {
-            UserDefaults.standard.removeObject(forKey: key)
-        } else if let encoded = try? JSONEncoder().encode(next) {
-            UserDefaults.standard.set(encoded, forKey: key)
-        }
-    }
-
-    public var effectiveModelSelection: ModelSelection {
-        modelSelection.normalized(using: capabilities?.modelProfiles)
-    }
+    public private(set) var modelSettings: ModelSettingsResponse?
+    public var modelKeyError: String?
 
     public var session: Session
     public var workItems: [WorkItem]
@@ -414,7 +384,6 @@ public final class NoriStore {
         }
 
         authState = .signedIn(email: savedSession.email)
-        modelSelection = loadStoredModelSelection()
         isLoading = true
         connectionState = .connecting
         defer { if generation == sessionGeneration { isLoading = false } }
@@ -454,7 +423,6 @@ public final class NoriStore {
             guard generation == sessionGeneration else { return }
             applySession(initialSession)
             authState = .signedIn(email: session.email)
-            modelSelection = loadStoredModelSelection()
             connectionState = .connected
             lastError = nil
             NoriLogger.auth.info("auth.signed_in", breadcrumb: true)
@@ -517,7 +485,9 @@ public final class NoriStore {
         let signedInState = authState
         let currentConnectionState = connectionState
         if let key = onboardingDoneKey { UserDefaults.standard.removeObject(forKey: key) }
-        if let key = modelSelectionKey { UserDefaults.standard.removeObject(forKey: key) }
+        if case .signedIn(let email) = signedInState {
+            UserDefaults.standard.removeObject(forKey: "nori.diagnostics.modelSelection.v1." + email.lowercased())
+        }
         UserDefaults.standard.removeObject(forKey: "nori.appearance")
         dataResetGeneration &+= 1
         sessionGeneration &+= 1
@@ -604,7 +574,8 @@ public final class NoriStore {
         toastMessage = nil
         streamingAssistantText = nil
         streamingTurnID = nil
-        modelSelection = ModelSelection()
+        modelSettings = nil
+        modelKeyError = nil
     }
 
     private func clearTransportIdentity() async {
@@ -1140,28 +1111,14 @@ public final class NoriStore {
         NoriLogger.store.info("turn submitted", attributes: ["nori.turn.id": clientID], breadcrumb: true)
 
         do {
-            let activeSelection = capabilities == nil ? modelSelection : effectiveModelSelection
             let attachmentIDs = attachments.map(\.id)
             var updated = try await NoriTelemetryRuntime.$parentSpan.withValue(submitSpan) {
-                do {
-                    return try await transport.sendTurn(
-                        id: clientID,
-                        message: trimmed,
-                        attachmentIDs: attachmentIDs,
-                        modelSelection: activeSelection.isEmpty ? nil : activeSelection
-                    )
-                } catch let error as NoriAPIError where !activeSelection.isEmpty && error.code == "model_selection_unavailable" {
-                    guard generation == sessionGeneration else { throw CancellationError() }
-                    let latest = try? await transport.fetchCapabilities()
-                    guard generation == sessionGeneration else { throw CancellationError() }
-                    capabilities = latest
-                    return try await transport.sendTurn(
-                        id: clientID,
-                        message: trimmed,
-                        attachmentIDs: attachmentIDs,
-                        modelSelection: nil
-                    )
-                }
+                try await transport.sendTurn(
+                    id: clientID,
+                    message: trimmed,
+                    attachmentIDs: attachmentIDs,
+                    modelSelection: nil
+                )
             }
             guard generation == sessionGeneration else { return false }
             if !updated.messages.contains(where: { $0.id == expectedUserMessageID || $0.turnID == clientID && $0.role == .user }) {
@@ -1170,6 +1127,7 @@ public final class NoriStore {
                 updated.messages.append(savedBubble)
             }
             self.session = updated
+            modelKeyError = nil
             isThinking = updated.conversation?.processing == true || updated.conversation?.pending == true
             finishObservedReplies(in: updated.messages)
             return true
@@ -1178,6 +1136,9 @@ public final class NoriStore {
             session.messages.removeAll { $0.id == expectedUserMessageID }
             isThinking = false
             lastError = error.localizedDescription
+            if let apiError = error as? NoriAPIError, apiError.code == "model_key_required" {
+                modelKeyError = apiError.message
+            }
             if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled {
                 finishSubmitSpan(turnID: clientID, outcome: "cancelled", status: .cancelled)
             } else {
@@ -1893,6 +1854,44 @@ public final class NoriStore {
         }
     }
 
+    public func refreshModelSettings() async throws {
+        let generation = sessionGeneration
+        do {
+            let latest = try await transport.fetchModelSettings()
+            guard generation == sessionGeneration else { throw CancellationError() }
+            modelSettings = latest
+        } catch {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            _ = await handleAuthFailureIfNeeded(error)
+            throw error
+        }
+    }
+
+    public func saveModelSettings(_ selection: ModelSelection, expectedRevision: Int? = nil) async throws {
+        let generation = sessionGeneration
+        guard let settings = modelSettings else {
+            throw NoriAPIError(message: "Reload model settings and try again.")
+        }
+        do {
+            let request = SaveModelSettingsRequest(
+                selection: selection,
+                expectedRevision: expectedRevision ?? settings.revision
+            )
+            let updated = try await transport.saveModelSettings(request)
+            guard generation == sessionGeneration else { throw CancellationError() }
+            modelSettings = updated
+            modelKeyError = nil
+            showToast("Models saved")
+        } catch {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            if let apiError = error as? NoriAPIError, apiError.isRevisionConflict {
+                try? await refreshModelSettings()
+            }
+            _ = await handleAuthFailureIfNeeded(error)
+            throw error
+        }
+    }
+
     public func refreshModelKeysThrowing() async throws {
         let generation = sessionGeneration
         do {
@@ -1915,6 +1914,7 @@ public final class NoriStore {
             let updated = try await transport.saveModelKey(provider: provider, apiKey: apiKey)
             guard generation == sessionGeneration else { throw CancellationError() }
             upsertModelKeyProvider(updated)
+            modelKeyError = nil
             showToast("\(updated.label) key saved")
             return updated
         } catch {

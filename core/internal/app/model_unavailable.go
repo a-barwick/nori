@@ -5,7 +5,7 @@ import (
 
 	"nori/internal/agent"
 	"nori/internal/conversation"
-	"nori/internal/state"
+	"nori/internal/usage"
 )
 
 type unavailableReplyModel struct {
@@ -14,10 +14,10 @@ type unavailableReplyModel struct {
 }
 
 func (m *unavailableReplyModel) Name() string { return m.name }
-func (m *unavailableReplyModel) Respond(_ context.Context, _ conversation.ReplyRequest) (conversation.Reply, error) {
-	return conversation.Reply{
-		Usage: state.Usage{Provider: "outer", Model: m.name, CostStatus: "unknown", RequestStatus: "not_sent"},
-	}, m.err
+func (m *unavailableReplyModel) Respond(ctx context.Context, _ conversation.ReplyRequest) (conversation.Reply, error) {
+	attempt := usage.Attempt(ctx, "outer", m.name)
+	attempt.RequestStatus = "not_sent"
+	return conversation.Reply{Usage: attempt}, m.err
 }
 
 type unavailableTaskModel struct {

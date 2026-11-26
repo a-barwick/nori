@@ -15,6 +15,7 @@ public struct ChatView: View {
     private let onOpenDocument: (NoriCore.LibraryItem) -> Void
     private let onNavigateToNeedsYou: () -> Void
     private let onOpenTask: (String) -> Void
+    private let onOpenModels: () -> Void
 
     @State private var retryingMessageIDs: Set<String> = []
     @State private var cancellingReminderIDs: Set<String> = []
@@ -28,7 +29,8 @@ public struct ChatView: View {
         onOpenActivity: @escaping () -> Void = {},
         onOpenDocument: @escaping (NoriCore.LibraryItem) -> Void = { _ in },
         onNavigateToNeedsYou: @escaping () -> Void = {},
-        onOpenTask: @escaping (String) -> Void = { _ in }
+        onOpenTask: @escaping (String) -> Void = { _ in },
+        onOpenModels: @escaping () -> Void = {}
     ) {
         self.store = store
         self.scrollToBottomTrigger = scrollToBottomTrigger
@@ -36,6 +38,7 @@ public struct ChatView: View {
         self.onOpenDocument = onOpenDocument
         self.onNavigateToNeedsYou = onNavigateToNeedsYou
         self.onOpenTask = onOpenTask
+        self.onOpenModels = onOpenModels
     }
 
     private var effectiveMarkState: MarkState {
@@ -97,6 +100,15 @@ public struct ChatView: View {
                 .padding(.horizontal, 14)
                 .padding(.top, 8)
                 .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
+            if let message = store.modelKeyError {
+                NoriNotice(title: "Model key required", detail: message, tone: .warning, systemImage: "key.fill") {
+                    Button("Open Models", action: onOpenModels)
+                        .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, 8)
             }
 
             threadArea
@@ -383,7 +395,8 @@ public struct ChatView: View {
                 isRetrying: retryingMessageIDs.contains(message.id),
                 onRetry: {
                     retryFailedMessage(message)
-                }
+                },
+                onOpenModels: onOpenModels
             )
             .padding(.top, 4)
             .padding(.bottom, 12)
@@ -1490,6 +1503,7 @@ private struct ChatErrorCard: View {
     let message: Message
     let isRetrying: Bool
     let onRetry: () -> Void
+    let onOpenModels: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1513,24 +1527,30 @@ private struct ChatErrorCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            if message.isRetryableError {
+            if message.isRetryableError || message.error?.code == "model_key_required" {
                 HStack {
-                    Button(action: onRetry) {
-                        HStack(spacing: 6) {
-                            if isRetrying {
-                                ProgressView()
-                                    .controlSize(.mini)
-                                    .tint(NoriColors.onAccent)
-                            } else {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: 11.5, weight: .semibold))
-                            }
-                            Text(isRetrying ? "Retrying…" : "Retry")
-                        }
+                    if message.error?.code == "model_key_required" {
+                        Button("Open Models", action: onOpenModels)
+                            .buttonStyle(NoriButtonStyle(.quiet, compact: true))
                     }
-                    .buttonStyle(NoriButtonStyle(.primary, compact: true))
-                    .disabled(isRetrying)
-                    .accessibilityLabel(isRetrying ? "Retrying message" : "Retry message")
+                    if message.isRetryableError {
+                        Button(action: onRetry) {
+                            HStack(spacing: 6) {
+                                if isRetrying {
+                                    ProgressView()
+                                        .controlSize(.mini)
+                                        .tint(NoriColors.onAccent)
+                                } else {
+                                    Image(systemName: "arrow.clockwise")
+                                        .font(.system(size: 11.5, weight: .semibold))
+                                }
+                                Text(isRetrying ? "Retrying…" : "Retry")
+                            }
+                        }
+                        .buttonStyle(NoriButtonStyle(.primary, compact: true))
+                        .disabled(isRetrying)
+                        .accessibilityLabel(isRetrying ? "Retrying message" : "Retry message")
+                    }
 
                     Spacer(minLength: 0)
                 }

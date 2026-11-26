@@ -75,3 +75,32 @@ public struct SaveModelKeyRequest: Sendable, Codable, Hashable {
         self.apiKey = apiKey
     }
 }
+
+public struct ModelSettingsResponse: Sendable, Codable, Hashable {
+    public var modelProfiles: ModelProfileCatalog
+    public var selection: ModelSelection
+    public var revision: Int
+    public var recommendations: [String: ModelSelection]
+
+    enum CodingKeys: String, CodingKey {
+        case modelProfiles = "model_profiles"
+        case selection
+        case revision
+        case recommendations
+    }
+}
+
+public struct SaveModelSettingsRequest: Sendable, Codable, Hashable {
+    public var selection: ModelSelection
+    public var expectedRevision: Int
+
+    enum CodingKeys: String, CodingKey {
+        case selection
+        case expectedRevision = "expected_revision"
+    }
+
+    public init(selection: ModelSelection, expectedRevision: Int) {
+        self.selection = selection
+        self.expectedRevision = expectedRevision
+    }
+}

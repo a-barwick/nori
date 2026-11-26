@@ -77,24 +77,26 @@ type Session struct {
 	ReadPosition   state.ReadMark     `json:"read_position"`
 }
 type Runner struct {
-	UserFacts    string
-	Profile      users.Profile
-	model        ReplyModel
-	ModelForTurn func(*state.ModelSelection) ReplyModel
-	classifier   IntentClassifier
-	summarizer   SummaryModel
-	compactAfter time.Time
-	extractAfter time.Time
-	dreamAfter   time.Time
-	tasks        *Tasks
-	process      sync.Mutex
-	Clock        Clock
-	Now          func() time.Time
-	NewID        func() string
-	After        func(time.Duration) <-chan time.Time
-	NewTicker    func(time.Duration) (<-chan time.Time, func())
-	SyncWork     bool
-	OnDelta      func(turnID, text string)
+	UserFacts        string
+	Profile          users.Profile
+	model            ReplyModel
+	ModelForTurn     func(*state.ModelSelection) ReplyModel
+	AccountModel     func(context.Context, *state.ModelSelection) ReplyModel
+	AccountSelection func(context.Context) (*state.ModelSelection, error)
+	classifier       IntentClassifier
+	summarizer       SummaryModel
+	compactAfter     time.Time
+	extractAfter     time.Time
+	dreamAfter       time.Time
+	tasks            *Tasks
+	process          sync.Mutex
+	Clock            Clock
+	Now              func() time.Time
+	NewID            func() string
+	After            func(time.Duration) <-chan time.Time
+	NewTicker        func(time.Duration) (<-chan time.Time, func())
+	SyncWork         bool
+	OnDelta          func(turnID, text string)
 }
 
 func (r *Runner) runWork(work *sync.WaitGroup, fn func()) {
@@ -189,13 +191,24 @@ func New(model ReplyModel, classifier IntentClassifier, summarizer SummaryModel,
 	return &Runner{model: model, classifier: classifier, summarizer: summarizer, tasks: tasks}
 }
 
-func (r *Runner) replyModel(sel *state.ModelSelection) ReplyModel {
+func (r *Runner) replyModel(ctx context.Context, sel *state.ModelSelection) ReplyModel {
+	if r.AccountModel != nil {
+		return r.AccountModel(ctx, sel)
+	}
 	if r != nil && r.ModelForTurn != nil {
 		if m := r.ModelForTurn(sel); m != nil {
 			return m
 		}
 	}
 	return r.model
+}
+
+func (r *Runner) replyModelForTurn(ctx context.Context, turn *state.ConversationTurn) ReplyModel {
+	selection := turn.ModelSelection
+	if r.AccountModel != nil {
+		selection = turn.Attempt.ModelSelection
+	}
+	return r.replyModel(ctx, selection)
 }
 
 func (r *Runner) HandleInput(ctx context.Context, input Input) (Session, error) {
@@ -334,10 +347,17 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 			f = fenceFor(c, t)
 		}
 		if t.Attempt.ID == "" {
-			turnModel := r.replyModel(t.ModelSelection)
+			selection := t.ModelSelection
+			if r.AccountSelection != nil {
+				selection, e = r.AccountSelection(ctx)
+				if e != nil {
+					return e
+				}
+			}
+			turnModel := r.replyModel(ctx, selection)
 			a := state.ConversationAttempt{
 				ID: fmt.Sprintf("%s-attempt-%d", t.ID, t.Restarts+1), TurnID: t.ID, Number: t.Restarts + 1,
-				Model: turnModel.Name(), ModelSelection: t.ModelSelection.Clone(),
+				Model: turnModel.Name(), ModelSelection: selection.Clone(),
 				Status: "running", StartedAt: r.now().UTC(), Actions: []state.ConversationAction{}, Usage: []state.Usage{},
 				ModelCheckpoint: &state.ConversationModelCheckpoint{Phase: preparingReply},
 			}

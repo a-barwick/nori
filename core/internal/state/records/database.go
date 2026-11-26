@@ -11,10 +11,11 @@ import (
 )
 
 type Database struct {
-	db            *docstore.Client
-	taskBudgetUSD float64
-	user          users.User
-	Now           func() time.Time
+	db                       *docstore.Client
+	taskBudgetUSD            float64
+	user                     users.User
+	Now                      func() time.Time
+	PinAccountModelSelection func(*state.ModelSelection) *state.ModelSelection
 }
 
 func (d *Database) now() time.Time {

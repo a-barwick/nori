@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"nori/internal/modelprofiles"
 	"nori/internal/secret/tenantkey"
 	"nori/internal/settings"
 	"nori/internal/state"
@@ -82,6 +83,9 @@ func (p *Storage) OpenStore(ctx context.Context, s settings.Settings, user users
 		return nil, err
 	}
 	documents := records.NewShared(p.docs, user, s.TaskBudgetUSD)
+	if s.Models.BYOKRequired {
+		documents.PinAccountModelSelection = modelprofiles.PinAccountSelection
+	}
 	if p.Now != nil {
 		documents.Now = p.Now
 	}
@@ -223,6 +227,9 @@ func OpenStore(ctx context.Context, s settings.Settings, user users.User) (state
 		return nil, err
 	}
 	documents := records.New(docs, user, s.TaskBudgetUSD)
+	if s.Models.BYOKRequired {
+		documents.PinAccountModelSelection = modelprofiles.PinAccountSelection
+	}
 	if local != nil {
 		return meteredStore(s, user, state.Compose(documents, local))
 	}

@@ -54,6 +54,7 @@ type CallMeta struct {
 	Provider        string
 	Model           string
 	MaxOutputTokens int
+	BYOK            bool
 }
 
 type metaKey struct{}
@@ -74,6 +75,9 @@ func WithMeta(ctx context.Context, meta CallMeta) context.Context {
 	}
 	if meta.MaxOutputTokens > 0 {
 		cur.MaxOutputTokens = meta.MaxOutputTokens
+	}
+	if meta.BYOK {
+		cur.BYOK = true
 	}
 	return context.WithValue(ctx, metaKey{}, cur)
 }
@@ -205,14 +209,24 @@ type scopeKey struct {
 }
 
 type scopeState struct {
-	inFlight          int
-	minuteCalls       []time.Time
-	hourCalls         []time.Time
+	inFlight    int
+	minuteCalls []time.Time
+	hourCalls   []time.Time
+}
+
+type circuitKey struct {
+	user     string
+	scope    string
+	identity [32]byte
+}
+
+type circuitState struct {
 	consecutiveAborts int
 	consecutiveErrors int
 	breakerTrips      int
 	circuitOpenUntil  time.Time
 	circuitReason     string
+	accessErr         error
 }
 
 type dupKey struct {
@@ -230,6 +244,7 @@ type Guard struct {
 	globalInFlight int
 	globalMinute   []time.Time
 	scopes         map[scopeKey]*scopeState
+	circuits       map[circuitKey]*circuitState
 	duplicates     map[dupKey][]time.Time
 	stats          Snapshot
 }
@@ -289,6 +304,7 @@ func New(cfg Config) *Guard {
 	return &Guard{
 		cfg:        normalizeConfig(cfg),
 		scopes:     map[scopeKey]*scopeState{},
+		circuits:   map[circuitKey]*circuitState{},
 		duplicates: map[dupKey][]time.Time{},
 	}
 }
@@ -442,8 +458,16 @@ func (t *guardedTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 		return nil, err
 	}
 	endpoint := req.URL.Host + req.URL.Path
+	credential := req.Header.Get("Authorization")
+	if credential == "" {
+		credential = req.Header.Get("x-api-key")
+	}
+	if credential == "" {
+		credential = req.Header.Get("x-goog-api-key")
+	}
+	identity := sha256.Sum256([]byte(strings.ToLower(req.URL.Host) + "\x00" + credential))
 
-	settle, err := t.guard.admit(req.Context(), meta, endpoint, bodyHash, bodyBytes)
+	settle, err := t.guard.admit(req.Context(), meta, endpoint, bodyHash, bodyBytes, identity)
 	if err != nil {
 		return nil, err
 	}
@@ -459,13 +483,17 @@ func (t *guardedTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 		res.Request = req.WithContext(context.WithValue(req.Context(), responseMeterKey{}, body))
 		return res, nil
 	}
-	settle(status, nil, rtErr)
+	var accessErr error
+	if meta.BYOK && rtErr == nil && res != nil {
+		accessErr = ModelAccessError(res, "provider")
+	}
+	settle(status, nil, rtErr, accessErr)
 	return res, rtErr
 }
 
 type meteredBody struct {
 	io.ReadCloser
-	settle func(int, *float64, error)
+	settle func(int, *float64, error, error)
 	status int
 	cost   *float64
 	failed error
@@ -481,7 +509,7 @@ func (b *meteredBody) Read(p []byte) (int, error) {
 
 func (b *meteredBody) Close() error {
 	err := b.ReadCloser.Close()
-	b.settle(b.status, b.cost, errors.Join(b.failed, err))
+	b.settle(b.status, b.cost, errors.Join(b.failed, err), nil)
 	return err
 }
 
@@ -512,6 +540,9 @@ func mergeMeta(base, override CallMeta) CallMeta {
 	}
 	if override.MaxOutputTokens > 0 {
 		out.MaxOutputTokens = override.MaxOutputTokens
+	}
+	if override.BYOK {
+		out.BYOK = true
 	}
 	return out
 }
@@ -555,6 +586,12 @@ func EstimateCallUSD(meta CallMeta, bodyBytes int) float64 {
 	inputRate, outputRate := 2.5, 10.0
 	model := strings.ToLower(meta.Model)
 	switch {
+	case strings.Contains(model, "gemini-4-carbon"):
+		inputRate, outputRate = 5, 25
+	case strings.Contains(model, "gemini-4-neon"):
+		inputRate, outputRate = 3.75, 18.75
+	case strings.Contains(model, "gemini-4-hydrogen"):
+		inputRate, outputRate = 2.5, 10
 	case strings.Contains(model, "opus-5.5"), strings.Contains(model, "opus-5-5"):
 		inputRate, outputRate = 5, 20
 	case strings.Contains(model, "opus"):
@@ -574,7 +611,7 @@ func EstimateCallUSD(meta CallMeta, bodyBytes int) float64 {
 	return (float64(max(bodyBytes, 256))*inputRate + float64(output)*outputRate) / 1e6
 }
 
-func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash string, bodyBytes int) (func(int, *float64, error), error) {
+func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash string, bodyBytes int, identity [32]byte) (func(int, *float64, error, error), error) {
 	now := g.now()
 	sk := scopeKey{user: meta.UserID, scope: meta.Scope}
 	policy := g.policyFor(meta.Scope)
@@ -587,14 +624,30 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 		st = &scopeState{}
 		g.scopes[sk] = st
 	}
+	ck := circuitKey{user: meta.UserID, scope: meta.Scope, identity: identity}
+	cs := g.circuits[ck]
+	if cs == nil {
+		if len(g.circuits) >= 1024 {
+			for key, existing := range g.circuits {
+				if !now.Before(existing.circuitOpenUntil) {
+					delete(g.circuits, key)
+				}
+			}
+		}
+		cs = &circuitState{}
+		g.circuits[ck] = cs
+	}
 
-	if !st.circuitOpenUntil.IsZero() && now.Before(st.circuitOpenUntil) {
+	if !cs.circuitOpenUntil.IsZero() && now.Before(cs.circuitOpenUntil) {
 		g.stats.TotalBlocked++
 		g.stats.BlockedCircuit++
-		remaining := st.circuitOpenUntil.Sub(now).Round(time.Second)
+		remaining := cs.circuitOpenUntil.Sub(now).Round(time.Second)
 		slog.WarnContext(ctx, "llmguard rejected call: circuit breaker open",
-			"user_id", meta.UserID, "scope", meta.Scope, "reason", st.circuitReason, "retry_in", remaining.String())
-		return nil, fmt.Errorf("%w (%s, retry in %s)", ErrCircuitOpen, st.circuitReason, remaining)
+			"user_id", meta.UserID, "scope", meta.Scope, "reason", cs.circuitReason, "retry_in", remaining.String())
+		if cs.accessErr != nil {
+			return nil, fmt.Errorf("%w: %w", cs.accessErr, ErrCircuitOpen)
+		}
+		return nil, fmt.Errorf("%w (%s, retry in %s)", ErrCircuitOpen, cs.circuitReason, remaining)
 	}
 
 	if g.cfg.MaxTotalCalls > 0 && g.stats.TotalAdmitted >= int64(g.cfg.MaxTotalCalls) {
@@ -713,7 +766,7 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 	g.stats.TotalAdmitted++
 
 	var once sync.Once
-	settle := func(status int, actual *float64, resultErr error) {
+	settle := func(status int, actual *float64, resultErr, accessErr error) {
 		once.Do(func() {
 			now := g.now()
 			g.mu.Lock()
@@ -729,7 +782,7 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 			} else if resultErr != nil || (status >= 200 && status < 300) {
 				g.stats.EstimatedUnknownUSD += estCallUSD
 			}
-			g.observeLocked(ctx, now, st, meta, status, resultErr)
+			g.observeLocked(ctx, now, cs, meta, status, resultErr, accessErr)
 			g.mu.Unlock()
 			if parentSettle != nil {
 				parentSettle(status, actual, resultErr)
@@ -809,7 +862,7 @@ func (g *Guard) admitGlobal(ctx context.Context, meta CallMeta, now time.Time, e
 	}, nil
 }
 
-func (g *Guard) observeLocked(ctx context.Context, now time.Time, st *scopeState, meta CallMeta, status int, resultErr error) {
+func (g *Guard) observeLocked(ctx context.Context, now time.Time, st *circuitState, meta CallMeta, status int, resultErr, accessErr error) {
 	if resultErr != nil {
 		st.consecutiveAborts++
 		g.stats.UnknownAborts++
@@ -832,6 +885,7 @@ func (g *Guard) observeLocked(ctx context.Context, now time.Time, st *scopeState
 		st.breakerTrips = 0
 		st.circuitOpenUntil = time.Time{}
 		st.circuitReason = ""
+		st.accessErr = nil
 		return
 	}
 
@@ -842,6 +896,7 @@ func (g *Guard) observeLocked(ctx context.Context, now time.Time, st *scopeState
 			cooldown := min(5*time.Minute, g.cfg.BreakerMaxCooldown)
 			st.circuitOpenUntil = now.Add(cooldown)
 			st.circuitReason = "provider returned HTTP 402"
+			st.accessErr = accessErr
 			slog.ErrorContext(ctx, "llmguard circuit breaker opened on HTTP 402",
 				"user_id", meta.UserID, "scope", meta.Scope, "cooldown", cooldown.String())
 			return
@@ -854,6 +909,7 @@ func (g *Guard) observeLocked(ctx context.Context, now time.Time, st *scopeState
 				cooldown := g.breakerCooldown(st.breakerTrips)
 				st.circuitOpenUntil = now.Add(cooldown)
 				st.circuitReason = fmt.Sprintf("%d consecutive provider HTTP %d errors", st.consecutiveErrors, status)
+				st.accessErr = accessErr
 				slog.ErrorContext(ctx, "llmguard circuit breaker opened on provider errors",
 					"user_id", meta.UserID, "scope", meta.Scope, "status", status,
 					"consecutive_errors", st.consecutiveErrors, "cooldown", cooldown.String())

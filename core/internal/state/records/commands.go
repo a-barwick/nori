@@ -29,6 +29,18 @@ func (d *Database) AcceptCommandBatch(ctx context.Context, commands []state.Comm
 			runIDs = append(runIDs, id)
 		}
 		slices.Sort(runIDs)
+		if d.PinAccountModelSelection != nil {
+			batch.AccountModels = true
+			for _, command := range commands {
+				if command.Kind == state.CommandStart && batch.Prior[command.ID] == nil {
+					batch.AccountModelSelection, err = d.readAccountModelSelection(tx)
+					if err != nil {
+						return err
+					}
+					break
+				}
+			}
+		}
 		pending, err := d.readPendingInteractions(tx, runIDs)
 		if err != nil {
 			return err
@@ -48,6 +60,25 @@ func (d *Database) AcceptCommandBatch(ctx context.Context, commands []state.Comm
 		return d.supersedeInteractions(tx, pending, before, batch, commands)
 	})
 	return receipts, err
+}
+
+func (d *Database) readAccountModelSelection(tx *docstore.Transaction) (*state.ModelSelection, error) {
+	doc, err := tx.Get(d.resources(state.ModelSettingsCollection).Doc(state.ModelSettingsID))
+	if notFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	row, err := toResource(state.ModelSettingsCollection, doc)
+	if err != nil {
+		return nil, err
+	}
+	var selection state.ModelSelection
+	if err := row.Decode(&selection); err != nil {
+		return nil, err
+	}
+	return d.PinAccountModelSelection(selection.TaskOnly()), nil
 }
 
 func (d *Database) readCommandBatch(tx *docstore.Transaction, commands []state.Command) (state.CommandBatch, error) {

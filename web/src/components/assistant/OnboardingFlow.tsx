@@ -17,6 +17,7 @@ import { useResource, useResourceInvalidation } from "@/lib/assistant/useResourc
 import type { MemoryFact, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
 import type { MarkState } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { RecommendedModelsPrompt } from "./ModelsSettings";
 import { Notice, Pill } from "./ui";
 
 export type OnboardingStep = 1 | 2 | 3 | 4;
@@ -203,6 +204,8 @@ export function OnboardingFlow({
   const [validatingKey, setValidatingKey] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
   const [keyFocused, setKeyFocused] = useState(false);
+  const [selectedProvider, setSelectedProvider] = useState("");
+  const [savedProvider, setSavedProvider] = useState<{ id: string; label: string } | null>(null);
 
   // Step 4 (About you)
   const [name, setName] = useState("");
@@ -231,10 +234,12 @@ export function OnboardingFlow({
     [],
   );
 
-  const primaryProvider: ModelKeyProvider | undefined = keys.data?.providers[0];
+  const primaryProvider: ModelKeyProvider | undefined = keys.data?.providers.find((provider) => provider.provider === selectedProvider)
+    ?? keys.data?.providers.find((provider) => provider.configured)
+    ?? keys.data?.providers[0];
   const byokRequired = !!keys.data?.byok_required;
   const keyConfigured = !!primaryProvider?.configured && !isReplacingKey;
-  const canContinueStep3 = !byokRequired || keyConfigured;
+  const canContinueStep3 = (!byokRequired || !!keys.data?.providers.some((provider) => provider.configured)) && !savedProvider;
 
   const goStep = (next: OnboardingStep) => {
     setStep(next);
@@ -249,11 +254,11 @@ export function OnboardingFlow({
   };
 
   const handleVerifyKey = async () => {
-    const provider = primaryProvider ?? {
-      provider: "vercel_ai_gateway",
-      label: "Vercel AI Gateway",
-      configured: false,
-    };
+    const provider = primaryProvider;
+    if (!provider) {
+      setKeyError("Model providers are unavailable. Try again shortly.");
+      return;
+    }
     const trimmed = draftKey.trim();
     if (!trimmed) {
       setKeyError("Enter an API key.");
@@ -272,7 +277,8 @@ export function OnboardingFlow({
           providers: keys.data.providers.map((item) => (item.provider === updated.provider ? updated : item)),
         });
       }
-      invalidate("/settings/model-keys", "/capabilities");
+      invalidate("/settings/model-keys", "/settings/models", "/capabilities");
+      setSavedProvider({ id: provider.provider, label: provider.label });
       triggerMood("hop", { happy: true, sparkles: true, durationMs: 850 });
     } catch (err) {
       setKeyError(errorText(err));
@@ -547,12 +553,26 @@ export function OnboardingFlow({
                     <span className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-accent-subtle text-accent-text">
                       <KeyRound size={17} strokeWidth={1.9} aria-hidden />
                     </span>
-                    <span className="text-row font-semibold text-ink">
-                      {primaryProvider?.label || "Vercel AI Gateway"}
-                    </span>
+                    <label className="sr-only" htmlFor="onboarding-provider">Model provider</label>
+                    <select
+                      id="onboarding-provider"
+                      value={primaryProvider?.provider ?? ""}
+                      disabled={validatingKey || !keys.data?.providers.length}
+                      onChange={(event) => {
+                        setSelectedProvider(event.target.value);
+                        setIsReplacingKey(false);
+                        setDraftKey("");
+                        setKeyError(null);
+                        setSavedProvider(null);
+                      }}
+                      className="rounded-[10px] border border-card-border bg-fill-1 px-3 py-2 text-row font-semibold text-ink"
+                    >
+                      {!primaryProvider && <option value="">Providers unavailable</option>}
+                      {keys.data?.providers.map((provider) => <option key={provider.provider} value={provider.provider}>{provider.label}</option>)}
+                    </select>
                   </div>
-                  <Pill tone={validatingKey ? "working" : keyConfigured ? "ok" : byokRequired ? "warning" : "neutral"}>
-                    {validatingKey ? "Validating" : keyConfigured ? "Configured" : byokRequired ? "Required" : "Optional"}
+                  <Pill tone={validatingKey ? "working" : keyConfigured ? "ok" : "neutral"}>
+                    {validatingKey ? "Saving" : keyConfigured ? "Configured" : "Not configured"}
                   </Pill>
                 </div>
 
@@ -589,14 +609,14 @@ export function OnboardingFlow({
                         onClick={() => void handleVerifyKey()}
                         className="t-fast absolute right-2 rounded-lg bg-surface px-2.5 py-1.5 text-[12px] font-semibold text-accent-text hover:bg-fill-2 disabled:opacity-50"
                       >
-                        {validatingKey ? "Checking…" : "Verify"}
+                        {validatingKey ? "Saving…" : "Save"}
                       </button>
                     </div>
                   </div>
                 ) : (
                   <div className="flex items-center justify-between rounded-[12px] bg-[var(--ok-bg)] px-3.5 py-2.5 text-meta text-[var(--ok-text)]">
                     <span>
-                      Key verified
+                      Key saved
                       {primaryProvider?.last4 && (
                         <>
                           {" "}
@@ -623,6 +643,12 @@ export function OnboardingFlow({
                   </div>
                 )}
               </div>
+
+              {savedProvider && (
+                <div className="mt-3">
+                  <RecommendedModelsPrompt provider={savedProvider} onClose={() => setSavedProvider(null)} />
+                </div>
+              )}
 
               <div className="mt-3">
                 <Notice tone="neutral">

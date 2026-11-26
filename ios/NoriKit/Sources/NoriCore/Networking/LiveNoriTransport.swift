@@ -1190,6 +1190,14 @@ public actor LiveNoriTransport: NoriTransport {
 
     // MARK: - Model API Keys (BYOK)
 
+    public func fetchModelSettings() async throws -> ModelSettingsResponse {
+        try await getJSON("/v1/settings/models")
+    }
+
+    public func saveModelSettings(_ request: SaveModelSettingsRequest) async throws -> ModelSettingsResponse {
+        try await sendJSON("/v1/settings/models", method: "PUT", body: request)
+    }
+
     public func fetchModelKeys() async throws -> ModelKeysResponse {
         try await getJSON("/v1/settings/model-keys")
     }

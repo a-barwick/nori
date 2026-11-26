@@ -45,7 +45,7 @@ func isMemoryToolCall(call ToolCall) bool {
 func (r *Runner) planUserCommands(ctx context.Context, t *state.ConversationTurn, reply Reply, request ReplyRequest,
 	messages []json.RawMessage, inputID string,
 ) (Reply, error) {
-	plan, err := r.replyModel(t.ModelSelection).Respond(ctx, ReplyRequest{
+	plan, err := r.replyModelForTurn(ctx, t).Respond(ctx, ReplyRequest{
 		Messages: messages, CommandPlan: true, TaskIDs: request.TaskIDs, MemoryIDs: request.MemoryIDs,
 		TelemetryInput: request.TelemetryInput, RecordUsage: request.RecordUsage,
 	})

@@ -29,13 +29,18 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 			map[string]any{"type": "input_image", "image_url": image, "detail": "high"},
 		}}},
 	}
+	if c.BYOKProviderLabel != "" && c.DefaultReasoning != "" {
+		fields["reasoning"] = map[string]string{"effort": c.DefaultReasoning}
+	}
 	c.requestOptions(fields)
 	body, err := json.Marshal(fields)
 	if err != nil {
 		return out, errors.New("inspection request could not be encoded")
 	}
+	meta := llmguard.CallMeta{UserID: c.UserID, Scope: llmguard.ScopeTask, Provider: c.Provider(), Model: c.ModelName, MaxOutputTokens: req.MaxOutputTokens, BYOK: c.Byok}
+	reqCtx := llmguard.WithMeta(ctx, meta)
 	buildReq := func() (*http.Request, error) {
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.endpoint(), bytes.NewReader(body))
 		if err != nil {
 			return nil, err
 		}
@@ -47,6 +52,9 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 		return out, err
 	}
 	record := usage.Attempt(ctx, c.Provider(), c.ModelName)
+	if c.Byok {
+		record.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
+	}
 	if err := c.Meter.RecordUsage(ctx, record); err != nil {
 		return out, err
 	}
@@ -62,6 +70,9 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 		}
 		_ = usage.Finish(ctx, c.Meter, prev)
 		record = usage.Attempt(ctx, c.Provider(), c.ModelName)
+		if c.Byok {
+			record.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
+		}
 		if err := c.Meter.RecordUsage(ctx, record); err != nil {
 			record.RequestStatus = "not_sent"
 			return err
@@ -69,7 +80,7 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 		record.RequestStatus = "unknown"
 		return nil
 	}
-	res, err := c.doWithRetry(ctx, buildReq, onRetry)
+	res, err := c.doWithRetry(reqCtx, buildReq, onRetry)
 	if err != nil {
 		if errors.Is(err, usage.ErrUserQuotaExceeded) {
 			record.RequestStatus = "not_sent"
@@ -83,6 +94,11 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 	record.RequestStatus = "received"
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
+		if c.BYOKProviderLabel != "" {
+			if err := llmguard.ModelAccessError(res, c.BYOKProviderLabel); err != nil {
+				return out, err
+			}
+		}
 		if c.gatewayURL != "" {
 			return out, modelgateway.HTTPError(res.StatusCode)
 		}

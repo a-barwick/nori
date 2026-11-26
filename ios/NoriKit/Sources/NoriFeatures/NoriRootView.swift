@@ -172,7 +172,8 @@ public struct NoriRootView: View {
                     onOpenActivity: { isActivitySheetPresented = true },
                     onOpenDocument: openDocument,
                     onNavigateToNeedsYou: jumpToNeedsYou,
-                    onOpenTask: openWorkTask
+                    onOpenTask: openWorkTask,
+                    onOpenModels: openModels
                 )
                 .tabItem {
                     NoriMark.tabBarIcon(selected: selectedTab == .chat)
@@ -193,13 +194,15 @@ public struct NoriRootView: View {
                         isLoadingOverview: !didApplyInitialWorkTab,
                         onOpenDocument: openDocument,
                         onOpenTask: openWorkTask,
-                        onStartInChat: startInChat
+                        onStartInChat: startInChat,
+                        onOpenModels: openModels
                     )
                     .navigationDestination(for: String.self) { taskID in
                         WorkDetailView(
                             store: store,
                             taskID: taskID,
-                            onOpenDocument: openDocument
+                            onOpenDocument: openDocument,
+                            onOpenModels: openModels
                         )
                     }
                 }
@@ -223,8 +226,8 @@ public struct NoriRootView: View {
                                 StandingPermissionsView(store: store)
                             case .preferences:
                                 PreferencesBudgetsView(store: store)
-                            case .apiKeys:
-                                APIKeysSettingsView(store: store)
+                            case .models:
+                                ModelsSettingsView(store: store)
                             case .appearance:
                                 AppearanceSettingsView()
                             case .account:
@@ -290,6 +293,13 @@ public struct NoriRootView: View {
         selectedWorkTabExplicitly = true
         workTabFilter = .tasks
         selectedTab = .work
+    }
+
+    private func openModels() {
+        isActivitySheetPresented = false
+        presentedDocument = nil
+        selectedTab = .more
+        morePath = [.models]
     }
 
     private func openWorkTask(_ taskID: String) {

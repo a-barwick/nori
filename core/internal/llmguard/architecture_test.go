@@ -18,6 +18,8 @@ func TestNoRawLLMCallsOutsideGuardedAdapters(t *testing.T) {
 		filepath.ToSlash("internal/conversation/openai.go"):       true,
 		filepath.ToSlash("internal/conversation/anthropic.go"):    true,
 		filepath.ToSlash("internal/agent/responses/responses.go"): true,
+		filepath.ToSlash("internal/agent/responses/google.go"):    true,
+		filepath.ToSlash("internal/platform/models.go"):           true,
 		filepath.ToSlash("internal/agent/anthropic/anthropic.go"): true,
 		filepath.ToSlash("internal/conversation/jev.go"):          true,
 		filepath.ToSlash("internal/gateway/server.go"):            true,
@@ -28,6 +30,8 @@ func TestNoRawLLMCallsOutsideGuardedAdapters(t *testing.T) {
 		"openrouter.ai",
 		"api.anthropic.com",
 		"api.typesafe.ai",
+		"ai-gateway.vercel.sh",
+		"generativelanguage.googleapis.com",
 	}
 
 	err = filepath.WalkDir(coreRoot, func(path string, d fs.DirEntry, walkErr error) error {
@@ -60,6 +64,15 @@ func TestNoRawLLMCallsOutsideGuardedAdapters(t *testing.T) {
 			}
 			if strings.Contains(src, "&http.Client{") {
 				t.Errorf("%s must not construct raw &http.Client{}; use llmguard.Guard.Client / WrapClient", rel)
+			}
+			return nil
+		}
+
+		if rel == "internal/modelkeys/service.go" {
+			// Key validation reads provider metadata without running a model.
+			if strings.Count(src, "http.NewRequest") != 1 ||
+				!strings.Contains(src, "http.NewRequestWithContext(valCtx, http.MethodGet, endpoint, nil)") {
+				t.Errorf("%s may issue a single GET for provider key validation", rel)
 			}
 			return nil
 		}

@@ -204,6 +204,8 @@ public protocol NoriTransport: Sendable {
     func fetchModelKeys() async throws -> ModelKeysResponse
     func saveModelKey(provider: String, apiKey: String) async throws -> ModelKeyProvider
     func deleteModelKey(provider: String) async throws -> ModelKeyProvider
+    func fetchModelSettings() async throws -> ModelSettingsResponse
+    func saveModelSettings(_ request: SaveModelSettingsRequest) async throws -> ModelSettingsResponse
 }
 
 public extension NoriTransport {
@@ -221,6 +223,14 @@ public extension NoriTransport {
 
     func deleteModelKey(provider: String) async throws -> ModelKeyProvider {
         throw NoriAPIError(message: "Model keys are not supported by this transport.")
+    }
+
+    func fetchModelSettings() async throws -> ModelSettingsResponse {
+        throw NoriAPIError(message: "Model settings are not supported by this transport.")
+    }
+
+    func saveModelSettings(_ request: SaveModelSettingsRequest) async throws -> ModelSettingsResponse {
+        throw NoriAPIError(message: "Model settings are not supported by this transport.")
     }
     func performMCPAction(
         serverID: String,

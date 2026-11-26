@@ -18,6 +18,7 @@ import (
 	"nori/internal/extensions"
 	"nori/internal/httpjson"
 	"nori/internal/modelkeys"
+	"nori/internal/modelprofiles"
 	"nori/internal/permissions"
 	"nori/internal/scheduler"
 	"nori/internal/secret"
@@ -42,6 +43,8 @@ type Assistant struct {
 	Scheduler           *scheduler.Service
 	MCP                 *mcp.Service
 	ModelKeys           *modelkeys.Service
+	Models              *modelprofiles.Account
+	AccountBYOK         bool
 	UnattendedWrites    string
 	NextScheduled       func(ctx context.Context) *time.Time
 	InboxUnread         func(ctx context.Context) int
@@ -78,7 +81,7 @@ func writeAPIError(w http.ResponseWriter, err error, requestID string, current a
 		status, code, message, retryable = 400, "validation_failed", err.Error(), false
 	case errors.Is(err, modelkeys.ErrInvalidAPIKey):
 		status, code, message, retryable = http.StatusUnprocessableEntity, "invalid_api_key", err.Error(), false
-	case errors.Is(err, modelkeys.ErrMissingAPIKey):
+	case errors.Is(err, modelkeys.ErrModelAccess), errors.Is(err, modelkeys.ErrMissingAPIKey):
 		status, code, message, retryable = http.StatusUnprocessableEntity, "missing_api_key", err.Error(), false
 	case errors.Is(err, modelkeys.ErrValidationFailed):
 		status, code, message, retryable = http.StatusServiceUnavailable, "provider_unavailable", "Could not reach the model provider to validate your API key. Try again shortly.", true
@@ -207,6 +210,9 @@ func (a *Assistant) register(mux *http.ServeMux) {
 	}
 	if a.ModelKeys != nil {
 		a.registerModelKeys(mux)
+	}
+	if a.Models != nil {
+		a.registerModelSettings(mux)
 	}
 	mux.HandleFunc("GET /v1/diagnostics", a.diagnostics)
 	mux.HandleFunc("POST /v1/diagnostics/actions", jsonBody(a.diagnosticsAction))

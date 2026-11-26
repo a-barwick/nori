@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Globe, Terminal, X } from "lucide-react";
 import { Medallion } from "@/components/mark/NoriMark";
@@ -159,7 +160,10 @@ export function TaskPanel({
     {selected.status === "running" && (question?.text || selected.waiting) && <p className="mb-3 whitespace-pre-wrap break-words text-meta text-ink-2 [overflow-wrap:anywhere]">{question?.text || selected.waiting}</p>}
     {selected.status === "running" && !question?.text && !selected.waiting && selected.progress && <p className="mb-3 whitespace-pre-wrap break-words text-meta text-ink-2 [overflow-wrap:anywhere]">{selected.progress}</p>}
     {selected.cleanup_error && <p role="status" className="mb-3 rounded-tile bg-fill-1 p-3 text-meta text-ink-2">{selected.cleanup_error}</p>}
-    {selected.error && <p role="status" className={cn("mb-3 rounded-tile p-3 text-meta", selected.status === "failed" ? "bg-danger-bg text-danger" : "bg-fill-1 text-ink-2")}>{selected.error}</p>}
+    {selected.error && <p role="status" className={cn("mb-3 rounded-tile p-3 text-meta", selected.status === "failed" ? "bg-danger-bg text-danger" : "bg-fill-1 text-ink-2")}>
+      {selected.error}
+      {/more\s*(?:→|>)\s*models|model_key_required|missing_api_key/i.test(selected.error) && <> <Link href="/settings/models" className="font-semibold underline">Open Models</Link></>}
+    </p>}
     {selected.status === "running" && !selected.cancel_requested && !selected.finishing && <form className="mb-4 space-y-2 px-2" onSubmit={(event) => {
       event.preventDefault();
       const text = drafts[selected.id]?.trim();

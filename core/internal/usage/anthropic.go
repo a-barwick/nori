@@ -27,6 +27,8 @@ func anthropicTariff(model string, totalPromptTokens int64) (inputPerMillion, ou
 	switch {
 	case strings.Contains(m, "opus-5.5") || strings.Contains(m, "opus-5-5"):
 		return 4.0, 20.0, 0.05
+	case strings.Contains(m, "sonnet-5.5") || strings.Contains(m, "sonnet-5-5"):
+		return 2.0, 10.0, 0.05
 	case strings.Contains(m, "haiku-5.5") || strings.Contains(m, "haiku-5-5"):
 		if totalPromptTokens > 100_000 {
 			return 0.50, 2.50, 0.10

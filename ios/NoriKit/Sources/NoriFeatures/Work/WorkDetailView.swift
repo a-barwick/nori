@@ -9,6 +9,7 @@ public struct WorkDetailView: View {
     @Bindable private var store: NoriStore
     public let taskID: String
     private let onOpenDocument: (NoriCore.LibraryItem) -> Void
+    private let onOpenModels: () -> Void
 
     @State private var steerDraft: String = ""
     @State private var isSteering: Bool = false
@@ -22,11 +23,13 @@ public struct WorkDetailView: View {
     public init(
         store: NoriStore,
         taskID: String,
-        onOpenDocument: @escaping (NoriCore.LibraryItem) -> Void = { _ in }
+        onOpenDocument: @escaping (NoriCore.LibraryItem) -> Void = { _ in },
+        onOpenModels: @escaping () -> Void = {}
     ) {
         self.store = store
         self.taskID = taskID
         self.onOpenDocument = onOpenDocument
+        self.onOpenModels = onOpenModels
     }
 
     private var detail: WorkDetail? {
@@ -139,6 +142,12 @@ public struct WorkDetailView: View {
                     state: isRunning ? .thinking : .idle
                 )
                 .padding(.bottom, 14)
+
+                if item.error?.code == "model_key_required" || item.error?.message.contains("More → Models") == true {
+                    Button("Open Models", action: onOpenModels)
+                        .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                        .padding(.bottom, 14)
+                }
 
                 if isRunning {
                     if !pendingInteractions.isEmpty {

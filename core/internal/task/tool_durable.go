@@ -305,7 +305,7 @@ func (a *Activities) runtimeTool(ctx context.Context, in ToolInput, op *state.Op
 		offset, _ := in.Call.Args["offset"].(string)
 		output, err = a.taskHistoryRead(ctx, in.RunID, ref, before, offset)
 	} else {
-		output, err = a.agentForRun(run).CallRuntimeTool(observability.SuppressErrorCapture(ctx), in.RunID, in.Call.Name, in.Call.Args)
+		output, err = a.agentForRun(ctx, run).CallRuntimeTool(observability.SuppressErrorCapture(ctx), in.RunID, in.Call.Name, in.Call.Args)
 	}
 	if rerunnable && errors.Is(ctx.Err(), context.Canceled) {
 		return nil, context.Cause(ctx)
