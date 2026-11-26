@@ -74,15 +74,29 @@ gcloud secrets add-iam-policy-binding "${token_secret%:*}" --project="$project" 
 
 docker buildx build --platform linux/amd64 -f web/Dockerfile --build-arg "SENTRY_RELEASE=$sha" -t "$image" --push .
 env_vars="^|^NORI_CLOUD=aws|NORI_AUTH_PROVIDER=oidc|NORI_OIDC_ISSUER=https://accounts.google.com|NORI_OIDC_AUDIENCE=$NORI_MAC_GOOGLE_CLIENT_ID|NORI_OIDC_IAP_POLICY_RESOURCE=$policy_resource|NORI_RUNTIME_URL=$core|NORI_SERVICE_AUDIENCE=$audience"
+edge_token=""
+if cloud services describe "$service" --format=json >/dev/null 2>&1; then
+  traffic_flags=(--no-traffic)
+else
+  # Cloud Run requires initial traffic on new services. Keep the first revision
+  # private while checking both application health and its authorization gate.
+  traffic_flags=(--invoker-iam-check)
+  edge_token="$(gcloud auth print-identity-token)"
+fi
 cloud deploy "$service" --image="$image" --service-account="$account" --ingress=all \
-  --no-invoker-iam-check --min-instances=0 --max-instances=2 --no-traffic --tag="$tag" --quiet \
+  "${traffic_flags[@]}" --min-instances=0 --max-instances=2 --tag="$tag" --quiet \
   --set-env-vars="$env_vars" --set-secrets="NORI_SERVICE_TOKEN_KEY=$token_secret"
 
 candidate="$(cloud services describe "$service" --flatten='status.traffic[]' \
   --format='value(status.traffic.tag,status.traffic.revisionName,status.traffic.url)' | awk -F '\t' -v tag="$tag" '$1==tag {print $2 "\t" $3}')"
 IFS=$'\t' read -r revision url <<< "$candidate"
 status() {
-  curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 15 "$@"
+  local curl_flags=(--silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 15)
+  if [[ -n "$edge_token" ]]; then
+    printf 'X-Serverless-Authorization: Bearer %s\n' "$edge_token" | curl "${curl_flags[@]}" -H @- "$@"
+  else
+    curl "${curl_flags[@]}" "$@"
+  fi
 }
 if [[ -z "$revision" || -z "$url" ]] ||
    [[ "$(status --retry 5 --retry-all-errors --fail "$url/api/health")" != 200 ]] ||
@@ -94,6 +108,8 @@ if [[ -z "$revision" || -z "$url" ]] ||
 fi
 
 cloud services update-traffic "$service" --to-revisions="$revision=100" --remove-tags="$tag" --quiet
+cloud services update "$service" --no-invoker-iam-check --quiet
+edge_token=""
 url="$(cloud services describe "$service" --format='value(status.url)')"
 [[ "$(status --fail "$url/api/health")" == 200 && "$(status "$url/")" == 403 ]]
 printf 'Mac Web is ready at %s\n' "$url"
