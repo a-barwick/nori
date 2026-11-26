@@ -1,0 +1,94 @@
+name: iOS Private TestFlight
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ios/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quiet-period:
+    name: Wait for iOS changes to settle
+    if: github.repository == 'a-barwick/nori' && github.ref == 'refs/heads/main' && vars.NORI_TESTFLIGHT_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: ios-testflight-quiet-period
+      cancel-in-progress: true
+    steps:
+      - run: sleep 600
+
+  distribute:
+    name: Archive and upload to private TestFlight
+    needs: quiet-period
+    runs-on: xcode-27
+    timeout-minutes: 30
+    environment: ios-testflight
+    concurrency:
+      group: ios-testflight-upload
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check for newer iOS changes on main
+        id: freshness
+        shell: bash
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          event_ios_commit=$(git log -1 --first-parent --format=%H "$GITHUB_SHA" -- ios/)
+          latest_ios_commit=$(git log -1 --first-parent --format=%H origin/main -- ios/)
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/main && [[ "$event_ios_commit" == "$latest_ios_commit" ]]; then
+            echo 'current=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'A newer iOS revision superseded this build.'
+          fi
+
+      - name: Archive release build
+        if: steps.freshness.outputs.current == 'true'
+        shell: bash
+        env:
+          SENTRY_DSN: ${{ vars.SENTRY_IOS_DSN }}
+        run: |
+          build_number=$((174 + GITHUB_RUN_NUMBER))
+          xcodebuild -project ios/Nori.xcodeproj -scheme Nori -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Nori.xcarchive" \
+            -disableAutomaticPackageResolution CODE_SIGNING_ALLOWED=NO \
+            "CURRENT_PROJECT_VERSION=$build_number" "SENTRY_DSN=$SENTRY_DSN" archive
+
+      - name: Verify archive symbols
+        if: steps.freshness.outputs.current == 'true'
+        uses: ./.github/actions/ios-symbols
+        with:
+          archive-path: ${{ runner.temp }}/Nori.xcarchive
+          verify-only: "true"
+
+      - name: Sign and upload the archive
+        if: steps.freshness.outputs.current == 'true'
+        shell: bash
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          : "${ASC_KEY_ID:?Set ASC_KEY_ID in the ios-testflight environment}"
+          : "${ASC_ISSUER_ID:?Set ASC_ISSUER_ID in the ios-testflight environment}"
+          : "${ASC_PRIVATE_KEY:?Set ASC_PRIVATE_KEY in the ios-testflight environment}"
+          umask 077
+          key_dir=$(mktemp -d "$RUNNER_TEMP/nori-signing.XXXXXX")
+          auth_key="$key_dir/AuthKey.p8"
+          trap 'rm -f -- "$auth_key"; rmdir -- "$key_dir"' EXIT
+          printf '%s\n' "$ASC_PRIVATE_KEY" > "$auth_key"
+          unset ASC_PRIVATE_KEY
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Nori.xcarchive" \
+            -exportPath "$RUNNER_TEMP/NoriTestFlight" \
+            -exportOptionsPlist ios/Config/TestFlightExportOptions.plist \
+            -allowProvisioningUpdates -authenticationKeyPath "$auth_key" \
+            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"

@@ -92,6 +92,12 @@ SENTRY_TRACES_SAMPLE_RATE = 1.0
 
 For TestFlight or App Store archives, pass `SENTRY_DSN="$SENTRY_IOS_DSN"` as an Xcode build setting in CI. An empty DSN disables Sentry. For a Debug build with Sentry enabled, open **More → Diagnostics → Send Test Event** and look for `diagnostics.test` in the configured iOS project. Submitting a chat turn produces an iOS transaction whose trace ID can also be searched in Go Core's Sentry project when both projects have tracing enabled.
 
+### Automatic Private TestFlight Builds
+
+The **iOS Private TestFlight** workflow waits 10 minutes after an `ios/` change lands on `main`. A newer iOS push restarts the wait. The workflow verifies the archive, signs it, and uploads an internal-testing-only build. App Store Connect delivers processed builds through the **Private TestFlight** internal group.
+
+The `ios-testflight` GitHub environment is restricted to `main` and holds `ASC_KEY_ID`, `ASC_ISSUER_ID`, and the `.p8` contents in `ASC_PRIVATE_KEY`. The repository variable `NORI_TESTFLIGHT_ENABLED` activates the workflow when set to `true`. Set `SENTRY_IOS_DSN` as an Actions variable if this build should send telemetry. To run a new upload manually, dispatch **iOS Private TestFlight** on `main`. Build numbering starts after build 174 and uses the workflow run number so retrying the same run uses the same build number.
+
 ### Uploading dSYMs for TestFlight / App Store Releases
 The **iOS Archive** GitHub Actions workflow builds a Release archive and checks that its dSYM UUID matches the app. The shared Xcode scheme can upload symbols from the archive you actually distribute. To enable that upload for local archives, add these settings to `ios/Config/Local.xcconfig`:
 
