@@ -4,11 +4,12 @@ Nori layers **in-app per-user rate limiting** (token buckets + concurrent SSE ca
 
 ## Topology
 
-- **`nori-web`** and **`nori-api`** sit behind a Global External Application Load Balancer (Serverless NEG) with a Cloud Armor security policy attached.
-- **`nori-worker`** is deployed with `--ingress=internal` and is never exposed to the public internet or attached to the external load balancer.
-- Cloud Armor enforces coarse per-IP volumetric/WAF protections before traffic hits Cloud Run; Nori's in-app limiter enforces fine-grained per-user quotas (writes, uploads, reads, concurrent SSE streams) and per-IP/email-hash limits on `POST /api/users/resolve`.
+- **`nori-web`** serves `noribot.chat` through a Cloud Run domain mapping, behind IAP. **`nori-core`** is public on its `run.app` URL and accepts only HS256 service tokens. Neither has a load balancer or a Cloud Armor policy.
+- **`nori-connector-relay`** (Home AI) is the only service behind a load balancer. Its backend uses the `nori-home-ai-throttle` policy, which limits each client IP to 60 requests per minute. [`infra/home_ai_edge.tf`](../../infra/home_ai_edge.tf) defines both.
+- **`nori-worker`** has internal ingress and no public route.
+- The `nori-edge-waf` policy below is a proposal. Using it needs a load balancer with a serverless NEG in front of `nori-web` and `nori-core`, added to `infra/`.
 
-## Recommended Cloud Armor Policy (`nori-edge-waf`)
+## Proposed Cloud Armor Policy (`nori-edge-waf`)
 
 ### 1. Create the security policy
 
@@ -88,8 +89,8 @@ gcloud compute backend-services update nori-web-backend \
 
 | Layer | Key | Scope | Default Limit |
 | :--- | :--- | :--- | :--- |
-| Cloud Armor | Client IP | `/api/users/resolve`, `/api/auth/*` | 60 req/min |
-| Cloud Armor | Client IP | All public routes | 600 req/min |
+| Cloud Armor (proposed) | Client IP | `/api/users/resolve`, `/api/auth/*` | 60 req/min |
+| Cloud Armor (proposed) | Client IP | All public routes | 600 req/min |
 | Web BFF (`rate-limit.ts`) | Client IP | Pre-auth proxy requests | 120 req/min (burst 30) |
 | Core API (`ratelimit.go`) | Client IP & email hash | `POST /api/users/resolve` | 30 req/min (burst 10) |
 | Core API (`ratelimit.go`) | `user.ID` | Writes / mutations | 60 req/min (burst 20) |

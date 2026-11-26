@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   check:
-    name: Check (Go, OpenAPI, Web, Scripts)
+    name: Check (Go, OpenAPI, Web, Scripts, Infra)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -49,6 +49,12 @@ jobs:
       - name: Install web dependencies
         working-directory: web
         run: bun install --frozen-lockfile
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.17.1"
+          terraform_wrapper: false
 
       - name: Run make check
         run: make check

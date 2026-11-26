@@ -10,3 +10,5 @@ __pycache__/
 *.py[cod]
 ios/Config/Local.xcconfig
 .agents/
+infra/.terraform/
+infra/tfplan

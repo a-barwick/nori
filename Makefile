@@ -1,4 +1,4 @@
-.PHONY: api-types api-check contracts contracts-check dev web web-build web-start core local-web local-core check sim-deep sim-pg sim-personas-validate sim-personas-smoke sim-personas-quick sim-personas-core sim-personas-memory sim-personas-full deps deps-stop release
+.PHONY: infra-check infra-plan api-types api-check contracts contracts-check dev web web-build web-start core local-web local-core check sim-deep sim-pg sim-personas-validate sim-personas-smoke sim-personas-quick sim-personas-core sim-personas-memory sim-personas-full deps deps-stop release
 
 NORI_ENV_FILE ?= $(abspath .env)
 NORI_TASK_ENV_FILE ?= $(NORI_ENV_FILE)
@@ -39,7 +39,7 @@ contracts: api-types
 
 contracts-check: api-check
 
-check: api-check
+check: api-check infra-check
 	$(MAKE) -C core check
 	cd web && ./node_modules/.bin/next typegen && ./node_modules/.bin/tsc --noEmit -p . && ./node_modules/.bin/eslint src && bun test src
 	npm --prefix macos test
@@ -79,3 +79,13 @@ deps-stop:
 
 release:
 	./scripts/release.sh
+
+# infra/ is the source of truth for GCP. CI applies it on main; see core/infrastructure/README.md.
+infra-check:
+	terraform -chdir=infra fmt -check -recursive
+	terraform -chdir=infra init -backend=false -input=false -lockfile=readonly >/dev/null
+	terraform -chdir=infra validate
+
+infra-plan:
+	terraform -chdir=infra init -input=false -lockfile=readonly >/dev/null
+	terraform -chdir=infra plan -input=false

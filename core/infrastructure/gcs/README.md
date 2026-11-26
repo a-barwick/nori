@@ -14,30 +14,16 @@
 
 `NORI_CREDENTIAL_KEY_SECRET` is AWS Secrets Manager-only and is rejected at startup when `NORI_CLOUD=gcp`.
 
-The Cloud Run service account needs `roles/storage.objectAdmin` scoped to `ARTIFACT_BUCKET` (and `roles/cloudkms.cryptoKeyEncrypterDecrypter` on `NORI_CREDENTIAL_KMS_KEY` when using Cloud KMS).
+The Cloud Run service account needs `roles/storage.objectAdmin` scoped to `ARTIFACT_BUCKET` (and `roles/cloudkms.cryptoKeyEncrypterDecrypter` on `NORI_CREDENTIAL_KMS_KEY` when using Cloud KMS). `infra/storage.tf` grants both to `nori-runtime`.
 
 Native GCS uses the exact same object key layout (`artifacts/users/<id>/...`), conditional create (`ifGenerationMatch=0`), and `Cache-Control: private, no-store` as the S3 adapter, so switching an existing bucket from `NORI_CLOUD=aws` to `NORI_CLOUD=gcp` requires zero data migration.
 
 ## Bucket Lifecycle Policy
 
-`lifecycle.json` enforces two automatic cleanup rules on `ARTIFACT_BUCKET`:
+`google_storage_bucket.artifacts` in [`infra/storage.tf`](../../../infra/storage.tf) sets two cleanup rules on `ARTIFACT_BUCKET`:
 
 1. **Abort incomplete multipart uploads after 1 day** (`AbortIncompleteMultipartUpload`, `age: 1`).
-2. **Delete noncurrent object versions after 7 days** (`Delete`, `isLive: false`, `daysSinceNoncurrentTime: 7`) when object versioning is enabled.
-
-Apply the lifecycle policy:
-
-```bash
-gcloud storage buckets update "gs://${ARTIFACT_BUCKET}" \
-  --lifecycle-file=core/infrastructure/gcs/lifecycle.json
-```
-
-Verify the active policy:
-
-```bash
-gcloud storage buckets describe "gs://${ARTIFACT_BUCKET}" \
-  --format="default(lifecycle)"
-```
+2. **Delete noncurrent object versions after 7 days** (`Delete`, `with_state: ARCHIVED`, `days_since_noncurrent_time: 7`) when object versioning is enabled.
 
 ## Orphan Blob Audit & Reconciliation
 
