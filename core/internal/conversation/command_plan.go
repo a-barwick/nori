@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -55,6 +56,10 @@ func (r *Runner) planUserCommands(ctx context.Context, t *state.ConversationTurn
 		return reply, recordErr
 	}
 	if err != nil {
+		if errors.Is(err, state.ErrConversationStale) && plan.Usage.RequestStatus == "not_sent" &&
+			t.Attempt.ModelCheckpoint != nil && t.Attempt.ModelCheckpoint.Phase == state.CheckpointRequestingPlan {
+			t.Attempt.ModelCheckpoint.Phase = state.CheckpointProposedReply
+		}
 		return reply, err
 	}
 	planCmdCalls, planMemCalls, err := splitMemory(plan.Calls)

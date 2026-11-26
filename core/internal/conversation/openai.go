@@ -191,10 +191,7 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	if request.RecordUsage != nil {
 		if err := request.RecordUsage(ctx, reply.Usage); err != nil {
 			reply.Usage.RequestStatus = "not_sent"
-			if errors.Is(err, usage.ErrUserQuotaExceeded) {
-				return reply, err
-			}
-			return reply, fmt.Errorf("usage recording unavailable; provider request was not sent")
+			return reply, usageRecordError(err)
 		}
 	}
 	reply.Usage.RequestStatus = "unknown"
@@ -234,7 +231,7 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	}
 	res, err := m.doWithRetry(reqCtx, endpoint, body, onRetry)
 	if err != nil {
-		if errors.Is(err, usage.ErrUserQuotaExceeded) {
+		if errors.Is(err, usage.ErrUserQuotaExceeded) || isSupersededCallError(err) {
 			reply.Usage.RequestStatus = "not_sent"
 			return reply, err
 		}
@@ -523,7 +520,7 @@ func (m *OpenAIModel) observeCall(ctx context.Context, span trace.Span, requestS
 	if a, ok := observability.ContentAttribute("output.value", reply.Text); ok {
 		span.SetAttributes(a)
 	}
-	if err != nil && !errors.Is(ctx.Err(), context.Canceled) {
+	if err != nil && !errors.Is(ctx.Err(), context.Canceled) && !isSupersededCallError(err) {
 		observability.RecordErrorCategory(ctx, "model.outer", err)
 		if !requestStarted.IsZero() {
 			observability.Event(ctx, "model.call.failed", provider, model)

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"nori/internal/state"
+	"nori/internal/usage"
 )
 
 var (
@@ -60,4 +62,19 @@ type Reply struct {
 func modelMessage(value any) json.RawMessage {
 	data, _ := json.Marshal(value)
 	return data
+}
+
+func usageRecordError(err error) error {
+	if errors.Is(err, usage.ErrUserQuotaExceeded) ||
+		errors.Is(err, state.ErrConversationStale) ||
+		errors.Is(err, state.ErrConversationBusy) ||
+		errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return fmt.Errorf("usage recording unavailable; provider request was not sent")
+}
+
+func isSupersededCallError(err error) bool {
+	return errors.Is(err, state.ErrConversationStale) || errors.Is(err, state.ErrConversationBusy)
 }

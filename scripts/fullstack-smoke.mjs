@@ -237,10 +237,12 @@ async function main() {
 
     const snapRes = await fetch(`${webBase}/api/v1/snapshot`, { headers: browser });
     assert.equal(snapRes.status, 200, `snapshot status=${snapRes.status}`);
+    const snap = await snapRes.json();
 
-    // 4. Open real SSE stream and wait for Nori's welcome, as a new user does before typing.
+    // 4. Open real SSE stream from the snapshot cursor and wait for Nori's welcome,
+    //    as a new user does before typing.
     const sseController = new AbortController();
-    const sseRes = await fetch(`${webBase}/api/v1/events`, {
+    const sseRes = await fetch(`${webBase}/api/v1/events?after=${snap.position ?? 0}`, {
       headers: { ...browser, Accept: "text/event-stream" },
       signal: sseController.signal,
     });
@@ -261,7 +263,10 @@ async function main() {
       }
       assert.ok(buffer.includes(text), `Did not receive "${text}" over SSE. Buffer:\n${buffer}`);
     };
-    await readUntil(SMOKE_WELCOME);
+    const alreadyWelcomed = (snap.messages ?? []).some((m) => m.role === "assistant" && m.text?.includes(SMOKE_WELCOME));
+    if (!alreadyWelcomed) {
+      await readUntil(SMOKE_WELCOME);
+    }
 
     // 5. Send a turn through Web -> Core -> ModelStub and assert the assistant reply arrives.
 

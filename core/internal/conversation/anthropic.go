@@ -154,10 +154,7 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 	if request.RecordUsage != nil {
 		if err := request.RecordUsage(ctx, reply.Usage); err != nil {
 			reply.Usage.RequestStatus = "not_sent"
-			if errors.Is(err, usage.ErrUserQuotaExceeded) {
-				return reply, err
-			}
-			return reply, fmt.Errorf("usage recording unavailable; provider request was not sent")
+			return reply, usageRecordError(err)
 		}
 	}
 	reply.Usage.RequestStatus = "unknown"
@@ -198,7 +195,7 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 
 	res, err := m.doWithRetry(reqCtx, body, onRetry)
 	if err != nil {
-		if errors.Is(err, usage.ErrUserQuotaExceeded) {
+		if errors.Is(err, usage.ErrUserQuotaExceeded) || isSupersededCallError(err) {
 			reply.Usage.RequestStatus = "not_sent"
 			return reply, err
 		}

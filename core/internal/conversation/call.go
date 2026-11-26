@@ -311,7 +311,9 @@ func (r *Runner) awaitAndPersistHint(
 		return Classification{}, classified.durationMS, classified.usageErr
 	}
 	if classificationErr != nil {
-		slog.WarnContext(callCtx, "Jev advisory hint unavailable", "err", classificationErr)
+		if !isSupersededCallError(classificationErr) && !errors.Is(classificationErr, context.Canceled) {
+			slog.WarnContext(callCtx, "Jev advisory hint unavailable", "err", classificationErr)
+		}
 		hint = Classification{Usage: hint.Usage, Available: false}
 	}
 	if saved := string(modelMessage(hint)); t.Attempt.Hint != saved || hint.Usage.ID != "" {
@@ -437,6 +439,10 @@ func (r *Runner) invokeOuterModel(
 	if modelErr != nil {
 		if r.OnDelta != nil {
 			r.OnDelta(t.ID, "")
+		}
+		if errors.Is(modelErr, state.ErrConversationStale) && reply.Usage.RequestStatus == "not_sent" &&
+			t.Attempt.ModelCheckpoint != nil && t.Attempt.ModelCheckpoint.Phase == state.CheckpointRequestingReply {
+			t.Attempt.ModelCheckpoint.Phase = state.CheckpointPreparingReply
 		}
 		return Reply{}, true, r.finishCall(ctx, callCtx, f, t, reply, modelErr, request.NoDispatch, *view)
 	}

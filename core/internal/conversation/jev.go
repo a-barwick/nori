@@ -106,7 +106,7 @@ func (c *JevClassifier) Classify(ctx context.Context, request ClassifyRequest) (
 			attribute.String("nori.cost.status", "unknown"),
 		)
 		provider, model := attribute.String("gen_ai.provider.name", jevProvider), attribute.String("gen_ai.request.model", jevModel)
-		if err != nil && !errors.Is(ctx.Err(), context.Canceled) {
+		if err != nil && !errors.Is(ctx.Err(), context.Canceled) && !isSupersededCallError(err) {
 			observability.RecordErrorCategory(ctx, "model.classifier", err)
 			if !requestStarted.IsZero() {
 				observability.Event(ctx, "model.call.failed", provider, model)
@@ -166,7 +166,7 @@ func (c *JevClassifier) Classify(ctx context.Context, request ClassifyRequest) (
 	if request.RecordUsage != nil {
 		if err := request.RecordUsage(ctx, classification.Usage); err != nil {
 			classification.Usage.RequestStatus = "not_sent"
-			return classification, fmt.Errorf("usage recording unavailable; provider request was not sent")
+			return classification, usageRecordError(err)
 		}
 	}
 	classification.Usage.RequestStatus = "unknown"
