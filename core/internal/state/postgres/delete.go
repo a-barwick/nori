@@ -23,6 +23,25 @@ func (b *backend) IsAccountDeletePending(ctx context.Context, userID string) (bo
 	return pending, nil
 }
 
+func (b *backend) ListAccountDeletePending(ctx context.Context) ([]string, error) {
+	rows, err := b.pool.Query(ctx, `SELECT id FROM nori_records
+		WHERE shard = 'users' AND collection = 'users' AND (data->'delete_pending') = 'true'::jsonb
+		ORDER BY id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (b *backend) BeginAccountDelete(ctx context.Context, userID string) error {
 	return b.readCommitted(ctx, false, func(q executor) error {
 		// Pairing and redemption use the same lock, so no device can be

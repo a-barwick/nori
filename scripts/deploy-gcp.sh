@@ -21,10 +21,10 @@ REGION="${GCP_REGION:-us-central1}"
 REPO="${GCP_AR_REPO:-nori-poc}"
 REGISTRY="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}"
 CLOUD="${NORI_CLOUD:-gcp}"
-TOPOLOGY="${NORI_DEPLOY_TOPOLOGY:-combined}"
+TOPOLOGY="${NORI_DEPLOY_TOPOLOGY:-split}"
 
 CORE_SERVICE="${NORI_GCP_CORE_SERVICE:-nori-core}"
-API_SERVICE="${NORI_GCP_API_SERVICE:-nori-api}"
+API_SERVICE="${NORI_GCP_API_SERVICE:-nori-core}"
 WORKER_SERVICE="${NORI_GCP_WORKER_SERVICE:-nori-worker}"
 WEB_SERVICE="${NORI_GCP_WEB_SERVICE:-nori-web}"
 if [[ "$TOPOLOGY" == "split" ]]; then

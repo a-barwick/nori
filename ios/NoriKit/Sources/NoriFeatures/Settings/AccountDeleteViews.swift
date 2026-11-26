@@ -98,3 +98,76 @@ struct DeleteAccountSheet: View {
         }
     }
 }
+
+public struct AccountDeleteRecoveryView: View {
+    @Bindable private var store: NoriStore
+    @State private var confirmationText = ""
+    @State private var errorMessage: String?
+
+    public init(store: NoriStore) {
+        self.store = store
+    }
+
+    private var expectedEmail: String {
+        store.authState.email?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private var confirmationMatches: Bool {
+        let entered = confirmationText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !entered.isEmpty else { return false }
+        if expectedEmail.isEmpty { return true }
+        return entered.caseInsensitiveCompare(expectedEmail) == .orderedSame
+    }
+
+    public var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text("Your account deletion was interrupted. Enter your account email to finish removing your account and data.")
+                        .font(.system(size: 15))
+                        .foregroundStyle(NoriColors.ink2)
+
+                    TextField(expectedEmail.isEmpty ? "Account email" : expectedEmail, text: $confirmationText)
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.emailAddress)
+                        #endif
+                        .autocorrectionDisabled()
+                        .padding(.horizontal, 12)
+                        .frame(height: 44)
+                        .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                        .disabled(store.isDeletingAccount)
+
+                    if let errorMessage, !errorMessage.isEmpty {
+                        NoriNotice(title: "Could not delete account", detail: errorMessage, tone: .danger)
+                    }
+
+                    Button {
+                        errorMessage = nil
+                        Task {
+                            do {
+                                try await store.deleteAccount(
+                                    confirmation: confirmationText.trimmingCharacters(in: .whitespacesAndNewlines),
+                                    resumePending: true
+                                )
+                            } catch {
+                                errorMessage = error.localizedDescription
+                            }
+                        }
+                    } label: {
+                        if store.isDeletingAccount {
+                            ProgressView("Deleting account…")
+                        } else {
+                            Text("Finish deleting account")
+                        }
+                    }
+                    .buttonStyle(NoriButtonStyle(.danger, fullWidth: true))
+                    .disabled(!confirmationMatches || store.isDeletingAccount)
+                }
+                .padding(20)
+            }
+            .background(NoriColors.canvas)
+            .navigationTitle("Finish deleting account")
+        }
+    }
+}

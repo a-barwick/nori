@@ -794,6 +794,11 @@ public final class NoriStore {
     }
 
     func handleAuthFailureIfNeeded(_ error: Error) async -> Bool {
+        if let apiErr = error as? NoriAPIError, apiErr.code == "account_delete_pending" {
+            stopEventStream()
+            accountDeletePending = true
+            return true
+        }
         if let apiErr = error as? NoriAPIError, apiErr.code == "data_reset_pending" {
             let baseline = preferences.dataResetAt
             let baselineKnown = hasLoadedPreferences

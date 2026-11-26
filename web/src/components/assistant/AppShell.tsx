@@ -64,12 +64,13 @@ export function AppShell({ localMode, scope, children }: { localMode: boolean; s
 }
 
 const ONBOARDING_STORAGE_PREFIX = "nori.onboarding.done:";
-type AccountGateState = { status: "checking" | "ready" | "resetting" | "pending" | "complete" | "reset-error" | "error"; error?: Error };
+type AccountGateState = { status: "checking" | "ready" | "resetting" | "pending" | "delete-pending" | "complete" | "reset-error" | "error"; error?: Error };
 
 function AccountStateGate({ scope, localMode, children }: { scope: string; localMode: boolean; children: ReactNode }) {
   const [state, setState] = useState<AccountGateState>({ status: "checking" });
   const [finishing, setFinishing] = useState(false);
   const [resumeError, setResumeError] = useState("");
+  const [deleteEmail, setDeleteEmail] = useState("");
   const activeCheck = useRef<AbortController | undefined>(undefined);
   const lastCheck = useRef<ResetCheckOptions>({});
 
@@ -94,7 +95,12 @@ function AccountStateGate({ scope, localMode, children }: { scope: string; local
         setState({ status: "ready" });
       }
     }).catch((error: Error) => {
-      if (!controller.signal.aborted) setState({ status: "error", error });
+      if (controller.signal.aborted) return;
+      if (error instanceof APIError && error.code === "account_delete_pending") {
+        setState({ status: "delete-pending" });
+        return;
+      }
+      setState({ status: "error", error });
     });
   }, [scope]);
 
@@ -151,6 +157,51 @@ function AccountStateGate({ scope, localMode, children }: { scope: string; local
     <div role="status" className="flex items-center gap-3 text-body text-ink">
       <LoaderCircle className="size-5 animate-spin motion-reduce:animate-none" aria-hidden />Resetting data…
     </div>
+  </main>;
+  const finishAccountDelete = async () => {
+    if (finishing) return;
+    const confirmation = deleteEmail.trim();
+    if (!confirmation) {
+      setResumeError("Enter your account email to finish deleting your account.");
+      return;
+    }
+    setFinishing(true);
+    setResumeError("");
+    try {
+      const response = await fetch("/api/v1/settings/account/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmation, resume_pending: true }),
+      });
+      if (response.status === 204 || response.status === 200) {
+        try { window.localStorage.setItem(SIGNED_OUT_EVENT_KEY, String(Date.now())); } catch {}
+        window.location.replace("/signed-out?deleted=1");
+        return;
+      }
+      const data = await response.json().catch(() => ({})) as { error?: string };
+      setResumeError(data.error || "Nori could not finish deleting your account. Try again.");
+      setFinishing(false);
+    } catch {
+      setResumeError("Nori could not finish deleting your account. Try again.");
+      setFinishing(false);
+    }
+  };
+
+  if (state.status === "delete-pending") return <main className="mx-auto max-w-xl space-y-4 p-6">
+    <h1 className="text-section font-semibold text-ink">Finish deleting your account</h1>
+    <p className="text-body text-ink-2">Your account deletion was interrupted. Enter your account email to finish removing your account and data.</p>
+    {resumeError && <Notice tone="danger">{resumeError}</Notice>}
+    <input
+      type="email"
+      value={deleteEmail}
+      onChange={(event) => setDeleteEmail(event.target.value)}
+      placeholder="Account email"
+      className="w-full rounded-input border border-hairline bg-surface px-3 py-2 text-body text-ink"
+      autoComplete="email"
+    />
+    <Button variant="danger" disabled={finishing} onClick={() => void finishAccountDelete()}>
+      {finishing ? "Deleting…" : "Finish deleting account"}
+    </Button>
   </main>;
   if (state.status === "pending") return <main className="mx-auto max-w-xl space-y-4 p-6">
     <h1 className="text-section font-semibold text-ink">Finish your data reset</h1>

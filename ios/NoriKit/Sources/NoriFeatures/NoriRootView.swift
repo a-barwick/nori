@@ -41,7 +41,9 @@ public struct NoriRootView: View {
             if store.isResettingData {
                 DataResetLoadingView()
             } else if store.authState.isSignedIn {
-                if store.dataResetRecoveryRequired {
+                if store.accountDeletePending {
+                    AccountDeleteRecoveryView(store: store)
+                } else if store.dataResetRecoveryRequired {
                     DataResetRecoveryView(store: store)
                 } else if store.dataResetStatusRequired {
                     DataResetStatusView(store: store)
