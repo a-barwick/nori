@@ -119,6 +119,8 @@ type attempt struct {
 	ExpiresAt     time.Time `json:"expires_at"`
 	Status        string    `json:"status"`
 	Reason        string    `json:"reason,omitempty"`
+	DrivePicker   bool      `json:"drive_picker,omitempty"`
+	AccountEpoch  int64     `json:"account_epoch,omitempty"`
 }
 
 type Resource struct {

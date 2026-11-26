@@ -276,19 +276,21 @@ func nonNil(values []string) []string {
 }
 
 type Request struct {
-	RunID        string
-	Revision     int64
-	Origin       string
-	AutomationID string
-	GoalID       string
-	ReadOnly     bool
-	ToolID       string
-	Effect       string
-	ConnectionID string
-	Epoch        int64
-	ResourceIDs  []string
-	Recipients   []string
-	Digest       string
+	RunID                   string
+	Revision                int64
+	Origin                  string
+	AutomationID            string
+	GoalID                  string
+	ReadOnly                bool
+	ToolID                  string
+	Effect                  string
+	ConnectionID            string
+	Epoch                   int64
+	ResourceIDs             []string
+	Recipients              []string
+	Digest                  string
+	RequireExplicitApproval bool
+	OperationID             string
 }
 
 type Decision struct {
@@ -422,6 +424,7 @@ type approval struct {
 	Decision    string    `json:"decision"`
 	Interaction string    `json:"interaction_id"`
 	At          time.Time `json:"at"`
+	UsedBy      string    `json:"used_by,omitempty"`
 }
 
 func (s *Service) Check(ctx context.Context, req Request) (Decision, error) {
@@ -447,6 +450,15 @@ func (s *Service) Check(ctx context.Context, req Request) (Decision, error) {
 			if a.Decision == "decline" {
 				return Decision{Result: "deny", Reason: "The user declined this exact action."}, nil
 			}
+			if req.RequireExplicitApproval {
+				used, err := s.useApproval(ctx, r, a, req.OperationID)
+				if err != nil {
+					return Decision{}, err
+				}
+				if !used {
+					return Decision{Result: "needs_interaction", Reason: "Approve this action again before repeating it."}, nil
+				}
+			}
 			dec, err := s.allow(ctx, req, "approval", nil, a.Interaction)
 			if err != nil {
 				return Decision{}, err
@@ -456,6 +468,9 @@ func (s *Service) Check(ctx context.Context, req Request) (Decision, error) {
 		} else if !errors.Is(err, state.ErrNotFound) {
 			return Decision{}, err
 		}
+	}
+	if req.RequireExplicitApproval {
+		return Decision{Result: "needs_interaction", Reason: "Approve this action before it runs."}, nil
 	}
 	for _, rule := range rules {
 		if rule.Effect == "ask" && s.applies(rule, req) {
@@ -489,6 +504,32 @@ func (s *Service) Check(ctx context.Context, req Request) (Decision, error) {
 		return Decision{Result: "deny", Reason: "This automation has no standing permission for this action."}, nil
 	}
 	return Decision{Result: "needs_interaction", Reason: "This action needs the user's approval."}, nil
+}
+
+func (s *Service) useApproval(ctx context.Context, r state.Resource, stored approval, operationID string) (bool, error) {
+	if operationID == "" {
+		return false, state.ErrInvalidResource
+	}
+	if stored.UsedBy != "" {
+		return stored.UsedBy == operationID, nil
+	}
+	stored.UsedBy = operationID
+	next, err := state.NewResource(CollectionApprovals, r.ID, 0, stored, r.Index, s.now())
+	if err != nil {
+		return false, err
+	}
+	_, err = s.Store.PutResource(ctx, next, r.Revision)
+	if !errors.Is(err, state.ErrRevisionConflict) {
+		return err == nil, err
+	}
+	latest, err := s.Store.Resource(ctx, CollectionApprovals, r.ID)
+	if err != nil {
+		return false, err
+	}
+	if err := latest.Decode(&stored); err != nil {
+		return false, err
+	}
+	return stored.UsedBy == operationID, nil
 }
 
 func originSource(origin string) string {

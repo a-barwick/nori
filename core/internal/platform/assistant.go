@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"nori/internal/connections"
+	"nori/internal/connectors/google"
 	"nori/internal/connectors/mcp"
 	"nori/internal/connectors/nori"
 	"nori/internal/extensions"
@@ -113,7 +114,16 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 		return nil, err
 	}
 	adapters := invoke.NewRegistry()
-	conn := connections.New(store, credentials, s.Connections.RedirectURL)
+	var integrations []connections.Integration
+	workspace := s.Connections.GoogleWorkspace
+	if workspace.EnabledFor(user.Email) {
+		integrations = append(integrations, google.Integration{ClientID: workspace.ClientID, ClientSecret: workspace.ClientSecret})
+		google.Register(adapters)
+	}
+	conn := connections.New(store, credentials, s.Connections.RedirectURL, integrations...)
+	if len(integrations) > 0 {
+		conn.GoogleWorkspace = &connections.GoogleWorkspace{UserID: user.ID, RedirectURL: workspace.RedirectURL, StateKey: workspace.ClientSecret}
+	}
 	conn.UserTimezone = user.TimeZone
 	conn.DataResetAt = user.DataResetAt
 	perms := &permissions.Service{Store: store, UnattendedWrites: s.Connections.UnattendedWrites, UserSends: s.Connections.UserSends}

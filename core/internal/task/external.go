@@ -160,6 +160,9 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 		if err != nil {
 			return nil, denial(in, effect, "failed", "The account could not be used: "+err.Error(), map[string]any{"recovery": "repair", "connection_id": record.ID}), nil
 		}
+		if grant.Connection.AuthorizationEpoch != record.AuthorizationEpoch {
+			return nil, denial(in, effect, "failed", "The account changed while preparing this action. Try again with the connected account.", nil), nil
+		}
 		call.Grant = &grant
 		connectionID, epoch = record.ID, record.AuthorizationEpoch
 	}
@@ -197,6 +200,7 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 			RunID: in.RunID, Revision: in.Revision, Origin: origin, AutomationID: automationID, GoalID: goalID, ReadOnly: run.ReadOnly,
 			ToolID: in.Exec.Tool.ID, Effect: string(prepared.Effect), ConnectionID: connectionID, Epoch: epoch,
 			ResourceIDs: resourceIDs, Recipients: prepared.Recipients, Digest: plan.digest,
+			RequireExplicitApproval: prepared.RequireExplicitApproval, OperationID: in.OperationID,
 		})
 		if err != nil {
 			return nil, nil, err
@@ -367,6 +371,9 @@ func (a *Activities) requestApproval(ctx context.Context, in ToolInput, run stat
 	}
 	if len(plan.prepared.MaterialEffects) > 0 {
 		payload["material_effects"] = plan.prepared.MaterialEffects
+	}
+	if plan.prepared.RequireExplicitApproval {
+		payload["approval_once"] = true
 	}
 	data, _ := json.Marshal(payload)
 	revision := in.Revision

@@ -32,6 +32,7 @@ type UserHandlerOptions struct {
 	Metrics          http.Handler
 	UserActivity     func(context.Context, users.User) (context.Context, users.User, func(), error)
 	ResetData        func(context.Context, users.User, bool) error
+	GoogleOAuthUser  func(string) string
 	RateLimiter      *RateLimiter
 	DisableRateLimit bool
 	ProvisioningMode settings.UserProvisioningMode
@@ -171,6 +172,20 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 			return
 		}
 		id := ""
+		googleCallback := r.Method == http.MethodGet && r.URL.Path == "/api/oauth/google-workspace/callback"
+		if googleCallback {
+			if !isUserToken && opts.GoogleOAuthUser != nil {
+				id = opts.GoogleOAuthUser(r.URL.Query().Get("state"))
+			}
+			if id == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "This Google sign-in link is invalid or expired."})
+				return
+			}
+			copyURL := *r.URL
+			copyURL.Path, copyURL.RawPath = "/v1/connections/oauth/callback", ""
+			r = r.Clone(r.Context())
+			r.URL = &copyURL
+		}
 		if strings.HasPrefix(r.URL.Path, "/users/") {
 			var path string
 			id, path, _ = strings.Cut(strings.TrimPrefix(r.URL.Path, "/users/"), "/")

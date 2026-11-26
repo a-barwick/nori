@@ -254,7 +254,9 @@ export async function assistantRoute(request: Request, family: string, segments:
   const incoming = new URL(request.url).searchParams;
   const path = ["v1", family, ...segments].map(encodeURIComponent).join("/") + (incoming.size ? `?${incoming}` : "");
   if (family === "connections" && segments.join("/") === "oauth/callback") {
-    if (!read || request.headers.get("sec-fetch-mode") !== "navigate") return forbidden();
+    if (!read) return forbidden();
+    if (incoming.get("state")?.startsWith("gw1.")) return googleWorkspaceCallback(request, mode, incoming);
+    if (request.headers.get("sec-fetch-mode") !== "navigate") return forbidden();
     return oauthCallback(request, mode, path);
   }
   if (!allowedCaller(request, mode, read ? sameOriginRead : sameOrigin)) return forbidden();
@@ -273,6 +275,34 @@ export async function assistantRoute(request: Request, family: string, segments:
   }
   const init: RequestInit = read ? {} : { method: request.method, body, headers: { "Content-Type": "application/json" } };
   return forward(request, mode, path, init, (type) => json(type) || (read && family === "library" && /^(application\/(pdf|octet-stream)|image\/(png|jpeg|webp)|text\/(plain|markdown|csv))/.test(type)));
+}
+
+async function googleWorkspaceCallback(request: Request, mode: Mode, params: URLSearchParams) {
+  const fail = () => new Response(null, { status: 303, headers: { Location: "/apps?result=failed", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
+  const target = runtimeTarget(mode);
+  if (target instanceof Response) return fail();
+  const query = new URLSearchParams();
+  for (const key of ["state", "code", "error", "picked_file_ids"]) {
+    const value = params.get(key);
+    if (value !== null) query.set(key, value);
+  }
+  if (query.toString().length > 12_000) return fail();
+  try {
+    const upstream = await fetch(new URL(`api/oauth/google-workspace/callback?${query}`, target.base), {
+      headers: { ...await runtimeHeaders(mode), ...upstreamTraceHeaders(request), "X-Nori-Redirect": "json" },
+      redirect: "error", cache: "no-store", signal: AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]),
+    });
+    if (!upstream.ok || !json(upstream.headers.get("content-type") ?? "")) {
+      void upstream.body?.cancel().catch(() => undefined);
+      return fail();
+    }
+    const { location } = await upstream.json() as { location?: unknown };
+    if (typeof location !== "string" || location.includes("\\")) return fail();
+    if ((!location.startsWith("/") || location.startsWith("//")) && !location.startsWith("nori://oauth/callback?")) return fail();
+    return new Response(null, { status: 303, headers: { Location: location, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
+  } catch {
+    return fail();
+  }
 }
 
 async function oauthCallback(request: Request, mode: Mode, path: string) {

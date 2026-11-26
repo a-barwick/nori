@@ -383,6 +383,7 @@ function Approval({
     : rawWarning;
   const accountLabel = payload.account?.label?.trim();
   const showMeta = !internalSchedule || !!accountLabel || !!payload.recipients?.length;
+  const summaryHasRecipients = payload.tool_id === "google/mail/mail-send";
   const buttonSize = inline ? "sm" : "md";
 
   return (
@@ -394,9 +395,9 @@ function Approval({
         <>
           <blockquote
             aria-label="Message to be sent"
-            className="mt-2.5 rounded-tile border border-hairline bg-fill-1 px-3.5 py-2.5 text-[13.5px] leading-relaxed whitespace-pre-line text-ink [overflow-wrap:anywhere]"
+            className="mt-2.5 rounded-tile border border-hairline bg-fill-1 px-3.5 py-2.5 text-[13.5px] leading-relaxed whitespace-pre-wrap text-ink [overflow-wrap:anywhere]"
           >
-            {message.trim() || "(No message text)"}
+            {message || "(No message text)"}
           </blockquote>
           {message.trimEnd().endsWith("…") && (
             <p className="mt-1 text-caption text-ink-2">Only the start of the message is shown here. The rest is sent too.</p>
@@ -416,7 +417,7 @@ function Approval({
       )}
       {showMeta && (
         <dl className="mt-3 grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-1.5 text-meta">
-          {send && !!payload.recipients?.length && (
+          {send && !summaryHasRecipients && !!payload.recipients?.length && (
             <>
               <dt className="text-ink-2">To</dt>
               <dd className="font-medium text-ink [overflow-wrap:anywhere]">{payload.recipients.join(", ")}</dd>
@@ -459,14 +460,16 @@ function Approval({
         >
           {state.pending === "allow_once" ? "Allowing…" : "Allow once"}
         </Button>
-        <Button
-          variant="neutral"
-          size={buttonSize}
-          disabled={busy}
-          onClick={() => void state.respond(buildApprovalResponse("always_allow", digest), "always_allow")}
-        >
-          {state.pending === "always_allow" ? "Saving rule…" : "Always allow"}
-        </Button>
+        {!payload.approval_once && (
+          <Button
+            variant="neutral"
+            size={buttonSize}
+            disabled={busy}
+            onClick={() => void state.respond(buildApprovalResponse("always_allow", digest), "always_allow")}
+          >
+            {state.pending === "always_allow" ? "Saving rule…" : "Always allow"}
+          </Button>
+        )}
         <Button
           variant="neutral"
           size={buttonSize}
@@ -581,7 +584,25 @@ function SignIn({ interaction, payload, state }: { interaction: Interaction; pay
         window.location.assign(next);
       });
     } else if (!mcp && connection.data) {
-      void action.run("sign_in", () => startSignIn(connection.data!, "repair", returnTo));
+      void action.run("sign_in", async () => {
+        let capabilities: string[] | undefined;
+        if (payload.integration_id === "google") {
+          if (!integration.data) throw new Error("Google permissions could not be loaded. Try again.");
+          const requested = new Set(payload.requested_scopes ?? []);
+          const scopes = new Set([...(connection.data!.granted_scopes ?? []), ...requested]);
+          const matched = integration.data.capabilities
+            .filter((capability) => capability.supported && capability.scopes?.length && capability.scopes.every((scope) => scopes.has(scope)));
+          const covered = new Set(matched.flatMap((capability) => capability.scopes ?? []));
+          if ([...requested].some((scope) => !covered.has(scope))) {
+            throw new Error("Google permissions could not be refreshed. Try again from Apps.");
+          }
+          capabilities = [...new Set([
+            ...(connection.data!.capabilities ?? []),
+            ...matched.map((capability) => capability.id),
+          ])];
+        }
+        await startSignIn(connection.data!, "repair", returnTo, capabilities);
+      });
     } else {
       void action.run("sign_in", async () => {
         throw new Error(browserContinuation
@@ -601,6 +622,9 @@ function SignIn({ interaction, payload, state }: { interaction: Interaction; pay
         <p className="text-meta text-ink-2">
           {title} will ask you to allow: {wanted.join("; ")}.
         </p>
+      )}
+      {payload.integration_id === "google" && (
+        <p className="text-meta text-ink-2">Nori uses the Google data you allow to carry out your requests and may share it with your selected AI model provider.</p>
       )}
       {blocked && (
         <Notice tone="danger">This sign-in link isn’t one Nori issued, so it won’t open.</Notice>

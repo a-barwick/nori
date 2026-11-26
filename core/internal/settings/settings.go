@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +45,33 @@ type Connections struct {
 	CredentialKMSKey, CredentialKey, CredentialKeySecret, CredentialKeyFile string
 	UnattendedWrites, UserSends                                             string
 	MCPCommands                                                             map[string][]string
+	GoogleWorkspace                                                         GoogleWorkspace
+}
+
+type GoogleWorkspace struct {
+	ClientID, ClientSecret, RedirectURL string
+	TestUsers                           []string
+}
+
+func (g GoogleWorkspace) EnabledFor(email string) bool {
+	return g.ClientID != "" && g.ClientSecret != "" && g.RedirectURL != "" &&
+		slices.Contains(g.TestUsers, strings.ToLower(strings.TrimSpace(email)))
+}
+
+func (g GoogleWorkspace) validate() error {
+	if g.ClientID == "" && g.ClientSecret == "" && g.RedirectURL == "" && len(g.TestUsers) == 0 {
+		return nil
+	}
+	if g.ClientID == "" || g.ClientSecret == "" || g.RedirectURL == "" || len(g.TestUsers) == 0 {
+		return fmt.Errorf("Google Workspace beta requires NORI_GOOGLE_WORKSPACE_CLIENT_ID, NORI_GOOGLE_WORKSPACE_CLIENT_SECRET, NORI_GOOGLE_WORKSPACE_REDIRECT_URL and NORI_GOOGLE_WORKSPACE_TEST_USERS")
+	}
+	u, err := url.Parse(g.RedirectURL)
+	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" ||
+		u.Path != "/api/v1/connections/oauth/callback" || (u.Scheme != "https" &&
+		(u.Scheme != "http" || (u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1" && u.Hostname() != "::1"))) {
+		return fmt.Errorf("NORI_GOOGLE_WORKSPACE_REDIRECT_URL must point to the Web /api/v1/connections/oauth/callback route over HTTPS or local loopback")
+	}
+	return nil
 }
 
 type Features struct {
@@ -162,6 +190,12 @@ func load(defaultCloud string, simulation bool) (Settings, error) {
 	if s.Cloud != "aws" && strings.TrimSpace(s.Connections.CredentialKeySecret) != "" {
 		return Settings{}, fmt.Errorf("NORI_CREDENTIAL_KEY_SECRET requires NORI_CLOUD=aws")
 	}
+	if err := s.Connections.GoogleWorkspace.validate(); err != nil {
+		return Settings{}, err
+	}
+	if len(s.Connections.GoogleWorkspace.TestUsers) > 0 && s.Connections.CredentialStore != "database" {
+		return Settings{}, fmt.Errorf("Google Workspace beta needs NORI_CREDENTIAL_STORE=database")
+	}
 	if simulation {
 		if s.Cloud != "local" {
 			return Settings{}, fmt.Errorf("the simulation executable requires NORI_CLOUD=local")
@@ -219,6 +253,12 @@ func connectionsFromEnvironment() Connections {
 		UnattendedWrites:    get("NORI_AUTOMATION_UNATTENDED", "confirm_writes"),
 		UserSends:           get("NORI_USER_SENDS", "ask"),
 		MCPCommands:         mcpCommands(os.Getenv("NORI_MCP_COMMANDS")),
+		GoogleWorkspace: GoogleWorkspace{
+			ClientID:     strings.TrimSpace(os.Getenv("NORI_GOOGLE_WORKSPACE_CLIENT_ID")),
+			ClientSecret: strings.TrimSpace(os.Getenv("NORI_GOOGLE_WORKSPACE_CLIENT_SECRET")),
+			RedirectURL:  strings.TrimSpace(os.Getenv("NORI_GOOGLE_WORKSPACE_REDIRECT_URL")),
+			TestUsers:    splitCSV(os.Getenv("NORI_GOOGLE_WORKSPACE_TEST_USERS"), true),
+		},
 	}
 }
 
@@ -269,6 +309,7 @@ func fromEnvironment(defaultCloud string, simulation bool) Settings {
 		"NORI_POSTGRES_LISTEN_URL",
 		"NORI_SERVICE_TOKEN_KEY",
 		"NORI_CREDENTIAL_KEY",
+		"NORI_GOOGLE_WORKSPACE_CLIENT_SECRET",
 		"NORI_HOME_AI_KEY",
 		"NORI_HOME_AI_POSTGRES_URL",
 		"NORI_HOME_AI_POSTGRES_LISTEN_URL",

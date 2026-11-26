@@ -30,17 +30,18 @@ type Call struct {
 }
 
 type Prepared struct {
-	Summary             string
-	Effect              extensions.Effect
-	Resources           []state.ProviderRef
-	Recipients          []string
-	Precondition        string
-	Spec                map[string]string
-	MaterialEffects     []string
-	Keys                map[string]string
-	PromptTitle         string
-	SkipAutoReview      bool
-	RequireConfirmation bool
+	Summary                 string
+	Effect                  extensions.Effect
+	Resources               []state.ProviderRef
+	Recipients              []string
+	Precondition            string
+	Spec                    map[string]string
+	MaterialEffects         []string
+	Keys                    map[string]string
+	PromptTitle             string
+	SkipAutoReview          bool
+	RequireConfirmation     bool
+	RequireExplicitApproval bool
 }
 
 type Result struct {

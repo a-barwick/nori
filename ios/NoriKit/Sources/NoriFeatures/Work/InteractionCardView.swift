@@ -246,7 +246,7 @@ public struct InteractionCardView: View {
         let isSensitiveSend = payload.effect == .sensitiveSend
         let parsed = parseApprovalSummary(payload)
         let warning = payload.displayWarning
-        let hasRecipients = !(payload.recipients?.isEmpty ?? true)
+        let hasRecipients = payload.toolID != "google/mail/mail-send" && !(payload.recipients?.isEmpty ?? true)
         let showEffectRow = !payload.isInternalNoriSchedule
         let hasMetadataRows = hasRecipients || payload.hasAccountLabel || showEffectRow
 
@@ -280,7 +280,7 @@ public struct InteractionCardView: View {
             }
 
             if let quotedBody = parsed.quotedBody, !quotedBody.isEmpty {
-                let canExpand = shouldOfferQuotedBodyExpansion(quotedBody)
+                let canExpand = payload.approvalOnce != true && shouldOfferQuotedBodyExpansion(quotedBody)
                 VStack(alignment: .leading, spacing: 4) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(quotedBody)
@@ -316,7 +316,7 @@ public struct InteractionCardView: View {
                             .strokeBorder(NoriColors.hairline, lineWidth: 1)
                     )
 
-                    if quotedBody.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("…") {
+                    if payload.approvalOnce != true && quotedBody.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("…") {
                         Text("Only the start of the message is shown here. The rest is sent too.")
                             .font(.system(size: 11.5))
                             .foregroundStyle(NoriColors.ink2)
@@ -334,7 +334,7 @@ public struct InteractionCardView: View {
 
             if hasMetadataRows {
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 6) {
-                    if isSensitiveSend, let recipients = payload.recipients, !recipients.isEmpty {
+                    if isSensitiveSend, hasRecipients, let recipients = payload.recipients, !recipients.isEmpty {
                         GridRow {
                             Text("To")
                                 .font(.system(size: 12.5))
@@ -358,7 +358,7 @@ public struct InteractionCardView: View {
                         }
                     }
 
-                    if !isSensitiveSend, let recipients = payload.recipients, !recipients.isEmpty {
+                    if !isSensitiveSend, hasRecipients, let recipients = payload.recipients, !recipients.isEmpty {
                         GridRow {
                             Text("To")
                                 .font(.system(size: 12.5))
@@ -451,7 +451,7 @@ public struct InteractionCardView: View {
     }
 
     private func supportsRememberRule(for payload: ApprovalPayload) -> Bool {
-        true
+        payload.approvalOnce != true
     }
 
     private func shouldOfferQuotedBodyExpansion(_ text: String) -> Bool {
@@ -466,6 +466,9 @@ public struct InteractionCardView: View {
     }
 
     private func parseApprovalSummary(_ payload: ApprovalPayload) -> (head: String?, quotedBody: String?) {
+        if payload.toolID == "google/mail/mail-send" {
+            return (nil, payload.summary)
+        }
         if let head = payload.summaryHead, !head.isEmpty {
             return (head, payload.summary)
         }
@@ -728,7 +731,7 @@ public struct InteractionCardView: View {
             : nil
         let displayTitle = server?.name ?? connection?.title ?? payload.integrationID.capitalized
         let safeURL = payload.authorizeURL.flatMap { Self.safeAuthorizeURL($0) }
-        let blockedUnsafeURL = payload.authorizeURL != nil && safeURL == nil
+        let blockedUnsafeURL = payload.integrationID != "google" && payload.authorizeURL != nil && safeURL == nil
 
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
@@ -754,7 +757,12 @@ public struct InteractionCardView: View {
                 }
             }
 
-            if let scopes = payload.requestedScopes, !scopes.isEmpty {
+            if payload.integrationID == "google" {
+                Text(googleDisclosure(for: payload.requestedScopes ?? []))
+                    .font(.system(size: 12))
+                    .foregroundStyle(NoriColors.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let scopes = payload.requestedScopes, !scopes.isEmpty {
                 Text("Will request: \(scopes.joined(separator: ", "))")
                     .font(.system(size: 12))
                     .foregroundStyle(NoriColors.ink2)
@@ -797,6 +805,34 @@ public struct InteractionCardView: View {
             }
             .padding(.top, 2)
         }
+    }
+
+    private func googleDisclosure(for scopes: [String]) -> String {
+        let service: String
+        if scopes.contains(where: { $0.hasSuffix("/drive.file") }) {
+            service = "your selected Drive files"
+        } else if scopes.contains(where: { $0.contains("/calendar") }) {
+            service = "your Calendar events"
+        } else if scopes.contains(where: { $0.hasSuffix("/gmail.send") }) {
+            service = "your Gmail messages and attachments"
+        } else {
+            service = "your Google data"
+        }
+        return "Nori uses \(service) for your requests. Relevant content may be processed by your selected AI model provider."
+    }
+
+    private func googleCapabilities(for scopes: [String], existing: [String]) -> [String] {
+        var capabilities = Set(existing)
+        for scope in scopes {
+            switch scope {
+            case "https://www.googleapis.com/auth/calendar.readonly": capabilities.insert("calendar.read")
+            case "https://www.googleapis.com/auth/calendar.events": capabilities.formUnion(["calendar.read", "calendar.write"])
+            case "https://www.googleapis.com/auth/drive.file": capabilities.formUnion(["files.read", "files.write"])
+            case "https://www.googleapis.com/auth/gmail.send": capabilities.insert("mail.send")
+            default: break
+            }
+        }
+        return capabilities.sorted()
     }
 
     private static func safeAuthorizeURL(_ raw: String) -> URL? {
@@ -888,7 +924,15 @@ public struct InteractionCardView: View {
             }
 
             let targetURL: URL
-            if let safeURL {
+            if payload.integrationID == "google" {
+                let capabilities = googleCapabilities(for: payload.requestedScopes ?? [], existing: connection?.capabilities ?? [])
+                guard let attempt = await store.connectGoogle(capabilities: capabilities),
+                      let attemptURL = Self.safeAuthorizeURL(attempt.authorizeURL) else {
+                    await refreshAfterSignIn()
+                    return
+                }
+                targetURL = attemptURL
+            } else if let safeURL {
                 targetURL = safeURL
             } else if let server {
                 let attempt = await store.startMCPOAuth(serverID: server.id)
@@ -927,7 +971,7 @@ public struct InteractionCardView: View {
                 let callbackURL = try await webAuthenticationSession.authenticate(
                     using: targetURL,
                     callback: .customScheme("nori"),
-                    preferredBrowserSession: .ephemeral,
+                    preferredBrowserSession: payload.integrationID == "google" ? .shared : .ephemeral,
                     additionalHeaderFields: [:]
                 )
                 let outcome = Self.parseOAuthCallback(callbackURL)

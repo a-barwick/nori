@@ -13,6 +13,7 @@ import { useHydrated } from "@/lib/hooks";
 import "@/lib/desktop";
 import { cn } from "@/lib/utils";
 import { safeAuthorizeURL } from "./InteractionCard";
+import { GoogleConnection } from "./GoogleConnection";
 import { Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, RefreshButton, Row, Rows, Screen, Section, type Tone } from "./ui";
 
 type List<T> = { items: T[] };
@@ -74,6 +75,7 @@ export function AppsScreen() {
   if (!has("mcp") && !has("connections")) return <Screen title="Apps & MCP" back="/more" backLabel="More"><NotYet what="MCP servers" /></Screen>;
   return (
     <Screen title="Apps & MCP" back="/more" backLabel="More">
+      {has("connections") && <GoogleConnection />}
       {has("mcp") ? <MCPServers /> : <NotYet what="MCP servers" />}
       {has("connections") && <ActiveConnections />}
     </Screen>
@@ -82,7 +84,7 @@ export function AppsScreen() {
 
 function ActiveConnections() {
   const connections = useResource<List<Connection>>("/connections", { poll: 30_000 });
-  const items = (connections.data?.items ?? []).filter((connection) => connection.status !== "disconnected" && !(connection.status === "not_connected" && !connection.account?.provider_id));
+  const items = (connections.data?.items ?? []).filter((connection) => connection.integration_id !== "google" && connection.status !== "disconnected" && !(connection.status === "not_connected" && !connection.account?.provider_id));
   if (!items.length) return null;
   return (
     <Section title="Connections">

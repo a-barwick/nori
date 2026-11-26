@@ -118,6 +118,18 @@ public protocol NoriTransport: Sendable {
         requestID: String
     ) async throws -> MutationReceipt<MCPServer>
     func fetchConnections() async throws -> [Connection]
+    func fetchIntegrations() async throws -> [IntegrationSummary]
+    func fetchConnectionResources(connectionID: String) async throws -> [ConnectionResource]
+    func createConnection(integrationID: String, requestID: String) async throws -> MutationReceipt<Connection>
+    func performConnectionAction(
+        connectionID: String,
+        expectedRevision: Int,
+        action: String,
+        returnTo: String?,
+        capabilities: [String],
+        requestID: String
+    ) async throws -> MutationReceipt<Connection>
+    func startGoogleDrivePicker(connectionID: String, returnTo: String) async throws -> AuthAttempt
     func performConnectionAction(
         connectionID: String,
         expectedRevision: Int,
@@ -293,6 +305,38 @@ public extension NoriTransport {
             returnTo: nil,
             requestID: requestID
         )
+    }
+
+    func fetchIntegrations() async throws -> [IntegrationSummary] { [] }
+
+    func fetchConnectionResources(connectionID: String) async throws -> [ConnectionResource] { [] }
+
+    func createConnection(integrationID: String, requestID: String) async throws -> MutationReceipt<Connection> {
+        throw NoriAPIError(message: "Connections are not supported by this transport.")
+    }
+
+    func performConnectionAction(
+        connectionID: String,
+        expectedRevision: Int,
+        action: String,
+        returnTo: String?,
+        capabilities: [String],
+        requestID: String
+    ) async throws -> MutationReceipt<Connection> {
+        guard capabilities.isEmpty else {
+            throw NoriAPIError(message: "Selecting account access is not supported by this transport.")
+        }
+        return try await performConnectionAction(
+            connectionID: connectionID,
+            expectedRevision: expectedRevision,
+            action: action,
+            returnTo: returnTo,
+            requestID: requestID
+        )
+    }
+
+    func startGoogleDrivePicker(connectionID: String, returnTo: String) async throws -> AuthAttempt {
+        throw NoriAPIError(message: "Google Drive is not supported by this transport.")
     }
 
     func fetchLibraryItemFile(id: String) async throws -> LibraryFilePayload {

@@ -307,6 +307,10 @@
           },
           "description": "Readable consequences, e.g. attendees will be notified"
         },
+        "approval_once": {
+          "type": "boolean",
+          "description": "This action needs its own approval and cannot create a standing permission."
+        },
         "card": {
           "$ref": "library.schema.json#/$defs/CardPart"
         }

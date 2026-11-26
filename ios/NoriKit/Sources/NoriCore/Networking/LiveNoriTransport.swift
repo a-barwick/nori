@@ -843,6 +843,48 @@ public actor LiveNoriTransport: NoriTransport {
         return resp.items
     }
 
+    public func fetchIntegrations() async throws -> [IntegrationSummary] {
+        let resp: ListResponse<IntegrationSummary> = try await getJSON("/v1/integrations")
+        return resp.items
+    }
+
+    public func fetchConnectionResources(connectionID: String) async throws -> [ConnectionResource] {
+        let encodedID = connectionID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? connectionID
+        let resp: ListResponse<ConnectionResource> = try await getJSON("/v1/connections/\(encodedID)/resources")
+        return resp.items
+    }
+
+    public func createConnection(integrationID: String, requestID: String) async throws -> MutationReceipt<Connection> {
+        struct Value: Encodable {
+            let integration_id: String
+            let title: String
+            let selected_resource_ids: [String]
+        }
+        struct Request: Encodable {
+            let request_id: String
+            let expected_revision: Int
+            let value: Value
+        }
+        return try await mutate(
+            "/v1/connections",
+            requestID: requestID,
+            body: Request(
+                request_id: requestID,
+                expected_revision: 0,
+                value: Value(integration_id: integrationID, title: "", selected_resource_ids: [])
+            )
+        )
+    }
+
+    public func startGoogleDrivePicker(connectionID: String, returnTo: String) async throws -> AuthAttempt {
+        struct Request: Encodable { let return_to: String }
+        let encodedID = connectionID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? connectionID
+        return try await sendJSON(
+            "/v1/connections/\(encodedID)/google-drive/picker",
+            body: Request(return_to: returnTo)
+        )
+    }
+
     public func performConnectionAction(
         connectionID: String,
         expectedRevision: Int,
@@ -850,9 +892,28 @@ public actor LiveNoriTransport: NoriTransport {
         returnTo: String?,
         requestID: String
     ) async throws -> MutationReceipt<Connection> {
+        return try await performConnectionAction(
+            connectionID: connectionID,
+            expectedRevision: expectedRevision,
+            action: action,
+            returnTo: returnTo,
+            capabilities: [],
+            requestID: requestID
+        )
+    }
+
+    public func performConnectionAction(
+        connectionID: String,
+        expectedRevision: Int,
+        action: String,
+        returnTo: String?,
+        capabilities: [String],
+        requestID: String
+    ) async throws -> MutationReceipt<Connection> {
         struct ActionVal: Encodable {
             let action: String
             let return_to: String?
+            let capabilities: [String]?
         }
         struct ActionReq: Encodable {
             let request_id: String
@@ -866,7 +927,7 @@ public actor LiveNoriTransport: NoriTransport {
             body: ActionReq(
                 request_id: requestID,
                 expected_revision: expectedRevision,
-                value: ActionVal(action: action, return_to: cleanReturnTo)
+                value: ActionVal(action: action, return_to: cleanReturnTo, capabilities: capabilities.isEmpty ? nil : capabilities)
             )
         )
     }

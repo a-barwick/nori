@@ -78,6 +78,33 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     env.NORI_SERVICE_AUDIENCE = "nori";
   });
 
+  test("the Google Workspace browser callback routes without a Nori session and only returns safe redirects", async () => {
+    const state = "gw1.signed-test-state";
+    const callback = new URL("/api/v1/connections/oauth/callback", APP_ORIGIN);
+    callback.search = new URLSearchParams({ state, code: "test-code", picked_file_ids: "drive-file", ignored: "extra" }).toString();
+    let location = "nori://oauth/callback?result=drive_files_selected&connection=conn_google_workspace";
+    let calls = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls++;
+      const url = new URL(input instanceof Request ? input.url : input);
+      assert.equal(url.origin, RUNTIME_URL);
+      assert.equal(url.pathname, "/api/oauth/google-workspace/callback");
+      assert.deepEqual(Object.fromEntries(url.searchParams), { state, code: "test-code", picked_file_ids: "drive-file" });
+      const headers = new Headers(init?.headers);
+      assert.match(headers.get("authorization") ?? "", /^Bearer /);
+      assert.equal(headers.get("x-nori-redirect"), "json");
+      return Response.json({ location });
+    }) as typeof fetch;
+    const request = () => assistantRoute(new Request(callback), "connections", ["oauth", "callback"]);
+    const resolved = await request();
+    assert.equal(resolved.status, 303);
+    assert.equal(resolved.headers.get("location"), location);
+    assert.equal(resolved.headers.get("cache-control"), "no-store");
+    location = "https://elsewhere.example.test";
+    assert.equal((await request()).headers.get("location"), "/apps?result=failed");
+    assert.equal(calls, 2);
+  });
+
   afterEach(() => {
     globalThis.fetch = origFetch;
     console.warn = origWarn;

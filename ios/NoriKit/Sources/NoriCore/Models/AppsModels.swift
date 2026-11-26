@@ -1,5 +1,38 @@
 import Foundation
 
+public struct IntegrationSummary: Sendable, Codable, Hashable, Identifiable {
+    public var id: String
+    public var title: String
+    public var availability: String
+    public var availabilityReason: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, availability
+        case availabilityReason = "availability_reason"
+    }
+}
+
+public struct ConnectionResource: Sendable, Codable, Hashable, Identifiable {
+    public struct Reference: Sendable, Codable, Hashable {
+        public var connectionID: String
+        public var kind: String
+        public var providerID: String
+
+        enum CodingKeys: String, CodingKey {
+            case connectionID = "connection_id"
+            case kind
+            case providerID = "provider_id"
+        }
+    }
+
+    public var ref: Reference
+    public var title: String
+    public var kind: String
+    public var selected: Bool
+    public var writable: Bool
+    public var id: String { "\(ref.connectionID):\(ref.kind):\(ref.providerID)" }
+}
+
 
 public enum MCPTransport: String, Sendable, Codable, Hashable {
     case http

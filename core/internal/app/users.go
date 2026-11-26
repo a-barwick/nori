@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"nori/internal/api"
+	"nori/internal/connections"
 	"nori/internal/homeai"
 	"nori/internal/observability"
 	"nori/internal/platform"
@@ -468,6 +469,12 @@ func (s *Service) openUserApp(ctx context.Context, row users.User, done chan str
 }
 
 func (s *Service) Handler(local bool) http.Handler {
+	var googleOAuthUser func(string) string
+	if key := s.cfg.Connections.GoogleWorkspace.ClientSecret; key != "" {
+		googleOAuthUser = func(raw string) string {
+			return connections.GoogleWorkspaceCallbackUser(raw, key, s.now())
+		}
+	}
 	return wrapAccountDeleteRequest(api.UserHandlerWithOptions(s.Users, func(ctx context.Context, row users.User) (api.UserRoutes, func(), error) {
 		userApp, release, err := s.acquire(ctx, row)
 		if err != nil {
@@ -481,10 +488,11 @@ func (s *Service) Handler(local bool) http.Handler {
 		}
 		return api.UserRoutes{Handler: userApp.handler, Resume: resume}, release, nil
 	}, local, s.cfg.Models.Outer, api.UserHandlerOptions{
-		ReadyCheck:   s.Ping,
-		Metrics:      observability.MetricsHandler(),
-		UserActivity: s.userDataActivity,
-		ResetData:    s.resetUserData,
+		ReadyCheck:      s.Ping,
+		Metrics:         observability.MetricsHandler(),
+		UserActivity:    s.userDataActivity,
+		ResetData:       s.resetUserData,
+		GoogleOAuthUser: googleOAuthUser,
 	}))
 }
 

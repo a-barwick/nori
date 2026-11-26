@@ -84,6 +84,7 @@ public struct ApprovalPayload: Sendable, Codable, Hashable {
     public var recipients: [String]?
     public var materialEffects: [String]?
     public var summaryHead: String?
+    public var approvalOnce: Bool?
 
     enum CodingKeys: String, CodingKey {
         case summary
@@ -95,6 +96,7 @@ public struct ApprovalPayload: Sendable, Codable, Hashable {
         case recipients
         case materialEffects = "material_effects"
         case summaryHead = "summary_head"
+        case approvalOnce = "approval_once"
     }
 
     public init(
@@ -106,7 +108,8 @@ public struct ApprovalPayload: Sendable, Codable, Hashable {
         resources: [ResourceRef] = [],
         recipients: [String]? = nil,
         materialEffects: [String]? = nil,
-        summaryHead: String? = nil
+        summaryHead: String? = nil,
+        approvalOnce: Bool? = nil
     ) {
         self.summary = summary
         self.toolID = toolID
@@ -117,6 +120,7 @@ public struct ApprovalPayload: Sendable, Codable, Hashable {
         self.recipients = recipients
         self.materialEffects = materialEffects
         self.summaryHead = summaryHead
+        self.approvalOnce = approvalOnce
     }
 
     public var hasAccountLabel: Bool {

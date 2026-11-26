@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -176,6 +177,7 @@ func (a *Assistant) register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /v1/connections/{id}", jsonBody(a.updateConnection))
 	mux.HandleFunc("POST /v1/connections/{id}/actions", jsonBody(a.connectionAction))
 	mux.HandleFunc("GET /v1/connections/{id}/resources", a.connectionResources)
+	mux.HandleFunc("POST /v1/connections/{id}/google-drive/picker", jsonBody(a.googleDrivePicker))
 	mux.HandleFunc("GET /v1/preferences", a.preferences)
 	mux.HandleFunc("PUT /v1/preferences", jsonBody(a.savePreferences))
 	mux.HandleFunc("GET /v1/permissions", a.rules)
@@ -404,6 +406,23 @@ func (a *Assistant) connectionResources(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, 200, list[connections.Resource]{Items: items})
 }
 
+func (a *Assistant) googleDrivePicker(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		ReturnTo string `json:"return_to"`
+	}
+	if err := httpjson.Decode(w, r, &input, 4096); err != nil {
+		writeAPIError(w, state.ErrInvalidResource, "", nil)
+		return
+	}
+	attempt, err := a.Connections.StartGoogleDrivePicker(r.Context(), r.PathValue("id"), input.ReturnTo)
+	if err != nil {
+		writeAPIError(w, err, "", nil)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, attempt)
+}
+
 func (a *Assistant) oauthCallback(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	state, code, providerError := query.Get("state"), query.Get("code"), query.Get("error")
@@ -422,7 +441,7 @@ func (a *Assistant) oauthCallback(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	location, err := a.Connections.Callback(r.Context(), state, code, providerError)
+	location, err := a.Connections.CallbackWithSelection(r.Context(), state, code, providerError, query.Get("picked_file_ids"))
 	if errors.Is(err, connections.ErrAttemptInvalid) {
 		callbackRedirect(w, r, "/apps?result=failed")
 		return
@@ -887,10 +906,20 @@ func (a *Assistant) ResolveSignIns(ctx context.Context, connectionID string) {
 			continue
 		}
 		var payload struct {
-			ConnectionID string `json:"connection_id"`
+			ConnectionID    string   `json:"connection_id"`
+			IntegrationID   string   `json:"integration_id"`
+			RequestedScopes []string `json:"requested_scopes"`
 		}
 		if json.Unmarshal(i.Payload, &payload) != nil || payload.ConnectionID != connectionID {
 			continue
+		}
+		if payload.IntegrationID == connections.GoogleIntegrationID && len(payload.RequestedScopes) > 0 {
+			connection, err := a.Connections.Get(ctx, connectionID)
+			if err != nil || slices.ContainsFunc(payload.RequestedScopes, func(scope string) bool {
+				return !slices.Contains(connection.GrantedScopes, scope)
+			}) {
+				continue
+			}
 		}
 		requestID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("signed-in:"+i.ID)).String()
 		_, answer, err := a.Permissions.Respond(ctx, i.ID, requestID, i.Revision, permissions.Response{Kind: "signed_in",

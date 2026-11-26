@@ -28,6 +28,7 @@ require (
 
 require (
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
+	github.com/ledongthuc/pdf v0.0.0-20261125152515-e8918f005efa // indirect
 	go.opentelemetry.io/otel/log v1.47.0 // indirect
 	google.golang.org/grpc v1.84.0 // indirect
 )

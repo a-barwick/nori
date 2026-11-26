@@ -105,36 +105,7 @@ func (s *Store) Get(ctx context.Context, connectionID string) (secret.Credential
 }
 
 func (s *Store) Replace(ctx context.Context, connectionID string, expected int64, data []byte) (int64, error) {
-	if !state.ValidResourceID(connectionID) {
-		return 0, errors.New("invalid connection id")
-	}
-	dataKey := make([]byte, 32)
-	if _, err := rand.Read(dataKey); err != nil {
-		return 0, err
-	}
-	gcm, err := newGCM(dataKey)
-	if err != nil {
-		return 0, err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return 0, err
-	}
-	wrapped, keyID, err := s.Keys.Wrap(ctx, dataKey)
-	if err != nil {
-		return 0, fmt.Errorf("the data key could not be wrapped: %w", err)
-	}
-	if s.Owner == "" {
-		return 0, errors.New("the credential store has no owner")
-	}
-	r, err := state.NewResource(Collection, connectionID, expected+1, row{
-		WrappedKey: wrapped,
-		KeyID:      keyID,
-		Nonce:      nonce,
-		Ciphertext: gcm.Seal(nil, nonce, data, ownerAAD(s.Owner, connectionID)),
-		Owner:      true,
-		AADVersion: 2,
-	}, nil, s.now())
+	r, err := s.PrepareReplacement(ctx, connectionID, expected, data)
 	if err != nil {
 		return 0, err
 	}
@@ -146,6 +117,40 @@ func (s *Store) Replace(ctx context.Context, connectionID string, expected int64
 		return 0, err
 	}
 	return saved.Revision, nil
+}
+
+// PrepareReplacement encrypts a credential for a mutation that also updates its connection.
+func (s *Store) PrepareReplacement(ctx context.Context, connectionID string, expected int64, data []byte) (state.Resource, error) {
+	if !state.ValidResourceID(connectionID) {
+		return state.Resource{}, errors.New("invalid connection id")
+	}
+	dataKey := make([]byte, 32)
+	if _, err := rand.Read(dataKey); err != nil {
+		return state.Resource{}, err
+	}
+	gcm, err := newGCM(dataKey)
+	if err != nil {
+		return state.Resource{}, err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return state.Resource{}, err
+	}
+	wrapped, keyID, err := s.Keys.Wrap(ctx, dataKey)
+	if err != nil {
+		return state.Resource{}, fmt.Errorf("the data key could not be wrapped: %w", err)
+	}
+	if s.Owner == "" {
+		return state.Resource{}, errors.New("the credential store has no owner")
+	}
+	return state.NewResource(Collection, connectionID, expected+1, row{
+		WrappedKey: wrapped,
+		KeyID:      keyID,
+		Nonce:      nonce,
+		Ciphertext: gcm.Seal(nil, nonce, data, ownerAAD(s.Owner, connectionID)),
+		Owner:      true,
+		AADVersion: 2,
+	}, nil, s.now())
 }
 
 func (s *Store) Delete(ctx context.Context, connectionID string) error {

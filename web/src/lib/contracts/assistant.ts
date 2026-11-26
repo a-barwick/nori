@@ -1140,6 +1140,7 @@ export type ApprovalPayload = {
   resources: ResourceRef[];
   recipients?: string[];
   material_effects?: string[];
+  approval_once?: boolean;
   card?: CardPart;
 };
 export type AccountSelectionPayload = {

@@ -216,7 +216,7 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 	receipt, err := s.Store.Mutate(ctx, state.Mutation{
 		RequestID: requestID, Method: "POST", Target: "/v1/interactions/" + id + "/responses", ExpectedRevision: expected,
 		Payload: response, Collection: CollectionInteractions, ID: id, SkipRevisionCheck: true,
-		Apply: func(current *state.Resource, _ func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
+		Apply: func(current *state.Resource, read func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
 			answer = nil
 			declined = nil
 			appliedResource = nil
@@ -252,6 +252,12 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 				}
 				resolution.Text, text = response.Text, response.Text
 			case (response.Kind == "approve" || response.Kind == "decline") && i.Kind == "approval":
+				var payload struct {
+					ApprovalOnce bool `json:"approval_once"`
+				}
+				if err := json.Unmarshal(i.Payload, &payload); err != nil || payload.ApprovalOnce && response.RememberRule {
+					return state.MutationResult{}, state.ErrInvalidResource
+				}
 				if response.ActionDigest == "" {
 					return state.MutationResult{}, fmt.Errorf("%w: approve and decline need the action_digest that was shown", state.ErrInvalidResource)
 				}
@@ -263,7 +269,25 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 					revision = *i.InstructionRevision
 				}
 				record := approval{RunID: i.TaskID, Revision: revision, Digest: i.ActionDigest, Decision: response.Kind, Interaction: i.ID, At: now}
-				approvalResource, err := state.NewResource(CollectionApprovals, ApprovalKey(i.TaskID, revision, i.ActionDigest), 1, record, map[string]string{"task_id": i.TaskID}, now)
+				approvalKey := ApprovalKey(i.TaskID, revision, i.ActionDigest)
+				approvalRevision := int64(1)
+				if payload.ApprovalOnce {
+					previous, err := read(CollectionApprovals, approvalKey)
+					if err != nil {
+						return state.MutationResult{}, err
+					}
+					if previous != nil {
+						var consumed approval
+						if err := previous.Decode(&consumed); err != nil {
+							return state.MutationResult{}, err
+						}
+						if consumed.UsedBy == "" {
+							return state.MutationResult{}, ErrInteractionStale
+						}
+						approvalRevision = previous.Revision + 1
+					}
+				}
+				approvalResource, err := state.NewResource(CollectionApprovals, approvalKey, approvalRevision, record, map[string]string{"task_id": i.TaskID}, now)
 				if err != nil {
 					return state.MutationResult{}, err
 				}

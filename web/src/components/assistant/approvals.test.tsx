@@ -281,6 +281,33 @@ describe("submitInteractionResponse wire calls and live cache invalidation", () 
 });
 
 describe("InteractionCard and inline chat stream rendering", () => {
+  test("shows the full send details and only permits approval once when requested", () => {
+    const base = makeApprovalInteraction();
+    const interaction = makeApprovalInteraction({
+      payload: {
+        ...base.payload,
+        approval_once: true,
+        tool_id: "google/mail/mail-send",
+        summary: "Send email\nTo: first@example.com\nCc: second@example.com\nSubject: Update\nAttachments: plan.pdf\n\n  Full message\nwith spacing.  ",
+        recipients: ["first@example.com", "second@example.com"],
+      },
+    });
+    const html = renderToStaticMarkup(
+      <AssistantProvider localMode>
+        <InteractionCard interaction={interaction} />
+      </AssistantProvider>,
+    );
+
+    assert.match(html, /Allow once/);
+    assert.doesNotMatch(html, /Always allow/);
+    assert.match(html, /first@example.com/);
+    assert.match(html, /second@example.com/);
+    assert.equal(html.match(/first@example\.com/g)?.length, 1);
+    assert.equal(html.match(/second@example\.com/g)?.length, 1);
+    assert.match(html, /plan.pdf/);
+    assert.ok(html.includes("  Full message\nwith spacing.  "));
+  });
+
   test("renders 3-button approval card with warning callout, expiry indicator, and task link", () => {
     const interaction = makeApprovalInteraction();
     const html = renderToStaticMarkup(

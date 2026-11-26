@@ -122,6 +122,7 @@ public final class NoriStore {
     public var mcpServers: [MCPServer]
     public var mcpTools: [String: [MCPServerTool]]
     public var connections: [Connection]
+    public private(set) var integrations: [IntegrationSummary] = []
     public var libraryItems: [LibraryItem]
     public var searchHits: [SearchHit]
     public var coreMemories: [MemoryFact]
@@ -753,6 +754,7 @@ public final class NoriStore {
         mcpServers = []
         mcpTools = [:]
         connections = []
+        integrations = []
         libraryItems = []
         searchHits = []
         coreMemories = []
@@ -921,11 +923,16 @@ public final class NoriStore {
             do { return .success(try await activeTransport.fetchConnections()) }
             catch { return .failure(error) }
         }()
+        async let integrationsResult: Result<[IntegrationSummary], Error> = {
+            do { return .success(try await activeTransport.fetchIntegrations()) }
+            catch { return .failure(error) }
+        }()
 
-        let (serversRes, connsRes) = await (serversResult, connectionsResult)
+        let (serversRes, connsRes, integrationsRes) = await (serversResult, connectionsResult, integrationsResult)
         guard generation == sessionGeneration else { return }
         if case .failure(let err) = serversRes, await handleAuthFailureIfNeeded(err) { return }
         if case .failure(let err) = connsRes, await handleAuthFailureIfNeeded(err) { return }
+        if case .failure(let err) = integrationsRes, await handleAuthFailureIfNeeded(err) { return }
 
         if case .success(let servers) = serversRes {
             self.mcpServers = servers
@@ -953,6 +960,9 @@ public final class NoriStore {
         }
         if case .success(let conns) = connsRes {
             self.connections = conns
+        }
+        if case .success(let items) = integrationsRes {
+            self.integrations = items
         }
         if assistantSummary != nil {
             assistantSummary?.appsAttention = computedAppsAttentionCount
@@ -1763,6 +1773,101 @@ public final class NoriStore {
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
             return nil
+        }
+    }
+
+    public func connectGoogle(capabilities: [String]) async -> AuthAttempt? {
+        let generation = sessionGeneration
+        do {
+            let connection: Connection
+            if let existing = connections.first(where: {
+                $0.integrationID == "google" && $0.status != .disconnecting
+            }) {
+                connection = existing
+            } else {
+                let receipt = try await transport.createConnection(
+                    integrationID: "google", requestID: UUID().uuidString.lowercased()
+                )
+                guard generation == sessionGeneration else { return nil }
+                connection = receipt.resource
+                connections.append(connection)
+            }
+            let receipt = try await transport.performConnectionAction(
+                connectionID: connection.id,
+                expectedRevision: connection.revision,
+                action: "connect",
+                returnTo: NoriConfig.oauthCallbackURL,
+                capabilities: capabilities,
+                requestID: UUID().uuidString.lowercased()
+            )
+            guard generation == sessionGeneration else { return nil }
+            if let index = connections.firstIndex(where: { $0.id == connection.id }) {
+                connections[index] = receipt.resource
+            }
+            return receipt.auth
+        } catch {
+            guard generation == sessionGeneration else { return nil }
+            lastError = error.localizedDescription
+            showToast(error.localizedDescription)
+            return nil
+        }
+    }
+
+    public func startGoogleDrivePicker(connectionID: String) async -> AuthAttempt? {
+        let generation = sessionGeneration
+        do {
+            let attempt = try await transport.startGoogleDrivePicker(
+                connectionID: connectionID, returnTo: NoriConfig.oauthCallbackURL
+            )
+            guard generation == sessionGeneration else { return nil }
+            return attempt
+        } catch {
+            guard generation == sessionGeneration else { return nil }
+            lastError = error.localizedDescription
+            showToast(error.localizedDescription)
+            return nil
+        }
+    }
+
+    public func loadGoogleDriveFiles(connectionID: String) async -> [ConnectionResource]? {
+        let generation = sessionGeneration
+        do {
+            let resources = try await transport.fetchConnectionResources(connectionID: connectionID)
+            guard generation == sessionGeneration else { return nil }
+            return resources.filter { $0.kind == "drive_file" }
+        } catch {
+            guard generation == sessionGeneration else { return nil }
+            showToast(error.localizedDescription)
+            return nil
+        }
+    }
+
+    public func disconnectGoogle(connectionID: String) async {
+        let generation = sessionGeneration
+        guard let connection = connections.first(where: { $0.id == connectionID }) else { return }
+        do {
+            let receipt = try await transport.performConnectionAction(
+                connectionID: connectionID,
+                expectedRevision: connection.revision,
+                action: "disconnect",
+                returnTo: nil,
+                requestID: UUID().uuidString.lowercased()
+            )
+            guard generation == sessionGeneration else { return }
+            if let index = connections.firstIndex(where: { $0.id == connectionID }) {
+                connections[index] = receipt.resource
+            }
+            await refreshApps()
+            guard generation == sessionGeneration else { return }
+            if let message = connections.first(where: { $0.id == connectionID })?.health.message, !message.isEmpty {
+                showToast(message)
+            } else {
+                showToast("Disconnected Google")
+            }
+        } catch {
+            guard generation == sessionGeneration else { return }
+            lastError = error.localizedDescription
+            showToast(error.localizedDescription)
         }
     }
 

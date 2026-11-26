@@ -99,6 +99,58 @@ struct AuthAndLiveTransportTests {
         )
     }
 
+    @Test("Google connection requests scoped access and opens the Drive picker for the signed-in user")
+    func googleConnectionRequests() async throws {
+        let urlSession = StubURLProtocol.makeSession()
+        let provider = makeProvider(session: urlSession)
+        await provider.saveSession(AuthSession(
+            idToken: makeFakeJWT(email: "alex@example.com"), refreshToken: "refresh",
+            expiresAt: Date().addingTimeInterval(3_600), email: "alex@example.com"
+        ))
+        defer { StubURLProtocol.setHandler(nil) }
+        StubURLProtocol.setHandler { request in
+            let url = try #require(request.url)
+            if url.path == "/api/users/resolve" {
+                return (httpResponse(url: url, statusCode: 200), Data(#"{"id":"usr-1"}"#.utf8))
+            }
+            #expect(url.path.hasPrefix("/users/usr-1/v1/"))
+            switch url.path {
+            case "/users/usr-1/v1/integrations":
+                return (httpResponse(url: url, statusCode: 200), Data(#"{"items":[{"id":"google","title":"Google","availability":"available"}]}"#.utf8))
+            case "/users/usr-1/v1/connections":
+                let body = try #require(JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any])
+                let value = try #require(body["value"] as? [String: Any])
+                #expect(value["integration_id"] as? String == "google")
+            case "/users/usr-1/v1/connections/conn-google/actions":
+                let body = try #require(JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any])
+                let value = try #require(body["value"] as? [String: Any])
+                #expect(value["return_to"] as? String == "nori://oauth/callback")
+                #expect(value["capabilities"] as? [String] == ["files.read", "files.write"])
+            case "/users/usr-1/v1/connections/conn-google/google-drive/picker":
+                let body = try #require(JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any])
+                #expect(body["return_to"] as? String == "nori://oauth/callback")
+                return (httpResponse(url: url, statusCode: 200), Data(#"{"id":"picker-1","authorize_url":"https://example.com/picker","expires_at":"2026-11-26T00:00:00Z"}"#.utf8))
+            case "/users/usr-1/v1/connections/conn-google/resources":
+                return (httpResponse(url: url, statusCode: 200), Data(#"{"items":[{"ref":{"connection_id":"conn-google","kind":"drive_file","provider_id":"file-1"},"title":"Report","kind":"drive_file","selected":true,"writable":true}]}"#.utf8))
+            default:
+                Issue.record("Unexpected request \(url.path)")
+                return (httpResponse(url: url, statusCode: 404), Data())
+            }
+            let response = #"{"request_id":"req-1","accepted":true,"status":"applied","resource":{"id":"conn-google","revision":1,"integration_id":"google","title":"Google","status":"not_connected","granted_scopes":[],"selected_resource_ids":[],"health":{},"defaults":[]},"auth":{"id":"attempt-1","authorize_url":"https://example.com/oauth","expires_at":"2026-11-26T00:00:00Z"}}"#
+            return (httpResponse(url: url, statusCode: 200), Data(response.utf8))
+        }
+        let transport = LiveNoriTransport(baseURL: URL(string: "https://nori.example")!, authProvider: provider, urlSession: urlSession)
+        #expect(try await transport.fetchIntegrations().first?.id == "google")
+        let created = try await transport.createConnection(integrationID: "google", requestID: "req-1")
+        let connected = try await transport.performConnectionAction(
+            connectionID: created.resource.id, expectedRevision: created.resource.revision, action: "connect",
+            returnTo: "nori://oauth/callback", capabilities: ["files.read", "files.write"], requestID: "req-2"
+        )
+        #expect(connected.auth?.id == "attempt-1")
+        #expect(try await transport.startGoogleDrivePicker(connectionID: created.resource.id, returnTo: "nori://oauth/callback").id == "picker-1")
+        #expect(try await transport.fetchConnectionResources(connectionID: created.resource.id).first?.title == "Report")
+    }
+
     @Test("API costs use the authenticated owner and requested range")
     func apiCostsWireRequest() async throws {
         let urlSession = StubURLProtocol.makeSession()

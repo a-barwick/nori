@@ -117,6 +117,14 @@ All external and built-in tools are represented as sealed `extensions.Definition
 - **Permissions (`internal/permissions`):** Every external call is prepared and checked against explicit `deny` rules, recorded approvals for `(run_id, revision, action_digest)`, matching `allow` rules, and task origin policy. External MCP tools default to `unknown` effect (server annotations are advisory only), so unruled MCP calls open an `approval` interaction card and pause the workflow until the user approves or declines via `POST /v1/interactions/{id}/responses`.
 - **Credential storage (`internal/secret/rowstore`):** Setting `NORI_CREDENTIAL_STORE=database` stores connection and MCP credentials in Postgres encrypted with AES-256-GCM envelope encryption (AAD bound to `owner:connectionID`), wrapped with `NORI_CREDENTIAL_KEY`, `NORI_CREDENTIAL_KEY_SECRET` (AWS Secrets Manager), or `NORI_CREDENTIAL_KEY_FILE` (`NORI_CLOUD=local` only).
 
+### Private Google Workspace testing
+
+1. In a dedicated Google Cloud test project, enable the Calendar, Drive, Picker, Docs, Sheets, and Gmail APIs. In Google Auth Platform, use an external app in **Testing**, list the Google accounts that will grant access, and create a Web application OAuth client. Register `https://<test-web-host>/api/v1/connections/oauth/callback` as an authorized redirect URI. For a loopback Web test, use the exact `http://localhost:<port>` callback URL instead.
+2. Configure `NORI_GOOGLE_WORKSPACE_CLIENT_ID`, `NORI_GOOGLE_WORKSPACE_CLIENT_SECRET`, and `NORI_GOOGLE_WORKSPACE_REDIRECT_URL` on Core. Set `NORI_GOOGLE_WORKSPACE_TEST_USERS` to the comma-separated **Nori sign-in emails** allowed to see the feature. Give API and worker services the same settings and configured Postgres credential encryption. The Web deployment needs its normal authenticated Core route. Keep the Google client secret on Core.
+3. In Nori on Web and iOS, open **More → Apps & MCP → Connect Google**. Enable the services you want to exercise. Use **Choose files** for Google Docs, Sheets, and PDFs. The picker grants access to the files you choose so they can be referenced by name in later requests. Use designated test calendars and email recipients for tests that change or send data. Google Testing grants may expire after seven days. Use the connection's reconnect action to continue testing.
+
+The Google callback uses a signed, expiring OAuth state to reach the correct user when an iOS browser session lacks a Web sign-in cookie. Core still checks the user's stored attempt and PKCE verifier. The picker uses its own `drive.file`-only authorization and the browser callback carries the result status. A Gmail send needs an approval for that specific send, including its recipients, body, and attachments.
+
 ## Managed model context
 
 Saved history is immutable and authoritative. Model requests use bounded derived views maintained at execution boundaries without rewriting messages or task history:

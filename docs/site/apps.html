@@ -9,7 +9,7 @@
 </head>
 <body>
 <h1>Connections and MCP</h1>
-<p class="lede">How Nori registers tools, connects enterprise MCP servers and preserves a provider-agnostic connections port without shipping personal vendor OAuth integrations.</p>
+<p class="lede">How Nori registers tools and connects apps through MCP servers and native integrations.</p>
 <div class="card"><div class="flow">
 <div class="node"><b>Extension registry</b><small>Versioned tool definitions: schema, binding, policy and a content digest.</small></div>
 <div class="arrow">↓ <span class="lbl">definitions, filtered by user state and capability</span></div>
@@ -42,7 +42,7 @@
 <tr><td>Scoped use</td><td>The executor requests credentials for exactly one connection ID. A failed write is never retried on another account.</td></tr>
 <tr><td>Health &amp; disconnect</td><td>Tracks <code>ready</code>, <code>needs_sign_in</code>, <code>needs_more_access</code>, <code>revoked</code>, <code>rate_limited</code>, <code>temporarily_failing</code>, <code>provider_unavailable</code> or <code>credential_store_unavailable</code>. Disconnect closes new calls before revoking.</td></tr>
 </table></div>
-<p class="note">Nori intentionally ships <strong>no built-in personal vendor OAuth connectors</strong> and <strong>no plugin store</strong>. Enterprise deployments plug in internal tools through MCP servers or custom adapters implementing <code>connections.Integration</code> (and <code>invoke.Adapter</code> for execution). Nori also keeps its small internal self-connector (<code>core/internal/connectors/nori</code>) for assistant self-management operations routed through the same permission checks.</p>
+<p class="note">The private Google Workspace beta exposes Google Calendar, user-selected Drive files, and Gmail sending to designated testers. Enterprise deployments plug in internal tools through MCP servers or custom adapters implementing <code>connections.Integration</code> and <code>invoke.Adapter</code>. Nori routes its built-in self-management tools through the same permission checks.</p>
 </section>
 <section><h2>Scripts of tool calls (<code>compose</code>)</h2>
 <p>When a step needs many calls whose results are combined, the task model can send one <code>compose</code> script instead of calling tools one at a time. A script is versioned JSON supporting ordered steps, list iteration with filters, references to earlier results and an output template (up to 64 calls total, at most 8 concurrent).</p>

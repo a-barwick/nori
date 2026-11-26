@@ -45,17 +45,18 @@ func (e *ChooseAccount) Error() string {
 }
 
 type Service struct {
-	Store        state.ResourceStore
-	Credentials  secret.CredentialStore
-	Integrations map[string]Integration
-	order        []string
-	RedirectURL  string
-	UserTimezone string
-	DataResetAt  string
-	Now          func() time.Time
-	Transport    http.RoundTripper
-	Cleanup      []func(ctx context.Context, connectionID string, purgeCache, deleteImported bool) error
-	OnConnected  func(ctx context.Context, connectionID string)
+	Store           state.ResourceStore
+	Credentials     secret.CredentialStore
+	Integrations    map[string]Integration
+	order           []string
+	RedirectURL     string
+	UserTimezone    string
+	DataResetAt     string
+	Now             func() time.Time
+	Transport       http.RoundTripper
+	Cleanup         []func(ctx context.Context, connectionID string, purgeCache, deleteImported bool) error
+	OnConnected     func(ctx context.Context, connectionID string)
+	GoogleWorkspace *GoogleWorkspace
 }
 
 func New(store state.ResourceStore, credentials secret.CredentialStore, redirectURL string, integrations ...Integration) *Service {
@@ -167,6 +168,9 @@ func (s *Service) Records(ctx context.Context) ([]Record, []state.Resource, erro
 			if err := r.Decode(&record); err != nil {
 				return nil, nil, err
 			}
+			if !s.currentConnection(record) {
+				continue
+			}
 			records, resources = append(records, s.lapsed(record, r)), append(resources, r)
 		}
 		if next == "" {
@@ -183,6 +187,9 @@ func (s *Service) record(ctx context.Context, id string) (Record, state.Resource
 	}
 	var record Record
 	err = r.Decode(&record)
+	if err == nil && !s.currentConnection(record) {
+		return Record{}, r, state.ErrNotFound
+	}
 	return s.lapsed(record, r), r, err
 }
 
@@ -200,7 +207,7 @@ func (s *Service) lapsed(record Record, r state.Resource) Record {
 
 func (s *Service) ConnectTarget(ctx context.Context, integrationID, requestID string) (Record, error) {
 	integration := s.Integrations[integrationID]
-	if integration == nil || integration.Info().Auth != "oauth" || integration.OAuth(s.RedirectURL) == nil {
+	if integration == nil || integration.Info().Auth != "oauth" || s.oauthConfig(integration) == nil {
 		return Record{}, ErrNotConfigured
 	}
 	records, _, err := s.Records(ctx)
@@ -335,7 +342,7 @@ func (s *Service) info(integration Integration) Info {
 	if info.Availability == "" {
 		info.Availability = "available"
 	}
-	if info.Auth == "oauth" && integration.OAuth(s.RedirectURL) == nil {
+	if info.Auth == "oauth" && s.oauthConfig(integration) == nil {
 		info.Availability, info.AvailabilityReason = "unavailable", "The provider's app credentials are not configured in this deployment."
 	} else if _, err := s.Credentials.Get(context.Background(), "availability-probe"); errors.Is(err, secret.ErrCredentialUnavailable) && info.Auth != "none" {
 		info.Availability, info.AvailabilityReason = "blocked", "Connected-account credential storage is not configured in this deployment."
@@ -377,6 +384,10 @@ func (s *Service) Create(ctx context.Context, requestID string, value Editable) 
 		return state.MutationReceipt{}, err
 	}
 	id := "conn_" + strings.ReplaceAll(uuid.NewSHA1(uuid.NameSpaceOID, []byte("connection:"+requestID)).String(), "-", "")[:20]
+	singleGoogleAccount := s.GoogleWorkspace != nil && value.IntegrationID == GoogleIntegrationID
+	if singleGoogleAccount {
+		id = googleConnectionID
+	}
 	title := value.Title
 	if title == "" {
 		title = integration.Info().Title
@@ -387,8 +398,16 @@ func (s *Service) Create(ctx context.Context, requestID string, value Editable) 
 		Health: Health{Code: HealthNeedsSignIn, Recovery: "connect"},
 	}
 	receipt, err := s.Store.Mutate(ctx, state.Mutation{
-		RequestID: requestID, Method: "POST", Target: "/v1/connections", Payload: value, Collection: CollectionConnections, ID: id,
+		RequestID: requestID, Method: "POST", Target: "/v1/connections", Payload: value, Collection: CollectionConnections, ID: id, SkipRevisionCheck: singleGoogleAccount,
 		Apply: func(current *state.Resource, _ func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
+			if singleGoogleAccount && current != nil {
+				var existing Record
+				if err := current.Decode(&existing); err != nil {
+					return state.MutationResult{}, err
+				}
+				rc, err := s.receipt(s.lapsed(existing, *current), current.Revision, "applied", prefs)
+				return state.MutationResult{Receipt: rc}, err
+			}
 			r, err := state.NewResource(CollectionConnections, id, 1, record, recordIndex(record), s.now())
 			if err != nil {
 				return state.MutationResult{}, err
@@ -543,7 +562,7 @@ func (s *Service) connect(ctx context.Context, id, requestID string, expected in
 	if password, ok := integration.(PasswordIntegration); ok && integration.Info().Auth == "app_password" {
 		return s.connectPassword(ctx, id, requestID, expected, action, password)
 	}
-	config := integration.OAuth(s.RedirectURL)
+	config := s.oauthConfig(integration)
 	if config == nil {
 		return state.MutationReceipt{}, ErrNotConfigured
 	}
@@ -562,9 +581,12 @@ func (s *Service) connect(ctx context.Context, id, requestID string, expected in
 	}
 	returnTo = SafeReturnTo(returnTo)
 	oauthState, verifier := randomToken(), oauth2.GenerateVerifier()
+	if s.GoogleWorkspace != nil && record.IntegrationID == GoogleIntegrationID {
+		oauthState = s.GoogleWorkspace.signState(oauthState, s.now().Add(attemptLifetime))
+	}
 	attemptRecord := attempt{
 		ID: stateKey(oauthState), ConnectionID: id, IntegrationID: record.IntegrationID, Scopes: scopes, Capabilities: capabilities,
-		Verifier: verifier, ReturnTo: returnTo, ExpiresAt: s.now().Add(attemptLifetime), Status: "pending",
+		Verifier: verifier, ReturnTo: returnTo, ExpiresAt: s.now().Add(attemptLifetime), Status: "pending", AccountEpoch: record.AuthorizationEpoch,
 	}
 	config.Scopes = scopes
 	options := []oauth2.AuthCodeOption{oauth2.AccessTypeOffline, oauth2.S256ChallengeOption(verifier),
@@ -620,6 +642,10 @@ func (s *Service) replay(_ context.Context, saved state.MutationReceipt, m state
 }
 
 func (s *Service) Callback(ctx context.Context, oauthState, code, providerError string) (string, error) {
+	return s.CallbackWithSelection(ctx, oauthState, code, providerError, "")
+}
+
+func (s *Service) CallbackWithSelection(ctx context.Context, oauthState, code, providerError, pickedFiles string) (string, error) {
 	key := stateKey(oauthState)
 	r, err := s.Store.Resource(ctx, CollectionAttempts, key)
 	if errors.Is(err, state.ErrNotFound) {
@@ -631,6 +657,9 @@ func (s *Service) Callback(ctx context.Context, oauthState, code, providerError 
 	var a attempt
 	if err = r.Decode(&a); err != nil {
 		return "", err
+	}
+	if a.DrivePicker {
+		return s.finishDrivePicker(ctx, a, r, code, providerError, pickedFiles)
 	}
 	redirect := func(result string) string {
 		return BuildReturnRedirect(a.ReturnTo, url.Values{"connection": {a.ConnectionID}, "result": {result}})
@@ -668,9 +697,20 @@ func (s *Service) Callback(ctx context.Context, oauthState, code, providerError 
 		return finish("failed", "The sign-in link expired. Start again from Apps.")
 	}
 	integration := s.Integrations[a.IntegrationID]
-	config := integration.OAuth(s.RedirectURL)
+	config := s.oauthConfig(integration)
 	if config == nil {
 		return finish("failed", ErrNotConfigured.Error())
+	}
+	googleBeta := s.GoogleWorkspace != nil && a.IntegrationID == GoogleIntegrationID
+	if googleBeta {
+		claimed, acquired, err := s.claimGoogleAttempt(ctx, a, r)
+		if err != nil {
+			return "", err
+		}
+		if !acquired {
+			return redirect("processing"), nil
+		}
+		r = claimed
 	}
 	config.Scopes = a.Scopes
 	exchange, cancel := context.WithTimeout(s.providerContext(ctx), 20*time.Second)
@@ -685,6 +725,13 @@ func (s *Service) Callback(ctx context.Context, oauthState, code, providerError 
 		return finish("failed", "The account could not be identified.")
 	}
 	granted := grantedScopes(token, a.Scopes)
+	if googleBeta {
+		var allowed bool
+		granted, allowed = googleGrantedScopes(integration, granted)
+		if !allowed {
+			return finish("failed", "Google returned access outside the permissions this connection supports.")
+		}
+	}
 	record, current, err := s.record(ctx, a.ConnectionID)
 	if err != nil {
 		if IsIOSOAuthCallback(a.ReturnTo) {
@@ -695,12 +742,21 @@ func (s *Service) Callback(ctx context.Context, oauthState, code, providerError 
 	if record.Account.ProviderID != "" && record.Account.ProviderID != account.ProviderID {
 		return finish("failed", ErrWrongAccount.Error())
 	}
-	if record.Account.ProviderID == "" {
+	if googleBeta && record.AuthorizationEpoch != a.AccountEpoch {
+		return finish("failed", "The Google connection changed. Start a new sign-in from Apps.")
+	}
+	if !googleBeta && record.Account.ProviderID == "" {
 		if existing, ok := s.sameAccount(ctx, a.IntegrationID, account.ProviderID, a.ConnectionID); ok {
 			return s.mergeSignIn(ctx, a, r, existing, account, integration, token, granted, finish)
 		}
 	}
-	if err = s.storeToken(ctx, a.ConnectionID, token); err != nil {
+	var credentialWrite state.Resource
+	if googleBeta {
+		credentialWrite, err = s.prepareGoogleCredential(ctx, record, token)
+	} else {
+		err = s.storeToken(ctx, a.ConnectionID, token)
+	}
+	if err != nil {
 		reason := "The account's credential could not be saved."
 		if errors.Is(err, secret.ErrCredentialUnavailable) {
 			reason = secret.ErrCredentialUnavailable.Error()
@@ -728,6 +784,9 @@ func (s *Service) Callback(ctx context.Context, oauthState, code, providerError 
 			if record.Status == StatusDisconnecting || record.Status == StatusDisconnected && cur.Revision != current.Revision {
 				return state.MutationResult{}, ErrInvalidAction
 			}
+			if googleBeta && record.AuthorizationEpoch != a.AccountEpoch {
+				return state.MutationResult{}, ErrInvalidAction
+			}
 			now := s.now()
 			record.Account, record.Status, record.GrantedScopes = account, StatusConnected, granted
 			record.Capabilities = s.grantedCapabilities(integration, granted)
@@ -744,11 +803,15 @@ func (s *Service) Callback(ctx context.Context, oauthState, code, providerError 
 			if err != nil {
 				return state.MutationResult{}, err
 			}
-			return s.write(record, cur.Revision+1, "applied", prefs, attemptResource)
+			writes := []state.Resource{attemptResource}
+			if googleBeta {
+				writes = append(writes, credentialWrite)
+			}
+			return s.write(record, cur.Revision+1, "applied", prefs, writes...)
 		},
 	})
 	if err != nil {
-		if IsIOSOAuthCallback(a.ReturnTo) {
+		if googleBeta || IsIOSOAuthCallback(a.ReturnTo) {
 			return finish("failed", "The connection could not be saved.")
 		}
 		return "", err
@@ -1116,6 +1179,10 @@ func (s *Service) finishDisconnect(ctx context.Context, id string, action Action
 	}
 	now := s.now()
 	record.Status, record.GrantedScopes, record.Capabilities = StatusDisconnected, []string{}, []string{}
+	if s.GoogleWorkspace != nil && record.ID == googleConnectionID {
+		record.Account = Account{}
+		record.DesiredScopes, record.SelectedResourceIDs = nil, []string{}
+	}
 	record.Health = Health{CheckedAt: &now, Code: HealthNeedsSignIn, Recovery: "connect", Message: strings.Join(problems, " ")}
 	next, err := state.NewResource(CollectionConnections, id, 0, record, recordIndex(record), now)
 	if err == nil {
@@ -1129,14 +1196,19 @@ func (s *Service) Resources(ctx context.Context, id string) ([]Resource, error) 
 		return nil, err
 	}
 	integration := s.Integrations[grant.Connection.IntegrationID]
-	list, err := integration.Resources(ctx, grant.Client)
+	var list []Resource
+	if s.GoogleWorkspace != nil && grant.Connection.ID == googleConnectionID {
+		list, err = s.googleResources(ctx, grant, integration)
+	} else {
+		list, err = integration.Resources(ctx, grant.Client)
+	}
 	if err != nil {
 		s.ReportFailure(ctx, id, err)
 		return nil, err
 	}
 	for i := range list {
 		list[i].Ref.ConnectionID = id
-		list[i].Selected = slices.Contains(grant.Connection.SelectedResourceIDs, list[i].Ref.ProviderID)
+		list[i].Selected = list[i].Selected || slices.Contains(grant.Connection.SelectedResourceIDs, list[i].Ref.ProviderID)
 	}
 	return list, nil
 }
@@ -1173,7 +1245,7 @@ func (s *Service) Grant(ctx context.Context, id string) (Grant, error) {
 		}
 		return Grant{Connection: record, Revision: r.Revision, Client: password.Client(s.baseClient(), pc.Username, pc.Password)}, nil
 	}
-	config := integration.OAuth(s.RedirectURL)
+	config := s.oauthConfig(integration)
 	if config == nil {
 		return Grant{}, ErrNotConfigured
 	}
@@ -1186,7 +1258,11 @@ func (s *Service) Grant(ctx context.Context, id string) (Grant, error) {
 		return Grant{}, errors.New("stored credential is malformed")
 	}
 	if !token.Valid() {
-		lock, _ := refreshLocks.LoadOrStore(id, &sync.Mutex{})
+		lockID := id
+		if s.GoogleWorkspace != nil && id == googleConnectionID {
+			lockID = s.GoogleWorkspace.UserID + ":" + id
+		}
+		lock, _ := refreshLocks.LoadOrStore(lockID, &sync.Mutex{})
 		mu := lock.(*sync.Mutex)
 		mu.Lock()
 		defer mu.Unlock()
@@ -1202,6 +1278,11 @@ func (s *Service) Grant(ctx context.Context, id string) (Grant, error) {
 				s.ReportFailure(ctx, id, err)
 				return Grant{}, fmt.Errorf("%w: %s", ErrNotConnected, redactOAuth(err))
 			}
+			if s.GoogleWorkspace != nil && id == googleConnectionID {
+				if _, allowed := googleGrantedScopes(integration, grantedScopes(fresh, record.GrantedScopes)); !allowed {
+					return Grant{}, fmt.Errorf("%w: Google returned access outside the permissions this connection supports", ErrNotConnected)
+				}
+			}
 			if fresh.RefreshToken == "" {
 				fresh.RefreshToken = token.RefreshToken
 			}
@@ -1216,6 +1297,15 @@ func (s *Service) Grant(ctx context.Context, id string) (Grant, error) {
 				return Grant{}, err
 			}
 			token = *fresh
+		}
+	}
+	if s.GoogleWorkspace != nil && id == googleConnectionID {
+		latest, _, err := s.record(ctx, id)
+		if err != nil {
+			return Grant{}, err
+		}
+		if usable, _ := usableRecord(latest); !usable || latest.AuthorizationEpoch != record.AuthorizationEpoch {
+			return Grant{}, fmt.Errorf("%w: the Google account changed while getting access", ErrNotConnected)
 		}
 	}
 	client := config.Client(s.providerContext(context.WithoutCancel(ctx)), &token)
@@ -1404,7 +1494,7 @@ func (s *Service) Inventory(ctx context.Context) (extensions.Inventory, error) {
 		}
 		groups := map[string]string{}
 		usable := map[string]bool{}
-		askable := integration.Info().Auth == "oauth" && integration.OAuth(s.RedirectURL) != nil
+		askable := integration.Info().Auth == "oauth" && s.oauthConfig(integration) != nil
 		var groupOrder []string
 		for _, d := range integration.Definitions() {
 			if _, seen := groups[d.Capability]; !seen {

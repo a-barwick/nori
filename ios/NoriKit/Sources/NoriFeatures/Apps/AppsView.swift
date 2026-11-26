@@ -6,11 +6,52 @@ import NoriDesign
 import UIKit
 #endif
 
+private enum GoogleService: String, CaseIterable, Identifiable {
+    case calendar, drive, gmail
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .calendar: return "Google Calendar"
+        case .drive: return "Google Drive"
+        case .gmail: return "Gmail"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .calendar: return "calendar"
+        case .drive: return "folder"
+        case .gmail: return "envelope"
+        }
+    }
+    var capabilities: [String] {
+        switch self {
+        case .calendar: return ["calendar.read", "calendar.write"]
+        case .drive: return ["files.read", "files.write"]
+        case .gmail: return ["mail.send"]
+        }
+    }
+    var disclosure: String {
+        switch self {
+        case .calendar:
+            return "Nori uses your calendar to read and manage the events you request. Relevant event details may be processed by your selected AI model provider."
+        case .drive:
+            return "Nori reads and manages the Google Drive files you select. Relevant file contents may be processed by your selected AI model provider."
+        case .gmail:
+            return "Nori sends the messages you approve, including their recipients and attachments. Relevant message details may be processed by your selected AI model provider."
+        }
+    }
+}
+
 public struct AppsView: View {
     @Bindable private var store: NoriStore
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
     @State private var showingAddMCP = false
     @State private var connectingConnectionID: String?
+    @State private var pendingGoogleService: GoogleService?
+    @State private var isGoogleBusy = false
+    @State private var showingDisconnectGoogle = false
+    @State private var googleDriveFiles: [ConnectionResource] = []
 
     public init(store: NoriStore) {
         self.store = store
@@ -19,6 +60,10 @@ public struct AppsView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
+                if let google = store.integrations.first(where: { $0.id == "google" }) {
+                    googleSection(google)
+                }
+
                 NoriSectionHeader("MCP servers") {
                     Text("\(store.mcpServers.count)")
                         .font(NoriTypography.caption)
@@ -61,16 +106,17 @@ public struct AppsView: View {
                     }
                 }
 
-                if !store.connections.isEmpty {
+                let otherConnections = store.connections.filter { $0.integrationID != "google" }
+                if !otherConnections.isEmpty {
                     NoriSectionHeader("Connections") {
-                        Text("\(store.connections.count)")
+                        Text("\(otherConnections.count)")
                             .font(NoriTypography.caption)
                             .foregroundStyle(NoriColors.ink3)
                     }
 
                     NoriRows {
-                        ForEach(Array(store.connections.enumerated()), id: \.element.id) { index, connection in
-                            let isLast = index == store.connections.count - 1
+                        ForEach(Array(otherConnections.enumerated()), id: \.element.id) { index, connection in
+                            let isLast = index == otherConnections.count - 1
                             let state = connectionHealthDisplay(for: connection)
                             NoriRow(
                                 title: connection.title,
@@ -102,6 +148,10 @@ public struct AppsView: View {
         .background(NoriColors.canvas)
         .refreshable {
             await store.refreshApps()
+            await refreshGoogleDriveFiles()
+        }
+        .task(id: googleConnection?.revision) {
+            await refreshGoogleDriveFiles()
         }
         .navigationTitle("Apps & MCP")
         #if os(iOS)
@@ -129,6 +179,156 @@ public struct AppsView: View {
                 .presentationDragIndicator(.visible)
                 .presentationBackground(NoriColors.sheetBackground)
                 .presentationCornerRadius(NoriRadius.sheet)
+        }
+        .alert("Connect Google", isPresented: Binding(
+            get: { pendingGoogleService != nil },
+            set: { if !$0 { pendingGoogleService = nil } }
+        ), presenting: pendingGoogleService) { service in
+            Button("Continue") { startGoogleOAuth(service) }
+            Button("Cancel", role: .cancel) {}
+        } message: { service in
+            Text(service.disclosure)
+        }
+        .confirmationDialog("Disconnect Google?", isPresented: $showingDisconnectGoogle) {
+            Button("Disconnect", role: .destructive) {
+                guard let connection = googleConnection else { return }
+                Task { await store.disconnectGoogle(connectionID: connection.id) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Nori will lose access to this Google account.")
+        }
+    }
+
+    private var googleConnection: Connection? {
+        store.connections.first { $0.integrationID == "google" && $0.status != .disconnected }
+    }
+
+    @ViewBuilder
+    private func googleSection(_ integration: IntegrationSummary) -> some View {
+        NoriSectionHeader("Google") {
+            if let connection = googleConnection, connection.account != nil {
+                Button("Disconnect") { showingDisconnectGoogle = true }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(NoriColors.accent)
+                    .disabled(isGoogleBusy)
+            }
+        }
+        if let label = googleConnection?.account?.label, !label.isEmpty {
+            Text(label)
+                .font(.system(size: 12.5))
+                .foregroundStyle(NoriColors.ink2)
+                .padding(.bottom, 8)
+        }
+        if integration.availability != "available" {
+            NoriNotice(
+                title: integration.availabilityReason ?? "Google connections are unavailable.",
+                tone: .warning,
+                systemImage: "exclamationmark.triangle.fill"
+            )
+        } else {
+            NoriRows {
+                ForEach(GoogleService.allCases) { service in
+                    let granted = googleServiceIsGranted(service)
+                    NoriRow(
+                        title: service.title,
+                        detail: granted ? "Connected" : nil,
+                        systemImage: service.icon,
+                        iconTone: granted ? .accent : .neutral,
+                        showDivider: service != .gmail
+                    ) {
+                        if service == .drive && granted {
+                            Button("Choose files") { startGoogleDrivePicker() }
+                                .buttonStyle(NoriButtonStyle(.tonal, compact: true))
+                                .disabled(isGoogleBusy)
+                        } else if !granted {
+                            Button("Connect") { pendingGoogleService = service }
+                                .buttonStyle(NoriButtonStyle(.primary, compact: true))
+                                .disabled(isGoogleBusy)
+                        }
+                    }
+                    if service == .drive && granted {
+                        ForEach(googleDriveFiles) { file in
+                            NoriRow(title: file.title, systemImage: "doc", wrapTitle: true)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func googleServiceIsGranted(_ service: GoogleService) -> Bool {
+        guard let connection = googleConnection,
+              connection.status == .connected || connection.status == .needsAttention else { return false }
+        guard connection.health.code != "needs_sign_in", connection.health.code != "revoked" else { return false }
+        let capabilities = Set(connection.capabilities ?? [])
+        return service.capabilities.allSatisfy { capabilities.contains($0) }
+    }
+
+    private func refreshGoogleDriveFiles() async {
+        guard let connection = googleConnection, googleServiceIsGranted(.drive) else {
+            googleDriveFiles = []
+            return
+        }
+        if let files = await store.loadGoogleDriveFiles(connectionID: connection.id) {
+            googleDriveFiles = files
+        }
+    }
+
+    private func startGoogleOAuth(_ service: GoogleService) {
+        guard !isGoogleBusy else { return }
+        isGoogleBusy = true
+        Task {
+            defer { isGoogleBusy = false }
+            guard let attempt = await store.connectGoogle(capabilities: service.capabilities) else { return }
+            await completeGoogleBrowserFlow(attempt, successMessage: "Connected \(service.title)")
+        }
+    }
+
+    private func startGoogleDrivePicker() {
+        guard !isGoogleBusy, let connection = googleConnection else { return }
+        isGoogleBusy = true
+        Task {
+            defer { isGoogleBusy = false }
+            guard let attempt = await store.startGoogleDrivePicker(connectionID: connection.id) else { return }
+            await completeGoogleBrowserFlow(attempt, successMessage: "Google Drive files selected")
+        }
+    }
+
+    private func completeGoogleBrowserFlow(_ attempt: AuthAttempt, successMessage: String) async {
+        guard let url = URL(string: attempt.authorizeURL), url.scheme?.lowercased() == "https" else {
+            store.showToast("Invalid Google sign-in link")
+            return
+        }
+        do {
+            let callback = try await webAuthenticationSession.authenticate(
+                using: url,
+                callback: .customScheme("nori"),
+                preferredBrowserSession: .shared,
+                additionalHeaderFields: [:]
+            )
+            let outcome = Self.parseOAuthCallback(callback)
+            switch outcome.result {
+            case "connected", "drive_files_selected":
+                store.showToast(successMessage)
+            case "cancelled", "canceled":
+                store.showToast("Cancelled")
+            case "failed":
+                store.showToast(outcome.reason ?? "Google connection failed")
+            default:
+                store.showToast("Google connection updated")
+            }
+            await store.refreshApps()
+            await refreshGoogleDriveFiles()
+            await store.refreshSummary()
+        } catch {
+            let nsError = error as NSError
+            if nsError.domain == ASWebAuthenticationSessionErrorDomain,
+               nsError.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
+                store.showToast("Cancelled")
+            } else {
+                store.showToast(error.localizedDescription)
+            }
         }
     }
 
