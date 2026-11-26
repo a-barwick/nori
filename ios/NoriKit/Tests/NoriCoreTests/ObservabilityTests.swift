@@ -181,8 +181,8 @@ final class ObservabilityTests: XCTestCase {
     func testRepliesFinishOnlyTheirMatchingSubmitSpan() async throws {
         let telemetry = SpyTelemetry()
         NoriTelemetryRuntime.configure(telemetry)
-        let transport = FullMockTransport()
-        let store = NoriStore(transport: transport)
+        let transport = MockNoriTransport()
+        let store = NoriStore(transport: transport, authProvider: AuthTokenProvider(tokenStore: InMemoryTokenStore()))
         store.authState = .signedIn(email: "test@example.test")
         defer { store.stopEventStream() }
 
@@ -202,9 +202,7 @@ final class ObservabilityTests: XCTestCase {
             .message(seq: 2, message: Message(id: "second", turnID: secondID, role: .assistant, text: "Reply"))
         ], terminalError: nil)
         store.startEventStream()
-        for _ in 0..<100 where second.finishedStatus == nil {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        await store.waitForEventStreamCompletion()
         XCTAssertNil(first.finishedStatus)
         XCTAssertEqual(second.finishedStatus, .ok)
 
@@ -212,9 +210,7 @@ final class ObservabilityTests: XCTestCase {
             .message(seq: 3, message: Message(id: "first", turnID: firstID, role: .assistant, status: .failed, text: "Failed"))
         ], terminalError: nil)
         store.startEventStream()
-        for _ in 0..<100 where first.finishedStatus == nil {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+        await store.waitForEventStreamCompletion()
         XCTAssertEqual(first.finishedStatus, .error)
         XCTAssertEqual(first.tags["nori.outcome"], "error")
         XCTAssertEqual(second.tags["nori.outcome"], "reply")
@@ -252,7 +248,7 @@ final class ObservabilityTests: XCTestCase {
         }
 
         let authProvider = AuthTokenProvider(
-            keychain: KeychainStore(service: "com.nori.ios.tests.\(UUID().uuidString)"),
+            tokenStore: InMemoryTokenStore(),
             urlSession: session,
             clientID: "test-client-id.apps.googleusercontent.com"
         )

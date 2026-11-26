@@ -159,9 +159,16 @@ public struct ModelsSettingsView: View {
                         get: { selection.chatProfileID ?? "" },
                         set: { id in
                             selection.chatProfileID = id.isEmpty ? nil : id
-                            let supported = profiles.first { $0.id == id }?.supportedReasoning ?? []
+                            let nextProfile = profiles.first { $0.id == id }
+                            let supported = nextProfile?.supportedReasoning ?? []
                             if let effort = selection.chatReasoning, !supported.contains(effort) {
-                                selection.chatReasoning = supported.first
+                                if let defaultEffort = nextProfile?.defaultReasoning,
+                                   !defaultEffort.isEmpty,
+                                   supported.contains(defaultEffort) {
+                                    selection.chatReasoning = defaultEffort
+                                } else {
+                                    selection.chatReasoning = nil
+                                }
                             }
                         }
                     ))
@@ -176,9 +183,16 @@ public struct ModelsSettingsView: View {
                         get: { selection.taskProfileID ?? "" },
                         set: { id in
                             selection.taskProfileID = id.isEmpty ? nil : id
-                            let supported = profiles.first { $0.id == id }?.supportedReasoning ?? []
+                            let nextProfile = profiles.first { $0.id == id }
+                            let supported = nextProfile?.supportedReasoning ?? []
                             if let effort = selection.taskReasoning, !supported.contains(effort) {
-                                selection.taskReasoning = supported.first
+                                if let defaultEffort = nextProfile?.defaultReasoning,
+                                   !defaultEffort.isEmpty,
+                                   supported.contains(defaultEffort) {
+                                    selection.taskReasoning = defaultEffort
+                                } else {
+                                    selection.taskReasoning = nil
+                                }
                             }
                         }
                     ))

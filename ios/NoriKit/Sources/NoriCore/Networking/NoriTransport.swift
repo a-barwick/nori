@@ -2,25 +2,36 @@ import Foundation
 
 public struct NoriFullSnapshot: Sendable, Hashable {
     public var capabilities: Capabilities?
+    public var didLoadCapabilities: Bool
     public var session: Session
     public var workItems: [WorkItem]
+    public var didLoadWorkItems: Bool
     public var interactions: [Interaction]
-    var didLoadWorkItems: Bool
-    var didLoadInteractions: Bool
+    public var didLoadInteractions: Bool
     public var mcpServers: [MCPServer]
+    public var didLoadMCPServers: Bool
     public var mcpTools: [String: [MCPServerTool]]
     public var connections: [Connection]
+    public var didLoadConnections: Bool
     public var libraryItems: [LibraryItem]
+    public var didLoadLibraryItems: Bool
     public var coreMemories: [MemoryFact]
+    public var didLoadCoreMemories: Bool
     public var memoryLogs: [MemoryLog]
+    public var didLoadMemoryLogs: Bool
     public var workingMemory: WorkingMemory
-    var didLoadWorkingMemory: Bool
+    public var didLoadWorkingMemory: Bool
     public var automations: [Automation]
+    public var didLoadAutomations: Bool
     public var goals: [Goal]
+    public var didLoadGoals: Bool
     public var permissions: [PermissionRule]
+    public var didLoadPermissions: Bool
     public var preferences: Preferences
-    var didLoadPreferences: Bool
+    public var didLoadPreferences: Bool
     public var modelKeys: ModelKeysResponse
+    public var didLoadModelKeys: Bool
+    public var partialErrors: [String: String]
 
     public init(
         capabilities: Capabilities? = nil,
@@ -39,36 +50,61 @@ public struct NoriFullSnapshot: Sendable, Hashable {
         permissions: [PermissionRule] = [],
         preferences: Preferences = Preferences(),
         modelKeys: ModelKeysResponse = ModelKeysResponse(),
+        didLoadCapabilities: Bool = true,
         didLoadWorkItems: Bool = true,
         didLoadInteractions: Bool = true,
+        didLoadMCPServers: Bool = true,
+        didLoadConnections: Bool = true,
+        didLoadLibraryItems: Bool = true,
+        didLoadCoreMemories: Bool = true,
+        didLoadMemoryLogs: Bool = true,
         didLoadWorkingMemory: Bool = true,
-        didLoadPreferences: Bool = true
+        didLoadAutomations: Bool = true,
+        didLoadGoals: Bool = true,
+        didLoadPermissions: Bool = true,
+        didLoadPreferences: Bool = true,
+        didLoadModelKeys: Bool = true,
+        partialErrors: [String: String] = [:]
     ) {
         self.capabilities = capabilities
+        self.didLoadCapabilities = didLoadCapabilities
         self.session = session
         self.workItems = workItems
-        self.interactions = interactions
         self.didLoadWorkItems = didLoadWorkItems
+        self.interactions = interactions
         self.didLoadInteractions = didLoadInteractions
         self.mcpServers = mcpServers
+        self.didLoadMCPServers = didLoadMCPServers
         self.mcpTools = mcpTools
         self.connections = connections
+        self.didLoadConnections = didLoadConnections
         self.libraryItems = libraryItems
+        self.didLoadLibraryItems = didLoadLibraryItems
         self.coreMemories = coreMemories
+        self.didLoadCoreMemories = didLoadCoreMemories
         self.memoryLogs = memoryLogs
+        self.didLoadMemoryLogs = didLoadMemoryLogs
         self.workingMemory = workingMemory
         self.didLoadWorkingMemory = didLoadWorkingMemory
         self.automations = automations
+        self.didLoadAutomations = didLoadAutomations
         self.goals = goals
+        self.didLoadGoals = didLoadGoals
         self.permissions = permissions
+        self.didLoadPermissions = didLoadPermissions
         self.preferences = preferences
         self.didLoadPreferences = didLoadPreferences
         self.modelKeys = modelKeys
+        self.didLoadModelKeys = didLoadModelKeys
+        self.partialErrors = partialErrors
     }
 }
 
 public protocol NoriTransport: Sendable {
     func ping() async -> HealthCheckResult
+    func resolveUser(idToken: String, email: String?, name: String?) async throws -> UserResolveOutcome
+    func redeemInvite(idToken: String, inviteCode: String, email: String?, name: String?) async throws -> String
+
     func fetchCapabilities() async throws -> Capabilities
     func fetchAssistantSummary() async throws -> AssistantSummary
     func fetchSession(before cursor: String?) async throws -> Session
@@ -83,10 +119,12 @@ public protocol NoriTransport: Sendable {
 
     func fetchWorkItems(bucket: WorkBucket?) async throws -> [WorkItem]
     func fetchWorkDetail(taskID: String) async throws -> WorkDetail
+    func fetchOperations(connectionID: String?) async throws -> [OperationProjection]
     func stopWork(taskID: String, requestID: String) async throws -> MutationReceipt<WorkItem>
     func continueWork(taskID: String, budgetUSD: Double, requestID: String) async throws -> MutationReceipt<WorkItem>
 
     func fetchInteractions() async throws -> [Interaction]
+    func fetchInteraction(id: String) async throws -> Interaction
     func respondToInteraction(
         id: String,
         expectedRevision: Int,
@@ -152,6 +190,7 @@ public protocol NoriTransport: Sendable {
     func fetchCoreMemories() async throws -> [MemoryFact]
     func fetchMemoryLogs() async throws -> [MemoryLog]
     func fetchWorkingMemory() async throws -> WorkingMemory
+    func searchMemory(query: String, layer: String?, limit: Int) async throws -> MemorySearchResponse
     func createMemory(
         text: String,
         section: String?,
@@ -229,6 +268,30 @@ public protocol NoriTransport: Sendable {
 }
 
 public extension NoriTransport {
+    func resolveUser(idToken: String, email: String?, name: String?) async throws -> UserResolveOutcome {
+        .resolved(userID: "user-default")
+    }
+
+    func redeemInvite(idToken: String, inviteCode: String, email: String?, name: String?) async throws -> String {
+        throw NoriAPIError(message: "Invite redemption is not supported by this transport.")
+    }
+
+    func fetchOperations(connectionID: String? = nil) async throws -> [OperationProjection] {
+        []
+    }
+
+    func fetchInteraction(id: String) async throws -> Interaction {
+        let all = try await fetchInteractions()
+        if let found = all.first(where: { $0.id == id }) {
+            return found
+        }
+        throw NoriAPIError(message: "Interaction not found.", statusCode: 404)
+    }
+
+    func searchMemory(query: String, layer: String? = nil, limit: Int = 20) async throws -> MemorySearchResponse {
+        MemorySearchResponse(items: [], query: query)
+    }
+
     func fetchAPICosts(days: Int) async throws -> APICostResponse {
         throw NoriAPIError(message: "API costs are not supported by this transport.")
     }

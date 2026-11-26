@@ -1,6 +1,5 @@
 import Foundation
 
-
 public struct SSEFrame: Sendable, Hashable {
     public var id: String?
     public var event: String?
@@ -107,7 +106,6 @@ public struct SSEParser: Sendable {
     }
 }
 
-
 public struct PresencePayload: Sendable, Codable, Hashable {
     public var paused: Bool?
     public var conversation: Conversation?
@@ -147,6 +145,27 @@ public enum NoriStreamEvent: Sendable, Hashable {
         }
     }
 
+    private static func decodePayload<T: Decodable>(
+        _ type: T.Type,
+        from data: Data,
+        decoder: JSONDecoder,
+        kind: String,
+        seq: Int?
+    ) -> T? {
+        do {
+            return try decoder.decode(type, from: data)
+        } catch {
+            var tags = NoriErrorDiagnostics.tags(for: error)
+            tags["sse.event"] = kind
+            if let seq {
+                tags["sse.seq"] = String(seq)
+            }
+            NoriLogger.sse.warning("sse.decode_failed", attributes: tags)
+            NoriTelemetryRuntime.shared.captureError(error, category: "sse.decode", tags: tags)
+            return nil
+        }
+    }
+
     public static func decode(from frame: SSEFrame, decoder: JSONDecoder = JSONDecoder()) -> NoriStreamEvent? {
         guard let data = frame.data.data(using: .utf8) else { return nil }
         let kind = frame.event ?? "message"
@@ -155,25 +174,25 @@ public enum NoriStreamEvent: Sendable, Hashable {
         switch kind {
         case "reset":
             struct ResetBody: Decodable { let position: Int }
-            if let body = try? decoder.decode(ResetBody.self, from: data) {
+            if let body = decodePayload(ResetBody.self, from: data, decoder: decoder, kind: kind, seq: seq) {
                 return .reset(position: body.position)
             }
             return .reset(position: seq ?? 0)
         case "message":
             struct MsgBody: Decodable { let message: Message }
-            if let body = try? decoder.decode(MsgBody.self, from: data) {
+            if let body = decodePayload(MsgBody.self, from: data, decoder: decoder, kind: kind, seq: seq) {
                 return .message(seq: seq, message: body.message)
             }
             return .unknown(seq: seq, kind: kind)
         case "task":
             struct TaskBody: Decodable { let run: Run }
-            if let body = try? decoder.decode(TaskBody.self, from: data) {
+            if let body = decodePayload(TaskBody.self, from: data, decoder: decoder, kind: kind, seq: seq) {
                 return .task(seq: seq, run: body.run)
             }
             return .unknown(seq: seq, kind: kind)
         case "result":
             struct ResultBody: Decodable { let result: SavedResult }
-            if let body = try? decoder.decode(ResultBody.self, from: data) {
+            if let body = decodePayload(ResultBody.self, from: data, decoder: decoder, kind: kind, seq: seq) {
                 return .result(seq: seq, result: body.result)
             }
             return .unknown(seq: seq, kind: kind)
@@ -182,17 +201,17 @@ public enum NoriStreamEvent: Sendable, Hashable {
                 let readPosition: ReadPosition
                 enum CodingKeys: String, CodingKey { case readPosition = "read_position" }
             }
-            if let body = try? decoder.decode(ReadPosBody.self, from: data) {
+            if let body = decodePayload(ReadPosBody.self, from: data, decoder: decoder, kind: kind, seq: seq) {
                 return .readPosition(seq: seq, readPosition: body.readPosition)
             }
             return .unknown(seq: seq, kind: kind)
         case "conversation":
-            if let presence = try? decoder.decode(PresencePayload.self, from: data) {
+            if let presence = decodePayload(PresencePayload.self, from: data, decoder: decoder, kind: kind, seq: seq) {
                 return .conversation(seq: seq, presence: presence)
             }
             return .unknown(seq: seq, kind: kind)
         case "presence":
-            if let presence = try? decoder.decode(PresencePayload.self, from: data) {
+            if let presence = decodePayload(PresencePayload.self, from: data, decoder: decoder, kind: kind, seq: seq) {
                 return .presence(presence)
             }
             return .unknown(seq: seq, kind: kind)
@@ -205,15 +224,16 @@ public enum NoriStreamEvent: Sendable, Hashable {
                     case text
                 }
             }
-            if let body = try? decoder.decode(DeltaBody.self, from: data) {
+            if let body = decodePayload(DeltaBody.self, from: data, decoder: decoder, kind: kind, seq: seq) {
                 return .assistantDelta(turnID: body.turnID, text: body.text)
             }
             return .unknown(seq: seq, kind: kind)
         case "memory":
             struct MemBody: Decodable { let ref: String? }
-            let body = try? decoder.decode(MemBody.self, from: data)
+            let body = decodePayload(MemBody.self, from: data, decoder: decoder, kind: kind, seq: seq)
             return .memory(seq: seq, ref: body?.ref)
         default:
+            NoriLogger.sse.info("sse.unknown_event", attributes: ["sse.event": kind])
             return .unknown(seq: seq, kind: kind)
         }
     }

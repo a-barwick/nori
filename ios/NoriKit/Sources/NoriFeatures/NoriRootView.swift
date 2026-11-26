@@ -27,6 +27,7 @@ public struct NoriRootView: View {
     @State private var presentedDocument: DocumentPresentation?
     @State private var hasBackgrounded = false
     @State private var tabRefreshTask: Task<Void, Never>?
+    @State private var resumeTask: Task<Void, Never>?
 
     public init(store: NoriStore) {
         self._store = State(initialValue: store)
@@ -77,12 +78,15 @@ public struct NoriRootView: View {
                 hasBackgrounded = true
                 tabRefreshTask?.cancel()
                 tabRefreshTask = nil
+                resumeTask?.cancel()
+                resumeTask = nil
                 store.pauseForBackground()
             case .active:
                 guard hasBackgrounded else { return }
                 hasBackgrounded = false
                 guard store.authState.isSignedIn else { return }
-                Task {
+                resumeTask?.cancel()
+                resumeTask = Task {
                     await store.resumeFromBackground()
                 }
             case .inactive:
@@ -95,6 +99,8 @@ public struct NoriRootView: View {
             if !isSignedIn {
                 tabRefreshTask?.cancel()
                 tabRefreshTask = nil
+                resumeTask?.cancel()
+                resumeTask = nil
                 didApplyInitialWorkTab = false
                 selectedWorkTabExplicitly = false
             } else if selectedTab != .chat {
@@ -249,6 +255,8 @@ public struct NoriRootView: View {
                                 AppearanceSettingsView()
                             case .account:
                                 AccountSettingsView(store: store)
+                            case .history:
+                                ActionHistoryView(store: store)
                             case .diagnostics:
                                 DiagnosticsSettingsView(store: store)
                             }
@@ -257,6 +265,7 @@ public struct NoriRootView: View {
                 .tabItem {
                     Label("More", systemImage: "ellipsis")
                 }
+                .badge(store.appsAttentionCount > 0 ? "•" : nil)
                 .tag(NoriTab.more)
             }
             .tint(NoriColors.accent)

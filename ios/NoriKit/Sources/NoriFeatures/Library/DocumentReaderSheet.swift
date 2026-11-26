@@ -1,21 +1,11 @@
 import SwiftUI
 import NoriCore
 import NoriDesign
-#if canImport(UniformTypeIdentifiers)
-import UniformTypeIdentifiers
-#endif
 #if canImport(QuickLook)
 import QuickLook
 #endif
 #if canImport(PDFKit)
 import PDFKit
-#endif
-#if canImport(UIKit)
-import UIKit
-private typealias PlatformImage = UIImage
-#elseif canImport(AppKit)
-import AppKit
-private typealias PlatformImage = NSImage
 #endif
 
 public struct DocumentReaderSheet: View {
@@ -30,12 +20,12 @@ public struct DocumentReaderSheet: View {
     @State private var isLoadingFile = false
     @State private var loadedPayload: LibraryFilePayload?
     @State private var fileLoadError: String?
-    @State private var decodedImage: PlatformImage?
+    @State private var decodedImage: DocumentPlatformImage?
     @State private var pdfPageCount: Int?
-    @State private var pdfThumbnail: PlatformImage?
+    @State private var pdfThumbnail: DocumentPlatformImage?
     @State private var tempFileURL: URL?
     @State private var quickLookURL: URL?
-    @State private var tempFileCleanup = TempFileCleanup()
+    @State private var tempFileCleanup = DocumentTempFileCleanup()
     @State private var reloadTrigger = 0
 
     @State private var revisionInstruction = ""
@@ -57,8 +47,8 @@ public struct DocumentReaderSheet: View {
     }
 
     private var effectiveMediaType: String {
-        let payloadType = Self.normalizedMediaType(loadedPayload?.mediaType)
-        let itemType = Self.normalizedMediaType(item?.mediaType)
+        let payloadType = DocumentFileUtilities.normalizedMediaType(loadedPayload?.mediaType)
+        let itemType = DocumentFileUtilities.normalizedMediaType(item?.mediaType)
         if !payloadType.isEmpty && payloadType != "application/octet-stream" {
             return payloadType
         }
@@ -85,8 +75,8 @@ public struct DocumentReaderSheet: View {
 
     private var isTextPayload: Bool {
         guard let payload = loadedPayload, payload.utf8Text != nil else { return false }
-        let mime = Self.normalizedMediaType(payload.mediaType)
-        if Self.isTextMediaType(mime) { return true }
+        let mime = DocumentFileUtilities.normalizedMediaType(payload.mediaType)
+        if DocumentFileUtilities.isTextMediaType(mime) { return true }
         if mime.isEmpty || mime == "application/octet-stream" {
             if let item, item.kind == .document || item.kind == .report || item.kind == .answer {
                 return true
@@ -99,8 +89,8 @@ public struct DocumentReaderSheet: View {
         if isTextPayload, let text = loadedPayload?.utf8Text, !text.isEmpty {
             return text
         }
-        if let body = item?.bodyText, !body.isEmpty {
-            return body
+        if let cached = store.cachedBodyText(for: itemID), !cached.isEmpty {
+            return cached
         }
         if let preview = item?.previewText, !preview.isEmpty {
             return preview
@@ -110,10 +100,10 @@ public struct DocumentReaderSheet: View {
 
     private var isMonospaceText: Bool {
         let mime = effectiveMediaType
-        if Self.isMonospaceMediaType(mime) { return true }
+        if DocumentFileUtilities.isMonospaceMediaType(mime) { return true }
         let candidateName = (loadedPayload?.filename ?? item?.name ?? item?.title ?? "").lowercased()
         let ext = (candidateName as NSString).pathExtension
-        return Self.monospaceExtensions.contains(ext)
+        return DocumentFileUtilities.monospaceExtensions.contains(ext)
     }
 
     private var canRevise: Bool {
@@ -140,10 +130,7 @@ public struct DocumentReaderSheet: View {
     }
 
     private var canCopyContent: Bool {
-        if fullTextContent != nil { return true }
-        if decodedImage != nil { return true }
-        if externalLinkURL != nil { return true }
-        return false
+        fullTextContent != nil || decodedImage != nil || externalLinkURL != nil
     }
 
     public var body: some View {
@@ -189,7 +176,6 @@ public struct DocumentReaderSheet: View {
         }
     }
 
-
     @ViewBuilder
     private var contentBody: some View {
         ScrollView {
@@ -227,7 +213,6 @@ public struct DocumentReaderSheet: View {
         }
     }
 
-
     @ViewBuilder
     private func metadataPills(for item: NoriCore.LibraryItem) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -249,17 +234,38 @@ public struct DocumentReaderSheet: View {
         }
     }
 
-
     @ViewBuilder
     private func documentBodySection(for item: NoriCore.LibraryItem) -> some View {
         if let image = decodedImage {
-            imageBodyCard(image: image, item: item)
+            DocumentImageCard(
+                image: image,
+                title: item.title,
+                filename: displayFilename(for: item),
+                canQuickLook: tempFileURL != nil,
+                onQuickLook: openQuickLookIfAvailable
+            )
         } else if isPDFItem, loadedPayload != nil {
-            pdfBodyCard(item: item)
+            DocumentPDFCard(
+                thumbnail: pdfThumbnail,
+                filename: displayFilename(for: item),
+                subtitle: pdfSubtitle(for: item),
+                canQuickLook: tempFileURL != nil,
+                onQuickLook: openQuickLookIfAvailable
+            )
         } else if loadedPayload != nil && !isTextPayload {
-            binaryBodyCard(item: item)
+            DocumentBinaryCard(
+                iconName: DocumentFileUtilities.fileIconName(for: effectiveMediaType),
+                filename: displayFilename(for: item),
+                subtitle: binarySubtitle(for: item),
+                canQuickLook: tempFileURL != nil,
+                onQuickLook: openQuickLookIfAvailable
+            )
         } else if let text = fullTextContent {
-            textBodyCard(text: text, item: item)
+            DocumentTextCard(
+                text: text,
+                isLoadingFull: isLoadingFile && loadedPayload == nil,
+                isMonospace: isMonospaceText
+            )
         } else if isLoadingFile {
             NoriCard(padding: 24) {
                 VStack(spacing: 10) {
@@ -293,184 +299,12 @@ public struct DocumentReaderSheet: View {
     }
 
     @ViewBuilder
-    private func textBodyCard(text: String, item: NoriCore.LibraryItem) -> some View {
-        NoriCard(padding: 16) {
-            VStack(alignment: .leading, spacing: 10) {
-                if isLoadingFile && loadedPayload == nil {
-                    HStack(spacing: 6) {
-                        ProgressView()
-                            .controlSize(.mini)
-                        Text("Loading full document…")
-                            .font(NoriTypography.caption)
-                            .foregroundStyle(NoriColors.ink3)
-                    }
-                }
-                if isMonospaceText {
-                    ScrollView(.horizontal, showsIndicators: true) {
-                        Text(text)
-                            .font(NoriTypography.monoSmall)
-                            .foregroundStyle(NoriColors.ink)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-        .tint(NoriColors.accent)
-                    }
-                } else {
-                    MarkdownBlocksView(markdown: text)
-                        .textSelection(.enabled)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func imageBodyCard(image: PlatformImage, item: NoriCore.LibraryItem) -> some View {
-        NoriCard(padding: 12) {
-            VStack(alignment: .leading, spacing: 10) {
-                Button {
-                    openQuickLookIfAvailable()
-                } label: {
-                    Self.swiftUIImage(from: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: .infinity, maxHeight: 460)
-                        .clipShape(RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                                .strokeBorder(NoriColors.hairline, lineWidth: 1)
-                        )
-                }
-                .buttonStyle(.plain)
-                .disabled(tempFileURL == nil)
-                .accessibilityLabel("Preview \(item.title) full screen")
-
-                HStack(spacing: 8) {
-                    Text(displayFilename(for: item))
-                        .font(NoriTypography.caption)
-                        .foregroundStyle(NoriColors.ink2)
-                        .lineLimit(1)
-                    Spacer(minLength: 8)
-                    #if canImport(QuickLook)
-                    if tempFileURL != nil {
-                        Button {
-                            openQuickLookIfAvailable()
-                        } label: {
-                            Label("Zoom", systemImage: "arrow.up.left.and.arrow.down.right")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(NoriColors.accent)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    #endif
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func pdfBodyCard(item: NoriCore.LibraryItem) -> some View {
-        NoriCard(padding: 14) {
-            VStack(alignment: .leading, spacing: 12) {
-                if let thumbnail = pdfThumbnail {
-                    Button {
-                        openQuickLookIfAvailable()
-                    } label: {
-                        Self.swiftUIImage(from: thumbnail)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxWidth: .infinity, maxHeight: 380)
-                            .background(Color.white)
-                            .clipShape(RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                                    .strokeBorder(NoriColors.hairline, lineWidth: 1)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(tempFileURL == nil)
-                    .accessibilityLabel("Open PDF preview")
-                }
-
-                HStack(spacing: 12) {
-                    Image(systemName: "doc.richtext.fill")
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundStyle(NoriColors.accent)
-                        .frame(width: 42, height: 42)
-                        .background(NoriColors.accentSubtle, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(displayFilename(for: item))
-                            .font(NoriTypography.rowTitle)
-                            .foregroundStyle(NoriColors.ink)
-                            .lineLimit(1)
-                        Text(pdfSubtitle(for: item))
-                            .font(NoriTypography.caption)
-                            .foregroundStyle(NoriColors.ink2)
-                    }
-
-                    Spacer(minLength: 8)
-                }
-
-                #if canImport(QuickLook)
-                if tempFileURL != nil {
-                    Button {
-                        openQuickLookIfAvailable()
-                    } label: {
-                        Label("Open PDF", systemImage: "eye")
-                    }
-                    .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
-                }
-                #endif
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func binaryBodyCard(item: NoriCore.LibraryItem) -> some View {
-        NoriCard(padding: 16) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 12) {
-                    Image(systemName: fileIconName(for: effectiveMediaType))
-                        .font(.system(size: 22, weight: .medium))
-                        .foregroundStyle(NoriColors.accent)
-                        .frame(width: 46, height: 46)
-                        .background(NoriColors.accentSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(displayFilename(for: item))
-                            .font(NoriTypography.rowTitle)
-                            .foregroundStyle(NoriColors.ink)
-                            .lineLimit(2)
-
-                        Text(binarySubtitle(for: item))
-                            .font(NoriTypography.caption)
-                            .foregroundStyle(NoriColors.ink2)
-                    }
-
-                    Spacer(minLength: 8)
-                }
-
-                #if canImport(QuickLook)
-                if tempFileURL != nil {
-                    Button {
-                        openQuickLookIfAvailable()
-                    } label: {
-                        Label("Quick Look", systemImage: "eye")
-                    }
-                    .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
-                }
-                #endif
-            }
-        }
-    }
-
-
-    @ViewBuilder
     private func quickActionsRow(for item: NoriCore.LibraryItem) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
                 if canCopyContent {
                     Button {
-                        copyCurrentContent(for: item)
+                        copyCurrentContent()
                     } label: {
                         Label("Copy", systemImage: "doc.on.doc")
                     }
@@ -536,7 +370,6 @@ public struct DocumentReaderSheet: View {
             .background(NoriColors.fill1, in: Circle())
     }
 
-
     @ViewBuilder
     private func revisionSection(for item: NoriCore.LibraryItem) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -546,7 +379,7 @@ public struct DocumentReaderSheet: View {
                 NoriCard(
                     padding: 12,
                     backgroundColor: NoriColors.accentSubtle,
-                    borderColor: NoriColors.accentMuted
+                    borderColor: NoriColors.accentBorder
                 ) {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(alignment: .top, spacing: 10) {
@@ -588,7 +421,7 @@ public struct DocumentReaderSheet: View {
                     .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                            .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                            .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
                     )
                     .onSubmit { submitRevision(for: item) }
 
@@ -606,7 +439,6 @@ public struct DocumentReaderSheet: View {
             }
         }
     }
-
 
     private func loadDocument() async {
         if loadedItemID != itemID {
@@ -654,17 +486,17 @@ public struct DocumentReaderSheet: View {
     }
 
     private func processLoadedPayload(_ payload: LibraryFilePayload, for item: NoriCore.LibraryItem) {
-        let mime = Self.normalizedMediaType(payload.mediaType)
+        let mime = DocumentFileUtilities.normalizedMediaType(payload.mediaType)
         let effective = (!mime.isEmpty && mime != "application/octet-stream")
             ? mime
-            : Self.normalizedMediaType(item.mediaType)
+            : DocumentFileUtilities.normalizedMediaType(item.mediaType)
 
         decodedImage = nil
         pdfPageCount = nil
         pdfThumbnail = nil
 
         if effective.hasPrefix("image/") || item.kind == .screenshot {
-            decodedImage = PlatformImage(data: payload.data)
+            decodedImage = DocumentPlatformImage(data: payload.data)
         }
 
         #if canImport(PDFKit)
@@ -681,7 +513,7 @@ public struct DocumentReaderSheet: View {
             || effective.hasPrefix("image/")
             || item.kind == .file
             || item.kind == .screenshot
-            || !Self.isTextMediaType(effective)
+            || !DocumentFileUtilities.isTextMediaType(effective)
 
         if needsTempFile, !payload.data.isEmpty {
             writeTempFile(data: payload.data, payloadFilename: payload.filename, mediaType: effective, item: item)
@@ -697,7 +529,7 @@ public struct DocumentReaderSheet: View {
         mediaType: String,
         item: NoriCore.LibraryItem
     ) {
-        let filename = Self.resolvedFilename(
+        let filename = DocumentFileUtilities.resolvedFilename(
             payloadFilename: payloadFilename,
             itemName: item.name,
             itemTitle: item.title,
@@ -730,9 +562,7 @@ public struct DocumentReaderSheet: View {
         Task {
             let result = await store.reviseDocument(itemID: item.id, instruction: trimmed)
             isRevising = false
-            guard let result else {
-                return
-            }
+            guard let result else { return }
             revisionInstruction = ""
             if result.isQueued {
                 queuedRevision = result
@@ -746,37 +576,18 @@ public struct DocumentReaderSheet: View {
         }
     }
 
-    private func copyCurrentContent(for item: NoriCore.LibraryItem) {
+    private func copyCurrentContent() {
         if let text = fullTextContent {
-            copyTextToClipboard(text)
+            DocumentFileUtilities.copyTextToClipboard(text)
             store.showToast("Copied to clipboard")
         } else if let image = decodedImage {
-            copyImageToClipboard(image)
+            DocumentFileUtilities.copyImageToClipboard(image)
             store.showToast("Image copied to clipboard")
         } else if let url = externalLinkURL {
-            copyTextToClipboard(url.absoluteString)
+            DocumentFileUtilities.copyTextToClipboard(url.absoluteString)
             store.showToast("Link copied to clipboard")
         }
     }
-
-    private func copyTextToClipboard(_ text: String) {
-        #if canImport(UIKit)
-        UIPasteboard.general.string = text
-        #elseif canImport(AppKit)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        #endif
-    }
-
-    private func copyImageToClipboard(_ image: PlatformImage) {
-        #if canImport(UIKit)
-        UIPasteboard.general.image = image
-        #elseif canImport(AppKit)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.writeObjects([image])
-        #endif
-    }
-
 
     private func shareableText(for item: NoriCore.LibraryItem) -> String {
         if let text = fullTextContent, !text.isEmpty {
@@ -789,7 +600,7 @@ public struct DocumentReaderSheet: View {
     }
 
     private func displayFilename(for item: NoriCore.LibraryItem) -> String {
-        Self.resolvedFilename(
+        DocumentFileUtilities.resolvedFilename(
             payloadFilename: loadedPayload?.filename,
             itemName: item.name,
             itemTitle: item.title,
@@ -824,332 +635,11 @@ public struct DocumentReaderSheet: View {
     private func binarySubtitle(for item: NoriCore.LibraryItem) -> String {
         var parts: [String] = []
         if !effectiveMediaType.isEmpty {
-            parts.append(Self.friendlyTypeLabel(for: effectiveMediaType))
+            parts.append(DocumentFileUtilities.friendlyTypeLabel(for: effectiveMediaType))
         }
         if let size = formattedSizeLabel(for: item) {
             parts.append(size)
         }
         return parts.isEmpty ? "Binary file" : parts.joined(separator: " · ")
-    }
-
-    private func fileIconName(for mediaType: String) -> String {
-        if mediaType == "application/pdf" { return "doc.richtext.fill" }
-        if mediaType.hasPrefix("image/") { return "photo" }
-        if mediaType.hasPrefix("audio/") { return "waveform" }
-        if mediaType.hasPrefix("video/") { return "film" }
-        if mediaType.contains("spreadsheet") || mediaType.contains("excel") || mediaType == "text/csv" {
-            return "tablecells"
-        }
-        if mediaType.contains("presentation") || mediaType.contains("powerpoint") {
-            return "rectangle.on.rectangle"
-        }
-        if mediaType.contains("zip") || mediaType.contains("archive") || mediaType.contains("gzip") {
-            return "doc.zipper"
-        }
-        return "doc.fill"
-    }
-
-    private static func swiftUIImage(from platformImage: PlatformImage) -> Image {
-        #if canImport(UIKit)
-        Image(uiImage: platformImage)
-        #elseif canImport(AppKit)
-        Image(nsImage: platformImage)
-        #endif
-    }
-
-    private static func normalizedMediaType(_ raw: String?) -> String {
-        guard let raw else { return "" }
-        return raw
-            .split(separator: ";")
-            .first?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased() ?? ""
-    }
-
-    private static func isTextMediaType(_ mime: String) -> Bool {
-        if mime.hasPrefix("text/") { return true }
-        switch mime {
-        case "application/json",
-             "application/xml",
-             "application/javascript",
-             "application/typescript",
-             "application/yaml",
-             "application/x-yaml",
-             "application/toml",
-             "application/sql",
-             "application/x-sh":
-            return true
-        default:
-            return mime.hasSuffix("+json") || mime.hasSuffix("+xml")
-        }
-    }
-
-    private static func isMonospaceMediaType(_ mime: String) -> Bool {
-        switch mime {
-        case "text/csv",
-             "text/tab-separated-values",
-             "text/html",
-             "text/css",
-             "text/javascript",
-             "text/xml",
-             "application/json",
-             "application/xml",
-             "application/javascript",
-             "application/typescript",
-             "application/yaml",
-             "application/x-yaml",
-             "application/toml",
-             "application/sql",
-             "application/x-sh":
-            return true
-        default:
-            return mime.hasPrefix("text/x-") || mime.hasSuffix("+json") || mime.hasSuffix("+xml")
-        }
-    }
-
-    private static let monospaceExtensions: Set<String> = [
-        "csv", "tsv", "json", "jsonl", "xml", "yaml", "yml", "toml",
-        "swift", "py", "go", "js", "ts", "tsx", "jsx", "rs", "c", "cpp", "h",
-        "java", "kt", "rb", "sh", "zsh", "bash", "sql", "html", "css", "log"
-    ]
-
-    private static func friendlyTypeLabel(for mime: String) -> String {
-        switch mime {
-        case "application/pdf": return "PDF Document"
-        case "application/zip": return "ZIP Archive"
-        case "application/vnd.openxmlformats-officedocument.wordprocessingml.document": return "Word Document"
-        case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": return "Spreadsheet"
-        case "application/vnd.openxmlformats-officedocument.presentationml.presentation": return "Presentation"
-        case "image/svg+xml": return "SVG Image"
-        default:
-            #if canImport(UniformTypeIdentifiers)
-            if let utType = UTType(mimeType: mime), let description = utType.localizedDescription, !description.isEmpty {
-                return description
-            }
-            #endif
-            return mime
-        }
-    }
-
-    private static func resolvedFilename(
-        payloadFilename: String?,
-        itemName: String?,
-        itemTitle: String,
-        mediaType: String
-    ) -> String {
-        let rawCandidate = [payloadFilename, itemName, itemTitle]
-            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .first(where: { !$0.isEmpty }) ?? "document"
-
-        let lastComponent = (rawCandidate as NSString).lastPathComponent
-        let sanitized = sanitizeFilename(lastComponent)
-        let base = sanitized.isEmpty ? "document" : sanitized
-
-        let existingExt = (base as NSString).pathExtension
-        if !existingExt.isEmpty {
-            return base
-        }
-        if let ext = preferredExtension(for: mediaType), !ext.isEmpty {
-            return "\(base).\(ext)"
-        }
-        return base
-    }
-
-    private static func sanitizeFilename(_ raw: String) -> String {
-        let forbidden = CharacterSet(charactersIn: "/\\:*?\"<>|\r\n\t")
-        let cleaned = raw.unicodeScalars.map { scalar -> Character in
-            if forbidden.contains(scalar) || scalar.value < 32 {
-                return "_"
-            }
-            return Character(scalar)
-        }
-        let result = String(cleaned)
-            .trimmingCharacters(in: CharacterSet(charactersIn: ". "))
-        if result.count > 100 {
-            return String(result.prefix(100))
-        }
-        return result
-    }
-
-    private static func preferredExtension(for mime: String) -> String? {
-        switch mime {
-        case "application/pdf": return "pdf"
-        case "image/png": return "png"
-        case "image/jpeg": return "jpg"
-        case "image/webp": return "webp"
-        case "image/gif": return "gif"
-        case "image/heic": return "heic"
-        case "image/svg+xml": return "svg"
-        case "text/markdown", "text/x-markdown": return "md"
-        case "text/csv": return "csv"
-        case "text/plain": return "txt"
-        case "text/html": return "html"
-        case "application/json": return "json"
-        case "application/zip": return "zip"
-        case "application/vnd.openxmlformats-officedocument.wordprocessingml.document": return "docx"
-        case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": return "xlsx"
-        case "application/vnd.openxmlformats-officedocument.presentationml.presentation": return "pptx"
-        default:
-            #if canImport(UniformTypeIdentifiers)
-            return UTType(mimeType: mime)?.preferredFilenameExtension
-            #else
-            return nil
-            #endif
-        }
-    }
-}
-
-
-private final class TempFileCleanup: @unchecked Sendable {
-    private let lock = NSLock()
-    private var directories: [URL] = []
-
-    func replace(with newDirectory: URL) {
-        let previous: [URL]
-        lock.lock()
-        previous = directories
-        directories = [newDirectory]
-        lock.unlock()
-
-        for dir in previous {
-            try? FileManager.default.removeItem(at: dir)
-        }
-    }
-
-    func clearAll() {
-        let existing: [URL]
-        lock.lock()
-        existing = directories
-        directories.removeAll()
-        lock.unlock()
-
-        for dir in existing {
-            try? FileManager.default.removeItem(at: dir)
-        }
-    }
-
-    deinit {
-        clearAll()
-    }
-}
-
-
-private struct MarkdownBlocksView: View {
-    let markdown: String
-
-    private enum Block: Hashable {
-        case spacer
-        case heading(level: Int, text: String)
-        case bullet(text: String)
-        case code(String)
-        case rule
-        case paragraph(String)
-    }
-
-    private var blocks: [Block] {
-        var result: [Block] = []
-        let lines = markdown.components(separatedBy: .newlines)
-        var inCodeFence = false
-        var codeLines: [String] = []
-
-        for rawLine in lines {
-            let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("```") {
-                if inCodeFence {
-                    result.append(.code(codeLines.joined(separator: "\n")))
-                    codeLines.removeAll()
-                    inCodeFence = false
-                } else {
-                    inCodeFence = true
-                }
-                continue
-            }
-
-            if inCodeFence {
-                codeLines.append(rawLine)
-                continue
-            }
-
-            if trimmed.isEmpty {
-                result.append(.spacer)
-            } else if trimmed == "---" || trimmed == "***" || trimmed == "___" {
-                result.append(.rule)
-            } else if trimmed.hasPrefix("### ") {
-                result.append(.heading(level: 3, text: String(trimmed.dropFirst(4))))
-            } else if trimmed.hasPrefix("## ") {
-                result.append(.heading(level: 2, text: String(trimmed.dropFirst(3))))
-            } else if trimmed.hasPrefix("# ") {
-                result.append(.heading(level: 1, text: String(trimmed.dropFirst(2))))
-            } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
-                result.append(.bullet(text: String(trimmed.dropFirst(2))))
-            } else {
-                result.append(.paragraph(trimmed))
-            }
-        }
-
-        if inCodeFence && !codeLines.isEmpty {
-            result.append(.code(codeLines.joined(separator: "\n")))
-        }
-
-        return result
-    }
-
-    var body: some View {
-        LazyVStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                switch block {
-                case .spacer:
-                    Spacer().frame(height: 2)
-                case .rule:
-                    Rectangle()
-                        .fill(NoriColors.hairline)
-                        .frame(height: 1)
-                        .padding(.vertical, 4)
-                case .heading(let level, let text):
-                    inlineMarkdownText(text)
-                        .font(.system(size: level == 1 ? 18 : (level == 2 ? 16.5 : 15), weight: .bold))
-                        .foregroundStyle(NoriColors.ink)
-                        .padding(.top, level == 1 ? 0 : 4)
-                case .bullet(let text):
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("•")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(NoriColors.accent)
-                        inlineMarkdownText(text)
-                            .font(.system(size: 14))
-                            .foregroundStyle(NoriColors.ink)
-                            .lineSpacing(3)
-                    }
-                case .code(let code):
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        Text(code)
-                            .font(NoriTypography.monoSmall)
-                            .foregroundStyle(NoriColors.ink)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-        .tint(NoriColors.accent)
-                    }
-                    .padding(10)
-                    .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous)
-                            .strokeBorder(NoriColors.hairline, lineWidth: 1)
-                    )
-                case .paragraph(let text):
-                    inlineMarkdownText(text)
-                        .font(.system(size: 14))
-                        .foregroundStyle(NoriColors.ink)
-                        .lineSpacing(3)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .tint(NoriColors.accent)
-    }
-
-    private func inlineMarkdownText(_ source: String) -> Text {
-        if let attributed = try? AttributedString(markdown: source) {
-            return Text(attributed)
-        }
-        return Text(source)
     }
 }

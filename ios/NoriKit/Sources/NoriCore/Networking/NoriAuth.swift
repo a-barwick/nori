@@ -2,18 +2,36 @@ import CryptoKit
 import Foundation
 import Security
 
-
 public enum NoriConfig {
-    public static let serverURL = URL(string: "https://nori-core-8273801370.us-central1.run.app")!
+    private static func makeSafeURL(host: String) -> URL {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = host
+        return components.url ?? URL(fileURLWithPath: "/")
+    }
 
-    public static var webURL: URL {
-        if let raw = (Bundle.main.object(forInfoDictionaryKey: "NORI_WEB_URL") as? String)?
+    private static let defaultServerURL = makeSafeURL(host: "nori-core-8273801370.us-central1.run.app")
+    private static let defaultWebURL = makeSafeURL(host: "nori-docs-elaoqxqkuq-uc.a.run.app")
+
+    private static func configuredURL(infoKey: String, fallback: URL) -> URL {
+        if let raw = (Bundle.main.object(forInfoDictionaryKey: infoKey) as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !raw.isEmpty,
-           let url = URL(string: raw) {
+           let url = URL(string: raw),
+           let scheme = url.scheme?.lowercased(),
+           (scheme == "https" || scheme == "http"),
+           url.host != nil {
             return url
         }
-        return URL(string: "https://nori-docs-elaoqxqkuq-uc.a.run.app")!
+        return fallback
+    }
+
+    public static var serverURL: URL {
+        configuredURL(infoKey: "NORI_SERVER_URL", fallback: defaultServerURL)
+    }
+
+    public static var webURL: URL {
+        configuredURL(infoKey: "NORI_WEB_URL", fallback: defaultWebURL)
     }
 
     public static func legalURL(path: String) -> URL {
@@ -39,7 +57,6 @@ public enum NoriConfig {
         "\(reversedClientIDScheme(for: clientID)):/oauth2redirect"
     }
 }
-
 
 public enum AuthState: Sendable, Equatable {
     case signedOut
@@ -75,6 +92,11 @@ public struct AuthSession: Codable, Sendable, Equatable {
     }
 }
 
+public enum UserResolveOutcome: Sendable, Equatable {
+    case resolved(userID: String)
+    case inviteRequired(message: String)
+    case forbidden(message: String)
+}
 
 public struct GoogleOAuthPKCE: Sendable {
     public let clientID: String
@@ -83,7 +105,14 @@ public struct GoogleOAuthPKCE: Sendable {
     public let codeVerifier: String
     public let codeChallenge: String
     public let state: String
-    private let preexchangedSession: AuthSession?
+
+    private static let tokenEndpointURL: URL = {
+        var c = URLComponents()
+        c.scheme = "https"
+        c.host = "oauth2.googleapis.com"
+        c.path = "/token"
+        return c.url ?? URL(fileURLWithPath: "/")
+    }()
 
     public init(clientID: String = NoriConfig.googleOAuthClientID) {
         self.clientID = clientID
@@ -94,47 +123,20 @@ public struct GoogleOAuthPKCE: Sendable {
         let digest = SHA256.hash(data: Data(verifier.utf8))
         self.codeChallenge = Self.base64URL(Data(digest))
         self.state = Self.randomBase64URL(byteCount: 16)
-        self.preexchangedSession = nil
-    }
-
-    private init(
-        clientID: String,
-        redirectScheme: String,
-        redirectURI: String,
-        codeVerifier: String,
-        codeChallenge: String,
-        state: String,
-        preexchangedSession: AuthSession?
-    ) {
-        self.clientID = clientID
-        self.redirectScheme = redirectScheme
-        self.redirectURI = redirectURI
-        self.codeVerifier = codeVerifier
-        self.codeChallenge = codeChallenge
-        self.state = state
-        self.preexchangedSession = preexchangedSession
-    }
-
-    public func withExchangedSession(_ session: AuthSession) -> GoogleOAuthPKCE {
-        GoogleOAuthPKCE(
-            clientID: clientID,
-            redirectScheme: redirectScheme,
-            redirectURI: redirectURI,
-            codeVerifier: codeVerifier,
-            codeChallenge: codeChallenge,
-            state: state,
-            preexchangedSession: session
-        )
     }
 
     public func authorizationURL() throws -> URL {
         guard !clientID.isEmpty, !clientID.contains("REPLACE_WITH") else {
             throw NoriAPIError(
-                message: "Google Sign-In is not configured yet. Set GOOGLE_OAUTH_CLIENT_ID in Info.plist.",
-                statusCode: 0
+                message: "Google Sign-In is unavailable in this build. Please update or reinstall Nori.",
+                statusCode: 0,
+                code: "oauth_not_configured"
             )
         }
-        var components = URLComponents(string: "https://accounts.google.com/o/oauth2/v2/auth")!
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "accounts.google.com"
+        components.path = "/o/oauth2/v2/auth"
         components.queryItems = [
             URLQueryItem(name: "client_id", value: clientID),
             URLQueryItem(name: "redirect_uri", value: redirectURI),
@@ -154,28 +156,40 @@ public struct GoogleOAuthPKCE: Sendable {
 
     public func extractAuthorizationCode(from callbackURL: URL) throws -> String {
         guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false) else {
-            throw NoriAPIError(message: "Invalid OAuth callback URL.")
+            throw NoriAPIError(message: "Invalid OAuth callback URL.", statusCode: 400, code: "invalid_oauth_callback")
         }
-        let items = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).compactMap { item in
-            item.value.map { (item.name, $0) }
-        })
-        if let err = items["error"] {
+        var values: [String: String] = [:]
+        var seenKeys: Set<String> = []
+        let strictSingleKeys: Set<String> = ["state", "code", "error"]
+        for item in components.queryItems ?? [] {
+            if strictSingleKeys.contains(item.name) {
+                if !seenKeys.insert(item.name).inserted {
+                    throw NoriAPIError(
+                        message: "Invalid OAuth callback URL: duplicate \(item.name) parameter.",
+                        statusCode: 400,
+                        code: "duplicate_oauth_param",
+                        retryable: false
+                    )
+                }
+            }
+            if let value = item.value {
+                values[item.name] = value
+            }
+        }
+        if let err = values["error"] {
             throw NoriAPIError(message: err == "access_denied" ? "Sign-in was cancelled." : "Google Sign-In failed (\(err)).")
         }
-        guard items["state"] == state else {
+        guard values["state"] == state else {
             throw NoriAPIError(message: "OAuth state verification failed. Please try again.")
         }
-        guard let code = items["code"], !code.isEmpty else {
+        guard let code = values["code"], !code.isEmpty else {
             throw NoriAPIError(message: "Missing authorization code from Google.")
         }
         return code
     }
 
     public func exchangeCode(_ code: String, session: URLSession = .shared) async throws -> AuthSession {
-        if let preexchangedSession {
-            return preexchangedSession
-        }
-        var req = URLRequest(url: URL(string: "https://oauth2.googleapis.com/token")!)
+        var req = URLRequest(url: Self.tokenEndpointURL)
         req.httpMethod = "POST"
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         req.httpBody = Self.formEncode([
@@ -197,13 +211,13 @@ public struct GoogleOAuthPKCE: Sendable {
     ) async throws -> AuthSession {
         guard !clientID.isEmpty else {
             throw NoriAPIError(
-                message: "Google Sign-In client ID is missing.",
+                message: "Google Sign-In is unavailable in this build. Please update or reinstall Nori.",
                 statusCode: 0,
                 code: "missing_client_id",
                 retryable: false
             )
         }
-        var req = URLRequest(url: URL(string: "https://oauth2.googleapis.com/token")!)
+        var req = URLRequest(url: tokenEndpointURL)
         req.httpMethod = "POST"
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         req.httpBody = formEncode([
@@ -318,7 +332,14 @@ public struct GoogleOAuthPKCE: Sendable {
 
     private static func randomBase64URL(byteCount: Int) -> String {
         var bytes = [UInt8](repeating: 0, count: byteCount)
-        _ = SecRandomCopyBytes(kSecRandomDefault, byteCount, &bytes)
+        let status = SecRandomCopyBytes(kSecRandomDefault, byteCount, &bytes)
+        if status != errSecSuccess {
+            NoriLogger.auth.error("auth.sec_random_failed", attributes: ["osstatus": String(status)])
+            var rng = SystemRandomNumberGenerator()
+            for index in bytes.indices {
+                bytes[index] = UInt8.random(in: .min ... .max, using: &rng)
+            }
+        }
         return base64URL(Data(bytes))
     }
 
@@ -330,21 +351,39 @@ public struct GoogleOAuthPKCE: Sendable {
     }
 }
 
+public protocol TokenStoring: Sendable {
+    @discardableResult
+    func saveToken(_ token: String, account: String) -> Bool
+    func loadToken(account: String) -> String?
+    @discardableResult
+    func deleteToken(account: String) -> Bool
+}
 
 public actor AuthTokenProvider {
-    private let keychain: KeychainStore
+    private let keychain: any TokenStoring
     private let account = "nori.google.auth.session.v1"
     private let urlSession: URLSession
     private let clientID: String?
     private var cached: AuthSession?
     private var generation: UInt64 = 0
+    private var inFlightRefresh: (generation: UInt64, task: Task<String, Error>)?
 
     public init(
-        keychain: KeychainStore = KeychainStore(),
+        keychain: any TokenStoring = KeychainStore(),
         urlSession: URLSession = .shared,
         clientID: String? = nil
     ) {
         self.keychain = keychain
+        self.urlSession = urlSession
+        self.clientID = clientID
+    }
+
+    public init(
+        tokenStore: any TokenStoring,
+        urlSession: URLSession = .shared,
+        clientID: String? = nil
+    ) {
+        self.keychain = tokenStore
         self.urlSession = urlSession
         self.clientID = clientID
     }
@@ -362,21 +401,34 @@ public actor AuthTokenProvider {
 
     public func saveSession(_ session: AuthSession) {
         generation &+= 1
+        inFlightRefresh?.task.cancel()
+        inFlightRefresh = nil
         persistSession(session)
     }
 
-    private func persistSession(_ session: AuthSession) {
+    @discardableResult
+    private func persistSession(_ session: AuthSession) -> Bool {
         cached = session
-        if let data = try? JSONEncoder().encode(session),
-           let raw = String(data: data, encoding: .utf8) {
-            keychain.saveToken(raw, account: account)
+        guard let data = try? JSONEncoder().encode(session),
+              let raw = String(data: data, encoding: .utf8) else {
+            NoriLogger.auth.error("auth.session_encode_failed", remote: false)
+            return false
         }
+        let saved = keychain.saveToken(raw, account: account)
+        if !saved {
+            NoriLogger.auth.warning("auth.keychain_save_failed", remote: false)
+        }
+        return saved
     }
 
     public func clearSession() {
         generation &+= 1
+        inFlightRefresh?.task.cancel()
+        inFlightRefresh = nil
         cached = nil
-        keychain.deleteToken(account: account)
+        if !keychain.deleteToken(account: account) {
+            NoriLogger.auth.warning("auth.keychain_delete_failed", remote: false)
+        }
     }
 
     public func validIDToken(forceRefresh: Bool = false) async throws -> String {
@@ -385,6 +437,9 @@ public actor AuthTokenProvider {
         }
         if !forceRefresh && !current.isExpiringSoon {
             return current.idToken
+        }
+        if let existing = inFlightRefresh, existing.generation == generation {
+            return try await existing.task.value
         }
         guard let refreshToken = current.refreshToken, !refreshToken.isEmpty else {
             clearSession()
@@ -395,11 +450,39 @@ public actor AuthTokenProvider {
                 retryable: false
             )
         }
+
         let activeGeneration = generation
+        let resolvedClientID = clientID ?? NoriConfig.googleOAuthClientID
+        let session = urlSession
+        let task = Task<String, Error> {
+            try await self.performRefresh(
+                current: current,
+                refreshToken: refreshToken,
+                clientID: resolvedClientID,
+                urlSession: session,
+                activeGeneration: activeGeneration
+            )
+        }
+        inFlightRefresh = (generation: activeGeneration, task: task)
+        defer {
+            if inFlightRefresh?.generation == activeGeneration {
+                inFlightRefresh = nil
+            }
+        }
+        return try await task.value
+    }
+
+    private func performRefresh(
+        current: AuthSession,
+        refreshToken: String,
+        clientID: String,
+        urlSession: URLSession,
+        activeGeneration: UInt64
+    ) async throws -> String {
         do {
             var refreshed = try await GoogleOAuthPKCE.refreshIDToken(
                 refreshToken: refreshToken,
-                clientID: clientID ?? NoriConfig.googleOAuthClientID,
+                clientID: clientID,
                 session: urlSession
             )
             guard activeGeneration == generation else { throw CancellationError() }
@@ -434,8 +517,7 @@ public actor AuthTokenProvider {
     }
 }
 
-
-public struct KeychainStore: Sendable {
+public struct KeychainStore: TokenStoring, Sendable {
     public let service: String
 
     public init(service: String = "com.nori.ios") {
@@ -450,12 +532,22 @@ public struct KeychainStore: Sendable {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        SecItemDelete(query as CFDictionary)
-        var attrs = query
-        attrs[kSecValueData as String] = data
-        attrs[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        let status = SecItemAdd(attrs as CFDictionary, nil)
-        return status == errSecSuccess
+        let attributesToUpdate: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        ]
+        let updateStatus = SecItemUpdate(query as CFDictionary, attributesToUpdate as CFDictionary)
+        if updateStatus == errSecSuccess {
+            return true
+        }
+        if updateStatus == errSecItemNotFound {
+            var addAttrs = query
+            addAttrs[kSecValueData as String] = data
+            addAttrs[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            let addStatus = SecItemAdd(addAttrs as CFDictionary, nil)
+            return addStatus == errSecSuccess
+        }
+        return false
     }
 
     public func loadToken(account: String) -> String? {
@@ -483,114 +575,5 @@ public struct KeychainStore: Sendable {
         ]
         let status = SecItemDelete(query as CFDictionary)
         return status == errSecSuccess || status == errSecItemNotFound
-    }
-}
-
-
-public enum UserResolveOutcome: Sendable, Equatable {
-    case resolved(userID: String)
-    case inviteRequired(message: String)
-    case forbidden(message: String)
-}
-
-public struct NoriProvisioningClient: Sendable {
-    public let serverURL: URL
-    private let urlSession: URLSession
-
-    public init(serverURL: URL = NoriConfig.serverURL, urlSession: URLSession = .shared) {
-        self.serverURL = serverURL
-        self.urlSession = urlSession
-    }
-
-    public func resolveUser(
-        idToken: String,
-        email: String? = nil,
-        name: String? = nil
-    ) async throws -> UserResolveOutcome {
-        let url = serverURL.appendingPathComponent("api/users/resolve")
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !idToken.isEmpty {
-            req.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
-        }
-        var payload: [String: String] = [:]
-        if let email, !email.isEmpty { payload["email"] = email }
-        if let name, !name.isEmpty { payload["name"] = name }
-        req.httpBody = try JSONEncoder().encode(payload)
-
-        let (data, response) = try await urlSession.data(for: req)
-        guard let http = response as? HTTPURLResponse else {
-            throw NoriAPIError(message: "Invalid response from server.", statusCode: 0, code: "invalid_response", retryable: true)
-        }
-        if (200..<300).contains(http.statusCode) {
-            struct ResolveResponse: Decodable { let id: String }
-            let decoded = try JSONDecoder().decode(ResolveResponse.self, from: data)
-            return .resolved(userID: decoded.id)
-        }
-        let body = decodeErrorBody(data)
-        if http.statusCode == 403 {
-            if body.code == "invite_required" {
-                return .inviteRequired(message: body.error ?? "An invite code is required to access Nori.")
-            }
-            return .forbidden(message: body.error ?? "This Google account is not authorized to access Nori.")
-        }
-        throw NoriAPIError(
-            message: body.error ?? "Nori could not check your account. Try again shortly.",
-            statusCode: http.statusCode,
-            code: body.code,
-            retryable: http.statusCode == 429 || http.statusCode >= 500
-        )
-    }
-
-    public func redeemInvite(
-        idToken: String,
-        inviteCode: String,
-        email: String? = nil,
-        name: String? = nil
-    ) async throws -> String {
-        let trimmed = inviteCode.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw NoriAPIError(message: "Enter an invite code.", statusCode: 400, code: "invite_code_required", retryable: false)
-        }
-        let url = serverURL.appendingPathComponent("api/users/redeem")
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !idToken.isEmpty {
-            req.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
-        }
-        var payload: [String: String] = ["invite_code": trimmed]
-        if let email, !email.isEmpty { payload["email"] = email }
-        if let name, !name.isEmpty { payload["name"] = name }
-        req.httpBody = try JSONEncoder().encode(payload)
-
-        let (data, response) = try await urlSession.data(for: req)
-        guard let http = response as? HTTPURLResponse else {
-            throw NoriAPIError(message: "Invalid response from server.", statusCode: 0, code: "invalid_response", retryable: true)
-        }
-        if (200..<300).contains(http.statusCode) {
-            struct RedeemResponse: Decodable { let id: String }
-            let decoded = try JSONDecoder().decode(RedeemResponse.self, from: data)
-            return decoded.id
-        }
-        let body = decodeErrorBody(data)
-        throw NoriAPIError(
-            message: body.error ?? "Invalid invite code.",
-            statusCode: http.statusCode,
-            code: body.code,
-            retryable: http.statusCode == 429 || http.statusCode >= 500
-        )
-    }
-
-    private func decodeErrorBody(_ data: Data) -> (error: String?, code: String?) {
-        struct ErrorEnvelope: Decodable {
-            let error: String?
-            let code: String?
-        }
-        guard let decoded = try? JSONDecoder().decode(ErrorEnvelope.self, from: data) else {
-            return (nil, nil)
-        }
-        return (decoded.error, decoded.code)
     }
 }

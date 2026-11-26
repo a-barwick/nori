@@ -4,32 +4,26 @@ import NoriCore
 import NoriDesign
 
 public struct SignInView: View {
-    private struct PendingInvite {
-        let callbackURL: URL
-        let pkce: GoogleOAuthPKCE
-        let session: AuthSession
-    }
-
     @Bindable private var store: NoriStore
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
     @State private var isAuthenticating = false
     @State private var localError: String?
-    @State private var pendingInvite: PendingInvite?
+    @State private var pendingInviteSession: AuthSession?
 
     public init(store: NoriStore) {
         self.store = store
     }
 
     public var body: some View {
-        if let pending = pendingInvite {
+        if let pendingSession = pendingInviteSession {
             InviteRedeemView(
-                session: pending.session,
+                store: store,
+                session: pendingSession,
                 onRedeemed: {
-                    pendingInvite = nil
-                    await store.completeGoogleSignIn(callbackURL: pending.callbackURL, pkce: pending.pkce)
+                    pendingInviteSession = nil
                 },
                 onCancel: {
-                    pendingInvite = nil
+                    pendingInviteSession = nil
                     localError = nil
                     store.authError = nil
                 }
@@ -46,7 +40,7 @@ public struct SignInView: View {
             VStack(spacing: 14) {
                 NoriMark(size: 52, state: isAuthenticating ? .thinking : .idle)
                 Text("Nori")
-                    .font(.system(size: 32, weight: .bold))
+                    .font(NoriTypography.display)
                     .foregroundStyle(NoriColors.ink)
                 Text("Sign in with your Google account to continue.")
                     .font(NoriTypography.meta)
@@ -76,7 +70,7 @@ public struct SignInView: View {
                         Image(systemName: "person.badge.key.fill")
                     }
                     Text("Sign in with Google")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(NoriTypography.section)
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: 48)
@@ -91,7 +85,7 @@ public struct SignInView: View {
                 Link("Privacy Policy", destination: NoriConfig.legalURL(path: "/privacy"))
                 Link("Terms of Service", destination: NoriConfig.legalURL(path: "/terms"))
             }
-            .font(.system(size: 13))
+            .font(NoriTypography.meta)
             .foregroundStyle(NoriColors.ink3)
             .padding(.bottom, 20)
         }
@@ -121,29 +115,17 @@ public struct SignInView: View {
                     preferredBrowserSession: .shared,
                     additionalHeaderFields: [:]
                 )
-                let code = try pkce.extractAuthorizationCode(from: callbackURL)
-                let authSession = try await pkce.exchangeCode(code)
-                let preexchangedPKCE = pkce.withExchangedSession(authSession)
-                let client = NoriProvisioningClient()
-                let name = GoogleOAuthPKCE.extractNameFromJWT(authSession.idToken)
-                let outcome = try await client.resolveUser(
-                    idToken: authSession.idToken,
-                    email: authSession.email,
-                    name: name
-                )
+                let outcome = try await store.beginGoogleSignIn(callbackURL: callbackURL, pkce: pkce)
                 switch outcome {
-                case .resolved:
-                    await store.completeGoogleSignIn(callbackURL: callbackURL, pkce: preexchangedPKCE)
-                case .inviteRequired:
-                    pendingInvite = PendingInvite(
-                        callbackURL: callbackURL,
-                        pkce: preexchangedPKCE,
-                        session: authSession
-                    )
+                case .signedIn:
+                    break
+                case .inviteRequired(let session):
+                    pendingInviteSession = session
                 case .forbidden(let message):
                     localError = message
                 }
             } catch let authErr as ASWebAuthenticationSessionError where authErr.code == .canceledLogin {
+                // User cancelled Google sign-in sheet.
             } catch {
                 localError = error.localizedDescription
             }

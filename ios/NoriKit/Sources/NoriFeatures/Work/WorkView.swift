@@ -426,7 +426,7 @@ public struct WorkView: View {
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                        .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
                 )
                 .contentShape(Rectangle())
             }

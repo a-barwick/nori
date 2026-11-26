@@ -53,7 +53,7 @@ public struct WorkOrigin: Sendable, Codable, Hashable {
     public var displayLabel: String {
         switch kind {
         case .conversation: return "Chat"
-        case .automation: return "Automation"
+        case .automation: return "Routine"
         case .goal: return "Goal"
         case .external: return "External"
         }
@@ -351,8 +351,8 @@ public struct OperationProjection: Sendable, Codable, Hashable, Identifiable {
         }
         switch raw {
         case "user_request": return "you asked"
-        case "permission_rule": return "permission rule"
-        case "automation": return "an automation"
+        case "permission_rule": return "a permission rule"
+        case "automation": return "a routine"
         case "approval": return "your approval"
         case "internal": return "Nori"
         default: return raw
@@ -379,7 +379,7 @@ public struct OperationProjection: Sendable, Codable, Hashable, Identifiable {
                 return nil
             }
             return OperationBadge(label: "Confirmed", tone: .ok)
-        case .pending: return OperationBadge(label: "Waiting", tone: .warning)
+        case .pending: return OperationBadge(label: "Waiting", tone: .neutral)
         case .uncertain: return OperationBadge(label: "Unconfirmed", tone: .warning)
         case .failed: return OperationBadge(label: "Failed", tone: .danger)
         case .submitted: return OperationBadge(label: "Submitted", tone: .neutral)

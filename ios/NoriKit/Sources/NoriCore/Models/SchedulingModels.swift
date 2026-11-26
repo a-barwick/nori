@@ -27,10 +27,11 @@ public struct AutomationTrigger: Sendable, Codable, Hashable {
     public var localStart: String?
     public var timezone: String?
     public var rrule: String?
+    public var event: ResourceRef?
     public var offsetSeconds: Int?
+    public var source: ResourceRef?
     public var predicateRef: String?
     public var minIntervalSeconds: Int?
-    public var displayCadence: String?
 
     enum CodingKeys: String, CodingKey {
         case kind
@@ -38,10 +39,11 @@ public struct AutomationTrigger: Sendable, Codable, Hashable {
         case localStart = "local_start"
         case timezone
         case rrule
+        case event
         case offsetSeconds = "offset_seconds"
+        case source
         case predicateRef = "predicate_ref"
         case minIntervalSeconds = "min_interval_seconds"
-        case displayCadence = "display_cadence"
     }
 
     public init(
@@ -50,31 +52,40 @@ public struct AutomationTrigger: Sendable, Codable, Hashable {
         localStart: String? = nil,
         timezone: String? = "America/Los_Angeles",
         rrule: String? = nil,
+        event: ResourceRef? = nil,
         offsetSeconds: Int? = nil,
+        source: ResourceRef? = nil,
         predicateRef: String? = nil,
-        minIntervalSeconds: Int? = nil,
-        displayCadence: String? = nil
+        minIntervalSeconds: Int? = nil
     ) {
         self.kind = kind
         self.at = at
         self.localStart = localStart
         self.timezone = timezone
         self.rrule = rrule
+        self.event = event
         self.offsetSeconds = offsetSeconds
+        self.source = source
         self.predicateRef = predicateRef
         self.minIntervalSeconds = minIntervalSeconds
-        self.displayCadence = displayCadence
     }
 
     public var summaryLabel: String {
-        if let displayCadence, !displayCadence.isEmpty {
-            return displayCadence
-        }
         if let rrule, !rrule.isEmpty {
             return rrule
         }
         if let at, !at.isEmpty {
             return "Once at \(at)"
+        }
+        if kind == "event_relative" {
+            if let offset = offsetSeconds {
+                let mins = abs(offset) / 60
+                return offset < 0 ? "\(mins)m before event" : "\(mins)m after event"
+            }
+            return "Relative to event"
+        }
+        if kind == "watch" {
+            return "Watching for changes"
         }
         return kind.capitalized
     }

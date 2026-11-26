@@ -44,7 +44,7 @@ private func makeJWT(payload: [String: Any]) -> String {
     return "\(b64url(headerData)).\(b64url(payloadData)).sig"
 }
 
-@Suite("Provisioning & Invite Redemption", .serialized)
+@Suite("Provisioning, OAuth Safety & Invite Redemption", .serialized)
 struct ProvisioningTests {
     @Test("Extracts email and display name from Google ID token")
     func jwtClaimExtraction() {
@@ -53,19 +53,50 @@ struct ProvisioningTests {
         #expect(GoogleOAuthPKCE.extractNameFromJWT(jwt) == "Alice Smith")
     }
 
-    @Test("Pre-exchanged PKCE returns cached session without network")
-    func preexchangedPKCE() async throws {
+    @Test("GoogleOAuthPKCE rejects duplicate OAuth query params cleanly without crashing")
+    func duplicateOAuthQueryParamsRejected() {
         let pkce = GoogleOAuthPKCE(clientID: "test.apps.googleusercontent.com")
-        let expected = AuthSession(idToken: "tok", refreshToken: "ref", expiresAt: .distantFuture, email: "alice@example.com")
-        let wrapped = pkce.withExchangedSession(expected)
-        let actual = try await wrapped.exchangeCode("unused-code", session: makeMockSession())
-        #expect(actual == expected)
+        let duplicateState = URL(string: "com.googleusercontent.apps.test:/oauth2redirect?state=\(pkce.state)&state=other&code=abc")!
+        do {
+            _ = try pkce.extractAuthorizationCode(from: duplicateState)
+            Issue.record("Expected duplicate_oauth_param error for duplicate state")
+        } catch let err as NoriAPIError {
+            #expect(err.code == "duplicate_oauth_param")
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        let duplicateCode = URL(string: "com.googleusercontent.apps.test:/oauth2redirect?state=\(pkce.state)&code=abc&code=def")!
+        do {
+            _ = try pkce.extractAuthorizationCode(from: duplicateCode)
+            Issue.record("Expected duplicate_oauth_param error for duplicate code")
+        } catch let err as NoriAPIError {
+            #expect(err.code == "duplicate_oauth_param")
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        let duplicateError = URL(string: "com.googleusercontent.apps.test:/oauth2redirect?error=access_denied&error=invalid_request")!
+        do {
+            _ = try pkce.extractAuthorizationCode(from: duplicateError)
+            Issue.record("Expected duplicate_oauth_param error for duplicate error")
+        } catch let err as NoriAPIError {
+            #expect(err.code == "duplicate_oauth_param")
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
     }
 
-    @Test("resolveUser surfaces invite_required, forbidden, and resolved outcomes")
+    @Test("LiveNoriTransport.resolveUser surfaces invite_required, forbidden, and resolved outcomes")
     func resolveUserOutcomes() async throws {
+        defer { ProvisioningURLProtocol.handler = nil }
         let baseURL = URL(string: "https://nori.example.test")!
-        let client = NoriProvisioningClient(serverURL: baseURL, urlSession: makeMockSession())
+        let session = makeMockSession()
+        let transport = LiveNoriTransport(
+            baseURL: baseURL,
+            authProvider: AuthTokenProvider(tokenStore: InMemoryTokenStore(), urlSession: session),
+            urlSession: session
+        )
 
         ProvisioningURLProtocol.handler = { req in
             #expect(req.url?.path == "/api/users/resolve")
@@ -74,7 +105,7 @@ struct ProvisioningTests {
             let data = Data(#"{"error":"An invite code is required to access Nori.","code":"invite_required"}"#.utf8)
             return (resp, data)
         }
-        let inviteOutcome = try await client.resolveUser(idToken: "id-tok", email: "alice@example.com", name: "Alice")
+        let inviteOutcome = try await transport.resolveUser(idToken: "id-tok", email: "alice@example.com", name: "Alice")
         #expect(inviteOutcome == .inviteRequired(message: "An invite code is required to access Nori."))
 
         ProvisioningURLProtocol.handler = { req in
@@ -82,7 +113,7 @@ struct ProvisioningTests {
             let data = Data(#"{"error":"No user for this sign-in."}"#.utf8)
             return (resp, data)
         }
-        let forbiddenOutcome = try await client.resolveUser(idToken: "id-tok", email: "alice@example.com")
+        let forbiddenOutcome = try await transport.resolveUser(idToken: "id-tok", email: "alice@example.com", name: nil)
         #expect(forbiddenOutcome == .forbidden(message: "No user for this sign-in."))
 
         ProvisioningURLProtocol.handler = { req in
@@ -90,14 +121,20 @@ struct ProvisioningTests {
             let data = Data(#"{"id":"11111111-1111-4111-8111-111111111111"}"#.utf8)
             return (resp, data)
         }
-        let resolvedOutcome = try await client.resolveUser(idToken: "id-tok", email: "alice@example.com")
+        let resolvedOutcome = try await transport.resolveUser(idToken: "id-tok", email: "alice@example.com", name: nil)
         #expect(resolvedOutcome == .resolved(userID: "11111111-1111-4111-8111-111111111111"))
     }
 
-    @Test("redeemInvite succeeds on 200 and surfaces structured error code on 403")
+    @Test("LiveNoriTransport.redeemInvite succeeds on 200 and surfaces structured error code on 403")
     func redeemInviteFlow() async throws {
+        defer { ProvisioningURLProtocol.handler = nil }
         let baseURL = URL(string: "https://nori.example.test")!
-        let client = NoriProvisioningClient(serverURL: baseURL, urlSession: makeMockSession())
+        let session = makeMockSession()
+        let transport = LiveNoriTransport(
+            baseURL: baseURL,
+            authProvider: AuthTokenProvider(tokenStore: InMemoryTokenStore(), urlSession: session),
+            urlSession: session
+        )
 
         ProvisioningURLProtocol.handler = { req in
             #expect(req.url?.path == "/api/users/redeem")
@@ -105,7 +142,12 @@ struct ProvisioningTests {
             let data = Data(#"{"id":"22222222-2222-4222-8222-222222222222"}"#.utf8)
             return (resp, data)
         }
-        let userID = try await client.redeemInvite(idToken: "id-tok", inviteCode: "NORI-TEST-CODE", email: "alice@example.com", name: "Alice")
+        let userID = try await transport.redeemInvite(
+            idToken: "id-tok",
+            inviteCode: "NORI-TEST-CODE",
+            email: "alice@example.com",
+            name: "Alice"
+        )
         #expect(userID == "22222222-2222-4222-8222-222222222222")
 
         ProvisioningURLProtocol.handler = { req in
@@ -114,7 +156,7 @@ struct ProvisioningTests {
             return (resp, data)
         }
         do {
-            _ = try await client.redeemInvite(idToken: "id-tok", inviteCode: "NORI-USED-CODE")
+            _ = try await transport.redeemInvite(idToken: "id-tok", inviteCode: "NORI-USED-CODE", email: nil, name: nil)
             Issue.record("expected redeemInvite to throw on 403")
         } catch let err as NoriAPIError {
             #expect(err.statusCode == 403)

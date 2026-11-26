@@ -4,7 +4,7 @@ import Testing
 
 @Suite("Routing, Deep Links & Codable Round-Trips")
 struct RoutingAndCodableTests {
-    @Test("Live Core router prefixes user-scoped routes with /users/{id}/")
+    @Test("Live Core router prefixes user-scoped routes with /users/{id}/ and encodes path segments")
     func directCoreRouting() throws {
         let router = NoriEndpointRouter(baseURL: NoriConfig.serverURL)
 
@@ -26,6 +26,11 @@ struct RoutingAndCodableTests {
 
         let turnURL = try router.scopedURL(path: "/api/turn", userID: "usr-42")
         #expect(turnURL.absoluteString == "https://nori-core-8273801370.us-central1.run.app/users/usr-42/api/turn")
+
+        let encodedSegment = NoriEndpointRouter.encodePathSegment("a/b?c#d e")
+        #expect(encodedSegment == "a%2Fb%3Fc%23d%20e")
+        let encodedURL = try router.scopedURL(path: "/v1/library/\(encodedSegment)/file", userID: "usr/1")
+        #expect(encodedURL.absoluteString.contains("/users/usr%2F1/v1/library/a%2Fb%3Fc%23d%20e/file"))
     }
 
     @Test("Google OAuth PKCE builds reversed redirect scheme and validates state")
@@ -89,11 +94,18 @@ struct RoutingAndCodableTests {
         #expect(NoriDeepLink.parse(URL(string: "https://example.com/work")!) == nil)
     }
 
-    @Test("Codable round-trip for Interaction variants, Session, MCPServer, Memory, Automation, Goal, Preferences")
+    @Test("Codable round-trip for Interaction variants, AutomationTrigger, ConnectionResource, and Preferences")
     func codableRoundTrips() throws {
         let encoder = JSONEncoder()
         let decoder = JSONDecoder()
 
+        let card = CardPart(
+            kind: "mail.send",
+            resource: CardResourceRef(kind: "draft", id: "draft-1", revision: 1),
+            actions: ["approve", "decline"],
+            fallback: "Email summary",
+            display: "inline"
+        )
         let approval = Interaction(
             id: "int-a",
             revision: 2,
@@ -106,7 +118,8 @@ struct RoutingAndCodableTests {
                 effect: .sensitiveSend,
                 account: ApprovalAccount(connectionID: "c-1", label: "alex@example.com"),
                 recipients: ["procurement@acme.com"],
-                materialEffects: ["Sends external email"]
+                materialEffects: ["Sends external email"],
+                card: card
             )),
             actionDigest: "sha256:abc"
         )
@@ -155,6 +168,62 @@ struct RoutingAndCodableTests {
         )
         let decodedReceipt = try decoder.decode(MutationReceipt<Preferences>.self, from: try encoder.encode(receipt))
         #expect(decodedReceipt == receipt)
+    }
+
+    @Test("AutomationTrigger round-trips event_relative and watch triggers with ResourceRef and without display_cadence")
+    func automationTriggerRoundTrip() throws {
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+
+        let eventTrigger = AutomationTrigger(
+            kind: "event_relative",
+            event: ResourceRef(connectionID: "conn-cal", kind: "calendar_event", providerID: "evt-9"),
+            offsetSeconds: -900
+        )
+        let eventData = try encoder.encode(eventTrigger)
+        let rawEventObj = try JSONSerialization.jsonObject(with: eventData)
+        let eventJSON = try #require(rawEventObj as? [String: Any])
+        #expect(eventJSON["display_cadence"] == nil)
+        #expect(try decoder.decode(AutomationTrigger.self, from: eventData) == eventTrigger)
+
+        let watchTrigger = AutomationTrigger(
+            kind: "watch",
+            source: ResourceRef(connectionID: "conn-mail", kind: "mailbox", providerID: "inbox")
+        )
+        let watchData = try encoder.encode(watchTrigger)
+        #expect(try decoder.decode(AutomationTrigger.self, from: watchData) == watchTrigger)
+        #expect(watchTrigger.summaryLabel == "Watching for changes")
+    }
+
+    @Test("ConnectionResource decodes when selected/writable are omitted and preserves provider_revision")
+    func connectionResourceOptionalFlagsAndRevision() throws {
+        let json = """
+        {
+          "ref": {
+            "connection_id": "conn-drive",
+            "kind": "drive_file",
+            "provider_id": "file-42",
+            "provider_revision": "rev-abc"
+          },
+          "title": "Q4 Roadmap",
+          "kind": "drive_file"
+        }
+        """
+        let decoded = try JSONDecoder().decode(ConnectionResource.self, from: Data(json.utf8))
+        #expect(decoded.ref.providerRevision == "rev-abc")
+        #expect(decoded.selected == nil)
+        #expect(decoded.writable == nil)
+        #expect(decoded.isSelected == false)
+        #expect(decoded.isWritable == false)
+    }
+
+    @Test("Parity display labels align with Web (Archived, Routine)")
+    func parityDisplayLabels() {
+        #expect(MemoryProvenance.summaryEvicted.displayLabel == "Archived")
+        #expect(WorkOrigin(kind: .automation).displayLabel == "Routine")
+        #expect(SearchHit.Kind.automation.displayLabel == "Routine")
+        let op = OperationProjection(id: "op-1", name: "mail.send", authoritySource: "automation")
+        #expect(op.displayAuthorityLabel == "a routine")
     }
 
     @Test("Codable round-trip for .ask PermissionRule and PermissionRuleEditable")
@@ -271,8 +340,18 @@ struct RoutingAndCodableTests {
     @Test("NoriStore.approveInteraction sends remember_rule and refreshes permissions when true")
     @MainActor
     func storeApproveInteractionRememberRuleRefreshesPermissions() async {
-        let mock = MockApprovalTransport()
-        let store = NoriStore(transport: mock)
+        let mock = MockNoriTransport()
+        let savedRule = PermissionRule(
+            id: "rule-remembered",
+            revision: 1,
+            effect: .allow,
+            toolIDs: ["gmail.send"],
+            connectionIDs: ["conn-1"],
+            resourceIDs: ["*"],
+            actionClasses: [.sensitiveSend]
+        )
+        await mock.setPermissions([savedRule])
+        let store = NoriStore(transport: mock, authProvider: AuthTokenProvider(tokenStore: InMemoryTokenStore()))
 
         let pending = Interaction(
             id: "int-1",
@@ -292,7 +371,10 @@ struct RoutingAndCodableTests {
         )
         store.interactions = [pending]
 
-        await store.approveInteraction(pending, rememberRule: true)
+        let outcome = await store.approveInteraction(pending, rememberRule: true)
+        if case .resolved = outcome {} else {
+            Issue.record("Expected resolved outcome")
+        }
 
         let captured = await mock.recordedAnswers
         #expect(captured == [.approve(actionDigest: "sha256:xyz", rememberRule: true)])
@@ -301,146 +383,5 @@ struct RoutingAndCodableTests {
         #expect(store.pendingInteractions.isEmpty)
         #expect(store.permissions.count == 1)
         #expect(store.permissions.first?.id == "rule-remembered")
-    }
-}
-
-private actor MockApprovalTransport: NoriTransport {
-    var recordedAnswers: [InteractionAnswer] = []
-    var fetchPermissionsCallCount: Int = 0
-    var fetchFullSnapshotCallCount: Int = 0
-    private var savedRule = PermissionRule(
-        id: "rule-remembered",
-        revision: 1,
-        effect: .allow,
-        toolIDs: ["gmail.send"],
-        connectionIDs: ["conn-1"],
-        resourceIDs: ["*"],
-        actionClasses: [.sensitiveSend]
-    )
-
-    func ping() async -> HealthCheckResult { HealthCheckResult(ok: true, status: "ok", latencyMs: 1) }
-    func fetchCapabilities() async throws -> Capabilities { Capabilities() }
-    func fetchAssistantSummary() async throws -> AssistantSummary { AssistantSummary() }
-    func fetchSession(before cursor: String?) async throws -> Session { Session() }
-    func fetchFullSnapshot() async throws -> NoriFullSnapshot {
-        fetchFullSnapshotCallCount += 1
-        return NoriFullSnapshot(interactions: [], permissions: [])
-    }
-    nonisolated func eventStream(after position: Int) -> AsyncThrowingStream<NoriStreamEvent, Error> {
-        AsyncThrowingStream { $0.finish() }
-    }
-    func sendTurn(id: String, message: String, attachmentIDs: [String], modelSelection: ModelSelection?) async throws -> Session { Session() }
-    func retryTurn(turnID: String?, messageID: String?) async throws -> Session { Session() }
-    func sendTaskCommand(_ command: TaskCommand) async throws -> TaskCommandResponse { TaskCommandResponse(accepted: true) }
-    func uploadFile(id: String, filename: String, mediaType: String, data: Data) async throws -> NoriCore.Attachment {
-        NoriCore.Attachment(id: id, name: filename, mediaType: mediaType, size: data.count)
-    }
-    func fetchWorkItems(bucket: WorkBucket?) async throws -> [WorkItem] { [] }
-    func fetchWorkDetail(taskID: String) async throws -> WorkDetail {
-        throw NoriAPIError(message: "Not implemented")
-    }
-    func stopWork(taskID: String, requestID: String) async throws -> MutationReceipt<WorkItem> {
-        throw NoriAPIError(message: "Not implemented")
-    }
-    func continueWork(taskID: String, budgetUSD: Double, requestID: String) async throws -> MutationReceipt<WorkItem> {
-        throw NoriAPIError(message: "Not implemented")
-    }
-    func fetchInteractions() async throws -> [Interaction] { [] }
-    func respondToInteraction(
-        id: String,
-        expectedRevision: Int,
-        answer: InteractionAnswer,
-        requestID: String
-    ) async throws -> MutationReceipt<Interaction> {
-        recordedAnswers.append(answer)
-        let resolved = Interaction(
-            id: id,
-            revision: expectedRevision + 1,
-            kind: .approval,
-            status: .resolved,
-            prompt: "Send email?",
-            payload: .unknown(.null),
-            resolution: InteractionResolution(kind: .approve, at: "2026-11-25T04:10:00Z")
-        )
-        return MutationReceipt(requestID: requestID, resource: resolved)
-    }
-    func fetchMCPServers() async throws -> [MCPServer] { [] }
-    func fetchMCPTools(serverID: String) async throws -> [MCPServerTool] { [] }
-    func createMCPServer(input: MCPServerInput, requestID: String) async throws -> MutationReceipt<MCPServer> {
-        throw NoriAPIError(message: "Not implemented")
-    }
-    func performMCPAction(serverID: String, expectedRevision: Int, action: String, returnTo: String?, requestID: String) async throws -> MutationReceipt<MCPServer> {
-        throw NoriAPIError(message: "Not implemented")
-    }
-    func setMCPCredential(serverID: String, expectedRevision: Int, secret: String, requestID: String) async throws -> MutationReceipt<MCPServer> {
-        throw NoriAPIError(message: "Not implemented")
-    }
-    func setMCPToolExposure(serverID: String, expectedRevision: Int, toolName: String, exposure: MCPToolExposure, requestID: String) async throws -> MutationReceipt<MCPServer> {
-        throw NoriAPIError(message: "Not implemented")
-    }
-    func fetchConnections() async throws -> [Connection] { [] }
-    func performConnectionAction(connectionID: String, expectedRevision: Int, action: String, returnTo: String?, requestID: String) async throws -> MutationReceipt<Connection> {
-        throw NoriAPIError(message: "Not implemented")
-    }
-    func fetchLibrary() async throws -> [LibraryItem] { [] }
-    func fetchLibraryItem(id: String) async throws -> LibraryItem {
-        throw NoriAPIError(message: "Not implemented")
-    }
-    func fetchLibraryItemFile(id: String, format: String?) async throws -> LibraryFilePayload {
-        throw NoriAPIError(message: "Not implemented")
-    }
-    func search(query: String) async throws -> SearchResponse { SearchResponse(items: []) }
-    func reviseLibraryItem(id: String, expectedRevision: Int, instruction: String, requestID: String) async throws -> MutationReceipt<LibraryItem> {
-        throw NoriAPIError(message: "Not implemented")
-    }
-    func fetchCoreMemories() async throws -> [MemoryFact] { [] }
-    func fetchMemoryLogs() async throws -> [MemoryLog] { [] }
-    func fetchWorkingMemory() async throws -> WorkingMemory { WorkingMemory() }
-    func createMemory(text: String, section: String?, about: String?, pinned: Bool, requestID: String) async throws -> MutationReceipt<MemoryFact> {
-        throw NoriAPIError(message: "Not implemented")
-    }
-    func performMemoryAction(id: String, expectedRevision: Int, action: String, requestID: String) async throws -> MutationReceipt<MemoryActionResource> {
-        throw NoriAPIError(message: "Not implemented")
-    }
-    func performMemoryLogEntryAction(date: String, entryID: String, expectedRevision: Int, action: String, pinned: Bool, requestID: String) async throws -> MutationReceipt<MemoryLogEntryActionResource> {
-        throw NoriAPIError(message: "Not implemented")
-    }
-    func performWorkingMemoryAction(itemID: String, expectedRevision: Int, action: String, requestID: String) async throws -> MutationReceipt<WorkingMemoryActionResource> {
-        throw NoriAPIError(message: "Not implemented")
-    }
-    func fetchAutomations() async throws -> [Automation] { [] }
-    func fetchAutomation(id: String) async throws -> Automation {
-        throw NoriAPIError(message: "Not implemented")
-    }
-    func updateAutomation(id: String, expectedRevision: Int, value: AutomationEditable, requestID: String) async throws -> MutationReceipt<Automation> {
-        throw NoriAPIError(message: "Not implemented")
-    }
-    func performAutomationAction(id: String, expectedRevision: Int, action: String, requestID: String) async throws -> MutationReceipt<Automation> {
-        throw NoriAPIError(message: "Not implemented")
-    }
-    func fetchGoals() async throws -> [Goal] { [] }
-    func fetchPermissions() async throws -> [PermissionRule] {
-        fetchPermissionsCallCount += 1
-        return [savedRule]
-    }
-    func createPermissionRule(_ rule: PermissionRuleEditable, requestID: String) async throws -> MutationReceipt<PermissionRule> {
-        let created = PermissionRule(
-            id: "rule-created",
-            revision: 1,
-            effect: rule.effect,
-            toolIDs: rule.toolIDs,
-            connectionIDs: rule.connectionIDs,
-            resourceIDs: rule.resourceIDs,
-            actionClasses: rule.actionClasses,
-            recipients: rule.recipients
-        )
-        return MutationReceipt(requestID: requestID, resource: created)
-    }
-    func revokePermissionRule(id: String, expectedRevision: Int, requestID: String) async throws -> MutationReceipt<PermissionRule> {
-        return MutationReceipt(requestID: requestID, resource: savedRule)
-    }
-    func fetchPreferences() async throws -> Preferences { Preferences() }
-    func savePreferences(_ preferences: Preferences, requestID: String) async throws -> MutationReceipt<Preferences> {
-        MutationReceipt(requestID: requestID, resource: preferences)
     }
 }
