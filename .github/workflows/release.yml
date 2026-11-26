@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  schedule:
+    - cron: "17 */3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-production
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.NORI_AUTO_RELEASE != 'false')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Authenticate to Cloud Run
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: projects/8273801370/locations/global/workloadIdentityPools/github/providers/nori-main
+          service_account: nori-ci-release@bot-111549.iam.gserviceaccount.com
+
+      - name: Release the newest green commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/release.sh --latest-green

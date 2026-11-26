@@ -23,8 +23,8 @@ Execute Nori's complete closeout checklist in order.
    - Fast-forward or cleanly merge the branch into `main` in the primary repo, then push `origin/main`.
 
 3. **Confirm the release (when `core/`, `web/`, or `contracts/` changed)**
-   - CI releases changed services after the checks pass on `main`. Follow the run with `gh run watch` and confirm its Release job succeeded (staging, checks, bake).
-   - If the Release job reverted, read its log, fix forward, and push again.
+   - The Release workflow ships the newest green `main` commit every three hours. To ship now, run `gh workflow run release.yml` after CI passes, and confirm the run succeeded (staging, checks, bake).
+   - If the release reverted, read its log, fix forward, and push again.
 
 4. **Clean up worktrees, branches, and processes**
    - Remove the finished worktree and delete its merged local branch (`git worktree prune`).

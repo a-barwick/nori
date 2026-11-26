@@ -20,7 +20,7 @@ function commitFile(repo, path, contents) {
   return git(repo, "rev-parse", "HEAD");
 }
 
-function fixture(t, { change, live = "base", failDeploy = "", badRevisions = "", args = [] } = {}) {
+function fixture(t, { change, live = "base", failDeploy = "", badRevisions = "", args = [], green = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "nori-release-test-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const repo = join(dir, "repo");
@@ -37,8 +37,12 @@ function fixture(t, { change, live = "base", failDeploy = "", badRevisions = "",
   git(repo, "add", ".");
   git(repo, "commit", "-q", "-m", "base");
   const base = git(repo, "rev-parse", "HEAD");
-  const head = change ? commitFile(repo, change, "v2\n") : base;
+  const changes = Array.isArray(change) ? change : change ? [change] : [];
+  const commits = changes.map((path) => commitFile(repo, path, "v2\n"));
+  const head = commits.at(-1) ?? base;
   const liveCommit = live === "base" ? base : live === "head" ? head : live;
+  const greenCommits = green ? green.map((index) => commits[index]) : null;
+  const released = greenCommits?.at(-1) ?? head;
 
   const log = join(dir, "log");
   writeFileSync(log, "");
@@ -57,6 +61,7 @@ case "$1 $2 $3" in
   "logging read "*) [ -z "$FIXTURE_BAD" ] || printf '%s\\n' $FIXTURE_BAD ;;
 esac
 exit 0`);
+  command("ci-status", `for sha in $FIXTURE_GREEN; do [ "$sha" = "$1" ] && exit 0; done; exit 1`);
   command("curl", `
 url="\${@: -1}"
 case "$url" in
@@ -70,18 +75,20 @@ esac`);
       PATH: `${bin}:${process.env.PATH}`,
       HOME: dir,
       FIXTURE_LOG: log,
-      FIXTURE_TAG: `release-${head.slice(0, 12)}`,
+      FIXTURE_TAG: `release-${released.slice(0, 12)}`,
+      FIXTURE_GREEN: (greenCommits ?? []).join(" "),
+      NORI_CI_STATUS_CMD: join(bin, "ci-status"),
       FIXTURE_LIVE: liveCommit,
       FIXTURE_FAIL_DEPLOY: failDeploy,
       FIXTURE_BAD: badRevisions,
       GITHUB_ACTIONS: "true",
-      NORI_RELEASE_CI_GATED: "1",
+      NORI_RELEASE_CI_GATED: greenCommits ? "0" : "1",
       NORI_RELEASE_REPO: repo,
       NORI_RELEASE_BAKE_SECONDS: "0",
     },
   });
   const calls = readFileSync(log, "utf8");
-  return { result, calls, head, deployed: [...calls.matchAll(/gcloud run deploy (\S+)/g)].map((m) => m[1]) };
+  return { result, calls, head, released, deployed: [...calls.matchAll(/gcloud run deploy (\S+)/g)].map((m) => m[1]) };
 }
 
 test("a web change releases only nori-web and nori-web-mac with the CI image", (t) => {
@@ -150,4 +157,23 @@ test("rollback moves each service in the group to its recorded previous revision
   assert.match(calls, /update-traffic nori-web .*--to-revisions=nori-web-older=100/);
   assert.match(calls, /update-traffic nori-web-mac .*--to-revisions=nori-web-mac-older=100/);
   assert.doesNotMatch(calls, /nori-core/);
+});
+
+test("--latest-green releases the newest commit with passing CI, skipping a red head", (t) => {
+  const { result, calls, released, head, deployed } = fixture(t, {
+    change: ["web/page.tsx", "core/main.go"],
+    green: [0],
+    args: ["--latest-green"],
+  });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.notEqual(released, head);
+  assert.deepEqual(deployed, ["nori-web", "nori-web-mac"]);
+  assert.match(calls, new RegExp(`deploy nori-web --image=\\S+/nori-web:${released} `));
+});
+
+test("--latest-green with no green commit releases nothing", (t) => {
+  const { result, calls } = fixture(t, { change: ["web/page.tsx"], green: [], args: ["--latest-green"] });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.match(result.stdout, /Nothing to release/);
+  assert.doesNotMatch(calls, /run deploy/);
 });

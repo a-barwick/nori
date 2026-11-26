@@ -12,13 +12,16 @@ BAKE_INTERVAL="${NORI_RELEASE_BAKE_INTERVAL:-30}"
 
 usage() {
   cat <<'USAGE'
-Release Nori Core and Web to Cloud Run. CI runs this after every green push to main.
+Release Nori Core and Web to Cloud Run. The Release workflow runs this every three hours
+and on demand with --latest-green.
 
 Usage:
-  scripts/release.sh [--dry-run] [--core] [--web] [--force-unverified]
+  scripts/release.sh [--latest-green] [--dry-run] [--core] [--web] [--force-unverified]
   scripts/release.sh rollback core|web|all
 
 Releases HEAD (or NORI_RELEASE_SHA) using the images CI built for that commit.
+--latest-green instead picks the newest commit on main whose CI checks passed and whose
+images exist.
 Only groups whose code changed since the live release ship; --core / --web force a group.
   core: nori-migrate job, then nori-core (API) and nori-worker
   web:  nori-web and nori-web-mac (same image)
@@ -108,6 +111,7 @@ rollback() {
 FORCE_CORE=0
 FORCE_WEB=0
 FORCE_UNVERIFIED=0
+LATEST_GREEN=0
 if [[ "${1:-}" == rollback ]]; then
   [[ "$#" -eq 2 ]] || { usage >&2; exit 2; }
   rollback "$2"
@@ -119,29 +123,59 @@ for arg in "$@"; do
     --core) FORCE_CORE=1 ;;
     --web) FORCE_WEB=1 ;;
     --force-unverified) FORCE_UNVERIFIED=1 ;;
+    --latest-green) LATEST_GREEN=1 ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
   esac
 done
 
 cd "${NORI_RELEASE_REPO:-$SCRIPT_DIR/..}"
-SHA="${NORI_RELEASE_SHA:-$(git rev-parse HEAD)}"
+CI_STATUS="${NORI_CI_STATUS_CMD:-$SCRIPT_DIR/ci-status.sh}"
+MAIN_REF=HEAD
+if [[ "${GITHUB_ACTIONS:-}" != true ]]; then
+  git fetch --quiet origin main
+  MAIN_REF=origin/main
+fi
+
+ci_green() {
+  [[ "${NORI_RELEASE_CI_GATED:-}" == 1 ]] && return 0
+  NORI_GITHUB_REPO="$REPO_SLUG" "$CI_STATUS" "$1" >/dev/null
+}
+images_exist() {
+  local name
+  for name in nori-core nori-web; do
+    gcloud artifacts docker images describe "$REGISTRY/$name:$1" --project="$PROJECT" --format='value(image_summary.digest)' >/dev/null 2>&1 || return 1
+  done
+}
+
+if [[ "$LATEST_GREEN" -eq 1 ]]; then
+  SHA=""
+  for candidate in $(git rev-list --first-parent -n "${NORI_RELEASE_SEARCH_DEPTH:-30}" "$MAIN_REF"); do
+    if ci_green "$candidate" && images_exist "$candidate"; then
+      SHA="$candidate"
+      break
+    fi
+  done
+  if [[ -z "$SHA" ]]; then
+    log "No recent commit on main has passing CI and built images. Nothing to release."
+    exit 0
+  fi
+else
+  SHA="${NORI_RELEASE_SHA:-$(git rev-parse HEAD)}"
+fi
 [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || die "release commit must be a full SHA (got '$SHA')."
 TAG="release-${SHA:0:12}"
 
 if [[ "${GITHUB_ACTIONS:-}" != true ]]; then
-  git fetch --quiet origin main
   git merge-base --is-ancestor "$SHA" origin/main || die "$SHA is not on origin/main; push it first."
   [[ -z "$(git status --porcelain -- core web contracts)" ]] || die "uncommitted changes under core/, web/, or contracts/."
 fi
 
-ci_passed() {
-  [[ "${NORI_RELEASE_CI_GATED:-}" == 1 ]] && return 0
-  NORI_GITHUB_REPO="$REPO_SLUG" "$SCRIPT_DIR/ci-status.sh" "$SHA" >/dev/null
-}
-if [[ "$FORCE_UNVERIFIED" -eq 1 ]]; then
+if [[ "$LATEST_GREEN" -eq 1 ]]; then
+  :
+elif [[ "$FORCE_UNVERIFIED" -eq 1 ]]; then
   printf 'WARNING: releasing %s without verifying CI.\n' "$SHA" >&2
-elif ! ci_passed; then
+elif ! ci_green "$SHA"; then
   die "CI has not passed on $SHA. Fix it, or pass --force-unverified in an emergency."
 fi
 
