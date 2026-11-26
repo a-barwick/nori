@@ -1,6 +1,7 @@
-export function reconnectingPage(status: 429 | 503, retryAfter?: string) {
+export function reconnectingPage(status: 429 | 503, retryAfter?: string, nonce?: string) {
   const busy = status === 429;
   const first = Math.min(30, Math.max(2, Number(retryAfter) || 2));
+  const scriptNonce = nonce ? ` nonce="${nonce}"` : "";
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex"><title>Nori · reconnecting</title><style>
 :root{color-scheme:light dark;--bg:#faf8fd;--card:#fff;--ink:#1d1630;--ink2:#625a73;--line:#e7e2ef;--accent:#5000ff}
@@ -14,7 +15,7 @@ button{margin-top:14px;font:inherit;font-weight:500;border:1px solid var(--line)
 </style></head><body><main role="status" aria-live="polite">
 <h1><span class="dot" aria-hidden="true"></span>${busy ? "Nori is busy" : "Reconnecting to Nori"}</h1>
 <p id="note">${busy ? "Nori has a lot to do right now." : "Nori's service isn't answering right now."} This page opens by itself when it is back.</p>
-<button type="button" id="now">Try now</button><form method="post" action="/api/auth/sign-out"><button type="submit">Sign out</button></form></main><script>
+<button type="button" id="now">Try now</button><form method="post" action="/api/auth/sign-out"><button type="submit">Sign out</button></form></main><script${scriptNonce}>
 (function(){
   var key="nori-reconnect", attempt=0, timer, checking=false;
   try{var s=JSON.parse(sessionStorage.getItem(key)||"null");if(s&&Date.now()-s.at<120000)attempt=s.attempt}catch(e){}

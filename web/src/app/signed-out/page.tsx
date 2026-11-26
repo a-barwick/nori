@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect } from "react";
 import { NoriMark } from "@/components/mark/NoriMark";
 import { Button } from "@/components/ui/primitives";
@@ -13,5 +14,10 @@ export default function SignedOut() {
     <NoriMark size={72} />
     <h1 className="text-display font-semibold text-ink">Signed out</h1>
     <form action="/api/auth/sign-in" method="post"><Button type="submit" variant="primary">Sign in</Button></form>
+    <nav aria-label="Legal" className="mt-2 flex items-center gap-4 text-meta text-ink-2">
+      <Link href="/privacy" className="hover:text-ink hover:underline">Privacy Policy</Link>
+      <span aria-hidden className="text-ink-3">·</span>
+      <Link href="/terms" className="hover:text-ink hover:underline">Terms of Service</Link>
+    </nav>
   </main>;
 }

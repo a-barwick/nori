@@ -344,6 +344,12 @@ function AccountSettings() {
         trailing={<Pill tone={statusPill.tone}>{statusPill.label}</Pill>}
       />
     </Rows>
+    <Section title="Legal">
+      <Rows label="Legal">
+        <Row href="/privacy" title="Privacy Policy" />
+        <Row href="/terms" title="Terms of Service" />
+      </Rows>
+    </Section>
     {!localMode && <Section><form action="/api/auth/sign-out" method="post"><Button type="submit" variant="quiet">Sign out</Button></form></Section>}
     </>
   );
