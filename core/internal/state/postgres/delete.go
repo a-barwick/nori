@@ -25,6 +25,11 @@ func (b *backend) IsAccountDeletePending(ctx context.Context, userID string) (bo
 
 func (b *backend) BeginAccountDelete(ctx context.Context, userID string) error {
 	return b.readCommitted(ctx, false, func(q executor) error {
+		// Pairing and redemption use the same lock, so no device can be
+		// authorized concurrently after deletion is marked pending.
+		if _, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "nori-home-ai:"+userID); err != nil {
+			return err
+		}
 		for _, query := range []string{
 			`WITH locked AS MATERIALIZED
 				(SELECT owner FROM nori_task_leases WHERE user_id = $1 FOR UPDATE)
@@ -52,8 +57,18 @@ func (b *backend) BeginAccountDelete(ctx context.Context, userID string) error {
 		if _, err := q.Exec(ctx, "DELETE FROM nori_task_leases WHERE user_id = $1", userID); err != nil {
 			return err
 		}
-		_, err = q.Exec(ctx, "DELETE FROM nori_user_wakes WHERE user_id = $1", userID)
-		return err
+		if _, err := q.Exec(ctx, "DELETE FROM nori_user_wakes WHERE user_id = $1", userID); err != nil {
+			return err
+		}
+		for _, query := range []string{
+			`SELECT pg_notify('nori_home_ai_events', 'd:' || id) FROM nori_home_ai_devices WHERE user_id = $1`,
+			`SELECT pg_notify('nori_home_ai_events', 'r:' || id) FROM nori_home_ai_requests WHERE user_id = $1`,
+		} {
+			if _, err := q.Exec(ctx, query, userID); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
@@ -68,6 +83,9 @@ func (b *backend) FinishAccountDelete(ctx context.Context, userID, owner string)
 			return fmt.Errorf("user %s has no pending account deletion", userID)
 		}
 		if err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, "SELECT nori_purge_home_ai_account($1)", userID); err != nil {
 			return err
 		}
 		if _, err := q.Exec(ctx, "DELETE FROM nori_records WHERE shard = $1", shard); err != nil {

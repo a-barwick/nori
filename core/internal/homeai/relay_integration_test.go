@@ -22,9 +22,15 @@ import (
 	"nori/internal/state/postgres"
 )
 
+type accountDeletionBackend interface {
+	BeginAccountDelete(context.Context, string) error
+	FinishAccountDelete(context.Context, string, string) error
+}
+
 type relayFixture struct {
 	ctx      context.Context
 	service  *Service
+	deletion accountDeletionBackend
 	server   *httptest.Server
 	userID   string
 	deviceID string
@@ -87,7 +93,11 @@ func newRelayFixture(t *testing.T) *relayFixture {
 	}
 	host := httptest.NewServer(s.Handler())
 	t.Cleanup(host.Close)
-	f := &relayFixture{ctx: ctx, service: s, server: host, userID: userID}
+	deletion, ok := backend.(accountDeletionBackend)
+	if !ok {
+		t.Fatal("Postgres backend does not support account deletion")
+	}
+	f := &relayFixture{ctx: ctx, service: s, deletion: deletion, server: host, userID: userID}
 	grant := f.start(t, "Home test")
 	if _, err = s.Approve(ctx, userID, grant.UserCode); err != nil {
 		t.Fatal(err)
@@ -362,6 +372,199 @@ func TestRelayRevocationInterruptsStream(t *testing.T) {
 	_, err := io.ReadAll(res.response.Body)
 	if !errors.Is(err, ErrRevoked) {
 		t.Fatalf("stream after revoke: %v", err)
+	}
+}
+
+func TestRelayAccountDeleteFencesAndPurges(t *testing.T) {
+	f := newRelayFixture(t)
+	f.connect(t)
+	grant := f.start(t, "Pending connector")
+
+	type result struct {
+		response *http.Response
+		err      error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		response, err := f.service.Infer(f.ctx, f.userID, f.deviceID, "model:latest", "abc123", "chat", []byte(`{"model":"model:latest"}`))
+		resultCh <- result{response, err}
+	}()
+	request := f.receive(t)
+	f.send(t, homeaiwire.Message{Type: "accepted", RequestID: request.RequestID, AttemptID: request.AttemptID})
+	f.send(t, homeaiwire.Message{Type: "headers", RequestID: request.RequestID, AttemptID: request.AttemptID, Status: 200, ContentType: "text/event-stream"})
+	f.send(t, homeaiwire.Message{Type: "chunk", RequestID: request.RequestID, AttemptID: request.AttemptID, Sequence: 1, Data: []byte("hello")})
+	res := <-resultCh
+	if res.err != nil {
+		t.Fatal(res.err)
+	}
+	defer res.response.Body.Close()
+	first := make([]byte, 5)
+	if _, err := io.ReadFull(res.response.Body, first); err != nil || string(first) != "hello" {
+		t.Fatalf("first=%q err=%v", first, err)
+	}
+
+	// Keep one completed request and chunk so their cascading deletion is checked.
+	historyID, attemptID := uuid.NewString(), uuid.NewString()
+	if _, err := f.service.pool.Exec(f.ctx, `INSERT INTO nori_home_ai_requests
+		(id,attempt_id,user_id,device_id,generation,operation,model,digest,payload,status,deadline)
+		VALUES($1,$2,$3,$4,1,'chat','model:latest','abc123',decode('00','hex'),'complete',clock_timestamp()+interval '1 hour')`, historyID, attemptID, f.userID, f.deviceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.pool.Exec(f.ctx, `INSERT INTO nori_home_ai_chunks(request_id,attempt_id,sequence,payload) VALUES($1,$2,1,decode('00','hex'))`, historyID, attemptID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.pool.Exec(f.ctx, `INSERT INTO nori_home_ai_refresh_history(token_hash,device_id,expires_at) VALUES($1,$2,clock_timestamp()+interval '1 hour')`, tokenHash(uuid.NewString()), f.deviceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.pool.Exec(f.ctx, `INSERT INTO nori_home_ai_pairing_attempts(user_id,bucket,attempts) VALUES($1,date_trunc('minute',clock_timestamp()),1) ON CONFLICT(user_id,bucket) DO UPDATE SET attempts=1`, f.userID); err != nil {
+		t.Fatal(err)
+	}
+
+	otherID := uuid.NewString()
+	if _, err := f.service.pool.Exec(f.ctx, `INSERT INTO nori_records(shard,collection,id,data) VALUES('users','users',$1,jsonb_build_object('id',$1::text))`, otherID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.pool.Exec(f.ctx, `INSERT INTO nori_home_ai_pairing_attempts(user_id,bucket,attempts) VALUES($1,date_trunc('minute',clock_timestamp()),1)`, otherID); err != nil {
+		t.Fatal(err)
+	}
+
+	listener, err := pgx.Connect(f.ctx, f.service.listenURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close(f.ctx)
+	if _, err := listener.Exec(f.ctx, `LISTEN nori_home_ai_events`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.deletion.BeginAccountDelete(f.ctx, f.userID); err != nil {
+		t.Fatal(err)
+	}
+	notifyCtx, stopNotify := context.WithTimeout(f.ctx, 5*time.Second)
+	defer stopNotify()
+	waiting := map[string]bool{"d:" + f.deviceID: true, "r:" + request.RequestID: true}
+	for len(waiting) != 0 {
+		event, err := listener.WaitForNotification(notifyCtx)
+		if err != nil {
+			t.Fatalf("deletion notifications missing %v: %v", waiting, err)
+		}
+		delete(waiting, event.Payload)
+	}
+	if _, err := io.ReadAll(res.response.Body); !errors.Is(err, ErrRevoked) {
+		t.Fatalf("stream after deletion begins: %v", err)
+	}
+	readCtx, stopRead := context.WithTimeout(f.ctx, 5*time.Second)
+	defer stopRead()
+	for {
+		_, _, err := f.conn.Read(readCtx)
+		if err != nil {
+			if readCtx.Err() != nil {
+				t.Fatalf("existing connector did not disconnect: %v", readCtx.Err())
+			}
+			break
+		}
+	}
+	if _, err := f.service.Infer(f.ctx, f.userID, f.deviceID, "model:latest", "abc123", "chat", []byte(`{"model":"model:latest"}`)); !errors.Is(err, ErrRevoked) {
+		t.Fatalf("inference during pending deletion: %v", err)
+	}
+	if _, err := f.service.Approve(f.ctx, f.userID, grant.UserCode); !errors.Is(err, ErrRevoked) {
+		t.Fatalf("pairing during pending deletion: %v", err)
+	}
+	conn, resp, err := websocket.Dial(f.ctx, f.server.URL+"/v1/connector/socket", &websocket.DialOptions{Subprotocols: []string{homeaiwire.Subprotocol}, HTTPHeader: http.Header{"Authorization": {"Bearer " + f.tokens.AccessToken}}})
+	if conn != nil {
+		_ = conn.CloseNow()
+	}
+	if err == nil || resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("new socket during pending deletion: response=%v err=%v", resp, err)
+	}
+
+	if err := f.deletion.FinishAccountDelete(f.ctx, f.userID, f.userID); err != nil {
+		t.Fatal(err)
+	}
+	checks := []struct {
+		name, query string
+		arg         string
+	}{
+		{"user", `SELECT count(*) FROM nori_records WHERE shard='users' AND collection='users' AND id=$1`, f.userID},
+		{"grants", `SELECT count(*) FROM nori_home_ai_grants WHERE user_id=$1`, f.userID},
+		{"devices", `SELECT count(*) FROM nori_home_ai_devices WHERE user_id=$1`, f.userID},
+		{"requests", `SELECT count(*) FROM nori_home_ai_requests WHERE user_id=$1`, f.userID},
+		{"chunks", `SELECT count(*) FROM nori_home_ai_chunks WHERE request_id=$1`, historyID},
+		{"refresh history", `SELECT count(*) FROM nori_home_ai_refresh_history WHERE device_id=$1`, f.deviceID},
+		{"pairing attempts", `SELECT count(*) FROM nori_home_ai_pairing_attempts WHERE user_id=$1`, f.userID},
+	}
+	for _, check := range checks {
+		var count int
+		if err := f.service.pool.QueryRow(f.ctx, check.query, check.arg).Scan(&count); err != nil || count != 0 {
+			t.Errorf("remaining %s=%d err=%v", check.name, count, err)
+		}
+	}
+	var otherCount int
+	if err := f.service.pool.QueryRow(f.ctx, `SELECT count(*) FROM nori_home_ai_pairing_attempts WHERE user_id=$1`, otherID).Scan(&otherCount); err != nil || otherCount != 1 {
+		t.Fatalf("other account pairing attempts=%d err=%v", otherCount, err)
+	}
+}
+
+func TestRelayAccountDeleteSerializesPairing(t *testing.T) {
+	f := newRelayFixture(t)
+	userID := uuid.NewString()
+	if _, err := f.service.pool.Exec(f.ctx, `INSERT INTO nori_records(shard,collection,id,data) VALUES('users','users',$1,jsonb_build_object('id',$1::text))`, userID); err != nil {
+		t.Fatal(err)
+	}
+	grant := f.start(t, "Concurrent connector")
+	tx, err := f.service.pool.Begin(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(f.ctx)
+	if _, err := tx.Exec(f.ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "nori-home-ai:"+userID); err != nil {
+		t.Fatal(err)
+	}
+	approval := make(chan error, 1)
+	go func() {
+		_, err := f.service.Approve(f.ctx, userID, grant.UserCode)
+		approval <- err
+	}()
+	waitForBlocked := func(want int) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			var blocked int
+			err := f.service.pool.QueryRow(f.ctx, `SELECT count(*) FROM pg_stat_activity
+				WHERE datname=current_database() AND wait_event_type='Lock' AND wait_event='advisory'
+				AND query LIKE 'SELECT pg_advisory_xact_lock%'`).Scan(&blocked)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if blocked >= want {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatalf("expected %d pairing/deletion transactions to wait for the account lock", want)
+	}
+	waitForBlocked(1)
+	deletion := make(chan error, 1)
+	go func() { deletion <- f.deletion.BeginAccountDelete(f.ctx, userID) }()
+	waitForBlocked(2)
+	var pending bool
+	if err := f.service.pool.QueryRow(f.ctx, `SELECT COALESCE((data->'delete_pending')='true'::jsonb,false) FROM nori_records WHERE shard='users' AND collection='users' AND id=$1`, userID).Scan(&pending); err != nil || pending {
+		t.Fatalf("deletion marked while pairing lock held: pending=%v err=%v", pending, err)
+	}
+	if err := tx.Commit(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-approval; err != nil && !errors.Is(err, ErrRevoked) {
+		t.Fatalf("concurrent approval: %v", err)
+	}
+	if err := <-deletion; err != nil {
+		t.Fatalf("concurrent deletion: %v", err)
+	}
+	if err := f.deletion.FinishAccountDelete(f.ctx, userID, userID); err != nil {
+		t.Fatal(err)
+	}
+	var remaining int
+	if err := f.service.pool.QueryRow(f.ctx, `SELECT count(*) FROM nori_home_ai_grants WHERE user_id=$1`, userID).Scan(&remaining); err != nil || remaining != 0 {
+		t.Fatalf("account grants after concurrent deletion=%d err=%v", remaining, err)
 	}
 }
 
