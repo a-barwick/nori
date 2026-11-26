@@ -55,7 +55,7 @@ func recordReplies(ctx context.Context, t state.ConversationTurn, text string, n
 		if in.Event != nil {
 			for _, hold := range in.Event.Holds {
 				status := "answered"
-				if t.Attempt.Status == "error" || text != t.Attempt.Text {
+				if t.Attempt.Status == state.AttemptError || text != t.Attempt.Text {
 					status = "failed"
 				}
 				_, span := conversationTracer.Start(ctx, "conversation.hold.reply", trace.WithAttributes(
@@ -83,7 +83,7 @@ func recordReplies(ctx context.Context, t state.ConversationTurn, text string, n
 			attribute.String("nori.turn.id", t.ID),
 			attribute.String("nori.attempt.id", t.Attempt.ID),
 			attribute.Int("nori.attempt.number", t.Attempt.Number),
-			attribute.String("nori.reply.status", t.Attempt.Status),
+			attribute.String("nori.reply.status", string(t.Attempt.Status)),
 			attribute.Bool("nori.output.present", text != ""),
 		)}
 		if !in.CreatedAt.IsZero() && !in.CreatedAt.After(now) {
@@ -98,12 +98,12 @@ func recordReplies(ctx context.Context, t state.ConversationTurn, text string, n
 		if a, ok := observability.ContentAttribute("input.value", in.Text); ok {
 			span.SetAttributes(a)
 		}
-		if t.Attempt.Status == "completed" && t.Attempt.Reply != "" && text == t.Attempt.Text {
+		if t.Attempt.Status == state.AttemptCompleted && t.Attempt.Reply != "" && text == t.Attempt.Text {
 			if a, ok := observability.ContentAttribute("output.value", text); ok {
 				span.SetAttributes(a)
 			}
 		}
-		if t.Attempt.Status == "error" {
+		if t.Attempt.Status == state.AttemptError {
 			span.SetStatus(codes.Error, "conversation reply failed")
 		}
 		span.End(trace.WithTimestamp(now))

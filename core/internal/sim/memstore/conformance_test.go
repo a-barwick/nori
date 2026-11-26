@@ -1618,8 +1618,24 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("RenewTaskLeases: renewed=%d err=%v, want 1/nil", renewed, err)
 		}
 
-		time.Sleep(180 * time.Millisecond)
-		taken, ok, err := ls.ClaimTaskByID(ctx, u1, rEarly, "worker-2", 5*time.Second)
+		var taken docstore.TaskLease
+		waitLeaseTimer := time.NewTimer(2 * time.Second)
+		waitLeaseTick := time.NewTicker(15 * time.Millisecond)
+		for {
+			taken, ok, err = ls.ClaimTaskByID(ctx, u1, rEarly, "worker-2", 5*time.Second)
+			if err != nil || ok {
+				break
+			}
+			select {
+			case <-waitLeaseTick.C:
+			case <-waitLeaseTimer.C:
+				waitLeaseTick.Stop()
+				waitLeaseTimer.Stop()
+				t.Fatalf("expiry takeover ClaimTaskByID timed out: ok=%v err=%v", ok, err)
+			}
+		}
+		waitLeaseTick.Stop()
+		waitLeaseTimer.Stop()
 		if err != nil || !ok {
 			t.Fatalf("expiry takeover ClaimTaskByID: ok=%v err=%v", ok, err)
 		}
@@ -1951,7 +1967,10 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 				go func() {
 					listenErr <- wl.ListenWakes(listenCtx, onEv)
 				}()
-				time.Sleep(25 * time.Millisecond)
+				// Yield so fallback backends without readiness hooks can begin listening.
+				waitTick := time.NewTicker(5 * time.Millisecond)
+				<-waitTick.C
+				waitTick.Stop()
 			}
 		}
 
@@ -1985,16 +2004,6 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 		}
 		if wakes, err := ls.ListUserWakes(ctx, u); err != nil || len(wakes) != 0 {
 			t.Fatalf("aborted tx leaked user wake: %+v err=%v", wakes, err)
-		}
-		if hasListener {
-			time.Sleep(30 * time.Millisecond)
-			evMu.Lock()
-			for _, ev := range received {
-				if ev.Payload == docstore.TaskWakePayload(u, rAbort) || ev.Payload == docstore.UserWakePayload(u, docstore.LaneConversation) {
-					t.Fatalf("aborted tx emitted wake event: %+v", ev)
-				}
-			}
-			evMu.Unlock()
 		}
 
 		err = client.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
@@ -2054,6 +2063,14 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 					evMu.Unlock()
 				}
 			}
+			evMu.Lock()
+			for _, ev := range received {
+				if ev.Payload == docstore.TaskWakePayload(u, rAbort) {
+					evMu.Unlock()
+					t.Fatalf("aborted tx emitted wake event: %+v", ev)
+				}
+			}
+			evMu.Unlock()
 			cancelListen()
 			if err := <-listenErr; !errors.Is(err, context.Canceled) {
 				t.Fatalf("ListenWakes exit err = %v, want context.Canceled", err)
@@ -2267,8 +2284,24 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 		if c3, ok, err := scoped.ClaimTaskForUser(ctx, u1, "w1", 5*time.Second); err != nil || ok {
 			t.Fatalf("ClaimTaskForUser(u1) #3 = (%+v, %v, %v), want ok=false", c3, ok, err)
 		}
-		time.Sleep(180 * time.Millisecond)
-		taken, ok, err := scoped.ClaimTaskForUser(ctx, u1, "w2", 5*time.Second)
+		var taken docstore.TaskLease
+		taskExpTimer := time.NewTimer(2 * time.Second)
+		taskExpTick := time.NewTicker(15 * time.Millisecond)
+		for {
+			taken, ok, err = scoped.ClaimTaskForUser(ctx, u1, "w2", 5*time.Second)
+			if err != nil || ok {
+				break
+			}
+			select {
+			case <-taskExpTick.C:
+			case <-taskExpTimer.C:
+				taskExpTick.Stop()
+				taskExpTimer.Stop()
+				t.Fatalf("ClaimTaskForUser(u1) expiry takeover timed out: (%+v, %v, %v)", taken, ok, err)
+			}
+		}
+		taskExpTick.Stop()
+		taskExpTimer.Stop()
 		if err != nil || !ok || taken.UserID != u1 || taken.RunID != rU1Early || taken.Owner != "w2" {
 			t.Fatalf("ClaimTaskForUser(u1) expiry takeover = (%+v, %v, %v)", taken, ok, err)
 		}
@@ -2300,8 +2333,24 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 		if uwSched, ok, err := scoped.ClaimUserWakeForUser(ctx, u1, docstore.LaneScheduler, "w1", 5*time.Second); err != nil || ok {
 			t.Fatalf("ClaimUserWakeForUser(u1, sched future) = (%+v, %v, %v), want ok=false", uwSched, ok, err)
 		}
-		time.Sleep(180 * time.Millisecond)
-		uwTakeover, ok, err := scoped.ClaimUserWakeForUser(ctx, u1, docstore.LaneConversation, "w2", 5*time.Second)
+		var uwTakeover docstore.UserWake
+		uwExpTimer := time.NewTimer(2 * time.Second)
+		uwExpTick := time.NewTicker(15 * time.Millisecond)
+		for {
+			uwTakeover, ok, err = scoped.ClaimUserWakeForUser(ctx, u1, docstore.LaneConversation, "w2", 5*time.Second)
+			if err != nil || ok {
+				break
+			}
+			select {
+			case <-uwExpTick.C:
+			case <-uwExpTimer.C:
+				uwExpTick.Stop()
+				uwExpTimer.Stop()
+				t.Fatalf("ClaimUserWakeForUser(u1, conv) takeover timed out: (%+v, %v, %v)", uwTakeover, ok, err)
+			}
+		}
+		uwExpTick.Stop()
+		uwExpTimer.Stop()
 		if err != nil || !ok || uwTakeover.UserID != u1 || uwTakeover.Owner != "w2" {
 			t.Fatalf("ClaimUserWakeForUser(u1, conv) takeover = (%+v, %v, %v)", uwTakeover, ok, err)
 		}

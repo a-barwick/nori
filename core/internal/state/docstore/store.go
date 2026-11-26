@@ -13,6 +13,10 @@ var Done = errors.New("end of documents")
 
 const DocumentID = "__name__"
 
+// MigrationAdvisoryLockKey is the Postgres transaction advisory lock key used to serialize
+// schema migrations. Shared so worker repair locks never collide with migration locks.
+const MigrationAdvisoryLockKey int64 = 7162384101
+
 type Direction int
 
 const (

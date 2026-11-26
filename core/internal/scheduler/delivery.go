@@ -16,7 +16,7 @@ func deliveryID(occurrence, destination string) string {
 	return "dlv_" + strings.ReplaceAll(uuid.NewSHA1(uuid.NameSpaceOID, []byte(occurrence+"|"+destination)).String(), "-", "")[:24]
 }
 
-func (s *Service) deliver(ctx context.Context, a stored, o occurrenceDoc, run state.Run, summary, status string, results []string) ([]string, error) {
+func (s *Service) deliver(ctx context.Context, a stored, o occurrenceDoc, run state.Run, summary string, status OccurrenceStatus, results []string) ([]string, error) {
 	destinations := a.DestinationIDs
 	if len(destinations) == 0 {
 		destinations = []string{InAppDestination}
@@ -24,9 +24,9 @@ func (s *Service) deliver(ctx context.Context, a stored, o occurrenceDoc, run st
 	title := a.Title
 	body := summary
 	switch status {
-	case "failed":
+	case OccurrenceFailed:
 		body = "This run did not finish: " + clip(run.Error, 400)
-	case "cancelled":
+	case OccurrenceCancelled:
 		body = "This run was stopped."
 	}
 	if body == "" {
@@ -144,7 +144,7 @@ func (s *Service) UnreadCount(ctx context.Context) int {
 }
 
 func (s *Service) NextScheduled(ctx context.Context) *time.Time {
-	all, err := s.automations(ctx, "enabled")
+	all, err := s.automations(ctx, string(AutomationEnabled))
 	if err != nil {
 		return nil
 	}
@@ -164,12 +164,12 @@ func (s *Service) NextWake(ctx context.Context) *time.Time {
 	if earliest != nil && !earliest.After(now) {
 		return earliest
 	}
-	if pending, _, err := s.Store.Resources(ctx, CollectionOccurrences, map[string]string{"status": "pending"}, "", 1); err == nil && len(pending) > 0 {
+	if pending, _, err := s.Store.Resources(ctx, CollectionOccurrences, map[string]string{"status": string(OccurrencePending)}, "", 1); err == nil && len(pending) > 0 {
 		return &now
 	}
 	if s.Tasks != nil {
-		for _, status := range []string{"accepted", "running"} {
-			occs, err := s.allResources(ctx, CollectionOccurrences, map[string]string{"status": status}, 200)
+		for _, status := range []OccurrenceStatus{OccurrenceAccepted, OccurrenceRunning} {
+			occs, err := s.allResources(ctx, CollectionOccurrences, map[string]string{"status": string(status)}, 200)
 			if err != nil {
 				continue
 			}

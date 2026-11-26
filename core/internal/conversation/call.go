@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"slices"
 	"strings"
 	"sync"
@@ -57,14 +58,6 @@ func inputText(in state.ConversationInput) string {
 	return strings.TrimSpace(in.Text + prompts.Runtime("input-attachments", nil) + string(data))
 }
 
-const (
-	preparingReply  = "preparing_reply"
-	requestingReply = "requesting_reply"
-	proposedReply   = "proposed_reply"
-	requestingPlan  = "requesting_plan"
-	resolvedReply   = "resolved_reply"
-)
-
 func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.ConversationTurn) (callErr error) {
 	ctx, span := conversationTracer.Start(ctx, "conversation.attempt", trace.WithAttributes(
 		attribute.String("openinference.span.kind", "CHAIN"),
@@ -80,11 +73,11 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 			attribute.Int64("nori.phase.history_ms", historyMS), attribute.Int64("nori.phase.tasks_ms", tasksMS),
 			attribute.Int64("nori.phase.visible_ms", visibleMS), attribute.Int64("nori.phase.classifier_ms", jevMS),
 			attribute.Int64("nori.phase.prompt_ms", promptMS), attribute.Int64("nori.phase.outer_ms", outerMS),
-			attribute.String("nori.reply.status", t.Attempt.Status),
+			attribute.String("nori.reply.status", string(t.Attempt.Status)),
 		)
 		if callErr != nil && !errors.Is(ctx.Err(), context.Canceled) && !errors.Is(callErr, state.ErrConversationStale) && !errors.Is(callErr, state.ErrConversationBusy) {
 			observability.RecordErrorCategory(ctx, "conversation.attempt", callErr)
-		} else if t.Attempt.Status == "error" {
+		} else if t.Attempt.Status == state.AttemptError {
 			span.SetStatus(codes.Error, "conversation reply failed")
 		}
 		slog.InfoContext(ctx, "conversation attempt phases",
@@ -124,60 +117,25 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 			callErr = nil
 		}
 	}()
+
 	checkpoint := t.Attempt.ModelCheckpoint
-	var reply Reply
 	requests := workRequests(t.Inputs)
 	fromUser := slices.ContainsFunc(t.Inputs, state.ConversationInput.IsUser)
 	noDispatch := !fromUser && len(requests) == 0
-	if checkpoint == nil {
-		err := errors.New("an earlier attempt was interrupted before its reply was saved")
-		return r.finishCall(ctx, callCtx, f, t, Reply{}, err, noDispatch, historyView{})
+
+	reply, handled, err := r.resumeCheckpoint(ctx, callCtx, f, t, checkpoint, noDispatch)
+	if handled || err != nil {
+		return err
 	}
-	if checkpoint.Phase != preparingReply {
-		var err error
-		switch checkpoint.Phase {
-		case requestingReply:
-			err = errors.New("the model request was interrupted before its reply was saved")
-		case requestingPlan:
-			err = errors.New("the task plan was interrupted before it was saved")
-		case proposedReply, resolvedReply:
-			err = restoreReply(checkpoint.Message, checkpoint.Text, checkpoint.Structured, &reply)
-		default:
-			err = errors.New("saved model phase is invalid")
-		}
-		if err != nil {
-			return r.finishCall(ctx, callCtx, f, t, Reply{}, err, noDispatch, historyView{})
-		}
-		observability.Event(ctx, "conversation.checkpoint_reused", attribute.String("nori.phase", checkpoint.Phase))
-		if checkpoint.Phase == resolvedReply {
-			memories, err := r.tasks.Store.Memories(callCtx)
-			if err != nil {
-				return err
-			}
-			state.SortCoreMemories(memories)
-			return r.finishCall(ctx, callCtx, f, t, reply, nil, noDispatch, historyView{Memories: memories})
-		}
-	}
+
 	r.runWork(&work, func() { tasksReady <- r.readAttemptTasks(callCtx) })
 	contextFrom, e := r.contextStart(callCtx)
 	if e != nil {
 		return e
 	}
 	r.runWork(&work, func() { historyReady <- r.readAttemptHistory(callCtx, contextFrom) })
-	recallReady := make(chan []recalledMemoryLog, 1)
-	if fromUser && !isPureAckInputs(t.Inputs) {
-		var queryParts []string
-		for _, in := range t.Inputs {
-			if in.IsUser() && strings.TrimSpace(in.Text) != "" {
-				queryParts = append(queryParts, in.Text)
-			}
-		}
-		queryText := strings.Join(queryParts, "\n")
-		recallNow := r.now()
-		r.runWork(&work, func() { recallReady <- r.recallMemoryLogs(callCtx, queryText, contextFrom, recallNow) })
-	} else {
-		recallReady <- nil
-	}
+	recallReady := r.startRecall(&work, callCtx, t.Inputs, fromUser, contextFrom)
+
 	readStarted := r.now()
 	visible, next, e := r.tasks.Store.ConversationMessages(callCtx, "")
 	visibleMS = r.now().Sub(readStarted).Milliseconds()
@@ -187,27 +145,8 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	if !contextFrom.IsZero() {
 		visible = slices.DeleteFunc(visible, func(m Message) bool { return m.CreatedAt.Before(contextFrom) })
 	}
-	inputID := t.Inputs[0].ID
-	for _, input := range t.Inputs {
-		if input.IsUser() {
-			inputID = input.ID
-			break
-		}
-	}
-	record := func(ctx context.Context, u state.Usage) error {
-		u.InputID = inputID
-		if err := r.tasks.Store.RecordUsage(ctx, u); err != nil {
-			return err
-		}
-		stale, err := r.tasks.Store.CheckConversation(ctx, f)
-		if err != nil {
-			return err
-		}
-		if stale {
-			return state.ErrConversationStale
-		}
-		return ctx.Err()
-	}
+	inputID := primaryInputID(t.Inputs)
+	record := r.makeUsageRecorder(f, inputID)
 	request := ReplyRequest{RecordUsage: record, NoDispatch: noDispatch, WorkRequests: requests}
 	for _, input := range t.Inputs {
 		if input.IsUser() {
@@ -218,6 +157,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	if hintErr != nil {
 		return hintErr
 	}
+
 	historyRead := <-historyReady
 	historyMS = historyRead.durationMS
 	if historyRead.err != nil {
@@ -231,6 +171,7 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	promptStarted := r.now()
 	messages, breakpoints := buildMessages(t, visible, view, next)
 	promptMS = r.now().Sub(promptStarted).Milliseconds()
+
 	taskRead := <-tasksReady
 	tasksMS = taskRead.durationMS
 	if taskRead.err != nil {
@@ -241,14 +182,133 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 		return err
 	}
 
+	hint, jevDur, err := r.awaitAndPersistHint(ctx, callCtx, f, t, hintReady)
+	jevMS = jevDur
+	if err != nil {
+		return err
+	}
+
+	recalled := <-recallReady
+	messages, breakpoints, advisory := r.appendAdvisoryContext(ctx, t, visible, &view, next, messages, breakpoints, taskContext, hint, recalled)
+
+	outerStarted := r.now()
+	defer func() { outerMS = r.now().Sub(outerStarted).Milliseconds() }()
+	if checkpoint.Phase == state.CheckpointPreparingReply {
+		var finished bool
+		reply, finished, err = r.invokeOuterModel(ctx, callCtx, f, t, &request, visible, &view, next, messages, breakpoints, advisory, taskContext, fromUser, inputID)
+		if finished || err != nil {
+			return err
+		}
+	}
+	if t.Attempt.ModelCheckpoint.Phase == state.CheckpointProposedReply {
+		var finished bool
+		reply, finished, err = r.runCommandPlan(ctx, callCtx, f, t, reply, request, view, visible, taskContext, inputID)
+		if finished || err != nil {
+			return err
+		}
+	}
+	return r.finishCall(ctx, callCtx, f, t, reply, nil, request.NoDispatch, view)
+}
+
+func primaryInputID(inputs []state.ConversationInput) string {
+	inputID := inputs[0].ID
+	for _, input := range inputs {
+		if input.IsUser() {
+			return input.ID
+		}
+	}
+	return inputID
+}
+
+func (r *Runner) makeUsageRecorder(f state.ConversationFence, inputID string) func(context.Context, state.Usage) error {
+	return func(ctx context.Context, u state.Usage) error {
+		u.InputID = inputID
+		if err := r.tasks.Store.RecordUsage(ctx, u); err != nil {
+			return err
+		}
+		stale, err := r.tasks.Store.CheckConversation(ctx, f)
+		if err != nil {
+			return err
+		}
+		if stale {
+			return state.ErrConversationStale
+		}
+		return ctx.Err()
+	}
+}
+
+func (r *Runner) resumeCheckpoint(
+	ctx, callCtx context.Context,
+	f state.ConversationFence,
+	t *state.ConversationTurn,
+	checkpoint *state.ConversationModelCheckpoint,
+	noDispatch bool,
+) (Reply, bool, error) {
+	if checkpoint == nil {
+		err := fmt.Errorf("%w: an earlier attempt was interrupted before its reply was saved", ErrAttemptInterrupted)
+		return Reply{}, true, r.finishCall(ctx, callCtx, f, t, Reply{}, err, noDispatch, historyView{})
+	}
+	if checkpoint.Phase == state.CheckpointPreparingReply {
+		return Reply{}, false, nil
+	}
+	var reply Reply
+	var err error
+	switch checkpoint.Phase {
+	case state.CheckpointRequestingReply:
+		err = fmt.Errorf("%w: the model request was interrupted before its reply was saved", ErrAttemptInterrupted)
+	case state.CheckpointRequestingPlan:
+		err = fmt.Errorf("%w: the task plan was interrupted before it was saved", ErrAttemptInterrupted)
+	case state.CheckpointProposedReply, state.CheckpointResolvedReply:
+		err = restoreReply(checkpoint.Message, checkpoint.Text, checkpoint.Structured, &reply)
+	default:
+		err = errors.New("saved model phase is invalid")
+	}
+	if err != nil {
+		return Reply{}, true, r.finishCall(ctx, callCtx, f, t, Reply{}, err, noDispatch, historyView{})
+	}
+	observability.Event(ctx, "conversation.checkpoint_reused", attribute.String("nori.phase", string(checkpoint.Phase)))
+	if checkpoint.Phase == state.CheckpointResolvedReply {
+		memories, memErr := r.tasks.Store.Memories(callCtx)
+		if memErr != nil {
+			return Reply{}, true, memErr
+		}
+		state.SortCoreMemories(memories)
+		return Reply{}, true, r.finishCall(ctx, callCtx, f, t, reply, nil, noDispatch, historyView{Memories: memories})
+	}
+	return reply, false, nil
+}
+
+func (r *Runner) startRecall(work *sync.WaitGroup, callCtx context.Context, inputs []state.ConversationInput, fromUser bool, contextFrom time.Time) <-chan []recalledMemoryLog {
+	recallReady := make(chan []recalledMemoryLog, 1)
+	if fromUser && !isPureAckInputs(inputs) {
+		var queryParts []string
+		for _, in := range inputs {
+			if in.IsUser() && strings.TrimSpace(in.Text) != "" {
+				queryParts = append(queryParts, in.Text)
+			}
+		}
+		queryText := strings.Join(queryParts, "\n")
+		recallNow := r.now()
+		r.runWork(work, func() { recallReady <- r.recallMemoryLogs(callCtx, queryText, contextFrom, recallNow) })
+	} else {
+		recallReady <- nil
+	}
+	return recallReady
+}
+
+func (r *Runner) awaitAndPersistHint(
+	ctx, callCtx context.Context,
+	f state.ConversationFence,
+	t *state.ConversationTurn,
+	hintReady <-chan hintResult,
+) (Classification, int64, error) {
 	classified := <-hintReady
-	jevMS = classified.durationMS
 	hint, classificationErr := classified.hint, classified.err
 	if hint.Usage.ID != "" {
 		attemptUsage(&t.Attempt, hint.Usage)
 	}
 	if classified.usageErr != nil {
-		return classified.usageErr
+		return Classification{}, classified.durationMS, classified.usageErr
 	}
 	if classificationErr != nil {
 		slog.WarnContext(callCtx, "Jev advisory hint unavailable", "err", classificationErr)
@@ -256,13 +316,28 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	}
 	if saved := string(modelMessage(hint)); t.Attempt.Hint != saved || hint.Usage.ID != "" {
 		t.Attempt.Hint = saved
-		if e = r.checkpoint(ctx, f, *t); e != nil {
-			return e
+		if err := r.checkpoint(ctx, f, *t); err != nil {
+			return Classification{}, classified.durationMS, err
 		}
 	}
 	if callCtx.Err() != nil {
-		return callCtx.Err()
+		return Classification{}, classified.durationMS, callCtx.Err()
 	}
+	return hint, classified.durationMS, nil
+}
+
+func (r *Runner) appendAdvisoryContext(
+	ctx context.Context,
+	t *state.ConversationTurn,
+	visible []Message,
+	view *historyView,
+	next string,
+	messages []json.RawMessage,
+	breakpoints []int,
+	taskContext TaskContext,
+	hint Classification,
+	recalled []recalledMemoryLog,
+) ([]json.RawMessage, []int, json.RawMessage) {
 	facts, clock := r.UserFacts, r.Clock
 	if r.Profile != nil {
 		facts, clock.Location = r.Profile(ctx)
@@ -270,7 +345,6 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	if clock.Now == nil {
 		clock.Now = r.Now
 	}
-	recalled := <-recallReady
 	advisoryPayload := map[string]any{"user": facts, "task_context": taskContext, "now": clock.timeContext()}
 	if hint.Available {
 		advisoryPayload["classification_hint"] = hint
@@ -282,102 +356,129 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	advisory := modelMessage(map[string]string{"role": "system", "content": prompts.Runtime("call-advisory-context-for-the-current-inputs", nil) + string(advice)})
 	for t.Attempt.ContextBytes+len(advisory) > state.OuterInputBytes && len(view.Turns) > 0 {
 		view.Turns, view.Truncated = view.Turns[1:], true
-		messages, breakpoints = buildMessages(t, visible, view, next)
+		messages, breakpoints = buildMessages(t, visible, *view, next)
 	}
 	messages = append(messages, advisory)
 	t.Attempt.ContextBytes += len(advisory)
-	outerStarted := r.now()
-	defer func() { outerMS = r.now().Sub(outerStarted).Milliseconds() }()
-	if checkpoint.Phase == preparingReply {
-		if e = r.checkpointModel(ctx, f, t, requestingReply, Reply{}); e != nil {
-			return e
-		}
-		request.Messages, request.CacheBreakpoints = messages, breakpoints
-		if r.OnDelta != nil && len(request.WorkRequests) == 0 && !hasUntrustedTaskOutput(t, taskContext) {
-			turnID := t.ID
-			onDelta := r.OnDelta
-			request.Stream = func(visible string) error {
-				if visible != "" {
-					onDelta(turnID, visible)
-				}
-				return nil
-			}
-		}
-		var modelErr error
-		turnModel := r.replyModelForTurn(callCtx, t)
-		for {
-			reply, modelErr = turnModel.Respond(callCtx, request)
-			if reply.ServedModel != "" {
-				t.Attempt.ServedModel = reply.ServedModel
-			}
-			if modelErr == nil && len(request.WorkRequests) == 0 {
-				modelErr = validateReplyIDs(reply.Calls, request.TaskIDs, request.MemoryIDs)
-			}
-			reply.Usage.InputID = inputID
-			attemptUsage(&t.Attempt, reply.Usage)
-			if e = r.recordUsage(inputID, reply.Usage); e != nil {
-				return e
-			}
-			if !errors.Is(modelErr, contextview.ErrOverflow) || t.Attempt.ContextReduced || len(view.Turns) == 0 || callCtx.Err() != nil {
-				break
-			}
-			view.Turns = nil
-			view.Truncated = true
-			reducedMessages, reducedBreakpoints := buildMessages(t, visible, view, next)
-			reduced := append(reducedMessages, advisory)
-			beforeBytes, afterBytes := 0, 0
-			for _, m := range request.Messages {
-				beforeBytes += len(m)
-			}
-			for _, m := range reduced {
-				afterBytes += len(m)
-			}
-			if afterBytes >= beforeBytes {
-				break
-			}
-			t.Attempt.ContextReduced = true
-			if r.OnDelta != nil {
-				r.OnDelta(t.ID, "")
-			}
-			request.Messages, request.CacheBreakpoints = reduced, reducedBreakpoints
-			if e = r.checkpointModel(ctx, f, t, requestingReply, Reply{}); e != nil {
-				return e
-			}
-		}
-		if modelErr != nil {
-			if r.OnDelta != nil {
-				r.OnDelta(t.ID, "")
-			}
-			return r.finishCall(ctx, callCtx, f, t, reply, modelErr, request.NoDispatch, view)
-		}
-		phase := resolvedReply
-		if fromUser && hasUntrustedTaskOutput(t, taskContext) && slices.ContainsFunc(reply.Calls, sideEffectingCall) {
-			phase = proposedReply
-		}
-		if e = r.checkpointModel(ctx, f, t, phase, reply); e != nil {
-			return e
-		}
-	}
-	if t.Attempt.ModelCheckpoint.Phase == proposedReply {
-		plan, err := r.commandPlanMessages(callCtx, t, view, visible, taskContext)
-		if err != nil {
-			return r.finishCall(ctx, callCtx, f, t, reply, err, request.NoDispatch, view)
-		}
-		if e = r.checkpointModel(ctx, f, t, requestingPlan, Reply{}); e != nil {
-			return e
-		}
-		reply, err = r.planUserCommands(callCtx, t, reply, request, plan, inputID)
-		if err != nil {
-			return r.finishCall(ctx, callCtx, f, t, reply, err, request.NoDispatch, view)
-		}
-		if e = r.checkpointModel(ctx, f, t, resolvedReply, reply); e != nil {
-			return e
-		}
-	}
-	return r.finishCall(ctx, callCtx, f, t, reply, nil, request.NoDispatch, view)
+	return messages, breakpoints, advisory
 }
 
-func (r *Runner) checkpointModel(ctx context.Context, f state.ConversationFence, t *state.ConversationTurn, phase string, reply Reply) error {
+func (r *Runner) invokeOuterModel(
+	ctx, callCtx context.Context,
+	f state.ConversationFence,
+	t *state.ConversationTurn,
+	request *ReplyRequest,
+	visible []Message,
+	view *historyView,
+	next string,
+	messages []json.RawMessage,
+	breakpoints []int,
+	advisory json.RawMessage,
+	taskContext TaskContext,
+	fromUser bool,
+	inputID string,
+) (Reply, bool, error) {
+	if err := r.checkpointModel(ctx, f, t, state.CheckpointRequestingReply, Reply{}); err != nil {
+		return Reply{}, true, err
+	}
+	request.Messages, request.CacheBreakpoints = messages, breakpoints
+	if r.OnDelta != nil && len(request.WorkRequests) == 0 && !hasUntrustedTaskOutput(t, taskContext) {
+		turnID := t.ID
+		onDelta := r.OnDelta
+		request.Stream = func(visibleText string) error {
+			if visibleText != "" {
+				onDelta(turnID, visibleText)
+			}
+			return nil
+		}
+	}
+	var reply Reply
+	var modelErr error
+	turnModel := r.replyModelForTurn(callCtx, t)
+	for {
+		reply, modelErr = turnModel.Respond(callCtx, *request)
+		if reply.ServedModel != "" {
+			t.Attempt.ServedModel = reply.ServedModel
+		}
+		if modelErr == nil && len(request.WorkRequests) == 0 {
+			modelErr = validateReplyIDs(reply.Calls, request.TaskIDs, request.MemoryIDs)
+		}
+		reply.Usage.InputID = inputID
+		attemptUsage(&t.Attempt, reply.Usage)
+		if err := r.recordUsage(inputID, reply.Usage); err != nil {
+			return Reply{}, true, err
+		}
+		if !errors.Is(modelErr, contextview.ErrOverflow) || t.Attempt.ContextReduced || len(view.Turns) == 0 || callCtx.Err() != nil {
+			break
+		}
+		view.Turns = nil
+		view.Truncated = true
+		reducedMessages, reducedBreakpoints := buildMessages(t, visible, *view, next)
+		reduced := append(reducedMessages, advisory)
+		beforeBytes, afterBytes := 0, 0
+		for _, m := range request.Messages {
+			beforeBytes += len(m)
+		}
+		for _, m := range reduced {
+			afterBytes += len(m)
+		}
+		if afterBytes >= beforeBytes {
+			break
+		}
+		t.Attempt.ContextReduced = true
+		if r.OnDelta != nil {
+			r.OnDelta(t.ID, "")
+		}
+		request.Messages, request.CacheBreakpoints = reduced, reducedBreakpoints
+		if err := r.checkpointModel(ctx, f, t, state.CheckpointRequestingReply, Reply{}); err != nil {
+			return Reply{}, true, err
+		}
+	}
+	if modelErr != nil {
+		if r.OnDelta != nil {
+			r.OnDelta(t.ID, "")
+		}
+		return Reply{}, true, r.finishCall(ctx, callCtx, f, t, reply, modelErr, request.NoDispatch, *view)
+	}
+	phase := state.CheckpointResolvedReply
+	if fromUser && hasUntrustedTaskOutput(t, taskContext) && slices.ContainsFunc(reply.Calls, sideEffectingCall) {
+		phase = state.CheckpointProposedReply
+	}
+	if err := r.checkpointModel(ctx, f, t, phase, reply); err != nil {
+		return Reply{}, true, err
+	}
+	return reply, false, nil
+}
+
+func (r *Runner) runCommandPlan(
+	ctx, callCtx context.Context,
+	f state.ConversationFence,
+	t *state.ConversationTurn,
+	reply Reply,
+	request ReplyRequest,
+	view historyView,
+	visible []Message,
+	taskContext TaskContext,
+	inputID string,
+) (Reply, bool, error) {
+	plan, err := r.commandPlanMessages(callCtx, t, view, visible, taskContext)
+	if err != nil {
+		return Reply{}, true, r.finishCall(ctx, callCtx, f, t, reply, err, request.NoDispatch, view)
+	}
+	if err := r.checkpointModel(ctx, f, t, state.CheckpointRequestingPlan, Reply{}); err != nil {
+		return Reply{}, true, err
+	}
+	reply, err = r.planUserCommands(callCtx, t, reply, request, plan, inputID)
+	if err != nil {
+		return Reply{}, true, r.finishCall(ctx, callCtx, f, t, reply, err, request.NoDispatch, view)
+	}
+	if err := r.checkpointModel(ctx, f, t, state.CheckpointResolvedReply, reply); err != nil {
+		return Reply{}, true, err
+	}
+	return reply, false, nil
+}
+
+func (r *Runner) checkpointModel(ctx context.Context, f state.ConversationFence, t *state.ConversationTurn, phase state.CheckpointPhase, reply Reply) error {
 	t.Attempt.ModelCheckpoint = &state.ConversationModelCheckpoint{
 		Phase: phase, Message: string(reply.Message), Text: reply.Text, Structured: reply.Structured,
 	}
@@ -445,14 +546,16 @@ func classifyModelFailure(modelErr error, fromUser bool) state.MessageError {
 			}
 		}
 	}
-	if modelErr != nil {
-		lower := strings.ToLower(modelErr.Error())
-		if strings.Contains(lower, "interrupted") || strings.Contains(lower, "unavailable") || strings.Contains(lower, "timeout") {
-			return state.MessageError{
-				Code:      "provider_unavailable",
-				Message:   "Couldn't reach Nori's model service right now." + suffix,
-				Retryable: fromUser,
-			}
+	var netErr net.Error
+	if errors.Is(modelErr, ErrProviderUnavailable) ||
+		errors.Is(modelErr, ErrStreamInterrupted) ||
+		errors.Is(modelErr, ErrAttemptInterrupted) ||
+		errors.Is(modelErr, context.DeadlineExceeded) ||
+		errors.As(modelErr, &netErr) {
+		return state.MessageError{
+			Code:      "provider_unavailable",
+			Message:   "Couldn't reach Nori's model service right now." + suffix,
+			Retryable: fromUser,
 		}
 	}
 	return state.MessageError{
@@ -479,12 +582,12 @@ func (r *Runner) modelFailureText(ctx context.Context, inputs []state.Conversati
 		heading := "Task " + id + ": " + string(run.Status) + "."
 		output := ""
 		switch run.Status {
-		case "completed", "failed", "cancelled":
+		case state.RunCompleted, state.RunFailed, state.RunCancelled:
 			output = run.Result
 			if run.Error != "" {
 				output = strings.TrimSpace(output + "\n" + run.Error)
 			}
-		case "running":
+		case state.RunRunning:
 			if run.CancelRequested {
 				heading = "Task " + id + prompts.Runtime("task-stop-requested", nil)
 			} else if question := run.Question; question != nil && question.Revision == run.Revision {
@@ -619,7 +722,7 @@ func buildMessages(t *state.ConversationTurn, visible []Message, view historyVie
 		recordIndex--
 	}
 	for _, turn := range history {
-		if turn.Attempt.Status == "error" {
+		if turn.Attempt.Status == state.AttemptError {
 			continue
 		}
 		for recordIndex >= 0 && !records[recordIndex].CreatedAt.After(turn.StartedAt) {
@@ -682,7 +785,7 @@ func (r *Runner) finishCall(
 		t.Attempt.Reply = string(reply.Message)
 		t.Attempt.StructuredReply = reply.Structured
 		t.Attempt.ProtocolInvalid = len(reply.Message) > 0
-		r.attemptEnd(&t.Attempt, "error", modelErr.Error())
+		r.attemptEnd(&t.Attempt, state.AttemptError, modelErr.Error())
 		t.Attempt.Failure = &failure
 		t.Attempt.Text = failureText
 	} else {
@@ -706,7 +809,7 @@ func (r *Runner) finishCall(
 		if err != nil {
 			rawFailure := prompts.Runtime("tool-calls-invalid", nil)
 			typedFailure := classifyModelFailure(err, fromUser)
-			r.attemptEnd(&t.Attempt, "error", rawFailure)
+			r.attemptEnd(&t.Attempt, state.AttemptError, rawFailure)
 			t.Attempt.Failure = &typedFailure
 			t.Attempt.ProtocolInvalid = true
 			t.Attempt.Text = typedFailure.Message
@@ -769,7 +872,7 @@ func (r *Runner) finishCall(
 					command.Attachments = command.Attachments[:state.MaxAttachments*2]
 				}
 				t.Attempt.Actions = append(t.Attempt.Actions, state.ConversationAction{
-					ID: id, Request: command.Text, Bytes: len(command.Text), Status: "pending", Command: command,
+					ID: id, Request: command.Text, Bytes: len(command.Text), Status: state.ActionPending, Command: command,
 				})
 				t.Attempt.Results = append(t.Attempt.Results, string(toolResult(call.ID, map[string]string{"error": "superseded before admission"})))
 			}
@@ -887,7 +990,7 @@ func (r *Runner) readAttemptHistory(ctx context.Context, from time.Time) history
 				return result(maintenanceErr)
 			}
 			slog.WarnContext(ctx, "conversation indexing interrupted; using committed excerpts", "err", maintenanceErr)
-			r.compactAfter = r.now().Add(compactionPause)
+			r.setCompactAfter(r.now().Add(compactionPause))
 		}
 		if !summary.Applies(from) || !summary.Through.After(before) {
 			break

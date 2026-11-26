@@ -14,6 +14,7 @@ import (
 
 	"nori/internal/agent"
 	"nori/internal/contextview"
+	"nori/internal/httpretry"
 	"nori/internal/llmguard"
 	"nori/internal/modelgateway"
 	"nori/internal/transcript"
@@ -465,55 +466,22 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 }
 
 func (c *Client) doWithRetry(ctx context.Context, body []byte, onRetry func(statusCode int) error) (*http.Response, error) {
-	client := c.httpClient()
-	const maxRetries = 3
-	baseDelay := 500 * time.Millisecond
-	for attempt := 0; ; attempt++ {
+	return httpretry.Do(ctx, httpretry.Config{
+		Client:    c.httpClient(),
+		BaseDelay: 500 * time.Millisecond,
+		ShouldStopRetry: func(res *http.Response) bool {
+			return c.BYOKProviderLabel != "" && llmguard.ModelAccessError(res, c.BYOKProviderLabel) != nil
+		},
+		OnRetry:   onRetry,
+		LogPrefix: "anthropic task model",
+	}, func() (*http.Request, error) {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), bytes.NewReader(body))
 		if err != nil {
 			return nil, err
 		}
 		c.setAuthHeaders(httpReq)
-
-		res, err := client.Do(httpReq)
-		if err != nil {
-			if attempt >= maxRetries || ctx.Err() != nil || llmguard.IsGuardError(err) {
-				return nil, err
-			}
-			delay := baseDelay << attempt
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(delay):
-			}
-			if onRetry != nil {
-				if rErr := onRetry(0); rErr != nil {
-					return nil, rErr
-				}
-			}
-			continue
-		}
-		retryable := res.StatusCode == http.StatusTooManyRequests ||
-			res.StatusCode == 529 ||
-			res.StatusCode >= 500
-		if !retryable || attempt >= maxRetries || (c.BYOKProviderLabel != "" && llmguard.ModelAccessError(res, c.BYOKProviderLabel) != nil) {
-			return res, nil
-		}
-		status := res.StatusCode
-		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 4096))
-		_ = res.Body.Close()
-		delay := baseDelay << attempt
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(delay):
-		}
-		if onRetry != nil {
-			if rErr := onRetry(status); rErr != nil {
-				return nil, rErr
-			}
-		}
-	}
+		return httpReq, nil
+	})
 }
 
 func sanitizeAnthropicToolID(id string, mapping map[string]string, seq *int) string {

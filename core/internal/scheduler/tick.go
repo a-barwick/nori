@@ -5,16 +5,25 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"nori/internal/homeai"
+	"nori/internal/httpretry"
+	"nori/internal/llmguard"
 	"nori/internal/modelkeys"
 	"nori/internal/state"
+	"nori/internal/usage"
 )
 
-const defaultSkipGrace = time.Minute
+const (
+	defaultSkipGrace                = time.Minute
+	maxAutomationUpdateRetries      = 4
+	maxConsecutiveAutomationFailures = 3
+)
 
 type skipTickArmKey struct{}
 
@@ -29,7 +38,7 @@ func skipTickArm(ctx context.Context) bool {
 
 func (s *Service) Tick(ctx context.Context) (*time.Time, error) {
 	now := s.now()
-	enabled, err := s.automations(ctx, "enabled")
+	enabled, err := s.automations(ctx, string(AutomationEnabled))
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +68,9 @@ func (s *Service) schedule(ctx context.Context, a stored, now time.Time) (*time.
 	next := s.computeNext(ctx, a, now)
 	if next == nil || next.After(now) {
 		if a.NextAt == nil && next != nil || a.NextAt != nil && (next == nil || !a.NextAt.Equal(*next)) {
-			s.saveNext(ctx, a, next)
+			if err := s.saveNext(ctx, a, next); err != nil && !errors.Is(err, state.ErrNotFound) {
+				slog.WarnContext(ctx, "scheduler saveNext failed", "automation_id", a.ID, "err", err)
+			}
 		}
 		return next, nil
 	}
@@ -103,7 +114,7 @@ func (s *Service) schedule(ctx context.Context, a stored, now time.Time) (*time.
 	}
 	type plan struct {
 		slot   time.Time
-		status string
+		status OccurrenceStatus
 		reason string
 	}
 	var plans []plan
@@ -112,15 +123,15 @@ func (s *Service) schedule(ctx context.Context, a stored, now time.Time) (*time.
 		late := skipWindow > 0 && now.Sub(slot) > skipWindow && !snoozed
 		switch {
 		case a.MissedRun == "latest" && !last:
-			plans = append(plans, plan{slot, "skipped", "missed_window"})
+			plans = append(plans, plan{slot, OccurrenceSkipped, "missed_window"})
 		case late:
-			plans = append(plans, plan{slot, "skipped", "missed_window"})
+			plans = append(plans, plan{slot, OccurrenceSkipped, "missed_window"})
 		case a.MissedRun == "skip" && !last:
-			plans = append(plans, plan{slot, "skipped", "missed_window"})
+			plans = append(plans, plan{slot, OccurrenceSkipped, "missed_window"})
 		case active >= a.MaxActiveRuns:
-			plans = append(plans, plan{slot, "skipped", "max_active_runs"})
+			plans = append(plans, plan{slot, OccurrenceSkipped, "max_active_runs"})
 		default:
-			plans = append(plans, plan{slot, "pending", ""})
+			plans = append(plans, plan{slot, OccurrencePending, ""})
 			active++
 		}
 		if a.MaxOccurrences > 0 && a.Created+len(plans) >= a.MaxOccurrences {
@@ -139,7 +150,7 @@ func (s *Service) schedule(ctx context.Context, a stored, now time.Time) (*time.
 			if err != nil {
 				return state.MutationResult{}, err
 			}
-			if latest.Generation != a.Generation || latest.Status != "enabled" || !sameTime(latest.Cursor, a.Cursor) {
+			if latest.Generation != a.Generation || latest.Status != AutomationEnabled || !sameTime(latest.Cursor, a.Cursor) {
 				return state.MutationResult{}, ErrStale
 			}
 			writes := []state.Resource{}
@@ -151,7 +162,7 @@ func (s *Service) schedule(ctx context.Context, a stored, now time.Time) (*time.
 				} else if existing != nil {
 					continue
 				}
-				resource, err := state.NewResource(CollectionOccurrences, occurrence.ID, 1, occurrence, map[string]string{"automation_id": latest.ID, "status": occurrence.Status}, s.now())
+				resource, err := state.NewResource(CollectionOccurrences, occurrence.ID, 1, occurrence, map[string]string{"automation_id": latest.ID, "status": string(occurrence.Status)}, s.now())
 				if err != nil {
 					return state.MutationResult{}, err
 				}
@@ -165,7 +176,7 @@ func (s *Service) schedule(ctx context.Context, a stored, now time.Time) (*time.
 			if latest.Trigger.Kind == "once" {
 				latest.NextAt = nil
 			}
-			resource, err := state.NewResource(CollectionAutomations, latest.ID, current.Revision+1, latest, map[string]string{"status": latest.Status, "goal_id": latest.GoalID}, s.now())
+			resource, err := state.NewResource(CollectionAutomations, latest.ID, current.Revision+1, latest, map[string]string{"status": string(latest.Status), "goal_id": latest.GoalID}, s.now())
 			if err != nil {
 				return state.MutationResult{}, err
 			}
@@ -193,21 +204,47 @@ func sameTime(a, b *time.Time) bool {
 	return a.Equal(*b)
 }
 
-func (s *Service) saveNext(ctx context.Context, a stored, next *time.Time) {
-	r, err := s.Store.Resource(ctx, CollectionAutomations, a.ID)
-	if err != nil {
-		return
+func (s *Service) updateAutomationWithRetry(ctx context.Context, id string, update func(*stored, state.Resource) (bool, map[string]string, error)) error {
+	for attempt := 0; attempt < maxAutomationUpdateRetries; attempt++ {
+		r, err := s.Store.Resource(ctx, CollectionAutomations, id)
+		if err != nil {
+			return err
+		}
+		latest, err := decodeAutomation(r)
+		if err != nil {
+			return err
+		}
+		changed, index, err := update(&latest, r)
+		if err != nil || !changed {
+			return err
+		}
+		if index == nil {
+			index = r.Index
+		}
+		resource, err := state.NewResource(CollectionAutomations, id, 0, latest, index, s.now())
+		if err != nil {
+			return err
+		}
+		_, err = s.Store.PutResource(ctx, resource, r.Revision)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, state.ErrRevisionConflict) {
+			return err
+		}
 	}
-	latest, err := decodeAutomation(r)
-	if err != nil || latest.Generation != a.Generation {
-		return
-	}
-	latest.NextAt = next
-	latest.EventStart, latest.EventRevision, latest.EventStatus, latest.EventCheckedAt = a.EventStart, a.EventRevision, a.EventStatus, a.EventCheckedAt
-	resource, err := state.NewResource(CollectionAutomations, a.ID, 0, latest, r.Index, s.now())
-	if err == nil {
-		_, _ = s.Store.PutResource(ctx, resource, r.Revision)
-	}
+	return state.ErrRevisionConflict
+}
+
+func (s *Service) saveNext(ctx context.Context, a stored, next *time.Time) error {
+	return s.updateAutomationWithRetry(ctx, a.ID, func(latest *stored, r state.Resource) (bool, map[string]string, error) {
+		if latest.Generation != a.Generation {
+			return false, nil, nil
+		}
+		latest.NextAt = next
+		latest.EventStart, latest.EventRevision, latest.EventStatus, latest.EventCheckedAt = a.EventStart, a.EventRevision, a.EventStatus, a.EventCheckedAt
+		return true, r.Index, nil
+	})
 }
 
 func (s *Service) refreshEvent(ctx context.Context, a stored, now time.Time) stored {
@@ -237,8 +274,8 @@ func (s *Service) refreshEvent(ctx context.Context, a stored, now time.Time) sto
 
 func (s *Service) activeCount(ctx context.Context, automationID string) (int, error) {
 	count := 0
-	for _, status := range []string{"pending", "accepted", "running"} {
-		resources, err := s.allResources(ctx, CollectionOccurrences, map[string]string{"automation_id": automationID, "status": status}, 50)
+	for _, status := range []OccurrenceStatus{OccurrencePending, OccurrenceAccepted, OccurrenceRunning} {
+		resources, err := s.allResources(ctx, CollectionOccurrences, map[string]string{"automation_id": automationID, "status": string(status)}, 50)
 		if err != nil {
 			return 0, err
 		}
@@ -248,10 +285,10 @@ func (s *Service) activeCount(ctx context.Context, automationID string) (int, er
 }
 
 func (s *Service) drain(ctx context.Context, now time.Time) error {
-	for _, status := range []string{"pending", "accepted", "running"} {
+	for _, status := range []OccurrenceStatus{OccurrencePending, OccurrenceAccepted, OccurrenceRunning} {
 		after := ""
 		for {
-			page, next, err := s.Store.Resources(ctx, CollectionOccurrences, map[string]string{"status": status}, after, 100)
+			page, next, err := s.Store.Resources(ctx, CollectionOccurrences, map[string]string{"status": string(status)}, after, 100)
 			if err != nil {
 				return err
 			}
@@ -287,15 +324,15 @@ func (s *Service) advance(ctx context.Context, r state.Resource, o occurrenceDoc
 		return err
 	}
 	switch o.Status {
-	case "pending":
-		if a.Generation != o.Generation || a.Status == "cancelled" {
-			return s.settle(ctx, r, o, "skipped", "superseded", "", nil)
+	case OccurrencePending:
+		if a.Generation != o.Generation || a.Status == AutomationCancelled {
+			return s.settle(ctx, r, o, OccurrenceSkipped, "superseded", "", nil)
 		}
-		if a.Status == "paused" {
-			return s.settle(ctx, r, o, "skipped", "paused", "", nil)
+		if a.Status == AutomationPaused {
+			return s.settle(ctx, r, o, OccurrenceSkipped, "paused", "", nil)
 		}
 		if window := time.Duration(a.ExecutionWindowSeconds) * time.Second; window > 0 && now.Sub(o.ScheduledAt) > window && o.Reason == "" {
-			return s.settle(ctx, r, o, "expired", "missed_window", "", nil)
+			return s.settle(ctx, r, o, OccurrenceExpired, "missed_window", "", nil)
 		}
 		id := taskID(o.ID)
 		run, err := s.Accept(ctx, state.Command{
@@ -306,12 +343,12 @@ func (s *Service) advance(ctx context.Context, r state.Resource, o occurrenceDoc
 			return err
 		}
 		started := now
-		o.Status, o.StartedAt, o.TaskIDs = "accepted", &started, []string{id}
+		o.Status, o.StartedAt, o.TaskIDs = OccurrenceAccepted, &started, []string{id}
 		if run.Status == state.RunRunning {
-			o.Status = "running"
+			o.Status = OccurrenceRunning
 		}
 		return s.put(ctx, r, o)
-	case "accepted", "running":
+	case OccurrenceAccepted, OccurrenceRunning:
 		if len(o.TaskIDs) == 0 {
 			return nil
 		}
@@ -321,24 +358,24 @@ func (s *Service) advance(ctx context.Context, r state.Resource, o occurrenceDoc
 		}
 		switch run.Status {
 		case state.RunRunning:
-			if o.Status != "running" {
-				o.Status = "running"
+			if o.Status != OccurrenceRunning {
+				o.Status = OccurrenceRunning
 				return s.put(ctx, r, o)
 			}
 			return nil
 		case state.RunCompleted:
-			return s.finish(ctx, r, o, a, run, "completed")
+			return s.finish(ctx, r, o, a, run, OccurrenceCompleted)
 		case state.RunCancelled:
-			return s.finish(ctx, r, o, a, run, "cancelled")
+			return s.finish(ctx, r, o, a, run, OccurrenceCancelled)
 		default:
-			return s.finish(ctx, r, o, a, run, "failed")
+			return s.finish(ctx, r, o, a, run, OccurrenceFailed)
 		}
 	}
 	return nil
 }
 
 func (s *Service) put(ctx context.Context, r state.Resource, o occurrenceDoc) error {
-	next, err := state.NewResource(CollectionOccurrences, o.ID, 0, o, map[string]string{"automation_id": o.AutomationID, "status": o.Status}, s.now())
+	next, err := state.NewResource(CollectionOccurrences, o.ID, 0, o, map[string]string{"automation_id": o.AutomationID, "status": string(o.Status)}, s.now())
 	if err != nil {
 		return err
 	}
@@ -346,96 +383,127 @@ func (s *Service) put(ctx context.Context, r state.Resource, o occurrenceDoc) er
 	return err
 }
 
-func (s *Service) settle(ctx context.Context, r state.Resource, o occurrenceDoc, status, reason, summary string, failure *ErrorDetail) error {
+func (s *Service) settle(ctx context.Context, r state.Resource, o occurrenceDoc, status OccurrenceStatus, reason, summary string, failure *ErrorDetail) error {
 	finished := s.now()
 	o.Status, o.Reason, o.Summary, o.Error, o.FinishedAt = status, reason, summary, failure, &finished
 	return s.put(ctx, r, o)
 }
 
-func (s *Service) finish(ctx context.Context, r state.Resource, o occurrenceDoc, a stored, run state.Run, status string) error {
+func (s *Service) finish(ctx context.Context, r state.Resource, o occurrenceDoc, a stored, run state.Run, status OccurrenceStatus) error {
 	summary := strings.TrimSpace(run.Result)
 	var failure *ErrorDetail
-	if status != "completed" {
-		code := "task_" + status
-		if status == "failed" && modelkeys.IsAccessFailure(run.Error) {
+	if status != OccurrenceCompleted {
+		code := "task_" + string(status)
+		if status == OccurrenceFailed && modelkeys.IsAccessFailure(run.Error) {
 			code = modelkeys.AccessFailureCode
 		}
 		failure = &ErrorDetail{Code: code, Message: clip(run.Error, 1000)}
 	}
-	quiet := o.Monitor && status == "completed" && (strings.HasPrefix(summary, NoChange) || sameFinding(summary, a.Checkpoint))
+	quiet := o.Monitor && status == OccurrenceCompleted && (strings.HasPrefix(summary, NoChange) || sameFinding(summary, a.Checkpoint))
 	if !quiet {
 		results := []string{}
 		if s.Results != nil {
 			results = s.Results(ctx, run.ID)
 		}
+		// Delivery uses deterministic IDs and tolerates duplicate writes, so running it
+		// before settle ensures DeliveryIDs are persisted atomically on the settled
+		// occurrence without advancing the monitor checkpoint before settlement succeeds.
 		deliveries, err := s.deliver(ctx, a, o, run, summary, status, results)
 		if err != nil {
 			return err
 		}
 		o.DeliveryIDs = deliveries
-		if o.Monitor && status == "completed" {
-			s.checkpoint(ctx, a.ID, clip(summary, 2000))
-		}
 	}
 	if err := s.settle(ctx, r, o, status, "", clip(summary, 2000), failure); err != nil {
 		return err
 	}
-	s.recordOutcomeHealth(ctx, a.ID, status, run.Error)
+	if !quiet && o.Monitor && status == OccurrenceCompleted {
+		if err := s.checkpoint(ctx, a.ID, clip(summary, 2000)); err != nil && !errors.Is(err, state.ErrNotFound) {
+			slog.WarnContext(ctx, "scheduler monitor checkpoint update failed", "automation_id", a.ID, "occurrence_id", o.ID, "err", err)
+		}
+	}
+	if err := s.recordOutcomeHealth(ctx, a.ID, status, run.Error); err != nil && !errors.Is(err, state.ErrNotFound) {
+		slog.WarnContext(ctx, "scheduler outcome health update failed", "automation_id", a.ID, "occurrence_id", o.ID, "err", err)
+	}
 	return nil
 }
 
-const maxConsecutiveAutomationFailures = 3
+// extractHTTPStatus parses a 3-digit HTTP status code following "HTTP " (case-insensitive).
+func extractHTTPStatus(errText string) (int, bool) {
+	upper := strings.ToUpper(errText)
+	search := upper
+	for {
+		idx := strings.Index(search, "HTTP ")
+		if idx < 0 {
+			return 0, false
+		}
+		rest := search[idx+5:]
+		if len(rest) >= 3 {
+			if code, err := strconv.Atoi(rest[:3]); err == nil && code >= 100 && code <= 599 {
+				if len(rest) == 3 || rest[3] < '0' || rest[3] > '9' {
+					return code, true
+				}
+			}
+		}
+		search = rest
+	}
+}
+
+var transientSentinelMessages = []string{
+	usage.ErrUserQuotaExceeded.Error(),
+	llmguard.ErrRateLimited.Error(),
+	llmguard.ErrConcurrencyLimited.Error(),
+	llmguard.ErrCircuitOpen.Error(),
+	llmguard.ErrBudgetExceeded.Error(),
+	llmguard.ErrCallLimitExceeded.Error(),
+	context.DeadlineExceeded.Error(),
+	homeai.ErrOffline.Error(),
+	homeai.ErrBusy.Error(),
+	homeai.ErrInterrupted.Error(),
+	homeai.ErrOllamaUnavailable.Error(),
+	"task model request interrupted or unavailable",
+	"Google model request interrupted or unavailable",
+	"inspection request interrupted or unavailable",
+	"model request interrupted or unavailable",
+}
 
 func isTransientAutomationFailure(errText string) bool {
+	if code, ok := extractHTTPStatus(errText); ok && httpretry.IsRetryableStatus(code) {
+		return true
+	}
 	lower := strings.ToLower(errText)
-	for _, marker := range []string{
-		"rate or spend limit",
-		"quota",
-		"http 429",
-		"http 503",
-		"temporarily unavailable",
-		"interrupted or unavailable",
-	} {
-		if strings.Contains(lower, marker) {
+	for _, sentinel := range transientSentinelMessages {
+		if strings.Contains(lower, strings.ToLower(sentinel)) {
 			return true
 		}
 	}
 	return false
 }
 
-func (s *Service) recordOutcomeHealth(ctx context.Context, id, status, errText string) {
-	if status != "completed" && status != "failed" {
-		return
+func (s *Service) recordOutcomeHealth(ctx context.Context, id string, status OccurrenceStatus, errText string) error {
+	if status != OccurrenceCompleted && status != OccurrenceFailed {
+		return nil
 	}
-	if status == "failed" && (modelkeys.IsAccessFailure(errText) || isTransientAutomationFailure(errText)) {
-		return
+	if status == OccurrenceFailed && (modelkeys.IsAccessFailure(errText) || isTransientAutomationFailure(errText)) {
+		return nil
 	}
-	r, err := s.Store.Resource(ctx, CollectionAutomations, id)
-	if err != nil {
-		return
-	}
-	a, err := decodeAutomation(r)
-	if err != nil {
-		return
-	}
-	if status == "completed" {
-		if a.ConsecutiveFailures == 0 {
-			return
+	return s.updateAutomationWithRetry(ctx, id, func(a *stored, _ state.Resource) (bool, map[string]string, error) {
+		if status == OccurrenceCompleted {
+			if a.ConsecutiveFailures == 0 {
+				return false, nil, nil
+			}
+			a.ConsecutiveFailures = 0
+		} else {
+			a.ConsecutiveFailures++
+			if a.ConsecutiveFailures >= maxConsecutiveAutomationFailures && a.Status == AutomationEnabled {
+				a.Status = AutomationPaused
+				a.NextAt = nil
+				slog.WarnContext(ctx, "auto-pausing automation after consecutive failures",
+					"automation_id", id, "consecutive_failures", a.ConsecutiveFailures)
+			}
 		}
-		a.ConsecutiveFailures = 0
-	} else {
-		a.ConsecutiveFailures++
-		if a.ConsecutiveFailures >= maxConsecutiveAutomationFailures && a.Status == "enabled" {
-			a.Status = "paused"
-			a.NextAt = nil
-			slog.WarnContext(ctx, "auto-pausing automation after consecutive failures",
-				"automation_id", id, "consecutive_failures", a.ConsecutiveFailures)
-		}
-	}
-	resource, err := state.NewResource(CollectionAutomations, id, 0, a, map[string]string{"status": a.Status, "goal_id": a.GoalID}, s.now())
-	if err == nil {
-		_, _ = s.Store.PutResource(ctx, resource, r.Revision)
-	}
+		return true, map[string]string{"status": string(a.Status), "goal_id": a.GoalID}, nil
+	})
 }
 
 func sameFinding(a, b string) bool {
@@ -443,20 +511,11 @@ func sameFinding(a, b string) bool {
 	return b != "" && norm(clip(a, 2000)) == norm(b)
 }
 
-func (s *Service) checkpoint(ctx context.Context, id, summary string) {
-	r, err := s.Store.Resource(ctx, CollectionAutomations, id)
-	if err != nil {
-		return
-	}
-	a, err := decodeAutomation(r)
-	if err != nil {
-		return
-	}
-	a.Checkpoint = summary
-	resource, err := state.NewResource(CollectionAutomations, id, 0, a, r.Index, s.now())
-	if err == nil {
-		_, _ = s.Store.PutResource(ctx, resource, r.Revision)
-	}
+func (s *Service) checkpoint(ctx context.Context, id, summary string) error {
+	return s.updateAutomationWithRetry(ctx, id, func(a *stored, r state.Resource) (bool, map[string]string, error) {
+		a.Checkpoint = summary
+		return true, r.Index, nil
+	})
 }
 
 func clip(text string, limit int) string {

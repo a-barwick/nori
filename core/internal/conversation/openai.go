@@ -248,7 +248,7 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 		if m.ProviderName == llmguard.ProviderHome {
 			return reply, err
 		}
-		return reply, fmt.Errorf("model request interrupted or unavailable")
+		return reply, ErrProviderUnavailable
 	}
 	reply.Usage.RequestStatus = "received"
 	defer func() {
@@ -753,7 +753,7 @@ func (m *OpenAIModel) decodeOpenAIStream(res *http.Response, reply Reply, reques
 		if m.ProviderName == llmguard.ProviderHome {
 			return reply, homeai.ErrInterrupted
 		}
-		return reply, errors.New("model stream interrupted; request will not be repeated")
+		return reply, ErrStreamInterrupted
 	}
 	ordered := []ToolCall{}
 	for i := 0; i < len(calls); i++ {

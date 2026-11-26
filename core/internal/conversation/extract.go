@@ -291,7 +291,7 @@ func (r *Runner) handleExtractFailure(ctx context.Context, plan extractPlan, cal
 		if err := r.tasks.Store.SaveConversationSummary(ctx, next, plan.expected); err != nil && !errors.Is(err, state.ErrConversationStale) {
 			slog.WarnContext(ctx, "failed to record idle extract retry counter", "err", err)
 		}
-		r.extractAfter = now.Add(flushBackoff(failures))
+		r.setExtractAfter(now.Add(flushBackoff(failures)))
 		return callErr
 	}
 
@@ -299,7 +299,7 @@ func (r *Runner) handleExtractFailure(ctx context.Context, plan extractPlan, cal
 		"failures", failures, "batch_through", plan.batchThrough, "err", callErr)
 	fallbackEntries := extractiveFallbackEntries(plan.batch, nowUTC)
 	err := r.commitExtractWithRebase(ctx, plan, nil, fallbackEntries, nowUTC)
-	r.extractAfter = now.Add(flushBackoff(failures))
+	r.setExtractAfter(now.Add(flushBackoff(failures)))
 	return err
 }
 
@@ -331,7 +331,7 @@ func (r *Runner) commitExtractWithRebase(
 			return ctx.Err()
 		}
 		if !errors.Is(err, state.ErrConversationStale) {
-			r.extractAfter = r.now().Add(flushBackoff(1))
+			r.setExtractAfter(r.now().Add(flushBackoff(1)))
 			return err
 		}
 		if attempt >= maxRebaseAttempts {

@@ -68,6 +68,56 @@ type userSnapshotData struct {
 	occurrences  []storedOccurrence
 }
 
+func (c *Checker) registerUserEntitiesLocked(u userSnapshotData) []Violation {
+	var vs []Violation
+	for _, runID := range sortedKeys(u.runs) {
+		vs = append(vs, c.registerOwnerLocked(c.runOwners, "run", runID, u.userID)...)
+	}
+	for _, inter := range u.interactions {
+		vs = append(vs, c.registerOwnerLocked(c.interactionOwners, "interaction", inter.resource.ID, u.userID)...)
+	}
+	for _, autoID := range sortedKeys(u.automations) {
+		vs = append(vs, c.registerOwnerLocked(c.automationOwners, "automation", autoID, u.userID)...)
+	}
+	for _, occ := range u.occurrences {
+		vs = append(vs, c.registerOwnerLocked(c.occurrenceOwners, "occurrence", occ.ID, u.userID)...)
+	}
+	return vs
+}
+
+func (c *Checker) checkUserSafetyDataLocked(
+	ctx context.Context,
+	u userSnapshotData,
+	completeView bool,
+	permSvc *permissions.Service,
+	wrapPerm func(func() error) error,
+	now time.Time,
+) []Violation {
+	var vs []Violation
+	vs = append(vs, c.checkRunsLocked(u.userID, u.runs, completeView)...)
+	vs = append(vs, c.checkTaskControlsLocked(u.userID, u.taskControls)...)
+	vs = append(vs, c.checkOperationsLocked(u.userID, u.runs, u.opsByRun, completeView)...)
+	vs = append(vs, c.checkCommandsLocked(u.userID, u.runs, u.cmds)...)
+	for _, msg := range u.msgs {
+		if msg.RunID != "" {
+			vs = append(vs, c.checkOwnedByLocked(c.runOwners, "run", msg.RunID, u.userID, "message "+msg.ID)...)
+		}
+	}
+	runInteractions := func() {
+		vs = append(vs, c.checkInteractionsLocked(ctx, u.userID, u.runs, u.interactions, permSvc, now)...)
+	}
+	if wrapPerm != nil {
+		_ = wrapPerm(func() error {
+			runInteractions()
+			return nil
+		})
+	} else {
+		runInteractions()
+	}
+	vs = append(vs, c.checkAutomationsAndOccurrencesLocked(u.userID, u.automations, u.occurrences)...)
+	return vs
+}
+
 func (c *Checker) checkSafetyFromSnapshotLocked(ctx context.Context, targets []UserTarget, snap memstore.BackendSnapshot, now time.Time) []Violation {
 	var vs []Violation
 
@@ -206,19 +256,7 @@ func (c *Checker) checkSafetyFromSnapshotLocked(ctx context.Context, targets []U
 		vs = append(vs, tagUser(t.User.ID, occVs)...)
 		uData.occurrences = occs
 
-		for _, runID := range sortedKeys(uData.runs) {
-			vs = append(vs, c.registerOwnerLocked(c.runOwners, "run", runID, t.User.ID)...)
-		}
-		for _, inter := range uData.interactions {
-			vs = append(vs, c.registerOwnerLocked(c.interactionOwners, "interaction", inter.resource.ID, t.User.ID)...)
-		}
-		for _, autoID := range sortedKeys(uData.automations) {
-			vs = append(vs, c.registerOwnerLocked(c.automationOwners, "automation", autoID, t.User.ID)...)
-		}
-		for _, occ := range uData.occurrences {
-			vs = append(vs, c.registerOwnerLocked(c.occurrenceOwners, "occurrence", occ.ID, t.User.ID)...)
-		}
-
+		vs = append(vs, c.registerUserEntitiesLocked(uData)...)
 		dataList = append(dataList, uData)
 	}
 
@@ -254,27 +292,11 @@ func (c *Checker) checkSafetyFromSnapshotLocked(ctx context.Context, targets []U
 			vs = append(vs, c.checkConversationLocked(u.userID, conv)...)
 		}
 
-		vs = append(vs, c.checkRunsLocked(u.userID, u.runs, true)...)
-
-		vs = append(vs, c.checkTaskControlsLocked(u.userID, u.taskControls)...)
-
-		vs = append(vs, c.checkOperationsLocked(u.userID, u.runs, u.opsByRun, true)...)
-
-		vs = append(vs, c.checkCommandsLocked(u.userID, u.runs, u.cmds)...)
-
-		for _, msg := range u.msgs {
-			if msg.RunID != "" {
-				vs = append(vs, c.checkOwnedByLocked(c.runOwners, "run", msg.RunID, u.userID, "message "+msg.ID)...)
-			}
-		}
-
 		permSvc := &permissions.Service{
 			Store: &snapshotResourceStore{snap: snap, owner: u.owner},
 			Now:   func() time.Time { return now },
 		}
-		vs = append(vs, c.checkInteractionsLocked(ctx, u.userID, u.runs, u.interactions, permSvc, now)...)
-
-		vs = append(vs, c.checkAutomationsAndOccurrencesLocked(u.userID, u.automations, u.occurrences)...)
+		vs = append(vs, c.checkUserSafetyDataLocked(ctx, u, true, permSvc, nil, now)...)
 	}
 
 	vs = append(vs, c.checkMemorySafetyFromSnapshotLocked(ctx, dataList, knownOwners, snap, now)...)
@@ -286,31 +308,25 @@ func (c *Checker) checkSafetyFromStoresLocked(ctx context.Context, targets []Use
 	var vs []Violation
 
 	type storeData struct {
-		target       UserTarget
-		userID       string
-		runs         map[string]state.Run
-		taskControls map[string]state.TaskControl
-		opsByRun     map[string][]rawOperationRecord
-		pendingCmds  []state.Command
-		msgs         []state.Message
-		interactions []rawInteractionRecord
-		automations  map[string]storedAutomation
-		occurrences  []storedOccurrence
-		eventPos     int64
-		readMark     state.ReadMark
-		hasReadMark  bool
-		conv         state.ConversationControl
+		userSnapshotData
+		eventPos    int64
+		readMark    state.ReadMark
+		hasReadMark bool
+		conv        state.ConversationControl
 	}
 
 	dataList := make([]storeData, 0, len(targets))
 	for _, t := range targets {
 		u := storeData{
-			target:       t,
-			userID:       t.User.ID,
-			runs:         map[string]state.Run{},
-			taskControls: map[string]state.TaskControl{},
-			opsByRun:     map[string][]rawOperationRecord{},
-			automations:  map[string]storedAutomation{},
+			userSnapshotData: userSnapshotData{
+				target:       t,
+				userID:       t.User.ID,
+				owner:        t.User.DataOwner(),
+				runs:         map[string]state.Run{},
+				taskControls: map[string]state.TaskControl{},
+				opsByRun:     map[string][]rawOperationRecord{},
+				automations:  map[string]storedAutomation{},
+			},
 		}
 		if t.Store == nil {
 			continue
@@ -356,7 +372,7 @@ func (c *Checker) checkSafetyFromStoresLocked(ctx context.Context, targets []Use
 				if err != nil {
 					return fmt.Errorf("Pending: %w", err)
 				}
-				u.pendingCmds = append(u.pendingCmds, page.Commands...)
+				u.cmds = append(u.cmds, page.Commands...)
 				if page.Next == "" {
 					break
 				}
@@ -381,63 +397,37 @@ func (c *Checker) checkSafetyFromStoresLocked(ctx context.Context, targets []Use
 			}
 			u.conv = conv
 
-			resAfter := ""
-			for {
-				page, next, err := t.Store.Resources(ctx, permissions.CollectionInteractions, nil, resAfter, 200)
-				if err != nil {
-					return fmt.Errorf("Resources(interactions): %w", err)
+			if err := listAllResources(ctx, t.Store, permissions.CollectionInteractions, func(r state.Resource) error {
+				var inter permissions.Interaction
+				if err := r.Decode(&inter); err != nil {
+					return fmt.Errorf("decode interaction %s: %w", r.ID, err)
 				}
-				for _, r := range page {
-					var inter permissions.Interaction
-					if err := r.Decode(&inter); err != nil {
-						return fmt.Errorf("decode interaction %s: %w", r.ID, err)
-					}
-					inter.Revision = r.Revision
-					u.interactions = append(u.interactions, rawInteractionRecord{resource: r, interaction: inter})
-				}
-				if next == "" {
-					break
-				}
-				resAfter = next
+				inter.Revision = r.Revision
+				u.interactions = append(u.interactions, rawInteractionRecord{resource: r, interaction: inter})
+				return nil
+			}); err != nil {
+				return err
 			}
-
-			resAfter = ""
-			for {
-				page, next, err := t.Store.Resources(ctx, scheduler.CollectionAutomations, nil, resAfter, 200)
-				if err != nil {
-					return fmt.Errorf("Resources(automations): %w", err)
+			if err := listAllResources(ctx, t.Store, scheduler.CollectionAutomations, func(r state.Resource) error {
+				var a storedAutomation
+				if err := r.Decode(&a); err != nil {
+					return fmt.Errorf("decode automation %s: %w", r.ID, err)
 				}
-				for _, r := range page {
-					var a storedAutomation
-					if err := r.Decode(&a); err != nil {
-						return fmt.Errorf("decode automation %s: %w", r.ID, err)
-					}
-					a.Revision = r.Revision
-					u.automations[r.ID] = a
-				}
-				if next == "" {
-					break
-				}
-				resAfter = next
+				a.Revision = r.Revision
+				u.automations[r.ID] = a
+				return nil
+			}); err != nil {
+				return err
 			}
-
-			resAfter = ""
-			for {
-				page, next, err := t.Store.Resources(ctx, scheduler.CollectionOccurrences, nil, resAfter, 200)
-				if err != nil {
-					return fmt.Errorf("Resources(occurrences): %w", err)
+			if err := listAllResources(ctx, t.Store, scheduler.CollectionOccurrences, func(r state.Resource) error {
+				var o storedOccurrence
+				if err := r.Decode(&o); err != nil {
+					return fmt.Errorf("decode occurrence %s: %w", r.ID, err)
 				}
-				for _, r := range page {
-					var o storedOccurrence
-					if err := r.Decode(&o); err != nil {
-						return fmt.Errorf("decode occurrence %s: %w", r.ID, err)
-					}
-					u.occurrences = append(u.occurrences, o)
-				}
-				if next == "" {
-					break
-				}
-				resAfter = next
+				u.occurrences = append(u.occurrences, o)
+				return nil
+			}); err != nil {
+				return err
 			}
 			return nil
 		})
@@ -450,18 +440,7 @@ func (c *Checker) checkSafetyFromStoresLocked(ctx context.Context, targets []Use
 			continue
 		}
 
-		for _, runID := range sortedKeys(u.runs) {
-			vs = append(vs, c.registerOwnerLocked(c.runOwners, "run", runID, t.User.ID)...)
-		}
-		for _, inter := range u.interactions {
-			vs = append(vs, c.registerOwnerLocked(c.interactionOwners, "interaction", inter.resource.ID, t.User.ID)...)
-		}
-		for _, autoID := range sortedKeys(u.automations) {
-			vs = append(vs, c.registerOwnerLocked(c.automationOwners, "automation", autoID, t.User.ID)...)
-		}
-		for _, occ := range u.occurrences {
-			vs = append(vs, c.registerOwnerLocked(c.occurrenceOwners, "occurrence", occ.ID, t.User.ID)...)
-		}
+		vs = append(vs, c.registerUserEntitiesLocked(u.userSnapshotData)...)
 		dataList = append(dataList, u)
 	}
 
@@ -471,27 +450,33 @@ func (c *Checker) checkSafetyFromStoresLocked(ctx context.Context, targets []Use
 			vs = append(vs, c.checkReadMarkLocked(u.userID, u.readMark, u.eventPos)...)
 		}
 		vs = append(vs, c.checkConversationLocked(u.userID, u.conv)...)
-		vs = append(vs, c.checkRunsLocked(u.userID, u.runs, false)...)
-		vs = append(vs, c.checkTaskControlsLocked(u.userID, u.taskControls)...)
-		vs = append(vs, c.checkOperationsLocked(u.userID, u.runs, u.opsByRun, false)...)
-		vs = append(vs, c.checkCommandsLocked(u.userID, u.runs, u.pendingCmds)...)
-		for _, msg := range u.msgs {
-			if msg.RunID != "" {
-				vs = append(vs, c.checkOwnedByLocked(c.runOwners, "run", msg.RunID, u.userID, "message "+msg.ID)...)
-			}
-		}
 		permSvc := u.target.Permissions
 		if permSvc == nil && u.target.Store != nil {
 			permSvc = &permissions.Service{Store: u.target.Store, Now: func() time.Time { return now }}
 		}
-		_ = c.withoutFaults(func() error {
-			vs = append(vs, c.checkInteractionsLocked(ctx, u.userID, u.runs, u.interactions, permSvc, now)...)
-			return nil
-		})
-		vs = append(vs, c.checkAutomationsAndOccurrencesLocked(u.userID, u.automations, u.occurrences)...)
+		vs = append(vs, c.checkUserSafetyDataLocked(ctx, u.userSnapshotData, false, permSvc, c.withoutFaults, now)...)
 	}
 
 	return vs
+}
+
+func listAllResources(ctx context.Context, store state.ResourceStore, collection string, visit func(state.Resource) error) error {
+	after := ""
+	for {
+		page, next, err := store.Resources(ctx, collection, nil, after, 200)
+		if err != nil {
+			return fmt.Errorf("Resources(%s): %w", collection, err)
+		}
+		for _, r := range page {
+			if err := visit(r); err != nil {
+				return err
+			}
+		}
+		if next == "" {
+			return nil
+		}
+		after = next
+	}
 }
 
 func (c *Checker) checkEventLogFromSnapshotLocked(userID, owner string, snap memstore.BackendSnapshot) (int64, []Violation) {

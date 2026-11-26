@@ -921,7 +921,7 @@ func (b *backend) migrationTransaction(ctx context.Context, run func(context.Con
 	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '5min'"); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(7162384101)"); err != nil {
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", docstore.MigrationAdvisoryLockKey); err != nil {
 		return err
 	}
 	if err := run(ctx, tx); err != nil {

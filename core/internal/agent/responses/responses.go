@@ -17,6 +17,7 @@ import (
 	"nori/internal/llmguard"
 	"nori/internal/modelgateway"
 	"nori/internal/settings"
+	"nori/internal/state"
 	"nori/internal/transcript"
 	"nori/internal/usage"
 )
@@ -157,17 +158,18 @@ func (c *Client) validModel() bool {
 	return c.ProviderName != "" && strings.TrimSpace(c.ModelName) != ""
 }
 
-func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Response, err error) {
-	out.NotSent = true
-	if c.ProviderName == llmguard.ProviderHome {
-		out.CostKnown, out.CostLocal = true, true
-	}
-	if !c.validModel() {
-		return out, errors.New("task model must be the selected GPT-6.1 Terra")
-	}
+type responsesAPIResponse struct {
+	Status string            `json:"status"`
+	Output []json.RawMessage `json:"output"`
+	Model  string            `json:"model"`
+	Tier   string            `json:"service_tier"`
+	Usage  *responseUsage    `json:"usage"`
+}
+
+func (c *Client) buildRequestBody(req agent.Request) ([]byte, error) {
 	input, err := responseInput(req.Messages, c.format())
 	if err != nil {
-		return out, err
+		return nil, err
 	}
 	tools := []any{}
 	nativeWebSearch := req.WebSearch && c.SupportsNativeWebSearch()
@@ -209,23 +211,198 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	c.requestOptions(fields)
 	body, err := json.Marshal(fields)
 	if err != nil {
-		return out, errors.New("task request could not be encoded")
+		return nil, errors.New("task request could not be encoded")
 	}
 	if err := contextview.Check(len(body)); err != nil {
-		return out, err
+		return nil, err
 	}
+	return body, nil
+}
+
+func (c *Client) callMeta(ctx context.Context, maxOutputTokens int) llmguard.CallMeta {
 	scope := llmguard.MetaFromContext(ctx).Scope
 	if scope == "" {
 		scope = llmguard.ScopeTask
 	}
-	meta := llmguard.CallMeta{
+	return llmguard.CallMeta{
 		UserID:          c.UserID,
 		Scope:           scope,
 		Provider:        c.Provider(),
 		Model:           c.ModelName,
-		MaxOutputTokens: req.MaxOutputTokens,
+		MaxOutputTokens: maxOutputTokens,
 		BYOK:            c.Byok,
 	}
+}
+
+func (c *Client) mapHTTPError(res *http.Response) error {
+	if c.BYOKProviderLabel != "" {
+		if err := llmguard.ModelAccessError(res, c.BYOKProviderLabel); err != nil {
+			return err
+		}
+	}
+	if (res.StatusCode == 400 || res.StatusCode == 413) && contextview.Refusal(res.Body) {
+		return contextview.ErrOverflow
+	}
+	if c.gatewayURL != "" {
+		return modelgateway.HTTPError(res.StatusCode)
+	}
+	return fmt.Errorf("task model returned HTTP %d", res.StatusCode)
+}
+
+func (c *Client) applyResponseUsage(res *http.Response, record *state.Usage, response responsesAPIResponse, out *agent.Response) {
+	out.Cost, out.CostKnown = c.recordCost(record, response.Model, response.Tier, response.Usage)
+	if c.ProviderName == llmguard.ProviderHome {
+		out.CostLocal = true
+		llmguard.RecordResponseCost(res, 0)
+	}
+	if c.LocalOnly && !out.CostKnown {
+		record.CostStatus = "local"
+		out.CostLocal = true
+	}
+	if u := response.Usage; u != nil && u.Input != nil && u.Output != nil && u.Total != nil {
+		nonReasoning := max(*u.Output-u.OutputDetails.Reasoning, 0)
+		out.Usage = &agent.Usage{
+			InputTokens: int32(*u.Input), OutputTokens: int32(nonReasoning),
+			ReasoningTokens: int32(u.OutputDetails.Reasoning), CachedTokens: int32(u.InputDetails.Cached), TotalTokens: int32(*u.Total),
+		}
+	}
+}
+
+type decodedOutputItems struct {
+	message     *transcript.Message
+	calls       []transcript.ToolCall
+	text        []string
+	webSearches []agent.WebSearchCall
+	citations   []agent.URLCitation
+}
+
+func (c *Client) decodeOutputItems(output []json.RawMessage, reqTools []transcript.Tool) (decodedOutputItems, error) {
+	saved, err := json.Marshal(output)
+	if err != nil {
+		return decodedOutputItems{}, err
+	}
+	decoded := decodedOutputItems{
+		message: &transcript.Message{
+			Role:  transcript.RoleModel,
+			Parts: []transcript.Part{{Provider: &transcript.ProviderState{Format: c.format(), Data: saved}}},
+		},
+		calls:       []transcript.ToolCall{},
+		text:        []string{},
+		webSearches: []agent.WebSearchCall{},
+		citations:   []agent.URLCitation{},
+	}
+	seenCitations := map[string]bool{}
+	for _, raw := range output {
+		var item struct {
+			ID        string `json:"id"`
+			Role      string `json:"role"`
+			Type      string `json:"type"`
+			Status    string `json:"status"`
+			CallID    string `json:"call_id"`
+			Name      string `json:"name"`
+			Arguments string `json:"arguments"`
+			Action    *struct {
+				Type    string   `json:"type"`
+				Query   string   `json:"query"`
+				Queries []string `json:"queries"`
+				URL     string   `json:"url"`
+				Pattern string   `json:"pattern"`
+				Sources []struct {
+					Type string `json:"type"`
+					URL  string `json:"url"`
+				} `json:"sources"`
+			} `json:"action"`
+			Content []struct {
+				Type        string `json:"type"`
+				Text        string `json:"text"`
+				Annotations []struct {
+					Type  string `json:"type"`
+					URL   string `json:"url"`
+					Title string `json:"title"`
+				} `json:"annotations"`
+			} `json:"content"`
+		}
+		if json.Unmarshal(raw, &item) != nil {
+			return decodedOutputItems{}, errors.New("invalid task response item")
+		}
+		switch item.Type {
+		case "function_call":
+			call := transcript.ToolCall{ID: item.CallID, Name: item.Name}
+			if call.ID == "" || json.Unmarshal([]byte(item.Arguments), &call.Args) != nil || call.Args == nil {
+				return decodedOutputItems{}, errors.New("invalid task tool call")
+			}
+			if c.gatewayURL != "" && !slices.ContainsFunc(reqTools, func(tool transcript.Tool) bool { return tool.Name == call.Name }) {
+				return decodedOutputItems{}, errors.New("model gateway returned a function call for a tool absent from the request")
+			}
+			decoded.calls = append(decoded.calls, call)
+			decoded.message.Parts = append(decoded.message.Parts, transcript.Part{ToolCall: &call})
+		case "web_search_call":
+			if c.gatewayURL != "" {
+				return decodedOutputItems{}, errors.New("model gateway returned an unsupported Responses output item. Check function calling compatibility")
+			}
+			ws := agent.WebSearchCall{
+				ID:     strings.TrimSpace(item.ID),
+				Status: strings.TrimSpace(item.Status),
+			}
+			if item.Action != nil {
+				ws.Action = strings.TrimSpace(item.Action.Type)
+				ws.Query = strings.TrimSpace(item.Action.Query)
+				for _, q := range item.Action.Queries {
+					if q = strings.TrimSpace(q); q != "" {
+						ws.Queries = append(ws.Queries, q)
+					}
+				}
+				ws.URL = strings.TrimSpace(item.Action.URL)
+				ws.Pattern = strings.TrimSpace(item.Action.Pattern)
+				for _, src := range item.Action.Sources {
+					if u := strings.TrimSpace(src.URL); u != "" {
+						ws.Sources = append(ws.Sources, u)
+					}
+				}
+			}
+			decoded.webSearches = append(decoded.webSearches, ws)
+		case "message":
+			if c.gatewayURL != "" && item.Role != "assistant" {
+				return decodedOutputItems{}, errors.New("model gateway returned a Responses message without the assistant role")
+			}
+			for _, content := range item.Content {
+				if content.Type == "output_text" {
+					decoded.text = append(decoded.text, content.Text)
+					for _, ann := range content.Annotations {
+						if ann.Type == "url_citation" {
+							if u := strings.TrimSpace(ann.URL); u != "" && !seenCitations[u] {
+								seenCitations[u] = true
+								decoded.citations = append(decoded.citations, agent.URLCitation{URL: u, Title: strings.TrimSpace(ann.Title)})
+							}
+						}
+					}
+				} else if c.gatewayURL != "" {
+					return decodedOutputItems{}, errors.New("model gateway returned unsupported Responses message content. Check model output or access policy")
+				}
+			}
+		case "reasoning":
+		default:
+			if c.gatewayURL != "" {
+				return decodedOutputItems{}, errors.New("model gateway returned an unsupported Responses output item. Check function calling compatibility")
+			}
+		}
+	}
+	return decoded, nil
+}
+
+func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Response, err error) {
+	out.NotSent = true
+	if c.ProviderName == llmguard.ProviderHome {
+		out.CostKnown, out.CostLocal = true, true
+	}
+	if !c.validModel() {
+		return out, errors.New("task model must be the selected GPT-6.1 Terra")
+	}
+	body, err := c.buildRequestBody(req)
+	if err != nil {
+		return out, err
+	}
+	meta := c.callMeta(ctx, req.MaxOutputTokens)
 	reqCtx := llmguard.WithMeta(ctx, meta)
 	buildReq := func() (*http.Request, error) {
 		httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.endpoint(), bytes.NewReader(body))
@@ -293,181 +470,45 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	record.RequestStatus = "received"
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		if c.BYOKProviderLabel != "" {
-			if err := llmguard.ModelAccessError(res, c.BYOKProviderLabel); err != nil {
-				return out, err
-			}
-		}
-		if (res.StatusCode == 400 || res.StatusCode == 413) && contextview.Refusal(res.Body) {
-			return out, contextview.ErrOverflow
-		}
-		if c.gatewayURL != "" {
-			return out, modelgateway.HTTPError(res.StatusCode)
-		}
-		return out, fmt.Errorf("task model returned HTTP %d", res.StatusCode)
+		return out, c.mapHTTPError(res)
 	}
-	var response struct {
-		Status string            `json:"status"`
-		Output []json.RawMessage `json:"output"`
-		Model  string            `json:"model"`
-		Tier   string            `json:"service_tier"`
-		Usage  *responseUsage    `json:"usage"`
-	}
+	var response responsesAPIResponse
 	if json.NewDecoder(io.LimitReader(res.Body, 2<<20)).Decode(&response) != nil {
 		return out, errors.New("task model returned an unreadable response")
 	}
-	out.Cost, out.CostKnown = c.recordCost(&record, response.Model, response.Tier, response.Usage)
-	if c.ProviderName == llmguard.ProviderHome {
-		out.CostLocal = true
-		llmguard.RecordResponseCost(res, 0)
-	}
-	if c.LocalOnly && !out.CostKnown {
-		record.CostStatus = "local"
-		out.CostLocal = true
-	}
-	if u := response.Usage; u != nil && u.Input != nil && u.Output != nil && u.Total != nil {
-		nonReasoning := max(*u.Output-u.OutputDetails.Reasoning, 0)
-		out.Usage = &agent.Usage{
-			InputTokens: int32(*u.Input), OutputTokens: int32(nonReasoning),
-			ReasoningTokens: int32(u.OutputDetails.Reasoning), CachedTokens: int32(u.InputDetails.Cached), TotalTokens: int32(*u.Total),
-		}
-	}
+	c.applyResponseUsage(res, &record, response, &out)
 	if response.Status != "completed" {
 		if c.gatewayURL != "" {
 			return out, errors.New("model gateway must return a completed Responses API response before tools can run")
 		}
 		return out, errors.New("task model response incomplete; no tools executed")
 	}
-	saved, err := json.Marshal(response.Output)
+	decoded, err := c.decodeOutputItems(response.Output, req.Tools)
 	if err != nil {
 		return out, err
 	}
-	message := &transcript.Message{
-		Role:  transcript.RoleModel,
-		Parts: []transcript.Part{{Provider: &transcript.ProviderState{Format: c.format(), Data: saved}}},
-	}
-	calls := []transcript.ToolCall{}
-	text := []string{}
-	webSearches := []agent.WebSearchCall{}
-	citations := []agent.URLCitation{}
-	seenCitations := map[string]bool{}
-	for _, raw := range response.Output {
-		var item struct {
-			ID        string `json:"id"`
-			Role      string `json:"role"`
-			Type      string `json:"type"`
-			Status    string `json:"status"`
-			CallID    string `json:"call_id"`
-			Name      string `json:"name"`
-			Arguments string `json:"arguments"`
-			Action    *struct {
-				Type    string   `json:"type"`
-				Query   string   `json:"query"`
-				Queries []string `json:"queries"`
-				URL     string   `json:"url"`
-				Pattern string   `json:"pattern"`
-				Sources []struct {
-					Type string `json:"type"`
-					URL  string `json:"url"`
-				} `json:"sources"`
-			} `json:"action"`
-			Content []struct {
-				Type        string `json:"type"`
-				Text        string `json:"text"`
-				Annotations []struct {
-					Type  string `json:"type"`
-					URL   string `json:"url"`
-					Title string `json:"title"`
-				} `json:"annotations"`
-			} `json:"content"`
-		}
-		if json.Unmarshal(raw, &item) != nil {
-			return out, errors.New("invalid task response item")
-		}
-		switch item.Type {
-		case "function_call":
-			call := transcript.ToolCall{ID: item.CallID, Name: item.Name}
-			if call.ID == "" || json.Unmarshal([]byte(item.Arguments), &call.Args) != nil || call.Args == nil {
-				return out, errors.New("invalid task tool call")
-			}
-			if c.gatewayURL != "" && !slices.ContainsFunc(req.Tools, func(tool transcript.Tool) bool { return tool.Name == call.Name }) {
-				return out, errors.New("model gateway returned a function call for a tool absent from the request")
-			}
-			calls = append(calls, call)
-			message.Parts = append(message.Parts, transcript.Part{ToolCall: &call})
-		case "web_search_call":
-			if c.gatewayURL != "" {
-				return out, errors.New("model gateway returned an unsupported Responses output item. Check function calling compatibility")
-			}
-			ws := agent.WebSearchCall{
-				ID:     strings.TrimSpace(item.ID),
-				Status: strings.TrimSpace(item.Status),
-			}
-			if item.Action != nil {
-				ws.Action = strings.TrimSpace(item.Action.Type)
-				ws.Query = strings.TrimSpace(item.Action.Query)
-				for _, q := range item.Action.Queries {
-					if q = strings.TrimSpace(q); q != "" {
-						ws.Queries = append(ws.Queries, q)
-					}
-				}
-				ws.URL = strings.TrimSpace(item.Action.URL)
-				ws.Pattern = strings.TrimSpace(item.Action.Pattern)
-				for _, src := range item.Action.Sources {
-					if u := strings.TrimSpace(src.URL); u != "" {
-						ws.Sources = append(ws.Sources, u)
-					}
-				}
-			}
-			webSearches = append(webSearches, ws)
-		case "message":
-			if c.gatewayURL != "" && item.Role != "assistant" {
-				return out, errors.New("model gateway returned a Responses message without the assistant role")
-			}
-			for _, content := range item.Content {
-				if content.Type == "output_text" {
-					text = append(text, content.Text)
-					for _, ann := range content.Annotations {
-						if ann.Type == "url_citation" {
-							if u := strings.TrimSpace(ann.URL); u != "" && !seenCitations[u] {
-								seenCitations[u] = true
-								citations = append(citations, agent.URLCitation{URL: u, Title: strings.TrimSpace(ann.Title)})
-							}
-						}
-					}
-				} else if c.gatewayURL != "" {
-					return out, errors.New("model gateway returned unsupported Responses message content. Check model output or access policy")
-				}
-			}
-		case "reasoning":
-		default:
-			if c.gatewayURL != "" {
-				return out, errors.New("model gateway returned an unsupported Responses output item. Check function calling compatibility")
-			}
-		}
-	}
-	if len(webSearches) > 0 {
-		out.Cost = c.addWebSearchCost(&record, out.Cost, out.CostKnown, webSearches)
-		out.WebSearches = webSearches
+	if len(decoded.webSearches) > 0 {
+		out.Cost = c.addWebSearchCost(&record, out.Cost, out.CostKnown, decoded.webSearches)
+		out.WebSearches = decoded.webSearches
 	}
 	if out.CostKnown && out.Cost > 0 {
 		llmguard.RecordResponseCost(res, out.Cost)
 	}
-	if len(citations) > 0 {
-		out.Citations = citations
+	if len(decoded.citations) > 0 {
+		out.Citations = decoded.citations
 	}
-	visibleText := strings.TrimSpace(strings.Join(text, "\n"))
-	if len(calls) == 0 {
+	visibleText := strings.TrimSpace(strings.Join(decoded.text, "\n"))
+	if len(decoded.calls) == 0 {
 		out.Answer = visibleText
 	}
-	if len(calls) == 0 && out.Answer == "" {
+	if len(decoded.calls) == 0 && out.Answer == "" {
 		return out, errors.New("task model returned no answer")
 	}
-	out.Calls = calls
+	out.Calls = decoded.calls
 	if visibleText != "" {
-		message.Parts = append(message.Parts, transcript.Part{Text: visibleText})
+		decoded.message.Parts = append(decoded.message.Parts, transcript.Part{Text: visibleText})
 	}
-	out.Message = message
+	out.Message = decoded.message
 	return out, nil
 }
 

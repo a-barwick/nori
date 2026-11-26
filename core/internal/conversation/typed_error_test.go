@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -151,4 +152,50 @@ func TestClassifyModelFailureVariants(t *testing.T) {
 	if fNoUser.Code != "provider_overloaded" || fNoUser.Retryable {
 		t.Fatalf("unexpected non-user 503 classification: %+v", fNoUser)
 	}
+
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"provider unavailable", fmt.Errorf("request failed: %w", ErrProviderUnavailable)},
+		{"stream interrupted", fmt.Errorf("sse read: %w", ErrStreamInterrupted)},
+		{"attempt interrupted", ErrAttemptInterrupted},
+		{"deadline exceeded", fmt.Errorf("call timed out: %w", context.DeadlineExceeded)},
+	} {
+		got := classifyModelFailure(tc.err, true)
+		if got.Code != "provider_unavailable" || !got.Retryable {
+			t.Fatalf("classifyModelFailure(%s) = %+v, want provider_unavailable retryable", tc.name, got)
+		}
+	}
+}
+
+func TestRunnerBackoffFieldsRaceFree(t *testing.T) {
+	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	r := &Runner{Now: func() time.Time { return now }}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(offset int) {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				ts := now.Add(time.Duration(offset*10+j) * time.Second)
+				r.setCompactAfter(ts)
+				r.setExtractAfter(ts.Add(time.Second))
+				r.setDreamAfter(ts.Add(2 * time.Second))
+			}
+		}(i)
+	}
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				_ = r.getCompactAfter()
+				_ = r.getExtractAfter()
+				_ = r.getDreamAfter()
+			}
+		}()
+	}
+	wg.Wait()
 }

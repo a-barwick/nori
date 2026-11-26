@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -98,6 +99,52 @@ func expectSignal(t *testing.T, ch <-chan struct{}, label string) {
 	}
 }
 
+func waitForCondition(t *testing.T, timeout time.Duration, check func() bool) bool {
+	t.Helper()
+	if check() {
+		return true
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	tick := time.NewTicker(5 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-tick.C:
+			if check() {
+				return true
+			}
+		case <-timer.C:
+			return check()
+		}
+	}
+}
+
+type manualTickerHub struct {
+	mu       sync.Mutex
+	channels []chan time.Time
+}
+
+func (h *manualTickerHub) NewTicker(_ time.Duration) (<-chan time.Time, func()) {
+	ch := make(chan time.Time, 8)
+	h.mu.Lock()
+	h.channels = append(h.channels, ch)
+	h.mu.Unlock()
+	return ch, func() {}
+}
+
+func (h *manualTickerHub) Tick(at time.Time) {
+	h.mu.Lock()
+	chs := append([]chan time.Time(nil), h.channels...)
+	h.mu.Unlock()
+	for _, ch := range chs {
+		select {
+		case ch <- at:
+		default:
+		}
+	}
+}
+
 func expectNoSignal(t *testing.T, ch <-chan struct{}, label string) {
 	t.Helper()
 	select {
@@ -172,6 +219,8 @@ func TestPoolInnerTaskDispatchAndConcurrency(t *testing.T) {
 	var maxActive atomic.Int32
 	var completed atomic.Int32
 	allDone := make(chan struct{})
+	twoActive := make(chan struct{})
+	var twoActiveOnce sync.Once
 	const totalTasks = 6
 	const maxConcurrency = 2
 
@@ -193,7 +242,13 @@ func TestPoolInnerTaskDispatchAndConcurrency(t *testing.T) {
 					break
 				}
 			}
-			time.Sleep(25 * time.Millisecond)
+			if cur >= maxConcurrency {
+				twoActiveOnce.Do(func() { close(twoActive) })
+			}
+			select {
+			case <-twoActive:
+			case <-ctx.Done():
+			}
 			active.Add(-1)
 			if _, err := backend.DeleteTaskLease(ctx, claim.UserID, claim.RunID, 0); err != nil {
 				return task.OutcomeBackoff, err
@@ -291,14 +346,10 @@ func TestPoolOuterConversationClaimParkAndConcurrentWake(t *testing.T) {
 		t.Fatalf("expected concurrent wake to prevent parking and trigger pass #2; runs=%d", runs.Load())
 	}
 
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
+	waitForCondition(t, time.Second, func() bool {
 		wakes, err := backend.ListUserWakes(ctx, u.ID)
-		if err == nil && len(wakes) == 1 && !wakes[0].Runnable && wakes[0].Owner == "" {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		return err == nil && len(wakes) == 1 && !wakes[0].Runnable && wakes[0].Owner == ""
+	})
 	wakes, err := backend.ListUserWakes(ctx, u.ID)
 	if err != nil || len(wakes) != 1 || wakes[0].Runnable || wakes[0].Owner != "" {
 		t.Fatalf("expected conversation wake to park cleanly after pass #2, got %+v (err=%v)", wakes, err)
@@ -321,6 +372,7 @@ func TestPoolOuterSchedulerDelayedClaimReArmAndPark(t *testing.T) {
 	pass2Done := make(chan struct{})
 	secondDue := clock.Now().Add(2 * time.Hour)
 
+	tickers := &manualTickerHub{}
 	pool, err := worker.New(svc, worker.Options{
 		Owner:                "pool-sched",
 		SchedulerConcurrency: 2,
@@ -328,6 +380,7 @@ func TestPoolOuterSchedulerDelayedClaimReArmAndPark(t *testing.T) {
 		RepairInterval:       time.Hour,
 		DrainTimeout:         2 * time.Second,
 		Now:                  clock.Now,
+		NewTicker:            tickers.NewTicker,
 		RunScheduler: func(ctx context.Context, userApp *app.App) (*time.Time, error) {
 			n := pass.Add(1)
 			if n == 1 {
@@ -351,47 +404,46 @@ func TestPoolOuterSchedulerDelayedClaimReArmAndPark(t *testing.T) {
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() { done <- pool.Run(runCtx) }()
+	if err := backend.WaitForWakeSubscribers(ctx, 1); err != nil {
+		t.Fatalf("WaitForWakeSubscribers: %v", err)
+	}
 
-	time.Sleep(60 * time.Millisecond)
+	tickers.Tick(clock.Now())
+	runtime.Gosched()
 	if pass.Load() != 0 {
 		t.Fatalf("scheduler ran before wake_at was due: pass=%d", pass.Load())
 	}
 
 	clock.Advance(time.Hour)
+	tickers.Tick(clock.Now())
 	select {
 	case <-pass1Done:
 	case <-time.After(2 * time.Second):
 		t.Fatalf("scheduler pass 1 did not run after wake_at became due")
 	}
 
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
+	waitForCondition(t, time.Second, func() bool {
 		wakes, _ := backend.ListUserWakes(ctx, u.ID)
-		if len(wakes) == 1 && wakes[0].Owner == "" && wakes[0].Runnable && wakes[0].WakeAt.Equal(secondDue) {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		return len(wakes) == 1 && wakes[0].Owner == "" && wakes[0].Runnable && wakes[0].WakeAt.Equal(secondDue)
+	})
 	wakes, _ := backend.ListUserWakes(ctx, u.ID)
 	if len(wakes) != 1 || !wakes[0].Runnable || !wakes[0].WakeAt.Equal(secondDue) || wakes[0].Owner != "" {
 		t.Fatalf("expected re-armed scheduler wake at %s, got %+v", secondDue, wakes)
 	}
 
 	clock.Advance(time.Hour)
+	tickers.Tick(clock.Now())
 	select {
 	case <-pass2Done:
 	case <-time.After(2 * time.Second):
 		t.Fatalf("scheduler pass 2 did not run")
 	}
 
-	deadline = time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
+	waitForCondition(t, time.Second, func() bool {
 		wakes, _ = backend.ListUserWakes(ctx, u.ID)
-		if len(wakes) == 1 && !wakes[0].Runnable && wakes[0].Owner == "" {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		return len(wakes) == 1 && !wakes[0].Runnable && wakes[0].Owner == ""
+	})
+	wakes, _ = backend.ListUserWakes(ctx, u.ID)
 	if len(wakes) != 1 || wakes[0].Runnable || wakes[0].Owner != "" {
 		t.Fatalf("expected scheduler wake to park when NextScheduled==nil, got %+v", wakes)
 	}
@@ -784,8 +836,12 @@ func TestPoolSlowConversationAndSchedulerBeyondCancelGrace(t *testing.T) {
 	svc, backend := newPoolTestEnv(t, clock)
 	u := mustCreateUser(t, svc, uuid.NewString(), "slow@example.com")
 
+	convStarted := make(chan struct{})
+	schedStarted := make(chan struct{})
+	releaseSlow := make(chan struct{})
 	convDone := make(chan struct{})
 	schedDone := make(chan struct{})
+	renewHub := &manualTickerHub{}
 
 	pool, err := worker.New(svc, worker.Options{
 		Owner:                   "pool-slow-grace",
@@ -797,13 +853,30 @@ func TestPoolSlowConversationAndSchedulerBeyondCancelGrace(t *testing.T) {
 		DrainTimeout:            2 * time.Second,
 		CancelGrace:             25 * time.Millisecond,
 		Now:                     clock.Now,
+		NewTicker: func(d time.Duration) (<-chan time.Time, func()) {
+			if d == 30*time.Millisecond {
+				return renewHub.NewTicker(d)
+			}
+			t := time.NewTicker(d)
+			return t.C, t.Stop
+		},
 		RunConversation: func(ctx context.Context, _ *app.App) error {
-			time.Sleep(90 * time.Millisecond)
+			close(convStarted)
+			select {
+			case <-releaseSlow:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 			close(convDone)
 			return nil
 		},
 		RunScheduler: func(ctx context.Context, _ *app.App) (*time.Time, error) {
-			time.Sleep(90 * time.Millisecond)
+			close(schedStarted)
+			select {
+			case <-releaseSlow:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 			close(schedDone)
 			return nil, nil
 		},
@@ -827,6 +900,22 @@ func TestPoolSlowConversationAndSchedulerBeyondCancelGrace(t *testing.T) {
 	}
 
 	select {
+	case <-convStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for slow conversation start")
+	}
+	select {
+	case <-schedStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for slow scheduler start")
+	}
+	// Advance past CancelGrace and fire renewal ticks to confirm leases renew cleanly.
+	clock.Advance(100 * time.Millisecond)
+	renewHub.Tick(clock.Now())
+	renewHub.Tick(clock.Now())
+	close(releaseSlow)
+
+	select {
 	case <-convDone:
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for slow conversation turn")
@@ -837,16 +926,12 @@ func TestPoolSlowConversationAndSchedulerBeyondCancelGrace(t *testing.T) {
 		t.Fatal("timed out waiting for slow scheduler turn")
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	waitForCondition(t, 2*time.Second, func() bool {
 		wakes, err := backend.ListUserWakes(ctx, u.ID)
-		if err == nil && len(wakes) == 2 &&
+		return err == nil && len(wakes) == 2 &&
 			!wakes[0].Runnable && wakes[0].Owner == "" && wakes[0].LeaseUntil == nil &&
-			!wakes[1].Runnable && wakes[1].Owner == "" && wakes[1].LeaseUntil == nil {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+			!wakes[1].Runnable && wakes[1].Owner == "" && wakes[1].LeaseUntil == nil
+	})
 	wakes, err := backend.ListUserWakes(ctx, u.ID)
 	if err != nil || len(wakes) != 2 {
 		t.Fatalf("expected 2 wakes, got %+v (err=%v)", wakes, err)
@@ -961,19 +1046,18 @@ func TestPoolRunNowOnceAutomationSettlementAndDeferredAnswer(t *testing.T) {
 		t.Fatalf("expected run_now Work.TaskID, got %+v", actRcpt)
 	}
 
-	deadline := time.Now().Add(5 * time.Second)
 	var inbox []scheduler.InboxItem
 	var occs []scheduler.Occurrence
-	for time.Now().Before(deadline) {
+	waitForCondition(t, 5*time.Second, func() bool {
 		items, ierr := userApp.Scheduler.Inbox(ctx, false)
 		curOccs, oerr := userApp.Scheduler.Occurrences(ctx, savedAuto.ID)
-		if ierr == nil && oerr == nil && len(items) == 1 && len(curOccs) == 1 && curOccs[0].Status == "completed" {
+		if ierr == nil && oerr == nil && len(items) == 1 && len(curOccs) == 1 && curOccs[0].Status == scheduler.OccurrenceCompleted {
 			inbox = items
 			occs = curOccs
-			break
+			return true
 		}
-		time.Sleep(15 * time.Millisecond)
-	}
+		return false
+	})
 	if len(inbox) != 1 || len(occs) != 1 || occs[0].Status != "completed" {
 		curOccs, _ := userApp.Scheduler.Occurrences(ctx, savedAuto.ID)
 		run, _ := userApp.Store.GetRun(ctx, actRcpt.Work.TaskID)
@@ -1054,24 +1138,21 @@ func TestPoolRunNowOnceAutomationSettlementAndDeferredAnswer(t *testing.T) {
 	clock.Advance(3 * time.Second)
 	backend.EmitResync()
 
-	deadline = time.Now().Add(5 * time.Second)
-	resolved := false
-	for time.Now().Before(deadline) {
+	resolved := waitForCondition(t, 5*time.Second, func() bool {
 		r, rerr := userApp.Store.GetRun(ctx, taskID)
-		if rerr == nil {
-			if r.Question != nil && r.Question.ResolvedBy != "" {
-				resolved = true
-				break
-			}
-			if r.Position >= 2 && r.Incorporated >= 2 {
-				if undeliv, _, uerr := userApp.Assistant.Permissions.UndeliveredAnswers(ctx); uerr == nil && len(undeliv) == 0 {
-					resolved = true
-					break
-				}
+		if rerr != nil {
+			return false
+		}
+		if r.Question != nil && r.Question.ResolvedBy != "" {
+			return true
+		}
+		if r.Position >= 2 && r.Incorporated >= 2 {
+			if undeliv, _, uerr := userApp.Assistant.Permissions.UndeliveredAnswers(ctx); uerr == nil && len(undeliv) == 0 {
+				return true
 			}
 		}
-		time.Sleep(15 * time.Millisecond)
-	}
+		return false
+	})
 	close(allowDeferredComplete)
 	if !resolved {
 		r, _ := userApp.Store.GetRun(ctx, taskID)
@@ -1079,16 +1160,15 @@ func TestPoolRunNowOnceAutomationSettlementAndDeferredAnswer(t *testing.T) {
 		t.Fatalf("expected LaneScheduler retry to resolve deferred answer for question %s, got run=%+v undelivered=%+v", inter.ID, r, ans)
 	}
 
-	deadline = time.Now().Add(5 * time.Second)
 	var finalRun state.Run
-	for time.Now().Before(deadline) {
+	waitForCondition(t, 5*time.Second, func() bool {
 		r, rerr := userApp.Store.GetRun(ctx, taskID)
 		if rerr == nil && r.Status == state.RunCompleted && !r.CleanupPending {
 			finalRun = r
-			break
+			return true
 		}
-		time.Sleep(15 * time.Millisecond)
-	}
+		return false
+	})
 	if finalRun.Status != state.RunCompleted || finalRun.CleanupPending {
 		r, _ := userApp.Store.GetRun(ctx, taskID)
 		t.Fatalf("expected deferred-answer task to complete cleanly, got run=%+v", r)
@@ -1212,7 +1292,7 @@ func TestPoolLostNotifyAndResyncRecovery(t *testing.T) {
 		}}, nil); err != nil {
 			t.Fatalf("AcceptCommandBatch: %v", err)
 		}
-		time.Sleep(40 * time.Millisecond)
+		runtime.Gosched()
 		expectNoSignal(t, subCh, "subscriber should not fire while wakes are dropped")
 
 		backend.EmitResync()
@@ -1436,8 +1516,8 @@ func TestPoolRepairOnceLeaderElection(t *testing.T) {
 	unlocked := lockerBackend.unlocked
 	lockerBackend.mu.Unlock()
 
-	if lastKey == 0 || lastKey == 7162384101 {
-		t.Fatalf("expected dedicated repair advisory lock key distinct from migration lock (7162384101), got %d", lastKey)
+	if lastKey == 0 || lastKey == docstore.MigrationAdvisoryLockKey {
+		t.Fatalf("expected dedicated repair advisory lock key distinct from migration lock (%d), got %d", docstore.MigrationAdvisoryLockKey, lastKey)
 	}
 	if acquired != 2 || skipped != 1 || unlocked != 2 {
 		t.Fatalf("advisory lock counts: acquired=%d skipped=%d unlocked=%d, want 2/1/2", acquired, skipped, unlocked)
@@ -1550,14 +1630,10 @@ func TestPoolLaneStatsConcurrentWork(t *testing.T) {
 	}
 
 	close(releaseAll)
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	waitForCondition(t, 2*time.Second, func() bool {
 		st := pool.LaneStats()
-		if st.TaskActive == 0 && st.ConversationActive == 0 && st.SchedulerActive == 0 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		return st.TaskActive == 0 && st.ConversationActive == 0 && st.SchedulerActive == 0
+	})
 	after := pool.LaneStats()
 	if after.TaskActive != 0 || after.ConversationActive != 0 || after.SchedulerActive != 0 {
 		t.Fatalf("post-completion LaneStats = %+v, want 0/0/0", after)
@@ -1718,18 +1794,14 @@ func TestPoolScopedUserIsolationWakeAndRepair(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- pool.Run(runCtx) }()
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if u1TaskDone.Load() >= 1 && u1ConvDone.Load() >= 1 && u1SchedDone.Load() >= 1 {
-			break
-		}
-		time.Sleep(15 * time.Millisecond)
-	}
+	waitForCondition(t, 3*time.Second, func() bool {
+		return u1TaskDone.Load() >= 1 && u1ConvDone.Load() >= 1 && u1SchedDone.Load() >= 1
+	})
 	if u1TaskDone.Load() < 1 || u1ConvDone.Load() < 1 || u1SchedDone.Load() < 1 {
 		t.Fatalf("u1 scoped pool did not complete all lanes: task=%d conv=%d sched=%d",
 			u1TaskDone.Load(), u1ConvDone.Load(), u1SchedDone.Load())
 	}
-	time.Sleep(50 * time.Millisecond)
+	runtime.Gosched()
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatalf("pool.Run: %v", err)

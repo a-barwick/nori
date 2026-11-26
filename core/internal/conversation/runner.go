@@ -86,6 +86,7 @@ type Runner struct {
 	HomeOnly         func(context.Context) (bool, error)
 	classifier       IntentClassifier
 	summarizer       SummaryModel
+	backoffMu        sync.RWMutex
 	compactAfter     time.Time
 	extractAfter     time.Time
 	dreamAfter       time.Time
@@ -296,9 +297,45 @@ func (r *Runner) Process(ctx context.Context) error {
 		}
 	}
 }
-func (r *Runner) attemptEnd(a *state.ConversationAttempt, statusText, detail string) {
+func (r *Runner) getCompactAfter() time.Time {
+	r.backoffMu.RLock()
+	defer r.backoffMu.RUnlock()
+	return r.compactAfter
+}
+
+func (r *Runner) setCompactAfter(t time.Time) {
+	r.backoffMu.Lock()
+	r.compactAfter = t
+	r.backoffMu.Unlock()
+}
+
+func (r *Runner) getExtractAfter() time.Time {
+	r.backoffMu.RLock()
+	defer r.backoffMu.RUnlock()
+	return r.extractAfter
+}
+
+func (r *Runner) setExtractAfter(t time.Time) {
+	r.backoffMu.Lock()
+	r.extractAfter = t
+	r.backoffMu.Unlock()
+}
+
+func (r *Runner) getDreamAfter() time.Time {
+	r.backoffMu.RLock()
+	defer r.backoffMu.RUnlock()
+	return r.dreamAfter
+}
+
+func (r *Runner) setDreamAfter(t time.Time) {
+	r.backoffMu.Lock()
+	r.dreamAfter = t
+	r.backoffMu.Unlock()
+}
+
+func (r *Runner) attemptEnd(a *state.ConversationAttempt, status state.AttemptStatus, detail string) {
 	now := r.now().UTC()
-	a.Status = statusText
+	a.Status = status
 	a.Error = detail
 	a.FinishedAt = &now
 	a.DurationMS = now.Sub(a.StartedAt).Milliseconds()
@@ -359,8 +396,8 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 			a := state.ConversationAttempt{
 				ID: fmt.Sprintf("%s-attempt-%d", t.ID, t.Restarts+1), TurnID: t.ID, Number: t.Restarts + 1,
 				Model: turnModel.Name(), ModelSelection: selection.Clone(),
-				Status: "running", StartedAt: r.now().UTC(), Actions: []state.ConversationAction{}, Usage: []state.Usage{},
-				ModelCheckpoint: &state.ConversationModelCheckpoint{Phase: preparingReply},
+				Status: state.AttemptRunning, StartedAt: r.now().UTC(), Actions: []state.ConversationAction{}, Usage: []state.Usage{},
+				ModelCheckpoint: &state.ConversationModelCheckpoint{Phase: state.CheckpointPreparingReply},
 			}
 			for _, in := range t.Inputs {
 				a.InputIDs = append(a.InputIDs, in.ID)
@@ -376,7 +413,7 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 			attribute.Int("nori.conversation.restart_count", t.Restarts),
 		)
 		f = fenceFor(c, t)
-		if t.Attempt.Reply == "" && t.Attempt.Status != "error" {
+		if t.Attempt.Reply == "" && t.Attempt.Status != state.AttemptError {
 			if e = r.call(ctx, f, &t); e != nil {
 				return e
 			}
@@ -428,7 +465,7 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 		text := t.Attempt.Text
 		commandFailure := ""
 		for _, a := range t.Attempt.Actions {
-			if a.Status == "rejected" {
+			if a.Status == state.ActionRejected {
 				commandFailure = prompts.Runtime("task-changes-rejected", map[string]any{"Error": a.Error})
 				text = commandFailure
 				break
@@ -442,8 +479,8 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 			span.SetAttributes(attribute.Bool("nori.reply.receipt_ack", true))
 			observability.Event(ctx, "conversation.command_acknowledgment", attribute.Int("nori.tool.call_count", len(t.Attempt.Actions)))
 		}
-		if t.Attempt.Status != "error" {
-			r.attemptEnd(&t.Attempt, "completed", "")
+		if t.Attempt.Status != state.AttemptError {
+			r.attemptEnd(&t.Attempt, state.AttemptCompleted, "")
 		}
 		if strings.TrimSpace(text) == "" {
 			text = memoryText(t.Attempt.Memory)
@@ -457,8 +494,8 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 			continue
 		}
 		if e == nil {
-			span.SetAttributes(attribute.String("nori.reply.status", t.Attempt.Status), attribute.Bool("nori.output.present", text != ""))
-			if t.Attempt.Status == "error" {
+			span.SetAttributes(attribute.String("nori.reply.status", string(t.Attempt.Status)), attribute.Bool("nori.output.present", text != ""))
+			if t.Attempt.Status == state.AttemptError {
 				span.SetStatus(codes.Error, "conversation reply failed")
 				observability.Event(ctx, "conversation.failed")
 			} else {
@@ -511,7 +548,7 @@ func (r *Runner) recoverActions(ctx context.Context, t *state.ConversationTurn) 
 	}
 	for i := range t.Attempt.Actions {
 		a := &t.Attempt.Actions[i]
-		if a.Status != "pending" {
+		if a.Status != state.ActionPending {
 			continue
 		}
 		receipt, e := r.tasks.Store.ConversationCommand(ctx, a.ID)
@@ -519,7 +556,7 @@ func (r *Runner) recoverActions(ctx context.Context, t *state.ConversationTurn) 
 			return e
 		}
 		if receipt != nil {
-			a.Status, a.CreatedAt, a.Command = "accepted", receipt.Command.CreatedAt, receipt.Command
+			a.Status, a.CreatedAt, a.Command = state.ActionAccepted, receipt.Command.CreatedAt, receipt.Command
 			callID := a.ID
 			if i < len(reply.Calls) && reply.Calls[i].ID != "" {
 				callID = reply.Calls[i].ID
@@ -533,7 +570,7 @@ func (r *Runner) recoverActions(ctx context.Context, t *state.ConversationTurn) 
 }
 
 func (r *Runner) dispatchPending(ctx context.Context, f state.ConversationFence, t *state.ConversationTurn) error {
-	if t.Attempt.Status != "error" {
+	if t.Attempt.Status != state.AttemptError {
 		var reply Reply
 		if e := decodeSavedReply(t.Attempt, &reply); e != nil {
 			return e
@@ -542,11 +579,11 @@ func (r *Runner) dispatchPending(ctx context.Context, f state.ConversationFence,
 		indices := []int{}
 		for i := range t.Attempt.Actions {
 			a := &t.Attempt.Actions[i]
-			if a.Status != "pending" {
+			if a.Status != state.ActionPending {
 				continue
 			}
 			if a.Command.ID == "" {
-				a.Command = state.Command{ID: a.ID, RunID: a.ID, Kind: "start", Text: a.Request}
+				a.Command = state.Command{ID: a.ID, RunID: a.ID, Kind: state.CommandStart, Text: a.Request}
 			}
 			if a.Command.Kind == state.CommandStart && a.Command.ModelSelection.IsEmpty() && !t.ModelSelection.IsEmpty() {
 				a.Command.ModelSelection = t.ModelSelection.TaskOnly()
@@ -569,13 +606,13 @@ func (r *Runner) dispatchPending(ctx context.Context, f state.ConversationFence,
 					callID = reply.Calls[i].ID
 				}
 				if err != nil {
-					a.Status, a.Error = "rejected", err.Error()
+					a.Status, a.Error = state.ActionRejected, err.Error()
 					if i < len(t.Attempt.Results) {
 						t.Attempt.Results[i] = string(toolResult(callID, map[string]string{"error": prompts.Runtime("command-batch-rejected", nil) + a.Error}))
 					}
 				} else {
 					receipt := receipts[j]
-					a.Status, a.CreatedAt, a.Command = "accepted", receipt.Command.CreatedAt, receipt.Command
+					a.Status, a.CreatedAt, a.Command = state.ActionAccepted, receipt.Command.CreatedAt, receipt.Command
 					if i < len(t.Attempt.Results) {
 						t.Attempt.Results[i] = string(toolResult(callID, commandResult(receipt)))
 					}
@@ -600,7 +637,7 @@ func buildProtocol(t *state.ConversationTurn, text string) {
 	t.Protocol = append(t.Protocol, t.Context...)
 	cleanActionFree := t.Attempt.StructuredReply &&
 		!t.Attempt.ProtocolInvalid &&
-		t.Attempt.Status != "error" &&
+		t.Attempt.Status != state.AttemptError &&
 		len(t.Attempt.Actions) == 0 &&
 		len(t.Attempt.Results) == 0 &&
 		len(t.Attempt.Memory) == 0 &&
@@ -625,7 +662,7 @@ func buildProtocol(t *state.ConversationTurn, text string) {
 			"content": prompts.Runtime("runner-saved-memory-changes-for-the-preceding-response-a-chang", nil) + string(changes),
 		})))
 	}
-	if cleanActionFree || t.Attempt.StructuredReply || t.Attempt.Reply == "" || t.Attempt.Status == "error" || text != t.Attempt.Text {
+	if cleanActionFree || t.Attempt.StructuredReply || t.Attempt.Reply == "" || t.Attempt.Status == state.AttemptError || text != t.Attempt.Text {
 		t.Protocol = append(t.Protocol, string(modelMessage(map[string]string{"role": "assistant", "content": text})))
 	}
 }
@@ -684,7 +721,7 @@ func (r *Runner) NextConversationWake(ctx context.Context) (time.Time, error) {
 		return time.Time{}, err
 	}
 	if flushState.hasWork {
-		consider(maxTime(now, r.compactAfter))
+		consider(maxTime(now, r.getCompactAfter()))
 	}
 
 	extractState, err := r.planExtract(ctx, control, summary, now, false)
@@ -696,7 +733,7 @@ func (r *Runner) NextConversationWake(ctx context.Context) (time.Time, error) {
 		if extractState.ready || target.IsZero() {
 			target = now
 		}
-		consider(maxTime(target, r.extractAfter))
+		consider(maxTime(target, r.getExtractAfter()))
 	}
 
 	latestTurnAt := maxTime(flushState.latestTurnAt, extractState.latestTurnAt)
@@ -705,9 +742,10 @@ func (r *Runner) NextConversationWake(ctx context.Context) (time.Time, error) {
 		return time.Time{}, err
 	}
 	if dreamState.eligible {
+		dreamAfter := r.getDreamAfter()
 		switch {
-		case r.dreamAfter.After(now):
-			consider(r.dreamAfter)
+		case dreamAfter.After(now):
+			consider(dreamAfter)
 		case !dreamState.wakeAt.IsZero():
 			consider(dreamState.wakeAt)
 		default:

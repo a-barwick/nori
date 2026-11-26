@@ -428,7 +428,12 @@ func (s *runSession) transitionPhase(phase state.TaskPhase) stepResult {
 
 func (s *runSession) transitionFailure(status state.RunStatus, detail string, bypassRouting bool, spend *state.SpendUpdate) stepResult {
 	if !s.acct.loaded {
-		_ = s.ensureAccounting(s.watcher.ctx)
+		if err := s.ensureAccounting(s.watcher.ctx); err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				return s.deleteLease()
+			}
+			return s.classifyControlErr(err)
+		}
 	}
 	pubSpent := s.acct.spent
 	pubUnknown := s.acct.costUnknown

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -311,7 +312,7 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 			if err := fn(); err == nil {
 				return
 			}
-			time.Sleep(5 * time.Millisecond)
+			runtime.Gosched()
 		}
 		inj.SetEnabled(false)
 		err := fn()
@@ -422,8 +423,16 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 		})
 	}
 
+	waitForPollRounds := func(rounds int) {
+		tick := time.NewTicker(25 * time.Millisecond)
+		defer tick.Stop()
+		for range rounds {
+			<-tick.C
+		}
+	}
+
 	backend.SetDropWakeEvents(true)
-	time.Sleep(60 * time.Millisecond)
+	waitForPollRounds(2)
 
 	retryOp("pause system", func() error {
 		return backend.Apply(ctx, docstore.Mutation{
@@ -440,7 +449,7 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 		return err
 	})
 	_ = pools[1].RepairOnce(ctx)
-	time.Sleep(60 * time.Millisecond)
+	waitForPollRounds(2)
 
 	cancels[0]()
 	if err := <-dones[0]; err != nil {
@@ -458,7 +467,7 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 	})
 	backend.SetDropWakeEvents(false)
 	backend.EmitResync()
-	time.Sleep(80 * time.Millisecond)
+	waitForPollRounds(2)
 
 	inj.SetEnabled(false)
 	if err := backend.Apply(ctx, docstore.Mutation{
@@ -472,8 +481,12 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 	_ = pools[1].RepairOnce(ctx)
 	backend.EmitResync()
 
-	deadline := time.Now().Add(15 * time.Second)
-	for round := 0; time.Now().Before(deadline); round++ {
+	settleTimer := time.NewTimer(15 * time.Second)
+	defer settleTimer.Stop()
+	settleTick := time.NewTicker(15 * time.Millisecond)
+	defer settleTick.Stop()
+settleLoop:
+	for round := 0; ; round++ {
 		if round > 0 && round%5 == 0 {
 			now := clock.Now()
 			target := now.Add(5 * time.Second)
@@ -558,7 +571,11 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 		if allSettled {
 			break
 		}
-		time.Sleep(25 * time.Millisecond)
+		select {
+		case <-settleTick.C:
+		case <-settleTimer.C:
+			break settleLoop
+		}
 	}
 
 	for i := 1; i < numReplicas; i++ {

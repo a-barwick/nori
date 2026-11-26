@@ -3,8 +3,18 @@ package conversation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"nori/internal/state"
+)
+
+var (
+	// ErrProviderUnavailable marks a transient transport/availability failure reaching the model provider.
+	ErrProviderUnavailable = errors.New("model request interrupted or unavailable")
+	// ErrStreamInterrupted marks an incomplete response stream from the model provider.
+	ErrStreamInterrupted = errors.New("model stream interrupted; request will not be repeated")
+	// ErrAttemptInterrupted marks an attempt interrupted before its model reply or plan was persisted.
+	ErrAttemptInterrupted = errors.New("conversation attempt interrupted before reply was saved")
 )
 
 type ReplyModel interface {

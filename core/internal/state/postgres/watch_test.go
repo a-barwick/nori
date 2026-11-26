@@ -25,6 +25,27 @@ type capturedLog struct {
 	attrs map[string]any
 }
 
+func waitForCondition(t *testing.T, timeout time.Duration, check func() bool) bool {
+	t.Helper()
+	if check() {
+		return true
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	tick := time.NewTicker(5 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-tick.C:
+			if check() {
+				return true
+			}
+		case <-timer.C:
+			return check()
+		}
+	}
+}
+
 type captureLogHandler struct {
 	mu      sync.Mutex
 	records []capturedLog
@@ -286,10 +307,9 @@ func TestWatchAndWakeListenersRateLimitErrorLogsAndCountErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("subscribeWatch: %v", err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for b.ListenStats().WatchErrors < 3 && time.Now().Before(deadline) {
-		time.Sleep(15 * time.Millisecond)
-	}
+	waitForCondition(t, 2*time.Second, func() bool {
+		return b.ListenStats().WatchErrors >= 3
+	})
 	b.unsubscribeWatch(sub)
 	b.closeWatchHub()
 
@@ -393,7 +413,8 @@ func TestWatchIdleQPSAndSingleListenConnection(t *testing.T) {
 		t.Fatalf("initial nori_records queries = %d, want exactly %d (1 per watcher)", queriesAfterInit, numWatchers)
 	}
 
-	time.Sleep(2 * time.Second)
+	idleTimer := time.NewTimer(2 * time.Second)
+	<-idleTimer.C
 	queriesAfterIdle := counter.recordsSelects.Load()
 	idleQueries := queriesAfterIdle - queriesAfterInit
 	if idleQueries != 0 {
@@ -472,10 +493,9 @@ func TestWatchLiveNotifyLatencyFanoutAndDrain(t *testing.T) {
 		}()
 	}
 
-	deadline := time.Now().Add(3 * time.Second)
-	for (b.ListenStats().ActiveWatchers < idleOthers+2 || counter.recordsSelectsDone.Load() < idleOthers+2) && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitForCondition(t, 3*time.Second, func() bool {
+		return b.ListenStats().ActiveWatchers >= idleOthers+2 && counter.recordsSelectsDone.Load() >= idleOthers+2
+	})
 	if got := b.ListenStats().ActiveWatchers; got != idleOthers+2 {
 		t.Fatalf("ActiveWatchers = %d, want %d", got, idleOthers+2)
 	}
@@ -510,7 +530,8 @@ func TestWatchLiveNotifyLatencyFanoutAndDrain(t *testing.T) {
 		}
 	}
 
-	time.Sleep(50 * time.Millisecond)
+	settleTimer := time.NewTimer(50 * time.Millisecond)
+	<-settleTimer.C
 	if delta := counter.recordsSelects.Load() - queriesBefore; delta != 2 {
 		t.Fatalf("nori_records queries on single-collection notify = %d, want 2 (15 unrelated watchers must stay idle)", delta)
 	}
@@ -534,22 +555,17 @@ func TestWatchLiveNotifyLatencyFanoutAndDrain(t *testing.T) {
 		t.Fatalf("raw pg_notify: %v", err)
 	}
 
-	deadline = time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		allDone := true
+	waitForCondition(t, 3*time.Second, func() bool {
 		for _, ws := range watchers {
 			ws.mu.Lock()
 			n := len(ws.seqs)
 			ws.mu.Unlock()
 			if n < 231 {
-				allDone = false
+				return false
 			}
 		}
-		if allDone {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		return true
+	})
 
 	for idx, ws := range watchers {
 		ws.mu.Lock()
@@ -687,10 +703,9 @@ func TestWatchHubIdleTeardownRestartAndSlowClient(t *testing.T) {
 		}, func([]docstore.Record) error { return nil })
 	}()
 
-	deadline := time.Now().Add(3 * time.Second)
-	for countListenConnections(t, b, watchChannel) != 1 && time.Now().Before(deadline) {
-		time.Sleep(15 * time.Millisecond)
-	}
+	waitForCondition(t, 3*time.Second, func() bool {
+		return countListenConnections(t, b, watchChannel) == 1
+	})
 	if got := countListenConnections(t, b, watchChannel); got != 1 {
 		t.Fatalf("LISTEN conns while active = %d, want 1", got)
 	}
@@ -698,10 +713,9 @@ func TestWatchHubIdleTeardownRestartAndSlowClient(t *testing.T) {
 	w1Cancel()
 	<-w1Done
 
-	deadline = time.Now().Add(3 * time.Second)
-	for countListenConnections(t, b, watchChannel) != 0 && time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitForCondition(t, 3*time.Second, func() bool {
+		return countListenConnections(t, b, watchChannel) == 0
+	})
 	if got := countListenConnections(t, b, watchChannel); got != 0 {
 		t.Fatalf("LISTEN conns after idle grace = %d, want 0", got)
 	}
@@ -782,16 +796,12 @@ func TestWatchHubIdleTeardownRestartAndSlowClient(t *testing.T) {
 	}
 
 	close(slowRelease)
-	deadline = time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
+	waitForCondition(t, 3*time.Second, func() bool {
 		slowMu.Lock()
 		n := len(slowSeqs)
 		slowMu.Unlock()
-		if n >= 3 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		return n >= 3
+	})
 	slowMu.Lock()
 	gotSlow := slices.Clone(slowSeqs)
 	slowMu.Unlock()
@@ -839,7 +849,9 @@ func TestWatchFallbackSafetyNet(t *testing.T) {
 		})
 	}()
 
-	time.Sleep(50 * time.Millisecond)
+	waitForCondition(t, 2*time.Second, func() bool {
+		return b.ListenStats().ActiveWatchers >= 1
+	})
 	if err := b.Apply(ctx, docstore.Mutation{
 		Kind:   "create",
 		Path:   fmt.Sprintf("%s/%020d", col, 1),
