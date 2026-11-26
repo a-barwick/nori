@@ -31,7 +31,7 @@
 <section><h2>Headless host app integration</h2>
 <p><code>integrations/embed/adapter.mjs</code> lets the host app embed Nori without duplicating agent orchestration or state:</p>
 <ul class="pts">
-<li><b>Identity mapping:</b> the host app supplies <code>verifyIdentity(request)</code> returning <code>{ issuer, subject }</code> and a server-side binding table mapping each identity to a distinct provisioned Nori user ID. Missing sessions return 401; unmapped identities return 403.</li>
+<li><b>Identity mapping:</b> the host app supplies <code>verifyIdentity(request)</code> returning <code>{ issuer, subject }</code> and a server-side binding table mapping each identity to a distinct provisioned Nori user ID. Missing sessions return 401. Unmapped identities return 403.</li>
 <li><b>Service auth:</b> the host app supplies <code>serviceAuthorization(signal)</code> returning the <code>Authorization</code> header (HS256 service token in hosted AWS deployments).</li>
 <li><b>Strict isolation:</b> The adapter prepends <code>/users/{mappedUser}</code> to every upstream call. Nori scopes Work, interactions, receipts and results to that user and returns 404 for any other user's resource ID.</li>
 <li><b>Typed contracts:</b> Clients consume the generated TypeScript types from <code>contracts/assistant/</code> (<code>web/src/lib/contracts/assistant.ts</code>) for Work items, approval interactions and mutation receipts.</li>

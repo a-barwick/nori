@@ -11,33 +11,28 @@
 <body>
 <h1>Nori</h1>
 <p class="lede">Nori is the persistent, multi-user assistant engine inside a host app. One conversation per user stays open while durable background tasks run.</p>
-<div class="card">
-<svg viewBox="0 0 820 300" width="100%" role="img" aria-label="The user talks to the outer loop through a host app, which runs a separate inner loop for each task">
-<defs><marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5b6474"/></marker></defs>
-<rect x="10" y="84" width="130" height="72" rx="10" fill="#fff" stroke="#1e2430" stroke-width="2"/><text x="75" y="120" text-anchor="middle" font-size="16" font-weight="700">User</text><text x="75" y="138" text-anchor="middle" font-size="11" fill="#4a5163">via host app</text>
-<rect x="240" y="72" width="190" height="96" rx="12" fill="#eef0ff" stroke="#2f2fd0" stroke-width="2"/><text x="335" y="114" text-anchor="middle" font-size="16" font-weight="700" fill="#2f2fd0">Outer loop</text><text x="335" y="136" text-anchor="middle" font-size="12" fill="#4a5163">replies, routes, reports results</text>
-<g font-size="14" font-weight="700" fill="#0c7a5f" text-anchor="middle">
-<rect x="560" y="10" width="240" height="60" rx="10" fill="#e7f4ef" stroke="#0c7a5f" stroke-width="2"/><text x="680" y="35">Inner loop</text>
-<rect x="560" y="90" width="240" height="60" rx="10" fill="#e7f4ef" stroke="#0c7a5f" stroke-width="2"/><text x="680" y="115">Inner loop</text>
-<rect x="560" y="170" width="240" height="60" rx="10" fill="#e7f4ef" stroke="#0c7a5f" stroke-width="2"/><text x="680" y="195">Inner loop</text></g>
-<g font-size="12" fill="#4a5163" text-anchor="middle"><text x="680" y="54">Pull Q3 metrics via MCP</text><text x="680" y="134">Draft incident brief</text><text x="680" y="214">Waiting for user approval</text></g>
-<path d="M140 110 H236" stroke="#5b6474" stroke-width="2" fill="none" marker-end="url(#m)"/><path d="M240 134 H144" stroke="#5b6474" stroke-width="2" fill="none" marker-end="url(#m)"/>
-<path d="M430 104 C 490 104 500 40 556 40" stroke="#5b6474" stroke-width="2" fill="none" marker-end="url(#m)" marker-start="url(#m)"/><path d="M430 120 H556" stroke="#5b6474" stroke-width="2" fill="none" marker-end="url(#m)" marker-start="url(#m)"/><path d="M430 136 C 490 136 500 200 556 200" stroke="#5b6474" stroke-width="2" fill="none" marker-end="url(#m)" marker-start="url(#m)"/>
-<rect x="10" y="252" width="790" height="38" rx="9" fill="#eef0f3" stroke="#5b6474" stroke-width="1.5"/><text x="405" y="276" text-anchor="middle" font-size="13" font-weight="650">Runtime: saves records, leases and wakes in Postgres, checks budgets and approvals</text>
-</svg><p class="note">Commands go from the outer loop to tasks. Events return to the outer loop.</p></div>
-<div class="grid3">
-<div class="card tight"><p class="keyline">The outer loop handles the conversation</p><p class="note">One persistent thread per user replies immediately, guards dispatches against prompt injection, manages explicit memory and routes work without blocking.</p></div>
-<div class="card tight"><p class="keyline">Inner loops run durable tasks</p><p class="note">Each task runs on the Postgres-native runner with its own instructions, checkpointed state and budget. One can wait for approval or fail without affecting the others, except that a subtask shares its parent's budget and stops with it.</p></div>
-<div class="card tight"><p class="keyline">The runtime checks and records</p><p class="note">Models propose actions. The runtime validates them, enforces permissions and action-digest approvals, persists records in Postgres and passes recorded outcomes back to the outer loop.</p></div>
-</div>
+<div class="card"><div class="flow">
+<div class="node"><b>User</b><small>via host app</small></div>
+<div class="arrow">↕ <span class="lbl">messages down, replies up</span></div>
+<div class="node outer"><b>Outer loop</b><small>Replies, routes and reports results.</small></div>
+<div class="arrow">↕ <span class="lbl">commands down, events up</span></div>
+<div class="node inner"><b>Inner loops</b><small>One per task, such as pulling the Q3 summary or drafting the launch brief.</small></div>
+<div class="arrow">↓ <span class="lbl">records, leases and wakes</span></div>
+<div class="node"><b>Runtime</b><small>Saves records, leases and wakes in Postgres. Checks budgets and approvals.</small></div>
+</div></div>
+<div class="card"><table class="stack"><tr><th>Part</th><th>What it does</th></tr>
+<tr><td>Outer loop</td><td data-label="What it does">Keeps one persistent thread per user, replies immediately, guards dispatches against prompt injection, manages explicit memory and routes work without blocking.</td></tr>
+<tr><td>Inner loops</td><td data-label="What it does">Each task runs on the Postgres-native runner with its own instructions, checkpointed state and budget. One task can wait for approval or fail without affecting the others. A subtask shares its parent's budget and stops with it.</td></tr>
+<tr><td>Runtime</td><td data-label="What it does">Models propose actions. The runtime validates them, enforces permissions and action-digest approvals, saves records in Postgres and passes recorded outcomes back to the outer loop.</td></tr>
+</table></div>
 <section><h2>An example conversation</h2>
 <div class="card">
 <p><span class="say me">Pull the latest Q3 revenue summary from the reporting server. Also draft a launch brief from the attached spec.</span></p>
-<p><span class="say">On it. I've started both.</span></p>
+<div><span class="say">On it. I've started both.</span></div>
 <p><span class="say me">Keep the launch brief under one page.</span></p>
-<p class="note">That steer goes to the brief task only. The reporting task's instructions don't change.</p>
+<div class="note">That steer goes to the brief task only. The reporting task's instructions don't change.</div>
 <p><span class="say">Q3 revenue is up 14% year over year across three regions.</span></p>
-<p class="note">The result arrives without another message from the user. <a href="request.html">Follow a request through the system</a>.</p>
+<div class="note">The result arrives without another message from the user. <a href="request.html">Follow a request through the system</a>.</div>
 </div></section>
 <section><h2>Where it stands</h2>
 <ul class="pts">
@@ -45,7 +40,7 @@
 <li>Tools connect through built-in runtime capabilities (web search, saved results, memory, uploaded images) and the <a href="apps.html">MCP tool bus &amp; provider-agnostic connections port</a>.</li>
 <li><a href="schedules.html">Automations and goals</a> run scheduled work and deliver results to the in-app inbox.</li>
 <li><a href="results.html">Results</a>, uploads, subtasks, <a href="memory.html">memories and summaries</a> persist in Postgres and S3 (or local disk). The SSE event stream resumes after reconnects.</li>
-<li><a href="clients.html">The host app embeds Nori headlessly</a> via <code>integrations/embed/adapter.mjs</code>; the slim Next.js <a href="web-client.html">test workbench</a> exercises the full assistant locally.</li>
+<li><a href="clients.html">The host app embeds Nori headlessly</a> through <code>integrations/embed/adapter.mjs</code>. The slim Next.js <a href="web-client.html">test workbench</a> runs the full assistant locally.</li>
 </ul></section>
 <section><h2>Where to go next</h2>
 <div class="grid2">

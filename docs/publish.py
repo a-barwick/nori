@@ -151,15 +151,15 @@ def publish(out):
         path = page["path"]
         rendered = public_html(page, nav)
         (out / path.name).write_text(rendered, encoding="utf-8")
-        if path.stem in ("privacy", "terms"):
-            clean_dir = out / path.stem
-            clean_dir.mkdir(exist_ok=True)
-            (clean_dir / "index.html").write_text(rendered, encoding="utf-8")
         body = "\n\n".join((f"## {s['title']}\n\n" if s["title"] != "Overview" else "") + s["text"] for s in page["sections"])
         (out / f"{path.stem}.md").write_text(body + "\n", encoding="utf-8")
     lines = ["# Nori Dokyu", "", "> How the Nori assistant engine works. Each page below has a plain text copy.", ""]
     lines += [f"- [{p['title']}]({p['path'].stem}.md): {p['summary']}" for p in pages]
     (out / "llms.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    for legal in sorted((ROOT / "docs" / "legal").glob("*.html")):
+        (out / legal.name).write_text(legal.read_text(encoding="utf-8"), encoding="utf-8")
+        (out / legal.stem).mkdir(exist_ok=True)
+        (out / legal.stem / "index.html").write_text(legal.read_text(encoding="utf-8"), encoding="utf-8")
     robots_txt = "User-agent: *\nAllow: /\n" if INDEXED else "User-agent: *\nDisallow: /\n"
     (out / "robots.txt").write_text(robots_txt, encoding="utf-8")
     for name in ("request-data.js", "task-data.js"):

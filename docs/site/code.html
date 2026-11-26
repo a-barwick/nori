@@ -11,9 +11,24 @@
 <body>
 <h1>Code map</h1>
 <p class="lede">Where to look when you want to read or change something across the Go engine, the host app adapter, contract suite and test workbench.</p>
-<p>Go code lives under <span class="mono">core/</span>, the headless host app Fetch adapter under <span class="mono">integrations/embed/</span>, shared JSON Schemas under <span class="mono">contracts/assistant/</span>, the local test workbench under <span class="mono">web/src/</span>, the native SwiftUI iOS client under <span class="mono">ios/</span>, and the multi-day persona simulation suite under <span class="mono">sim/personas/</span> and <span class="mono">scripts/persona-sim/</span>.
-  Dependencies run in one direction: entrypoints build an <span class="mono">app</span> via <span class="mono">platform</span>, whose <span class="mono">api</span> routes and <span class="mono">worker</span> pool call <span class="mono">conversation</span>, <span class="mono">task</span>, <span class="mono">permissions</span>, <span class="mono">scheduler</span>, <span class="mono">connections</span> and <span class="mono">connectors/mcp</span> over <span class="mono">state</span>.</p>
-<p>Infrastructure sits behind narrow contracts: <span class="mono">state/postgres</span> provides transactional JSONB records plus <span class="mono">nori_task_leases</span>, <span class="mono">nori_user_wakes</span> and <span class="mono">LISTEN/NOTIFY</span>, <span class="mono">wake</span> wraps durable wake/repair helpers, and <span class="mono">secret</span> handles AWS Secrets Manager and envelope-encrypted Postgres rows.</p>
+<ul class="pts">
+<li>Go code is under <span class="mono">core/</span>.</li>
+<li>The headless host app Fetch adapter is under <span class="mono">integrations/embed/</span>.</li>
+<li>Shared JSON Schemas are under <span class="mono">contracts/assistant/</span>.</li>
+<li>The local test workbench is under <span class="mono">web/src/</span>, and the native SwiftUI iOS client is under <span class="mono">ios/</span>.</li>
+<li>The multi-day persona simulation suite is under <span class="mono">sim/personas/</span> and <span class="mono">scripts/persona-sim/</span>.</li>
+</ul>
+<p>Dependencies run in one direction:</p>
+<ul class="pts">
+<li>Entrypoints build an <span class="mono">app</span> via <span class="mono">platform</span>.</li>
+<li>The <span class="mono">api</span> routes and <span class="mono">worker</span> pool call <span class="mono">conversation</span>, <span class="mono">task</span>, <span class="mono">permissions</span>, <span class="mono">scheduler</span>, <span class="mono">connections</span> and <span class="mono">connectors/mcp</span> over <span class="mono">state</span>.</li>
+</ul>
+<p>Infrastructure packages expose narrow contracts:</p>
+<ul class="pts">
+<li><span class="mono">state/postgres</span> provides transactional JSONB records plus <span class="mono">nori_task_leases</span>, <span class="mono">nori_user_wakes</span> and <span class="mono">LISTEN/NOTIFY</span>.</li>
+<li><span class="mono">wake</span> wraps durable wake and repair helpers.</li>
+<li><span class="mono">secret</span> handles AWS Secrets Manager and envelope-encrypted Postgres rows.</li>
+</ul>
   <div class="card">
     <table class="map">
       <tr><th>If you're looking for</th><th>Look in</th></tr>
@@ -26,7 +41,7 @@
           <tr><td>Model gateway HTTP client and shared context budget helper</td><td><span class="mono">core/internal/modelgateway/, contextview/</span></td></tr>
           <tr><td>Task and conversation records, store contracts and write rules</td><td><span class="mono">core/internal/state/</span></td></tr>
           <tr><td>Shared transactional persistence and Postgres JSONB/migrations backend</td><td><span class="mono">core/internal/state/records/, state/docstore/, state/postgres/</span></td></tr>
-          <tr><td>Private file storage in S3 (AWS) or local disk (dev)</td><td><span class="mono">core/internal/state/s3/, state/localfs/</span></td></tr>
+          <tr><td>Private file storage in S3 (AWS), GCS (GCP) or local disk (dev)</td><td><span class="mono">core/internal/state/s3/, state/gcs/, state/localfs/</span></td></tr>
           <tr><td><a href="budgets.html">Usage metering</a> and direct OpenAI tariffs (1/20th cached input)</td><td><span class="mono">core/internal/usage/</span></td></tr>
           <tr><td>Postgres-native inner task runner, activities, compose scripts, completion checks and subtasks</td><td><span class="mono">core/internal/task/</span></td></tr>
           <tr><td>Unified Postgres-native worker pool (outer conversation, scheduler and inner task lanes + repair sweep)</td><td><span class="mono">core/internal/worker/</span></td></tr>
@@ -54,13 +69,17 @@
     </table>
   </div>
   <div class="card">
-    <h3 style="margin-top:0">The five binaries <span class="mono" style="font-size:11px;color:#8a8268">core/cmd/</span></h3>
+    <h3 style="margin-top:0">The nine binaries <span class="mono" style="font-size:11px;color:#8a8268">core/cmd/</span></h3>
     <ul class="pts" style="margin-bottom:0">
-      <li><code>nori</code> — Hosted service binary (<code>--role=all|api|worker</code>; HS256 service-authenticated HTTP API and/or unified Postgres-native worker pool, AWS adapters by default).</li>
-      <li><code>nori-local</code> — Loopback development binary running both the HTTP API and the unified Postgres-native worker pool in one process.</li>
-      <li><code>nori-user</code> — CLI for provisioning and inspecting user records in Postgres.</li>
-      <li><code>contracts-check</code> — Strict validator for <code>contracts/assistant/</code> JSON Schemas, Go round-trip decoding, generated TypeScript types and live HTTP scenarios.</li>
-      <li><code>nori-sim</code> — Virtual-clock simulation server used by the multi-day persona simulation and grading suite.</li>
+      <li><code>nori</code>: the hosted service binary. <code>--role</code> is <code>all</code>, <code>api</code> or <code>worker</code>, which selects the HS256 service-authenticated HTTP API, the unified Postgres-native worker pool or both. It uses AWS adapters by default.</li>
+      <li><code>nori-local</code>: a loopback development binary that runs both the HTTP API and the worker pool in one process.</li>
+      <li><code>nori-user</code>: a CLI for provisioning and inspecting user records in Postgres.</li>
+      <li><code>contracts-check</code>: a strict validator for the <code>contracts/assistant/</code> JSON Schemas, Go round-trip decoding, generated TypeScript types and live HTTP scenarios.</li>
+      <li><code>nori-sim</code>: the virtual-clock simulation server for the multi-day persona simulation and grading suite.</li>
+      <li><code>nori-gateway</code>: a loopback gateway that can cap cumulative cost and call counts.</li>
+      <li><code>nori-connector</code>: the home connector CLI, with the commands pair, serve, status, doctor and unpair.</li>
+      <li><code>nori-connector-relay</code>: the relay that home connectors connect to, backed by Postgres.</li>
+      <li><code>nori-storage-audit</code>: reports objects in a GCS bucket that no record references. It deletes them only with <code>--delete</code> and <code>--confirm</code>.</li>
     </ul>
   </div>
 

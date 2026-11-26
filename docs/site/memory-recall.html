@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory recall and screen · Dokyu</title>
+<link rel="stylesheet" href="site.css">
+<script src="site-config.js" defer></script>
+<script src="site.js" defer></script>
+</head>
+<body>
+<h1>Memory recall and screen</h1>
+<p class="lede">The outer loop, tasks and the user each read saved memory in a different way, and the user can also edit it.</p>
+<div class="card"><table class="stack"><tr><th>Reader</th><th>How it reads</th><th>What it gets</th></tr>
+<tr><td>Outer loop</td><td>Searches Daily Logs on each user turn.</td><td>Up to 5 snippets, 2560 bytes in total, in the advisory message.</td></tr>
+<tr><td>Task</td><td>Calls the memory tools.</td><td>Core Memory, Working Memory, ranked snippets or full entries.</td></tr>
+<tr><td>User</td><td>Opens <code>/memory</code> or searches with <code>GET /v1/search</code>.</td><td>All three tiers, with edit controls.</td></tr>
+</table></div>
+
+<section><h2>Postgres FTS index &amp; tail auto-recall</h2>
+<p>The search index is the <code>nori_memory_chunks</code> table, split into 32 hash partitions by owner.</p>
+<ul class="pts">
+<li>Each chunk is indexed with the <code>english</code> and <code>simple</code> text search dictionaries, so exact identifiers and emails match along with stemmed words.</li>
+<li>Core items rank at 1.0, or 1.15 when pinned. Daily Log hits lose half their score every 30 days.</li>
+<li>The top hits are reranked to avoid near-duplicates, and each snippet is cut to 700 bytes.</li>
+<li>The outer loop searches only the log layer, for 5 hits created after <code>ContextFrom</code>, and adds them to the advisory message after the cached prefix.</li>
+</ul></section>
+
+<section><h2>Inner-loop recall tools</h2>
+<p>Tasks get these read tools by default. They return only entries created at or after <code>ContextFrom</code>, and they grant no permissions.</p>
+<div class="card"><table class="stack"><tr><th>Tool</th><th>Returns</th></tr>
+<tr><td><code>memory_read</code></td><td>Core Memory items and the current Working Memory summary.</td></tr>
+<tr><td><code>memory_search</code></td><td>Ranked snippets from Core Memory and Daily Logs, with a <code>layer</code> filter and a <code>limit</code> from 1 to 20.</td></tr>
+<tr><td><code>memory_get</code></td><td>All Core Memory (<code>target: "core"</code>), or one Daily Log date or entry (<code>target: "log"</code>).</td></tr>
+<tr><td><code>conversation_find</code> and <code>conversation_read</code></td><td>Matches in earlier chat messages, and full reads of them.</td></tr>
+<tr><td><code>operation_read</code> and <code>task_history_read</code></td><td>Saved outputs that the task transcript replaced, and older transcript blocks.</td></tr>
+</table></div>
+<p>See <a href="transcript.html#long-tasks">Task transcript</a> for how long task histories are shortened.</p></section>
+
+<section><h2>Unified <code>/memory</code> screen, receipts &amp; global search</h2>
+<p><code>/memory</code> shows all three tiers, and <code>/settings/memory</code> redirects to it.</p>
+<div class="card"><table class="stack"><tr><th>Tab</th><th>Controls</th></tr>
+<tr><td>Core Memory</td><td>Search, add, edit, pin, unpin, demote to log and forget. It shows each item's provenance and a meter of bytes used out of 24 KB.</td></tr>
+<tr><td>Daily Logs</td><td>A timeline by date with search, forget, and promote to Core. A <code>task_outcome</code> entry must be reviewed before promotion.</td></tr>
+<tr><td>Working Memory</td><td>The gist and summary items, with promote to Core and dismiss. A Consolidate now button starts AutoDream.</td></tr>
+</table></div>
+<ul class="pts">
+<li>Each <code>/v1/memory</code> change saves a receipt that <code>GET /v1/mutations/{request_id}</code> returns.</li>
+<li>Reusing a request ID for a different change returns <code>409 idempotency_conflict</code>. A stale revision returns <code>409 revision_conflict</code> with the current version.</li>
+<li>A memory change sends an SSE <code>memory</code> event, and <code>GET /v1/search</code> returns memory hits.</li>
+</ul></section>
+
+<details class="sources"><summary>Sources</summary><p><code>core/internal/state/postgres/migrations/005_memory_search.sql</code> · <code>core/internal/state/postgres/memory_search.go</code> · <code>core/internal/state/docstore/memory.go</code> · <code>core/internal/state/memory.go</code> · <code>core/internal/conversation/memory.go</code> · <code>core/internal/agent/memory.go</code> · <code>core/internal/agent/tools.go</code> · <code>core/internal/api/assistant.go</code> · <code>core/internal/api/memory.go</code> · <code>core/internal/api/library.go</code> · <code>web/src/components/assistant/MemoryScreen.tsx</code> · <code>web/src/app/(nori)/settings/[section]/page.tsx</code> · <a href="memory.html">Memory and context</a></p></details>
+</body>
+</html>

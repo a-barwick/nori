@@ -43,10 +43,10 @@
 <li>Each task runs in <code>task.Runner</code> inside <code>worker.Pool</code>, holding a 30-second document-fenced lease on <code>TaskControl</code> renewed every 10 seconds.</li>
 <li>Every model call, tool call and state transition persists its checkpoint directly in Postgres (<code>TaskModelCheckpoint</code>, <code>OperationRecord</code> and private history blocks) without requiring deterministic code replay.</li>
 <li>New commands (<code>steer</code>, <code>answer</code>, <code>stop</code>, <code>subtask_result</code>) update <code>nori_task_leases</code> in the same transaction and emit <code>NOTIFY nori_wake</code> so a running or parked task reacts immediately.</li>
-<li>Model and tool steps have a 240-second timeout; interrupted model calls reuse saved <code>TaskModelCheckpoint</code> receipts or retry up to twice within the 9-minute model step deadline without double-billing.</li>
+<li>Model and tool steps have a 240-second timeout. Interrupted model calls reuse saved <code>TaskModelCheckpoint</code> receipts or retry up to twice within the 9-minute model step deadline without double-billing.</li>
 <li>Tool definitions are pinned by content digest on each <code>OperationRecord</code> so approvals and audit evidence stay bound to the exact schema and arguments even when MCP servers update.</li>
 <li>An invalid tool batch sends per-call rejections back to the model, and nothing runs.</li>
-<li><code>TaskControl</code> and Postgres hold the authoritative live spend and checkpoint state directly—there is no second workflow store to keep in sync.</li>
+<li><code>TaskControl</code> and Postgres hold the live spend and checkpoint state directly. There is no second workflow store to keep in sync.</li>
 <li><code>cmd/nori --role=worker</code> (or <code>--role=all</code> / <code>nori-local</code>) runs the unified Postgres-native worker pool for both inner tasks and outer conversation/scheduler lanes.</li>
 </ul>
 <p>See <a href="authority.html">Tool authority</a> and <a href="permissions.html">Permissions and approvals</a> for how the runtime guards writes and uncertain operations.</p>

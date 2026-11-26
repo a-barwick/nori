@@ -10,17 +10,17 @@
 </head>
 <body>
 <h1>Sources</h1>
-<p class="lede">The architecture reference lives on this site. When prose disagrees with the code, the code and <code>contracts-check</code> decide what runs today.</p>
+<p class="lede">When a page disagrees with the code, the code and <code>contracts-check</code> decide what runs today.</p>
 <section><h2>How Dokyu stays truthful</h2>
-<ul class="pts">
-<li>Every page includes a repo-only <code>Sources</code> block pointing at the concrete Go, TypeScript, schema or integration files behind its claims.</li>
-<li><code>docs/publish.py</code> strips those repo-only source blocks and omits <code>code.html</code> and <code>sources.html</code> when building a clean static export.</li>
-<li><code>core/cmd/contracts-check -strict</code> verifies that JSON Schemas, Go decoders, generated TypeScript types and live HTTP scenarios match.</li>
-</ul></section>
+<div class="card"><table class="stack"><tr><th>Check</th><th>What it covers</th><th>Where</th></tr>
+<tr><td>Sources block</td><td data-label="What it covers">Names the Go, TypeScript, schema or integration files behind a page's claims.</td><td data-label="Where">Every page</td></tr>
+<tr><td>Contracts check</td><td data-label="What it covers">Verifies that JSON Schemas, Go decoders, generated TypeScript types and live HTTP scenarios match.</td><td data-label="Where"><code>core/cmd/contracts-check -strict</code></td></tr>
+<tr><td>Static export</td><td data-label="What it covers">Strips the Sources blocks and leaves out the <code>sources</code> and <code>code</code> pages.</td><td data-label="Where"><code>docs/publish.py</code></td></tr>
+</table></div></section>
 <section><h2>Reconciled claims</h2>
 <div class="card"><table class="tall"><tr><th>Earlier claim</th><th>What the code implements</th></tr>
 <tr><td>Budget exhaustion asks a <code>continue</code> question</td><td>Reaching the spending ceiling ends the task incomplete (<code>status: "failed"</code>, <code>expected_incomplete: true</code>) with no extra model call. Users explicitly start a linked continuation task from Work. See <a href="budgets.html">Budgets and controls</a>.</td></tr>
-<tr><td>Unknown model cost fails the task</td><td>Missing or unpriced usage records <code>cost_status=unknown</code> on the usage row and checkpoint without failing the response. See <a href="inner-loop.html">Inner loop</a>.</td></tr>
+<tr><td>Unknown model cost fails the task</td><td>Missing or unpriced usage records <code>cost_status</code> as <code>unknown</code> on the usage row and checkpoint, and the response does not fail. See <a href="inner-loop.html">Inner loop</a>.</td></tr>
 <tr><td>Browser Sentry tunnel used a legacy route</td><td>Browser events post to <code>/sentry-tunnel</code> (<code>web/src/app/sentry-tunnel/route.ts</code>). See <a href="observability.html">Observability</a>.</td></tr>
 <tr><td>Completion needs a Jev score</td><td>Record checks and cited tool evidence control completion. Jev supplies advisory intent hints only. See <a href="completion.html">Finishing a task</a>.</td></tr>
 </table></div></section>

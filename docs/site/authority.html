@@ -11,20 +11,34 @@
 <body>
 <h1>Tool authority</h1>
 <p class="lede">A task acts within the user's request and permission rules. The runtime checks the task revision, pins the tool definition digest and records the operation before dispatch.</p>
+<div class="card"><div class="flow">
+<div class="node inner"><b>Task step</b><small>Calls a tool. The call names its task revision, pinned definition digest and operation ID.</small></div>
+<div class="arrow">↓ <span class="lbl">call and arguments</span></div>
+<div class="node outer"><b>Runtime</b><small>Prepares the call, computes its action digest, then checks deny rules, approvals and allow rules.</small></div>
+<div class="arrow">↓ <span class="lbl">allowed call</span></div>
+<div class="node"><b>Postgres</b><small>One transaction checks the task revision and creates the operation record.</small></div>
+<div class="arrow">↓ <span class="lbl">saved operation</span></div>
+<div class="node computer"><b>MCP server or provider adapter</b><small>The runtime checks the revision again, counts the attempt, calls it and saves the outcome.</small></div>
+</div></div>
 <section><h2>Before a tool runs</h2>
 <ul class="pts">
 <li>Each call belongs to a task, instruction revision, pinned extension digest and operation ID. A correction or Stop fences stale work.</li>
-<li>Connecting an MCP server or account grants no execution authority on its own; every call passes through <code>core/internal/permissions</code> and <code>core/internal/invoke</code>.</li>
+<li>Connecting an MCP server or account grants no execution authority on its own. Every external call passes through <code>core/internal/permissions</code> and <code>core/internal/invoke</code>.</li>
 <li>A subtask can inherit a read-only limit from its parent. Loading a capability adds tool definitions to the model request without granting permission.</li>
 <li>Attachments, search results and MCP tool outputs are untrusted data. They carry no authority to dispatch or steer tasks or approve actions.</li>
 </ul></section>
 <section><h2>Recovering an interrupted call</h2>
-<p>Before dispatching an external write or unknown-effect tool, one Postgres transaction checks the task revision, verifies the matching approval or allow rule, and records the operation as attempted with its action digest and idempotency key.</p>
-<p>If a provider response is lost or a call ends uncertain, the runtime records the uncertain state and never repeats the write automatically. The task can inspect saved evidence and ask the user before continuing. Stop ends the task and preserves all operation evidence about what may already have happened.</p>
+<ul class="pts">
+<li>The operation record holds the action digest and summary, so a restarted worker can find the call.</li>
+<li>If the worker stops before the result is saved, the runtime asks the provider adapter to reconcile when it can. Otherwise it saves the outcome as uncertain.</li>
+<li>A write is never repeated automatically. Only reads and control tools can retry.</li>
+<li>While a write is unresolved, the runtime admits no other write. The task asks the user with <code>request_input</code>, and the answer lets later writes run.</li>
+<li>Stop ends the task and keeps all operation evidence about what may already have happened.</li>
+</ul>
 </section>
 <section><h2>Permissions and approvals</h2>
 <p>See <a href="permissions.html">Permissions and approvals</a> for deny-wins rules, action-digest-bound approval cards and optimistic revision checks, and <a href="apps.html">Connections and MCP</a> for how tool definitions are pinned.</p>
 </section>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/invoke/invoke.go</code> · <code>core/internal/permissions/rules.go</code> · <code>core/internal/permissions/interactions.go</code> · <code>core/internal/task/tool_durable.go</code> · <code>core/internal/task/unresolved.go</code> · <code>core/internal/state/evidence.go</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/invoke/invoke.go</code> · <code>core/internal/permissions/rules.go</code> · <code>core/internal/permissions/interactions.go</code> · <code>core/internal/task/tool_durable.go</code> · <code>core/internal/task/external.go</code> · <code>core/internal/state/records/tasks.go</code> · <code>core/internal/task/unresolved.go</code> · <code>core/internal/state/evidence.go</code></p></details>
 </body>
 </html>

@@ -37,8 +37,13 @@
 <ul class="pts"><li>The checks cover the records. No separate system judges whether an answer satisfies the request, so a wrong answer is caught only if the outer loop can see the conflict in the cited results.</li><li>Tools make that comparison possible by <a href="tools.html">returning a way to confirm each change</a>.</li></ul>
 </section>
 <details class="more"><summary>Evidence and telemetry</summary>
-<p>Private history references bind the task, parent and exact bytes. <code>TaskControl</code> checkpoints carry references instead of duplicating the cumulative transcript. Cited results are read on the outer turn that reports the outcome.</p>
-<p>Each <code>CompletionCheck</code> saves its ID, revision, position and proposal. Sentry and Arize receive correlated spans and operational attributes. Private history and credentials are excluded by default.</p>
+<ul class="pts">
+<li>Private history references bind the task, the parent and the exact bytes.</li>
+<li><code>TaskControl</code> checkpoints carry references and don't duplicate the cumulative transcript.</li>
+<li>The outer turn that reports the outcome reads the cited results.</li>
+<li>Each <code>CompletionCheck</code> saves its ID, revision, position and proposal.</li>
+<li>Sentry and Arize receive correlated spans and operational attributes. Private history and credentials are excluded by default.</li>
+</ul>
 </details>
 <details class="sources"><summary>Sources</summary><p><code>core/internal/task/completion.go</code> · <code>core/internal/task/history.go</code> · <code>core/internal/conversation/model.go</code> · <code>core/internal/conversation/task_context.go</code></p></details>
 </body>

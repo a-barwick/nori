@@ -19,7 +19,7 @@
 <div class="states"><span class="state run">Running</span><span class="state-arrow">→<small>error or budget limit</small></span><span class="state term">Failed</span></div>
 <div class="states"><span class="state">Running or waiting</span><span class="state-arrow">→<small>Stop</small></span><span class="state term">Cancelled</span></div>
 </div>
-    <p class="note" style="margin:12px 0 0;font-weight:600">While a task is waiting</p><ul class="pts note"><li>It has exactly one open question or typed interaction (such as an approval card) with a stable ID and revision.</li><li>It doesn't expire on its own, and it survives reloads, pauses, restarts and worker deploys.</li><li>A steer arriving while an approval is pending supersedes the old approval so stale decisions are rejected.</li></ul><p class="note" style="margin:8px 0 0;font-weight:600">When a task ends</p><ul class="pts note"><li>Finished tasks stay closed, so follow-up work—including continuing a task that reached its budget—starts a new linked task.</li><li>Stop is shown as <b>requested, stopping, then confirmed</b>.</li></ul>
+    <p class="note" style="margin:12px 0 0;font-weight:600">While a task is waiting</p><ul class="pts note"><li>It has exactly one open question or typed interaction (such as an approval card) with a stable ID and revision.</li><li>It doesn't expire on its own, and it survives reloads, pauses, restarts and worker deploys.</li><li>A steer arriving while an approval is pending supersedes the old approval so stale decisions are rejected.</li></ul><p class="note" style="margin:8px 0 0;font-weight:600">When a task ends</p><ul class="pts note"><li>Finished tasks stay closed. Follow-up work, including continuing a task that reached its budget, starts a new linked task.</li><li>Stop is shown as <b>requested, stopping, then confirmed</b>.</li></ul>
     </div>
 <section><h2>Moving between states</h2>
 <div class="card"><table>
@@ -30,7 +30,7 @@
 <tr data-flow="move-failed"><td>The task can't continue</td><td>Running → failed</td></tr>
 <tr data-flow="move-stopped"><td>A Stop takes effect</td><td>Running or waiting → cancelled</td></tr>
 </table>
-<p class="note">In Postgres, a waiting task still has status <code>running</code>; its open question or interaction is what puts it in the waiting bucket.</p></div></section>
+<p class="note">In Postgres, a waiting task still has status <code>running</code>. Its open question or interaction puts it in the waiting bucket.</p></div></section>
 <section><h2>Commands</h2>
 <div class="card"><table>
           <tr><th>Kind</th><th>What it does</th></tr>
@@ -40,7 +40,7 @@
           <tr data-flow="stop"><td><code>stop</code></td><td>Cancels this task and its subtasks.</td></tr>
           <tr><td><code>subtask_result</code></td><td>The runtime delivers finished subtasks to their parent as the result of its work request.</td></tr>
         </table>
-<p class="note">Only steer and stop are corrections. Answers and approval responses resume work without rewriting its instructions. Continuing a budget-stopped task creates a new task via Work's <code>continue</code> action.</p></div></section>
+<ul class="pts note"><li>Only steer and stop are corrections.</li><li>Answers and approval responses resume work without rewriting its instructions.</li><li>Continuing a budget-stopped task creates a new task through the <code>continue</code> action in Work.</li></ul></div></section>
 <section><h2>Steering keeps what still applies</h2>
 <div class="card"><table class="tall">
           <tr><th>Sequence</th><th>Means</th></tr>

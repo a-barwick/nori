@@ -40,7 +40,7 @@ Use the same words everywhere. `words.html` defines them. Don't add synonyms, an
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Page title · Nori</title>
+<title>Page title · Dokyu</title>
 <link rel="stylesheet" href="site.css">
 <script src="site-config.js" defer></script>
 <script src="site.js" defer></script>

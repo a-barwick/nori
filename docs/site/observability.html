@@ -14,13 +14,13 @@
 <div class="card"><div class="flow" role="img" aria-label="One trace follows a message from the client through the server, agent service, outer loop and inner loop to MCP tools">
 <div class="node"><b>Client / host app</b><small>Starts when the user sends a message.</small></div>
 <div class="arrow">↓ <span class="lbl">traceparent header</span></div>
-<div class="node"><b>Host / web server</b><small>Builds new trace headers and forwards no untrusted browser headers.</small></div>
+<div class="node"><b>Host / web server</b><small>Builds new trace headers and forwards no browser headers.</small></div>
 <div class="arrow">↓ <span class="lbl">traceparent header</span></div>
-<div class="node"><b>Agent service (<code>nori</code>)</b><small>Saves the traceparent with the input in Postgres alongside the durable wake row.</small></div>
+<div class="node"><b>Agent service (<code>nori</code>)</b><small>Saves the traceparent with the input and wake row in Postgres.</small></div>
 <div class="arrow">↓ <span class="lbl">saved traceparent</span></div>
 <div class="node outer"><b>Outer loop</b><small>Continues the saved trace, and dispatches carry it onto each task.</small></div>
 <div class="arrow">↓ <span class="lbl">saved traceparent</span></div>
-<div class="node inner"><b>Inner loop (<code>task.Runner</code>)</b><small>Each task step reads the traceparent from the task and traces model and MCP tool calls.</small></div>
+<div class="node inner"><b>Inner loop (<code>task.Runner</code>)</b><small>Each step reads the task's traceparent and traces model and MCP tool calls.</small></div>
 </div></div>
 <section><h2>Where each signal goes</h2>
 <div class="card"><table class="tall"><tr><th>Signal</th><th>Sentry</th><th>Arize</th><th>Process stderr</th></tr>
@@ -34,7 +34,7 @@
 </section>
 <section><h2>Where to look</h2>
 <div class="card"><table class="tall"><tr><th>To find</th><th>Open</th></tr>
-<tr><td>A reply's model, Jev hint, duration, cost and saved error</td><td>The debug view in the <a href="web-client.html">test workbench</a>. It reads saved Postgres records, so it works with telemetry off and covers unsampled replies.</td></tr>
+<tr><td>A reply's model, Jev hint, duration, cost and saved error</td><td>The debug view in the <a href="web-client.html">test workbench</a>. It reads saved Postgres records, so it covers unsampled replies and works with telemetry off.</td></tr>
 <tr><td>Where a message spent its time</td><td>The Sentry trace, if the message was sampled.</td></tr>
 <tr><td>Which kind of failure occurred</td><td>Sentry errors, grouped by <code>nori.error.category</code> and <code>nori.error.reason</code>.</td></tr>
 <tr><td>A model call's tokens and text</td><td>Arize. With <code>ARIZE_PROJECT_URL</code> set, Sentry model spans carry a <code>nori.arize.url</code> link to the span.</td></tr>
@@ -43,18 +43,18 @@
 </section>
 <section><h2>What's removed before export</h2>
 <div class="card"><table class="tall"><tr><th>Data</th><th>What's sent</th></tr>
-<tr><td>Span and log attributes</td><td>Allowlisted names only. Strings are cut to 256 bytes after redaction.</td></tr>
-<tr><td>Errors</td><td>A category, a fixed reason such as <code>deadline</code> or <code>http_503</code>, the error type and a stack without variables or source lines. Error text is dropped.</td></tr>
+<tr><td>Span and log attributes</td><td>Allowlisted names only. Strings are redacted, then cut to 256 bytes.</td></tr>
+<tr><td>Errors</td><td>A category, a fixed reason such as <code>deadline</code> or <code>http_</code> plus the status code, the error type and a stack without variables or source lines. Error text is dropped.</td></tr>
 <tr><td>HTTP requests</td><td>Method, known route and status. URLs, headers and bodies are dropped.</td></tr>
 <tr><td>Model text in Arize</td><td>The latest user message and the reply, up to 2,048 bytes each. URLs, email addresses, tokens and known credentials are replaced with <code>[redacted]</code>.</td></tr>
 <tr><td>Tool calls</td><td>Tool name, outcome and status. Arguments and tool payloads are not on the allowlist.</td></tr>
-<tr><td>Browser events</td><td>Sent to <code>/sentry-tunnel</code>, which checks authentication and strips request headers before forwarding.</td></tr>
+<tr><td>Browser events</td><td>Sent to <code>/sentry-tunnel</code>, which checks authentication and strips request headers.</td></tr>
 </table>
 </div>
 </section>
 <section><h2>Sampling and failures</h2>
 <ul class="pts">
-<li>The browser and each Go process sample 5% of new traces by default.</li>
+<li>The browser and each Go process sample 5% of new traces.</li>
 <li>Each export has a 2-second timeout and no retries.</li>
 <li>A failed export writes one line to stderr, at most once a minute.</li>
 </ul>
@@ -65,10 +65,10 @@
 <tr><td>Agent service</td><td><code>HTTP /api/turn</code>, <code>conversation.accept</code></td></tr>
 <tr><td>Outer loop</td><td><code>conversation.turn</code>, <code>conversation.acceptance_to_reply</code></td></tr>
 <tr><td>Inner loop</td><td><code>task.model</code>, <code>task.tool</code>, <code>task.acceptance_to_terminal</code></td></tr></table>
-<ul class="pts"><li>If a turn claims several messages, the first sampled message's trace becomes the parent. The others and the queue wake become links.</li><li>A sampled steer moves later activities to the steer's trace, with a link back to the trace that started the task.</li><li>A child span follows its parent's decision, so a trace is kept or dropped as a whole.</li><li>Successful health checks, snapshot reads and event streams create no request spans. A 5xx response on those routes is still captured as an error.</li><li>With no destination configured, processes sample nothing and still write structured JSON logs to stderr.</li></ul>
+<ul class="pts"><li>With no destination configured, processes sample nothing and still write JSON logs to stderr.</li></ul>
 <div class="card"><table class="tall"><tr><th>Variable</th><th>Default</th><th>Effect</th></tr>
 <tr><td><code>SENTRY_DSN</code></td><td>Empty</td><td>Turns on Sentry for Go processes.</td></tr>
-<tr><td><code>NEXT_PUBLIC_SENTRY_DSN</code>, <code>SENTRY_WEB_DSN</code></td><td>Empty</td><td>Turn on Sentry for the test workbench. <code>SENTRY_WEB_DSN</code> overrides <code>NEXT_PUBLIC_SENTRY_DSN</code> for both server and browser config.</td></tr>
+<tr><td><code>NEXT_PUBLIC_SENTRY_DSN</code>, <code>SENTRY_WEB_DSN</code></td><td>Empty</td><td>Turn on Sentry for the test workbench. <code>SENTRY_WEB_DSN</code> takes precedence.</td></tr>
 <tr><td><code>ARIZE_SPACE_ID</code>, <code>ARIZE_API_KEY</code></td><td>Empty</td><td>Turn on Arize. Both are required.</td></tr>
 <tr><td><code>SENTRY_TRACES_SAMPLE_RATE</code></td><td>0.05</td><td>Share of new traces kept.</td></tr>
 <tr><td><code>NORI_SENTRY_ERRORS_PER_HOUR</code>, <code>NORI_SENTRY_LOGS_PER_HOUR</code>, <code>NORI_SENTRY_METRICS_PER_HOUR</code></td><td>50, 100, 200</td><td>Go process limits.</td></tr>
@@ -77,8 +77,11 @@
 </div>
 </details>
 <section><h2>Diagnostics and feedback</h2>
-<p><code>GET /v1/diagnostics</code> lists per-user problems that need repair: a task stuck behind an undelivered answer, a write with an uncertain outcome, cleanup that did not finish, a missed wake, a failed delivery, or a connection or MCP server that needs attention. Each item names its task, operation or resource and, when a repair exists, runs it through <code>POST /v1/diagnostics/actions</code> using the same durable records and commands as normal work.</p>
-<p>Feedback (wrong result, wrong action, too slow, missing capability, broken connection) is saved via <code>POST /v1/feedback</code> with the task's operations, status and spend so issues point directly at recorded evidence.</p>
+<ul class="pts">
+<li><code>GET /v1/diagnostics</code> lists per-user problems that need repair, such as a task stuck behind an undelivered answer, a write with an uncertain outcome or a missed wake. Each item names its task, operation or resource.</li>
+<li>When a repair exists, <code>POST /v1/diagnostics/actions</code> runs it through the same durable records and commands as normal work.</li>
+<li><code>POST /v1/feedback</code> saves a report (wrong result, wrong action, too slow, missing capability or broken connection) with the task's operations, status and spend.</li>
+</ul>
 </section>
 <details class="sources"><summary>Sources</summary><p><code>core/internal/observability/</code> · <code>core/internal/conversation/telemetry.go</code> · <code>core/internal/task/telemetry.go</code> · <code>core/internal/state/records/tasks.go</code> · <code>core/internal/api/diagnostics.go</code> · <code>web/src/lib/observability/</code> · <code>web/src/lib/runtime/useRuntime.ts</code> · <code>web/src/app/sentry-tunnel/route.ts</code> · <code>web/src/components/dev/DebugBlock.tsx</code></p></details>
 </body>
