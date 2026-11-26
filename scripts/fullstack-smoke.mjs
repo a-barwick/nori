@@ -142,10 +142,16 @@ async function main() {
       NORI_STORE_BACKEND: "postgres",
       NORI_POSTGRES_URL: dbURL.toString(),
       NORI_LOCAL_ARTIFACT_DIR: join(work, "artifacts"),
-      NORI_BACKGROUND_TASKS_ENABLED: "false",
+      NORI_BACKGROUND_TASKS_ENABLED: "true",
       NORI_JEV_ENABLED: "false",
-      OPENAI_API_KEY: "smoke-placeholder",
+      NORI_CREDENTIAL_STORE: "database",
+      NORI_CREDENTIAL_KEY_FILE: join(work, "cred.key"),
+      NORI_MODEL_PROVIDER: "openai",
+      NORI_OUTER_PROVIDER: "openai",
+      NORI_INNER_PROVIDER: "openai",
+      NORI_AGENT_MODEL: "gpt-6.1-sol",
       MODEL_NAME: "gpt-6.1-terra",
+      OPENAI_TEST_API_KEY: "nori-loopback-stub",
       NORI_MODEL_TEST_URL: modelURL,
       PORT: String(corePort),
     };
@@ -206,7 +212,7 @@ async function main() {
     });
 
     // 1. Unauthenticated API call must be rejected.
-    const unauth = await fetch(`${webBase}/api/v1/capabilities`);
+    const unauth = await fetch(`${webBase}/api/v1/capabilities`, { headers: { "Sec-Fetch-Site": "same-origin" } });
     assert.equal(unauth.status, 403, `Expected 403 unauthenticated, got ${unauth.status}`);
 
     // 2. Sign in through prod-check OIDC redirect to obtain the session cookie.
@@ -218,19 +224,20 @@ async function main() {
     assert.match(cookie, /^nori_prod_check=/, "Missing OIDC session cookie");
 
     // 3. Capabilities and snapshot through real Web -> Core proxy.
-    const capsRes = await fetch(`${webBase}/api/v1/capabilities`, { headers: { Cookie: cookie } });
-    assert.equal(capsRes.status, 200, `capabilities status=${capsRes.status}`);
+    const browser = { Cookie: cookie, "Sec-Fetch-Site": "same-origin" };
+    const capsRes = await fetch(`${webBase}/api/v1/capabilities`, { headers: browser });
+    assert.equal(capsRes.status, 200, `capabilities status=${capsRes.status}: ${capsRes.status === 200 ? "" : await capsRes.clone().text()}`);
     const caps = await capsRes.json();
     assert.equal(caps.service, "nori");
     assert.equal(caps.contract, "nori-chat-2");
 
-    const snapRes = await fetch(`${webBase}/api/v1/snapshot`, { headers: { Cookie: cookie } });
+    const snapRes = await fetch(`${webBase}/api/v1/snapshot`, { headers: browser });
     assert.equal(snapRes.status, 200, `snapshot status=${snapRes.status}`);
 
     // 4. Open real SSE stream, send a turn through Web -> Core -> ModelStub, and assert assistant reply arrives.
     const sseController = new AbortController();
     const sseRes = await fetch(`${webBase}/api/v1/events`, {
-      headers: { Cookie: cookie, Accept: "text/event-stream" },
+      headers: { ...browser, Accept: "text/event-stream" },
       signal: sseController.signal,
     });
     assert.equal(sseRes.status, 200, `events status=${sseRes.status}`);
@@ -238,7 +245,7 @@ async function main() {
     const turnRes = await fetch(`${webBase}/api/turn`, {
       method: "POST",
       headers: {
-        Cookie: cookie,
+        ...browser,
         Origin: webBase,
         "Content-Type": "application/json",
       },
@@ -265,6 +272,9 @@ async function main() {
     sseController.abort();
     assert.ok(gotReply, `Did not receive "${SMOKE_REPLY}" over SSE. Buffer:\n${buffer}`);
     console.log("Full-stack Web <-> Core smoke passed.");
+  } catch (err) {
+    for (const child of procs) console.error(`--- ${child.spawnargs.slice(0, 2).join(" ")} (last 8000 bytes) ---\n${child.getLogs()}`);
+    throw err;
   } finally {
     for (const child of procs) {
       if (child.exitCode === null) child.kill("SIGTERM");
