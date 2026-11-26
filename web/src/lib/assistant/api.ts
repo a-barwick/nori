@@ -27,7 +27,7 @@ export class APIError extends Error {
   get code() { return this.body?.code; }
   get accepted() { return !!this.body?.accepted; }
   get stale() { return this.status === 409; }
-  get unavailable() { return this.status === 503 || this.code === "service_unavailable"; }
+  get unavailable() { return this.code === "service_unavailable" || this.message === SERVICE_UNAVAILABLE || (this.status === 503 && !this.body?.error); }
 }
 
 export function isUnavailableError(error: unknown): boolean {
