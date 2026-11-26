@@ -115,6 +115,9 @@ func (b *backend) FinishUserDataReset(ctx context.Context, userID, owner string)
 		if result.RowsAffected() != 1 {
 			return fmt.Errorf("user %s has no pending reset", userID)
 		}
+		if _, err := q.Exec(ctx, "SELECT nori_purge_home_ai_account($1)", userID); err != nil {
+			return err
+		}
 		if _, err := q.Exec(ctx, "DELETE FROM nori_records WHERE shard = $1 AND owner_id = $2", shard, owner); err != nil {
 			return err
 		}

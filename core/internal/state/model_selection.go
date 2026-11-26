@@ -10,6 +10,8 @@ type PinnedProfile struct {
 	Backend            string   `json:"backend,omitempty" firestore:"backend,omitempty"`
 	Model              string   `json:"model,omitempty" firestore:"model,omitempty"`
 	Adapter            string   `json:"adapter,omitempty" firestore:"adapter,omitempty"`
+	HomeDeviceID       string   `json:"home_device_id,omitempty" firestore:"home_device_id,omitempty"`
+	ModelDigest        string   `json:"model_digest,omitempty" firestore:"model_digest,omitempty"`
 	Endpoint           string   `json:"endpoint,omitempty" firestore:"endpoint,omitempty"`
 	SupportedReasoning []string `json:"supported_reasoning,omitempty" firestore:"supported_reasoning,omitempty"`
 	DefaultReasoning   string   `json:"default_reasoning,omitempty" firestore:"default_reasoning,omitempty"`
@@ -28,6 +30,7 @@ func (p *PinnedProfile) Clone() *PinnedProfile {
 }
 
 type ModelSelection struct {
+	HomeOnly           bool           `json:"home_only,omitempty" firestore:"home_only,omitempty"`
 	ChatProfileID      string         `json:"chat_profile_id,omitempty" firestore:"chat_profile_id,omitempty"`
 	ChatProfileVersion string         `json:"chat_profile_version,omitempty" firestore:"chat_profile_version,omitempty"`
 	ChatReasoning      string         `json:"chat_reasoning,omitempty" firestore:"chat_reasoning,omitempty"`
@@ -60,6 +63,7 @@ func (s *ModelSelection) TaskOnly() *ModelSelection {
 		return nil
 	}
 	return &ModelSelection{
+		HomeOnly:           s.HomeOnly,
 		TaskProfileID:      s.TaskProfileID,
 		TaskProfileVersion: s.TaskProfileVersion,
 		TaskReasoning:      s.TaskReasoning,
@@ -74,7 +78,8 @@ func ModelSelectionEqual(a, b *ModelSelection) bool {
 	if a.IsEmpty() || b.IsEmpty() {
 		return false
 	}
-	return a.ChatProfileID == b.ChatProfileID &&
+	return a.HomeOnly == b.HomeOnly &&
+		a.ChatProfileID == b.ChatProfileID &&
 		a.ChatReasoning == b.ChatReasoning &&
 		a.TaskProfileID == b.TaskProfileID &&
 		a.TaskReasoning == b.TaskReasoning

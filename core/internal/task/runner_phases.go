@@ -1,6 +1,7 @@
 package task
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -219,6 +220,11 @@ func (s *runSession) stepAsk() stepResult {
 }
 
 func (s *runSession) stepModel() stepResult {
+	if s.act.HomeModelAvailability != nil {
+		if proceed, result := s.checkHomeModelAvailability(); !proceed {
+			return result
+		}
+	}
 	if err := s.ensureAccounting(s.watcher.ctx); err != nil {
 		if res, lost := s.checkLeaseLost(); lost {
 			return res
@@ -244,6 +250,45 @@ func (s *runSession) stepModel() stepResult {
 		return s.handleModelErr(model, err)
 	}
 	return s.commitModelOutcome(model)
+}
+
+const homeModelWaiting = "Waiting for Home AI Server"
+
+func (s *runSession) waitForHomeModel(ctx context.Context) stepResult {
+	if err := s.store.SetProgress(ctx, s.runID, s.ctrl.Revision, homeModelWaiting); err != nil {
+		return s.handleStepErr(err, false)
+	}
+	s.setBackoff(30*time.Second, s.capturedSeq)
+	return stepDone(OutcomeBackoff, nil)
+}
+
+func (s *runSession) checkHomeModelAvailability() (bool, stepResult) {
+	ctx, cancel := s.stepCtx(stepTimeoutQuick)
+	defer cancel()
+	run, err := s.store.Guard(ctx, s.runID, s.ctrl.Revision)
+	if err != nil {
+		switch {
+		case errors.Is(err, state.ErrSuperseded):
+			return false, s.transitionPhase(state.TaskPhaseSync)
+		case errors.Is(err, state.ErrPaused):
+			return false, s.handleMidRunPaused()
+		default:
+			return false, s.handleStepErr(err, false)
+		}
+	}
+	ready, err := s.act.HomeModelAvailability(ctx, run.ModelSelection)
+	if err != nil {
+		return false, s.backoff(err)
+	}
+	if ready {
+		if run.Progress == homeModelWaiting {
+			if err := s.store.SetProgress(ctx, run.ID, s.ctrl.Revision, ""); err != nil {
+				return false, s.handleStepErr(err, false)
+			}
+		}
+		return true, stepContinue()
+	}
+	return false, s.waitForHomeModel(ctx)
 }
 
 func (s *runSession) prepareModelStep() (proceed bool, res stepResult) {
@@ -343,6 +388,18 @@ func (s *runSession) handleModelErr(model RefModelOutcome, err error) stepResult
 }
 
 func (s *runSession) commitModelOutcome(model RefModelOutcome) stepResult {
+	if model.HomeUnavailable {
+		next := s.ctrl
+		next.Models++
+		next.PendingModelID = ""
+		next.ModelStepStartedAt = nil
+		if result := s.saveCtrl(next); result.done {
+			return result
+		}
+		ctx, cancel := s.stepCtx(stepTimeoutQuick)
+		defer cancel()
+		return s.waitForHomeModel(ctx)
+	}
 	newSpent := s.acct.spent + model.Cost
 	newCostUnknown := s.acct.costUnknown || (!model.CostKnown && !model.NotSent)
 	spend := &state.SpendUpdate{

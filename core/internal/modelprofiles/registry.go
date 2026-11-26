@@ -20,6 +20,7 @@ import (
 
 const (
 	BackendLocal   = "local"
+	BackendHome    = "home"
 	BackendGateway = "gateway"
 
 	AdapterChatCompletions   = "chat_completions"
@@ -31,6 +32,9 @@ const (
 )
 
 type Profile struct {
+	HomeDeviceID       string   `json:"home_device_id,omitempty"`
+	ModelDigest        string   `json:"model_digest,omitempty"`
+	Availability       string   `json:"availability,omitempty"`
 	ID                 string   `json:"id"`
 	Version            string   `json:"version"`
 	Label              string   `json:"label"`
@@ -46,6 +50,8 @@ type Profile struct {
 }
 
 type PublicProfile struct {
+	HomeDeviceID       string   `json:"home_device_id,omitempty"`
+	Availability       string   `json:"availability,omitempty"`
 	ID                 string   `json:"id"`
 	Version            string   `json:"version"`
 	Label              string   `json:"label"`
@@ -84,6 +90,8 @@ func (c Catalog) Public() PublicCatalog {
 	}
 	for _, p := range c.Profiles {
 		out.Profiles = append(out.Profiles, PublicProfile{
+			HomeDeviceID:       p.HomeDeviceID,
+			Availability:       p.Availability,
 			ID:                 p.ID,
 			Version:            p.Version,
 			Label:              p.Label,
@@ -320,6 +328,8 @@ func pinProfile(p Profile, lane string) *state.PinnedProfile {
 		endpoint = p.Endpoint
 	}
 	return &state.PinnedProfile{
+		HomeDeviceID:       p.HomeDeviceID,
+		ModelDigest:        p.ModelDigest,
 		Backend:            p.Backend,
 		Model:              p.Model,
 		Adapter:            adapter,

@@ -106,6 +106,7 @@ public final class NoriStore {
     public var assistantSummary: AssistantSummary?
     public var lastPing: HealthCheckResult?
     public private(set) var modelSettings: ModelSettingsResponse?
+    public private(set) var homeConnectors: HomeConnectorsResponse?
     public var modelKeyError: String?
     public private(set) var dataResetRecoveryRequired = false
     public private(set) var dataResetStatusRequired = false
@@ -400,7 +401,12 @@ public final class NoriStore {
     }
 
     public var needsModelKeySetup: Bool {
-        modelKeys.byokRequired && !hasConfiguredModelKey
+        modelKeys.byokRequired && !hasConfiguredModelKey && !hasSelectedHomeChat
+    }
+
+    public var hasSelectedHomeChat: Bool {
+        guard let settings = modelSettings, let id = settings.selection.chatProfileID, !id.isEmpty else { return false }
+        return settings.selection.homeOnly == true || id.hasPrefix("home-") || settings.modelProfiles.profiles.contains { $0.id == id && $0.backend == "home" }
     }
 
     public func bootstrapIfNeeded() async {
@@ -738,6 +744,7 @@ public final class NoriStore {
         streamingAssistantText = nil
         streamingTurnID = nil
         modelSettings = nil
+        homeConnectors = nil
         modelKeyError = nil
         dataResetRecoveryRequired = false
         dataResetStatusRequired = false
@@ -2027,6 +2034,9 @@ public final class NoriStore {
         let generation = sessionGeneration
         do {
             try await refreshModelKeysThrowing()
+            if modelSettings == nil && modelKeys.byokRequired && !hasConfiguredModelKey {
+                try? await refreshModelSettings()
+            }
         } catch is CancellationError {
             return
         } catch {
@@ -2046,6 +2056,52 @@ public final class NoriStore {
             _ = await handleAuthFailureIfNeeded(error)
             throw error
         }
+    }
+
+    public func refreshHomeConnectors() async throws {
+        let generation = sessionGeneration
+        do {
+            let latest = try await transport.fetchHomeConnectors()
+            guard generation == sessionGeneration else { throw CancellationError() }
+            homeConnectors = latest
+        } catch let error as NoriAPIError where error.statusCode == 404 {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            homeConnectors = nil
+        } catch {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            _ = await handleAuthFailureIfNeeded(error)
+            throw error
+        }
+    }
+
+    public func lookupHomePairing(_ code: String) async throws -> HomePairing {
+        let generation = sessionGeneration
+        let result = try await transport.lookupHomePairing(code)
+        guard generation == sessionGeneration else { throw CancellationError() }
+        return result
+    }
+
+    public func approveHomePairing(_ code: String) async throws {
+        let generation = sessionGeneration
+        try await transport.approveHomePairing(code)
+        guard generation == sessionGeneration else { throw CancellationError() }
+        try? await refreshHomeConnectors()
+        try? await refreshModelSettings()
+    }
+
+    public func testHomeConnector(_ id: String) async throws {
+        let generation = sessionGeneration
+        let result = try await transport.testHomeConnector(id)
+        guard generation == sessionGeneration else { throw CancellationError() }
+        guard result.status == "ok" else { throw NoriAPIError(message: "Connection test did not complete.") }
+    }
+
+    public func revokeHomeConnector(_ id: String) async throws {
+        let generation = sessionGeneration
+        try await transport.revokeHomeConnector(id)
+        guard generation == sessionGeneration else { throw CancellationError() }
+        try? await refreshHomeConnectors()
+        try? await refreshModelSettings()
     }
 
     public func saveModelSettings(_ selection: ModelSelection, expectedRevision: Int? = nil) async throws {

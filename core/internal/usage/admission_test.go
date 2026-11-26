@@ -52,3 +52,23 @@ func TestWithAdmission_BlocksBeforeProviderIO(t *testing.T) {
 		t.Fatalf("expected ErrUserQuotaExceeded on daily spend cap with unknown exposure, got %v", err)
 	}
 }
+
+func TestLocalInferenceUsesCallLimitWithoutCloudSpend(t *testing.T) {
+	calls := 0
+	reader := &fakeWindowReader{spendUSD: 20}
+	meter := WithAdmission(Func(func(_ context.Context, u state.Usage) error {
+		calls++
+		if u.EstimatedExposureUSD != 0 {
+			t.Fatalf("local request reserved cloud spend: %+v", u)
+		}
+		return nil
+	}), reader, 1, 15, nil)
+	record := state.Usage{ID: "home", CostStatus: "local", RequestStatus: "pending"}
+	if err := meter.RecordUsage(context.Background(), record); err != nil || calls != 1 {
+		t.Fatalf("local admission after cloud cap = %v, %d writes", err, calls)
+	}
+	reader.calls = 1
+	if err := meter.RecordUsage(context.Background(), record); !errors.Is(err, ErrUserQuotaExceeded) || calls != 1 {
+		t.Fatalf("local admission bypassed call limit: %v, %d writes", err, calls)
+	}
+}

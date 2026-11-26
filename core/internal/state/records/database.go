@@ -219,7 +219,9 @@ func (d *Database) ReserveUsage(
 			return nil
 		}
 		incomingExposure := u.EstimatedExposureUSD
-		if incomingExposure <= 0 {
+		if u.CostStatus == "local" {
+			incomingExposure = 0
+		} else if incomingExposure <= 0 {
 			incomingExposure = unknownEstimateUSD
 		}
 		if maxUSDPerDay > 0 && window.ActualUSD+window.ExposureUSD+incomingExposure > maxUSDPerDay {
@@ -269,7 +271,7 @@ func summarizeUsage(rows []state.Usage, hour, day time.Time, unknown float64) do
 		}
 		if r.CostUSD != nil && *r.CostUSD > 0 {
 			window.ActualUSD += *r.CostUSD
-		} else if r.CostStatus != "provider" && r.CostStatus != "calculated" {
+		} else if r.CostStatus != "provider" && r.CostStatus != "calculated" && r.CostStatus != "local" {
 			window.Unknown++
 			if r.EstimatedExposureUSD > 0 {
 				window.ExposureUSD += r.EstimatedExposureUSD

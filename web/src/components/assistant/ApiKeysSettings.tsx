@@ -16,15 +16,15 @@ import { useResource, useResourceInvalidation } from "@/lib/assistant/useResourc
 import { cn } from "@/lib/utils";
 import { Confirm, Empty, Failure, Field, inputClass, Loading, Notice, Pill, Section } from "./ui";
 
-export function needsByokSetup(data?: ModelKeysResponse): boolean {
-  return !!data?.byok_required && !data.providers.some((provider) => provider.configured);
+export function needsByokSetup(data?: ModelKeysResponse, hasHomeChat = false): boolean {
+  return !!data?.byok_required && !hasHomeChat && !data.providers.some((provider) => provider.configured);
 }
 
 export function byokPromptLabel(data?: ModelKeysResponse): string {
   return data?.providers.length === 1 ? data.providers[0].label : "model provider";
 }
 
-export function ApiKeysSettings({ onKeySaved }: { onKeySaved?: (provider: ModelKeyProvider) => void }) {
+export function ApiKeysSettings({ onKeySaved, hasHomeChat = false }: { onKeySaved?: (provider: ModelKeyProvider) => void; hasHomeChat?: boolean }) {
   const keys = useResource<ModelKeysResponse>("/settings/model-keys", { poll: 0, versioned: false });
   const invalidate = useResourceInvalidation();
 
@@ -49,6 +49,7 @@ export function ApiKeysSettings({ onKeySaved }: { onKeySaved?: (provider: ModelK
       onRetry={() => void keys.reload()}
       onProviderUpdated={updateProvider}
       onKeySaved={onKeySaved}
+      hasHomeChat={hasHomeChat}
     />
   );
 }
@@ -60,6 +61,7 @@ export function ApiKeysContent({
   onProviderUpdated,
   onKeySaved,
   initialEditingProvider,
+  hasHomeChat = false,
 }: {
   data: ModelKeysResponse;
   error?: unknown;
@@ -67,13 +69,14 @@ export function ApiKeysContent({
   onProviderUpdated: (updated: ModelKeyProvider) => void;
   onKeySaved?: (provider: ModelKeyProvider) => void;
   initialEditingProvider?: string | null;
+  hasHomeChat?: boolean;
 }) {
   const [editingProvider, setEditingProvider] = useState<string | null>(initialEditingProvider ?? null);
   const [draftKey, setDraftKey] = useState("");
   const [busyProvider, setBusyProvider] = useState<{ provider: string; action: "save" | "delete" } | null>(null);
   const [providerErrors, setProviderErrors] = useState<Record<string, string>>({});
 
-  const requiresKey = needsByokSetup(data);
+  const requiresKey = needsByokSetup(data, hasHomeChat);
   const primaryLabel = byokPromptLabel(data);
 
   const startEditing = (provider: string) => {

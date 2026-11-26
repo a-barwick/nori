@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/http"
 	"net/url"
 	"os"
 	"strconv"
@@ -26,6 +27,7 @@ type Settings struct {
 	ServiceAuth    serviceauth.Config
 	BindHost, Port string
 	Models         Models
+	HomeAI         HomeAI
 	Metering       usage.Config
 	Store          Store
 	ExaSearchKey   string
@@ -54,6 +56,7 @@ type AWS struct {
 
 type Models struct {
 	Guard                                          *llmguard.Guard
+	CloudDispatchClient                            *http.Client
 	EnvProfile                                     string
 	OpenAIKey, AnthropicKey, JevKey, OpenRouterKey string
 	Outer, Inner                                   string
@@ -131,7 +134,7 @@ func load(defaultCloud string, simulation bool) (Settings, error) {
 			return Settings{}, fmt.Errorf("could not load task configuration %s", task)
 		}
 	}
-	for _, name := range []string{"NORI_BACKGROUND_TASKS_ENABLED", "NORI_JEV_ENABLED"} {
+	for _, name := range []string{"NORI_BACKGROUND_TASKS_ENABLED", "NORI_JEV_ENABLED", "NORI_HOME_AI_WORK_ENABLED"} {
 		if v := os.Getenv(name); v != "" && v != "true" && v != "false" {
 			return Settings{}, fmt.Errorf("%s must be true or false", name)
 		}
@@ -177,6 +180,9 @@ func load(defaultCloud string, simulation bool) (Settings, error) {
 		return Settings{}, fmt.Errorf("NORI_STORE_BACKEND must be postgres")
 	}
 	if err := s.Metering.Validate(); err != nil {
+		return Settings{}, err
+	}
+	if err := s.HomeAI.validate(s.Cloud); err != nil {
 		return Settings{}, err
 	}
 	if err := s.Models.validateModels(s.Cloud); err != nil {
@@ -255,6 +261,9 @@ func fromEnvironment(defaultCloud string, simulation bool) Settings {
 		"NORI_POSTGRES_LISTEN_URL",
 		"NORI_SERVICE_TOKEN_KEY",
 		"NORI_CREDENTIAL_KEY",
+		"NORI_HOME_AI_KEY",
+		"NORI_HOME_AI_POSTGRES_URL",
+		"NORI_HOME_AI_POSTGRES_LISTEN_URL",
 		"AWS_SECRET_ACCESS_KEY",
 		"AWS_SESSION_TOKEN",
 	} {
@@ -277,6 +286,7 @@ func fromEnvironment(defaultCloud string, simulation bool) Settings {
 		},
 		BindHost:      get("BIND_HOST", "127.0.0.1"),
 		Port:          os.Getenv("PORT"),
+		HomeAI:        homeAIFromEnvironment(),
 		Models:        modelsFromEnvironment(envProfile, cloud, simulation),
 		Store:         store,
 		Metering:      usage.Config{Mode: get("NORI_USAGE_METER", "store"), Endpoint: os.Getenv("NORI_USAGE_ENDPOINT"), Token: os.Getenv("NORI_USAGE_TOKEN"), MaxCallsPerHour: int(parseEnvInt32Default("NORI_USER_MAX_CALLS_PER_HOUR", 300)), MaxUSDPerDay: parseOptionalNonNegativeFloatDefault("NORI_USER_MAX_USD_PER_DAY", 15.0)},

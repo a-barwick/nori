@@ -95,11 +95,11 @@ func (c *Client) direct() bool {
 func (c *Client) SupportsNativeWebSearch() bool { return c.direct() }
 
 func (c *Client) Provider() string {
-	if c.gatewayURL != "" {
-		return modelgateway.Provider
-	}
 	if c.ProviderName != "" {
 		return c.ProviderName
+	}
+	if c.gatewayURL != "" {
+		return modelgateway.Provider
 	}
 	if c.direct() {
 		return "openai"
@@ -123,6 +123,9 @@ func (c *Client) endpoint() string {
 }
 
 func (c *Client) format() string {
+	if c.ProviderName == llmguard.ProviderHome {
+		return "nori.home.responses"
+	}
 	if c.gatewayURL != "" {
 		return "nori.gateway.responses"
 	}
@@ -156,6 +159,9 @@ func (c *Client) validModel() bool {
 
 func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Response, err error) {
 	out.NotSent = true
+	if c.ProviderName == llmguard.ProviderHome {
+		out.CostKnown, out.CostLocal = true, true
+	}
 	if !c.validModel() {
 		return out, errors.New("task model must be the selected GPT-6.1 Terra")
 	}
@@ -190,7 +196,7 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		"model": c.ModelName, "input": input, "instructions": req.Instructions,
 		"tools": tools, "max_output_tokens": req.MaxOutputTokens, "store": false,
 	}
-	if !req.SingleTurn {
+	if !req.SingleTurn && c.ProviderName != llmguard.ProviderHome {
 		fields["include"] = []string{"reasoning.encrypted_content"}
 	}
 	effort := req.Reasoning
@@ -234,6 +240,9 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		return out, err
 	}
 	record := usage.Attempt(ctx, c.Provider(), c.ModelName)
+	if c.ProviderName == llmguard.ProviderHome {
+		c.recordCost(&record, "", "", nil)
+	}
 	if c.Byok {
 		record.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
 	}
@@ -276,6 +285,9 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		if ctx.Err() != nil {
 			return out, ctx.Err()
 		}
+		if c.ProviderName == llmguard.ProviderHome {
+			return out, err
+		}
 		return out, errors.New("task model request interrupted or unavailable")
 	}
 	record.RequestStatus = "received"
@@ -305,6 +317,10 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		return out, errors.New("task model returned an unreadable response")
 	}
 	out.Cost, out.CostKnown = c.recordCost(&record, response.Model, response.Tier, response.Usage)
+	if c.ProviderName == llmguard.ProviderHome {
+		out.CostLocal = true
+		llmguard.RecordResponseCost(res, 0)
+	}
 	if c.LocalOnly && !out.CostKnown {
 		record.CostStatus = "local"
 		out.CostLocal = true

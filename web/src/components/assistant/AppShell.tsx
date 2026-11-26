@@ -330,7 +330,7 @@ function Frame({ scope, children }: { scope: string; children: ReactNode }) {
     </nav>
   );
 
-  if (showOnboarding) {
+  if (showOnboarding && path !== "/connector/activate") {
     return <OnboardingFlow preferences={preferences.data} onComplete={handleOnboardingComplete} />;
   }
 

@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"nori/internal/contextview"
+	"nori/internal/homeai"
 	"nori/internal/llmguard"
 	"nori/internal/modelgateway"
 	"nori/internal/observability"
@@ -33,6 +34,7 @@ const (
 )
 
 type OpenAIModel struct {
+	ProviderName          string
 	name                  string
 	key                   string
 	gatewayURL            string
@@ -109,6 +111,9 @@ func NewOpenRouterModel(key, name string) *OpenAIModel {
 func (m *OpenAIModel) Name() string { return m.name }
 
 func (m *OpenAIModel) provider() string {
+	if m.ProviderName != "" {
+		return m.ProviderName
+	}
 	if m.gatewayURL != "" {
 		return modelgateway.Provider
 	}
@@ -142,6 +147,10 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	}()
 	reply.Usage = state.Usage{
 		ID: m.newID(), Provider: "outer", Model: m.name, CostStatus: "unknown", RequestStatus: "not_sent", CreatedAt: m.now().UTC(),
+	}
+	if m.ProviderName == llmguard.ProviderHome {
+		zero := float64(0)
+		reply.Usage.CostUSD, reply.Usage.CostStatus = &zero, "local"
 	}
 	body, err := m.requestBody(request, 4096, span)
 	if err != nil {
@@ -236,11 +245,16 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 		if ctx.Err() != nil {
 			return reply, ctx.Err()
 		}
+		if m.ProviderName == llmguard.ProviderHome {
+			return reply, err
+		}
 		return reply, fmt.Errorf("model request interrupted or unavailable")
 	}
 	reply.Usage.RequestStatus = "received"
 	defer func() {
-		if reply.Usage.CostUSD != nil {
+		if m.ProviderName == llmguard.ProviderHome {
+			llmguard.RecordResponseCost(res, 0)
+		} else if reply.Usage.CostUSD != nil {
 			llmguard.RecordResponseCost(res, *reply.Usage.CostUSD)
 		}
 		res.Body.Close()
@@ -388,7 +402,9 @@ func (m *OpenAIModel) decodeOpenAIReply(res *http.Response, reply Reply, noDispa
 		reply.Usage.TotalTokens = response.Usage.Total
 		cached, written := response.Usage.InputDetails.Cached, response.Usage.InputDetails.Write
 		reply.Usage.CachedTokens, reply.Usage.CacheWriteTokens = &cached, &written
-		if m.gatewayURL != "" || m.openRouter {
+		if m.ProviderName == llmguard.ProviderHome {
+			reply.Usage.CostStatus = "local"
+		} else if m.gatewayURL != "" || m.openRouter {
 			var cost *float64
 			if json.Unmarshal(response.Usage.Cost, &cost) == nil {
 				usage.RecordReportedCost(&reply.Usage, cost)
@@ -711,6 +727,9 @@ func (m *OpenAIModel) decodeOpenAIStream(res *http.Response, reply Reply, reques
 		}
 	}
 	if scanner.Err() != nil || !done {
+		if m.ProviderName == llmguard.ProviderHome {
+			return reply, homeai.ErrInterrupted
+		}
 		return reply, errors.New("model stream interrupted; request will not be repeated")
 	}
 	ordered := []ToolCall{}

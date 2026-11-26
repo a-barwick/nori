@@ -358,6 +358,8 @@ public struct ModelProfile: Sendable, Codable, Hashable, Identifiable {
     public var supportedReasoning: [String]?
     public var defaultReasoning: String?
     public var paid: Bool
+    public var homeDeviceID: String?
+    public var availability: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -369,6 +371,8 @@ public struct ModelProfile: Sendable, Codable, Hashable, Identifiable {
         case supportedReasoning = "supported_reasoning"
         case defaultReasoning = "default_reasoning"
         case paid
+        case homeDeviceID = "home_device_id"
+        case availability
     }
 
     public init(
@@ -380,7 +384,9 @@ public struct ModelProfile: Sendable, Codable, Hashable, Identifiable {
         lanes: [String],
         supportedReasoning: [String]? = nil,
         defaultReasoning: String? = nil,
-        paid: Bool
+        paid: Bool,
+        homeDeviceID: String? = nil,
+        availability: String? = nil
     ) {
         self.id = id
         self.version = version
@@ -391,6 +397,8 @@ public struct ModelProfile: Sendable, Codable, Hashable, Identifiable {
         self.supportedReasoning = supportedReasoning
         self.defaultReasoning = defaultReasoning
         self.paid = paid
+        self.homeDeviceID = homeDeviceID
+        self.availability = availability
     }
 }
 
@@ -429,18 +437,21 @@ public struct ModelSelection: Sendable, Codable, Hashable {
     public var chatReasoning: String?
     public var taskProfileID: String?
     public var taskReasoning: String?
+    public var homeOnly: Bool?
 
     enum CodingKeys: String, CodingKey {
         case chatProfileID = "chat_profile_id"
         case chatReasoning = "chat_reasoning"
         case taskProfileID = "task_profile_id"
         case taskReasoning = "task_reasoning"
+        case homeOnly = "home_only"
     }
 
     func normalized(using catalog: ModelProfileCatalog?) -> ModelSelection {
         guard let catalog else { return ModelSelection() }
         guard !catalog.profiles.isEmpty else { return ModelSelection() }
         var out = ModelSelection()
+        out.homeOnly = homeOnly
         let chatTargetID = chatProfileID ?? catalog.defaultChatProfileID
         let chatProfile = catalog.profiles.first { $0.lanes.contains("chat") && $0.id == chatTargetID }
         if let cid = chatProfileID,
@@ -475,12 +486,14 @@ public struct ModelSelection: Sendable, Codable, Hashable {
         chatProfileID: String? = nil,
         chatReasoning: String? = nil,
         taskProfileID: String? = nil,
-        taskReasoning: String? = nil
+        taskReasoning: String? = nil,
+        homeOnly: Bool? = nil
     ) {
         self.chatProfileID = chatProfileID
         self.chatReasoning = chatReasoning
         self.taskProfileID = taskProfileID
         self.taskReasoning = taskReasoning
+        self.homeOnly = homeOnly
     }
 }
 

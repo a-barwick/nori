@@ -207,6 +207,11 @@ public protocol NoriTransport: Sendable {
     func deleteModelKey(provider: String) async throws -> ModelKeyProvider
     func fetchModelSettings() async throws -> ModelSettingsResponse
     func saveModelSettings(_ request: SaveModelSettingsRequest) async throws -> ModelSettingsResponse
+    func fetchHomeConnectors() async throws -> HomeConnectorsResponse
+    func lookupHomePairing(_ code: String) async throws -> HomePairing
+    func approveHomePairing(_ code: String) async throws
+    func testHomeConnector(_ id: String) async throws -> HomeConnectorTest
+    func revokeHomeConnector(_ id: String) async throws
 }
 
 public extension NoriTransport {
@@ -235,6 +240,21 @@ public extension NoriTransport {
 
     func saveModelSettings(_ request: SaveModelSettingsRequest) async throws -> ModelSettingsResponse {
         throw NoriAPIError(message: "Model settings are not supported by this transport.")
+    }
+    func fetchHomeConnectors() async throws -> HomeConnectorsResponse {
+        throw NoriAPIError(message: "Home connectors are not supported by this transport.", statusCode: 404)
+    }
+    func lookupHomePairing(_ code: String) async throws -> HomePairing {
+        throw NoriAPIError(message: "Home connectors are not supported by this transport.")
+    }
+    func approveHomePairing(_ code: String) async throws {
+        throw NoriAPIError(message: "Home connectors are not supported by this transport.")
+    }
+    func testHomeConnector(_ id: String) async throws -> HomeConnectorTest {
+        throw NoriAPIError(message: "Home connectors are not supported by this transport.")
+    }
+    func revokeHomeConnector(_ id: String) async throws {
+        throw NoriAPIError(message: "Home connectors are not supported by this transport.")
     }
     func performMCPAction(
         serverID: String,

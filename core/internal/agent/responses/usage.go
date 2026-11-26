@@ -2,6 +2,7 @@ package responses
 
 import (
 	"nori/internal/agent"
+	"nori/internal/llmguard"
 	"nori/internal/state"
 	"nori/internal/usage"
 )
@@ -21,6 +22,16 @@ type responseUsage struct {
 }
 
 func (c *Client) recordCost(record *state.Usage, model, tier string, u *responseUsage) (float64, bool) {
+	if c.ProviderName == llmguard.ProviderHome {
+		if u != nil {
+			record.InputTokens, record.OutputTokens, record.TotalTokens = u.Input, u.Output, u.Total
+			cached, written := u.InputDetails.Cached, u.InputDetails.Write
+			record.CachedTokens, record.CacheWriteTokens = &cached, &written
+		}
+		zero := float64(0)
+		record.CostUSD, record.CostStatus = &zero, "local"
+		return 0, true
+	}
 	if u == nil {
 		return 0, false
 	}

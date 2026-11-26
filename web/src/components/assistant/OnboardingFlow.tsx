@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { CheckSquare, KeyRound, Lightbulb, Lock, MessageSquare } from "lucide-react";
+import { Dialog } from "radix-ui";
 import { NoriMark, type MarkMood } from "@/components/mark/NoriMark";
 import { Button } from "@/components/ui/primitives";
 import { APPEARANCE_OPTIONS, useAppearance, type NoriAppearance } from "@/lib/appearance";
@@ -12,12 +13,14 @@ import {
   saveModelKey,
   type ModelKeyProvider,
   type ModelKeysResponse,
+  type HomeConnectors,
+  type ModelSettings,
 } from "@/lib/assistant/api";
 import { useResource, useResourceInvalidation } from "@/lib/assistant/useResource";
 import type { MemoryFact, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
 import type { MarkState } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { RecommendedModelsPrompt } from "./ModelsSettings";
+import { hasSelectedHomeChat, ModelsSettings, RecommendedModelsPrompt } from "./ModelsSettings";
 import { Notice, Pill } from "./ui";
 
 export type OnboardingStep = 1 | 2 | 3 | 4;
@@ -189,6 +192,9 @@ export function OnboardingFlow({
   const [step, setStep] = useState<OnboardingStep>(1);
   const [appearance, setAppearance] = useAppearance();
   const keys = useResource<ModelKeysResponse>("/settings/model-keys", { poll: 0, versioned: false });
+  const models = useResource<ModelSettings>("/settings/models", { poll: 0 });
+  const home = useResource<HomeConnectors>("/settings/home-connectors", { poll: 0, versioned: false });
+  const [showModels, setShowModels] = useState(false);
   const invalidate = useResourceInvalidation();
 
   // Mascot reaction state
@@ -239,7 +245,7 @@ export function OnboardingFlow({
     ?? keys.data?.providers[0];
   const byokRequired = !!keys.data?.byok_required;
   const keyConfigured = !!primaryProvider?.configured && !isReplacingKey;
-  const canContinueStep3 = (!byokRequired || !!keys.data?.providers.some((provider) => provider.configured)) && !savedProvider;
+  const canContinueStep3 = (!byokRequired || !!keys.data?.providers.some((provider) => provider.configured) || hasSelectedHomeChat(models.data)) && !savedProvider;
 
   const goStep = (next: OnboardingStep) => {
     setStep(next);
@@ -544,7 +550,7 @@ export function OnboardingFlow({
                 onTap={() => triggerMood("hop", { happy: true })}
               />
               <h1 className="text-center text-[28px] font-bold tracking-tight text-ink">
-                Add your API key
+                {home.data?.enabled ? "Choose your AI model" : "Add your API key"}
               </h1>
 
               <div className="mt-6 rounded-card border border-card-border bg-surface p-4">
@@ -649,6 +655,19 @@ export function OnboardingFlow({
                   <RecommendedModelsPrompt provider={savedProvider} onClose={() => setSavedProvider(null)} />
                 </div>
               )}
+
+              {home.data?.enabled && <div className="mt-3"><Button variant="tonal" onClick={() => setShowModels(true)}>Use a home AI server</Button></div>}
+              <Dialog.Root open={showModels} onOpenChange={setShowModels}>
+                <Dialog.Portal>
+                  <Dialog.Overlay className="scrim fixed inset-0 z-50 bg-overlay" />
+                  <Dialog.Content className="anim-pop fixed top-1/2 left-1/2 z-50 max-h-[85vh] w-[min(650px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 space-y-4 overflow-y-auto rounded-sheet border border-card-border bg-sheet p-6 shadow-pop">
+                    <Dialog.Title className="text-section font-semibold text-ink">Models</Dialog.Title>
+                    <Dialog.Description className="text-meta text-ink-2">Connect a computer and choose its model for Chat.</Dialog.Description>
+                    <ModelsSettings />
+                    <Dialog.Close asChild><Button>Done</Button></Dialog.Close>
+                  </Dialog.Content>
+                </Dialog.Portal>
+              </Dialog.Root>
 
               <div className="mt-3">
                 <Notice tone="neutral">

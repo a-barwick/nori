@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"nori/internal/api"
+	"nori/internal/homeai"
 	"nori/internal/observability"
 	"nori/internal/platform"
 	"nori/internal/settings"
@@ -29,6 +30,7 @@ type Service struct {
 	Now           func() time.Time
 	ConfigureApp  func(users.User, *App)
 
+	home      *homeai.Service
 	storage   *platform.Storage
 	cfg       settings.Settings
 	waker     wake.Waker
@@ -57,7 +59,15 @@ func OpenService(ctx context.Context, waker wake.Waker, cfg settings.Settings) (
 	if err != nil {
 		return nil, err
 	}
-	return OpenServiceWithStorage(storage, waker, cfg), nil
+	service := OpenServiceWithStorage(storage, waker, cfg)
+	if cfg.HomeAI.Enabled() {
+		service.home, err = openHomeAI(ctx, cfg)
+		if err != nil {
+			service.Close()
+			return nil, err
+		}
+	}
+	return service, nil
 }
 
 func OpenServiceWithStorage(storage *platform.Storage, waker wake.Waker, cfg settings.Settings) *Service {
@@ -137,6 +147,9 @@ func (s *Service) WakeListener() docstore.WakeListener {
 
 func (s *Service) closeShared() {
 	s.closeOnce.Do(func() {
+		if s.home != nil {
+			s.home.Close()
+		}
 		if s.Users != nil {
 			_ = s.Users.Close()
 		}
@@ -305,6 +318,7 @@ func (s *Service) RepairUser(ctx context.Context, row users.User) error {
 
 	opened, _, err := openWithResources(ctx, s.waker, s.cfg, row, s.storage, openOptions{
 		skipCollapseDuplicates: true,
+		home:                   s.home,
 	})
 	if err != nil {
 		return err
@@ -378,6 +392,7 @@ func (s *Service) openUserApp(ctx context.Context, row users.User, done chan str
 	}()
 	opened, collapsed, err := openWithResources(ctx, s.waker, s.cfg, row, s.storage, openOptions{
 		skipCollapseDuplicates: alreadyCollapsed || row.ResetPending,
+		home:                   s.home,
 	})
 	if err != nil {
 		return nil, err

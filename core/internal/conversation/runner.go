@@ -83,6 +83,7 @@ type Runner struct {
 	ModelForTurn     func(*state.ModelSelection) ReplyModel
 	AccountModel     func(context.Context, *state.ModelSelection) ReplyModel
 	AccountSelection func(context.Context) (*state.ModelSelection, error)
+	HomeOnly         func(context.Context) (bool, error)
 	classifier       IntentClassifier
 	summarizer       SummaryModel
 	compactAfter     time.Time
@@ -634,6 +635,12 @@ func (r *Runner) EnsureIntroduction(ctx context.Context) error {
 }
 
 func (r *Runner) backgroundIdleBlocked(ctx context.Context, control state.ConversationControl) (bool, error) {
+	if r.HomeOnly != nil {
+		homeOnly, err := r.HomeOnly(ctx)
+		if err != nil || homeOnly {
+			return true, err
+		}
+	}
 	if control.Pending() || control.Active != "" {
 		return true, nil
 	}

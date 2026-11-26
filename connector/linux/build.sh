@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_dir="$(cd "$(dirname "$0")/../.." && pwd)"
+output_dir="${1:-$project_dir/build/connector-linux}"
+relay_url="${NORI_CONNECTOR_RELAY_URL:-}"
+version="${NORI_CONNECTOR_VERSION:-0.1.0}"
+case "$relay_url" in
+  https://[A-Za-z0-9.-]*) ;;
+  http://127.0.0.1:*|http://localhost:*) ;;
+  *) printf '%s\n' "Set NORI_CONNECTOR_RELAY_URL to the relay HTTPS URL." >&2; exit 1 ;;
+esac
+case "$relay_url" in
+  *[!A-Za-z0-9.:/_-]*) printf '%s\n' "Invalid relay URL." >&2; exit 1 ;;
+esac
+case "$version" in
+  *[!A-Za-z0-9.+_-]*|'') printf '%s\n' "Invalid connector version." >&2; exit 1 ;;
+esac
+command -v nfpm >/dev/null || { printf '%s\n' "Install nfpm v2.49.0." >&2; exit 1; }
+mkdir -p "$output_dir"
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+for arch in amd64 arm64; do
+  binary="$scratch/nori-connector-$arch"
+  (
+    cd "$project_dir/core"
+    CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build \
+      -ldflags "-X nori/internal/homeconnector.DefaultRelayURL=$relay_url -X nori/internal/homeconnector.Version=$version" \
+      -o "$binary" ./cmd/nori-connector
+  )
+  (
+    cd "$project_dir"
+    NORI_PACKAGE_BINARY="$binary" NORI_PACKAGE_ARCH="$arch" NORI_CONNECTOR_VERSION="$version" \
+      nfpm package --config connector/linux/nfpm.yaml --packager deb \
+      --target "$output_dir/nori-connector-$version-$arch.deb"
+  )
+done
+(
+  cd "$output_dir"
+  if command -v sha256sum >/dev/null; then
+    sha256sum nori-connector-"$version"-*.deb > "nori-connector-$version-sha256.txt"
+  else
+    shasum -a 256 nori-connector-"$version"-*.deb > "nori-connector-$version-sha256.txt"
+  fi
+)

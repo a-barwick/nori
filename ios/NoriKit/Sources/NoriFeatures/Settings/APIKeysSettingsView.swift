@@ -45,8 +45,10 @@ public struct ModelsSettingsView: View {
                     }
                 }
 
+                HomeConnectorSettingsView(store: store)
+
                 NoriSectionHeader("API Keys")
-                if store.needsModelKeySetup {
+                if store.needsModelKeySetup && store.homeConnectors?.enabled != true {
                     NoriNotice(
                         title: "API key required",
                         detail: "Add a provider API key to use Chat and Work.",
@@ -88,7 +90,16 @@ public struct ModelsSettingsView: View {
             .padding(.top, 12)
             .padding(.bottom, 96)
         }
-        .task { await load() }
+        .task {
+            await load()
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(10)) } catch { break }
+                if store.homeConnectors?.enabled == true {
+                    try? await store.refreshHomeConnectors()
+                    if !hasUnsavedDraft { await reloadModels() }
+                }
+            }
+        }
         .refreshable { await load() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active && !hasUnsavedDraft {
@@ -139,8 +150,8 @@ public struct ModelsSettingsView: View {
         let taskProfile = profiles.first { $0.id == selection.taskProfileID && $0.lanes.contains("task") }
         return NoriCard {
             VStack(alignment: .leading, spacing: 12) {
-                if profiles.isEmpty {
-                    Text("Add an API key to choose models.")
+                if profiles.isEmpty && selection.homeOnly != true && selection.chatProfileID == nil && selection.taskProfileID == nil {
+                    Text("Add an API key or connect a home computer to choose models.")
                         .font(NoriTypography.meta)
                         .foregroundStyle(NoriColors.ink2)
                 } else {
@@ -177,6 +188,24 @@ public struct ModelsSettingsView: View {
                             set: { selection.taskReasoning = $0.isEmpty ? nil : $0 }
                         ))
                     }
+                    if store.homeConnectors?.enabled == true || selection.homeOnly == true {
+                        Toggle(isOn: Binding(
+                            get: { selection.homeOnly == true },
+                            set: { selection.homeOnly = $0 }
+                        )) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Use home models only").font(NoriTypography.rowTitle)
+                                Text("Model requests use your home computer. Nori still stores your conversations.")
+                                    .font(NoriTypography.meta)
+                                    .foregroundStyle(NoriColors.ink2)
+                            }
+                        }
+                        .tint(NoriColors.brandPrimary)
+                        .disabled(isSaving || (selection.homeOnly != true && chatProfile?.backend != "home"))
+                    }
+                    if selection.homeOnly == true, selection.taskProfileID != nil, taskProfile?.backend != "home" {
+                        NoriNotice(title: "Choose a home Work model or clear the Work model before saving.", tone: .warning)
+                    }
                     if let saveError {
                         NoriNotice(title: "Could not save models", detail: saveError, tone: .danger) {
                             if hasConflict {
@@ -201,10 +230,10 @@ public struct ModelsSettingsView: View {
         let available = profiles.filter { $0.lanes.contains(lane) }
         let selectedLabel: String = {
             if selectedID.wrappedValue.isEmpty {
-                return "Select model"
+                return lane == "task" ? "No Work model" : "Select model"
             }
             if let match = available.first(where: { $0.id == selectedID.wrappedValue }) {
-                return match.label
+                return profileLabel(match)
             }
             return "Unavailable · choose a model"
         }()
@@ -213,22 +242,42 @@ public struct ModelsSettingsView: View {
                 .font(NoriTypography.metaSemibold)
                 .foregroundStyle(NoriColors.ink2)
             Menu {
+                if lane == "task" {
+                    Button {
+                        selectedID.wrappedValue = ""
+                    } label: {
+                        if selectedID.wrappedValue.isEmpty {
+                            Label("No Work model", systemImage: "checkmark")
+                        } else {
+                            Text("No Work model")
+                        }
+                    }
+                }
                 ForEach(available) { profile in
                     Button {
                         selectedID.wrappedValue = profile.id
                     } label: {
                         if profile.id == selectedID.wrappedValue {
-                            Label(profile.label, systemImage: "checkmark")
+                            Label(profileLabel(profile), systemImage: "checkmark")
                         } else {
-                            Text(profile.label)
+                            Text(profileLabel(profile))
                         }
                     }
+                    .disabled(selection.homeOnly == true && profile.backend != "home")
                 }
             } label: {
                 pickerFieldLabel(selectedLabel, isPlaceholder: selectedID.wrappedValue.isEmpty)
             }
             .buttonStyle(.plain)
-            .disabled(isSaving || available.isEmpty)
+            .disabled(isSaving || (available.isEmpty && (lane != "task" || selectedID.wrappedValue.isEmpty)))
+        }
+    }
+
+    private func profileLabel(_ profile: ModelProfile) -> String {
+        switch profile.availability {
+        case "offline": return "\(profile.label) · Offline"
+        case "ollama_unavailable": return "\(profile.label) · Ollama unavailable"
+        default: return profile.label
         }
     }
 
@@ -298,6 +347,7 @@ public struct ModelsSettingsView: View {
         keyLoadError = nil
         async let keys: Void = store.refreshModelKeysThrowing()
         async let models: Void = store.refreshModelSettings()
+        async let home: Void = store.refreshHomeConnectors()
         do {
             try await models
             adoptSettingsIfUnedited()
@@ -309,6 +359,7 @@ public struct ModelsSettingsView: View {
         } catch {
             keyLoadError = error.localizedDescription
         }
+        _ = try? await home
     }
 
     private func reloadModels() async {

@@ -109,7 +109,46 @@ export type ModelProfile = {
   supported_reasoning?: string[];
   default_reasoning?: string;
   paid: boolean;
+  home_device_id?: string;
+  availability?: "online" | "offline" | "ollama_unavailable";
 };
+
+export type HomeConnector = {
+  id: string;
+  name: string;
+  status: "online" | "offline" | "ollama_unavailable";
+  last_seen_at?: string;
+  version?: string;
+  models: { name: string; digest?: string; capabilities?: string[] }[];
+};
+
+export type HomeConnectors = {
+  enabled: boolean;
+  devices: HomeConnector[];
+  downloads?: { macos?: string; linux_amd64?: string; linux_arm64?: string };
+};
+
+export type HomePairing = { name: string; user_code: string; expires_at: string };
+
+async function homeConnectorRequest<T>(path: string, method: string, body?: unknown): Promise<T> {
+  const response = await fetch(assistantURL(path), {
+    method,
+    ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+    cache: "no-store",
+    redirect: "error",
+  });
+  if (response.ok && response.status === 204) return undefined as T;
+  return readJSON<T>(response);
+}
+
+export const lookupHomePairing = (userCode: string) =>
+  homeConnectorRequest<HomePairing>("/settings/home-connectors/pairing/lookup", "POST", { user_code: userCode });
+export const approveHomePairing = (userCode: string) =>
+  homeConnectorRequest<void>("/settings/home-connectors/pairing/approve", "POST", { user_code: userCode });
+export const testHomeConnector = (id: string) =>
+  homeConnectorRequest<{ status: string }>(`/settings/home-connectors/${encodeURIComponent(id)}/test`, "POST");
+export const revokeHomeConnector = (id: string) =>
+  homeConnectorRequest<void>(`/settings/home-connectors/${encodeURIComponent(id)}`, "DELETE");
 
 export type ModelSettings = {
   model_profiles: { profiles: ModelProfile[] };

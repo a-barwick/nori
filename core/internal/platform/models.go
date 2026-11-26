@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"nori/internal/agent"
@@ -49,6 +50,7 @@ func ReplyModelForBYOK(models settings.Models, userID string, p modelprofiles.Pr
 			model = conversation.NewGatewayAnthropicModel(p.Endpoint, key, p.Model)
 		}
 		model.TestURL = models.TestURL
+		model.Client = cmp.Or(models.CloudDispatchClient, model.Client)
 		model.Guard, model.UserID, model.ReasoningEffort, model.BYOKProviderLabel = modelGuard(models, userID), userID, reasoning, label
 		return model
 	}
@@ -79,6 +81,7 @@ func ReplyModelForBYOK(models settings.Models, userID string, p modelprofiles.Pr
 		return unavailableBYOKModel{name: p.Model}
 	}
 	model.TestURL = models.TestURL
+	model.Client = cmp.Or(models.CloudDispatchClient, model.Client)
 	model.Guard, model.UserID, model.ReasoningEffort = modelGuard(models, userID), userID, reasoning
 	model.BYOKProviderLabel, model.AllowGatewayReasoning = label, true
 	return model
@@ -99,11 +102,13 @@ func TaskModelForBYOK(models settings.Models, meter usage.Meter, userID string, 
 			model = anthropic.NewGateway(p.Endpoint, key, p.Model, meter)
 		}
 		model.TestURL = models.TestURL
+		model.HTTP = cmp.Or(models.CloudDispatchClient, model.HTTP)
 		model.Guard, model.UserID, model.DefaultReasoning, model.BYOKProviderLabel = modelGuard(models, userID), userID, reasoning, label
 		return model
 	}
 	if p.Backend == "google" {
 		model := responses.NewGoogle(p.Endpoint, key, p.Model, meter)
+		model.HTTP = cmp.Or(models.CloudDispatchClient, model.HTTP)
 		model.Guard, model.UserID, model.DefaultReasoning = modelGuard(models, userID), userID, reasoning
 		return model
 	}
@@ -129,6 +134,7 @@ func TaskModelForBYOK(models settings.Models, meter usage.Meter, userID string, 
 		return unavailableBYOKTask{name: p.Model}
 	}
 	model.TestURL = models.TestURL
+	model.HTTP = cmp.Or(models.CloudDispatchClient, model.HTTP)
 	model.Guard, model.UserID, model.DefaultReasoning = modelGuard(models, userID), userID, reasoning
 	model.BYOKProviderLabel, model.AllowGatewayReasoning, model.Byok = label, true, true
 	if strings.TrimSpace(key) == "" {
@@ -204,6 +210,7 @@ func TaskModelForUser(models settings.Models, meter usage.Meter, userID string) 
 
 func ClassifierForUser(models settings.Models, userID string) *conversation.JevClassifier {
 	classifier := conversation.NewJevClassifier(models.JevKey)
+	classifier.Client = cmp.Or(models.CloudDispatchClient, classifier.Client)
 	classifier.Guard = modelGuard(models, userID)
 	classifier.UserID = userID
 	return classifier

@@ -14,6 +14,7 @@ import (
 	"nori/internal/state"
 	"nori/internal/state/docstore"
 	"nori/internal/state/records"
+	"nori/internal/usage"
 	"nori/internal/users"
 )
 
@@ -651,6 +652,36 @@ func TestPostgresUsageWindowBoundaries(t *testing.T) {
 	window, err := b.ReadUsageWindow(ctx, collection, hour, day, .25)
 	if err != nil || window != want {
 		t.Fatalf("window = %+v, %v; want %+v", window, err, want)
+	}
+}
+
+func TestPostgresHomeUsageKeepsCloudBudgetAvailable(t *testing.T) {
+	b := openIsolatedTestBackend(t)
+	ctx := context.Background()
+	user := users.User{ID: users.LegacyID}
+	db := records.NewShared(b, user, 0)
+	now := time.Now().UTC()
+	meter := usage.WithAdmission(db, db, 3, .02, func() time.Time { return now })
+	local := state.Usage{ID: "home-pending", Provider: "home", CostStatus: "local", RequestStatus: "pending", CreatedAt: now}
+	if err := meter.RecordUsage(ctx, local); err != nil {
+		t.Fatal(err)
+	}
+	local.ID, local.RequestStatus = "home-complete", "sent"
+	if err := usage.Finish(ctx, meter, local); err != nil {
+		t.Fatal(err)
+	}
+	collection := "owners/" + user.DataOwner() + "/model_usage"
+	window, err := b.ReadUsageWindow(ctx, collection, now.Add(-time.Hour), now.Add(-24*time.Hour), .02)
+	if err != nil || window != (docstore.UsageWindow{Calls: 2}) {
+		t.Fatalf("home usage window = %+v, %v", window, err)
+	}
+	cloud := state.Usage{ID: "cloud-pending", Provider: "openai", CostStatus: "unknown", RequestStatus: "pending", CreatedAt: now}
+	if err := meter.RecordUsage(ctx, cloud); err != nil {
+		t.Fatalf("home usage blocked cloud budget: %v", err)
+	}
+	local.ID, local.RequestStatus = "home-over-limit", "pending"
+	if err := meter.RecordUsage(ctx, local); !errors.Is(err, usage.ErrUserQuotaExceeded) {
+		t.Fatalf("home usage bypassed hourly rate limit: %v", err)
 	}
 }
 

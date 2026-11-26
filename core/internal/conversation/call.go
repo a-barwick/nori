@@ -16,7 +16,9 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"nori/internal/contextview"
+	"nori/internal/homeai"
 	"nori/internal/modelkeys"
+	"nori/internal/modelprofiles"
 	"nori/internal/observability"
 	"nori/internal/prompts"
 	"nori/internal/state"
@@ -400,6 +402,20 @@ func classifyModelFailure(modelErr error, fromUser bool) state.MessageError {
 	}
 	if errors.Is(modelErr, modelkeys.ErrMissingAPIKey) || errors.Is(modelErr, modelkeys.ErrModelAccess) {
 		return state.MessageError{Code: modelkeys.AccessFailureCode, Message: modelErr.Error(), Retryable: fromUser}
+	}
+	switch {
+	case errors.Is(modelErr, modelprofiles.ErrHomeOnly):
+		return state.MessageError{Code: "home_only", Message: "Choose a home model in More → Models to continue.", Retryable: fromUser}
+	case errors.Is(modelErr, homeai.ErrOffline):
+		return state.MessageError{Code: "home_offline", Message: "Your Home AI Server is offline." + suffix, Retryable: fromUser}
+	case errors.Is(modelErr, homeai.ErrOllamaUnavailable):
+		return state.MessageError{Code: "home_ollama_unavailable", Message: "Start Ollama on your home server." + suffix, Retryable: fromUser}
+	case errors.Is(modelErr, homeai.ErrBusy):
+		return state.MessageError{Code: "home_busy", Message: "Your Home AI Server is busy." + suffix, Retryable: fromUser}
+	case errors.Is(modelErr, homeai.ErrInterrupted):
+		return state.MessageError{Code: "home_interrupted", Message: "The connection to your Home AI Server was interrupted." + suffix, Retryable: fromUser}
+	case errors.Is(modelErr, homeai.ErrRevoked), errors.Is(modelErr, homeai.ErrDeviceNotFound), errors.Is(modelErr, homeai.ErrModelUnavailable), errors.Is(modelErr, homeai.ErrModelChanged):
+		return state.MessageError{Code: "home_model_unavailable", Message: "Choose an available home model in More → Models.", Retryable: false}
 	}
 	var statusErr interface{ HTTPStatusCode() int }
 	if errors.As(modelErr, &statusErr) {

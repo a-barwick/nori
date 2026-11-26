@@ -46,6 +46,7 @@ type TaskCommandReceipt = TaskCommand & { position: number; revision: number };
 export type TaskCommandResponse = { command: TaskCommandReceipt; run: Run; accepted?: boolean; retryable?: boolean; error?: string };
 export type PendingTaskCommand = { command: TaskCommand; started: number; sending?: boolean; error?: string; accepted?: boolean; position?: number; rejected?: boolean; retryManually?: boolean };
 export type ModelSelection = {
+  home_only?: boolean;
   chat_profile_id?: string;
   chat_profile_version?: string;
   chat_reasoning?: string;

@@ -12,6 +12,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -36,6 +37,7 @@ var (
 	ErrCircuitOpen           = errors.New("llmguard: LLM circuit breaker open after repeated aborts or provider errors")
 	ErrBudgetExceeded        = errors.New("llmguard: estimated LLM spend ceiling exceeded")
 	ErrCallLimitExceeded     = errors.New("llmguard: total LLM call limit exceeded")
+	ErrDispatchBlocked       = errors.New("llmguard: provider dispatch blocked")
 )
 
 func IsGuardError(err error) bool {
@@ -45,7 +47,7 @@ func IsGuardError(err error) bool {
 		errors.Is(err, ErrDuplicateStorm) ||
 		errors.Is(err, ErrCircuitOpen) ||
 		errors.Is(err, ErrBudgetExceeded) ||
-		errors.Is(err, ErrCallLimitExceeded)
+		errors.Is(err, ErrCallLimitExceeded) || errors.Is(err, ErrDispatchBlocked)
 }
 
 type CallMeta struct {
@@ -548,11 +550,33 @@ func mergeMeta(base, override CallMeta) CallMeta {
 }
 
 func isRealNetworkTransport(rt http.RoundTripper) bool {
+	if checked, ok := rt.(dispatchTransport); ok {
+		return isRealNetworkTransport(checked.base)
+	}
 	if rt == nil {
 		return true
 	}
 	_, isHTTP := rt.(*http.Transport)
 	return isHTTP
+}
+
+type dispatchTransport struct {
+	base  http.RoundTripper
+	check func(context.Context) error
+}
+
+func NewCheckedClient(check func(context.Context) error) *http.Client {
+	return &http.Client{Transport: dispatchTransport{base: http.DefaultTransport, check: check}}
+}
+
+func (t dispatchTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if err := t.check(req.Context()); err != nil {
+		if req.Body != nil {
+			_ = req.Body.Close()
+		}
+		return nil, fmt.Errorf("%w: %w", ErrDispatchBlocked, err)
+	}
+	return t.base.RoundTrip(req)
 }
 
 func isLoopbackHost(host string) bool {
@@ -582,7 +606,12 @@ func hashAndRestoreBody(req *http.Request) (string, int, error) {
 	return hex.EncodeToString(sum[:16]), len(data), nil
 }
 
+const ProviderHome = "home"
+
 func EstimateCallUSD(meta CallMeta, bodyBytes int) float64 {
+	if meta.Provider == ProviderHome {
+		return 0
+	}
 	inputRate, outputRate := 2.5, 10.0
 	model := strings.ToLower(meta.Model)
 	switch {
@@ -660,7 +689,7 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 	}
 
 	estCallUSD := EstimateCallUSD(meta, bodyBytes)
-	if g.cfg.MaxEstimatedUSD > 0 {
+	if g.cfg.MaxEstimatedUSD > 0 && meta.Provider != ProviderHome {
 		projected := g.stats.RecordedActualUSD + g.stats.EstimatedUnknownUSD + g.stats.InFlightEstimatedUSD + estCallUSD
 		if projected > g.cfg.MaxEstimatedUSD {
 			g.stats.TotalBlocked++
@@ -768,7 +797,7 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 	var once sync.Once
 	settle := func(status int, actual *float64, resultErr, accessErr error) {
 		once.Do(func() {
-			now := g.now()
+			finishedAt := g.now()
 			g.mu.Lock()
 			if g.globalInFlight > 0 {
 				g.globalInFlight--
@@ -777,12 +806,21 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 				st.inFlight--
 			}
 			g.stats.InFlightEstimatedUSD = max(0, g.stats.InFlightEstimatedUSD-estCallUSD)
+			if errors.Is(resultErr, ErrDispatchBlocked) {
+				if hasDup {
+					recent := g.duplicates[dk]
+					if i := slices.Index(recent, now); i >= 0 {
+						g.duplicates[dk] = slices.Delete(recent, i, i+1)
+					}
+				}
+				resultErr = nil
+			}
 			if actual != nil {
 				g.stats.RecordedActualUSD += *actual
 			} else if resultErr != nil || (status >= 200 && status < 300) {
 				g.stats.EstimatedUnknownUSD += estCallUSD
 			}
-			g.observeLocked(ctx, now, cs, meta, status, resultErr, accessErr)
+			g.observeLocked(ctx, finishedAt, cs, meta, status, resultErr, accessErr)
 			g.mu.Unlock()
 			if parentSettle != nil {
 				parentSettle(status, actual, resultErr)
@@ -805,7 +843,7 @@ func (g *Guard) admitGlobal(ctx context.Context, meta CallMeta, now time.Time, e
 		return nil, fmt.Errorf("%w (admitted %d >= limit %d)", ErrCallLimitExceeded, g.stats.TotalAdmitted, g.cfg.MaxTotalCalls)
 	}
 
-	if g.cfg.MaxEstimatedUSD > 0 {
+	if g.cfg.MaxEstimatedUSD > 0 && meta.Provider != ProviderHome {
 		projected := g.stats.RecordedActualUSD + g.stats.EstimatedUnknownUSD + g.stats.InFlightEstimatedUSD + estCallUSD
 		if projected > g.cfg.MaxEstimatedUSD {
 			g.stats.TotalBlocked++

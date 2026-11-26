@@ -37,6 +37,7 @@ public struct OnboardingView: View {
     @State private var selectedProviderID = ""
     @State private var suggestedProvider: String?
     @State private var showingModelSuggestion = false
+    @State private var showingModels = false
     @FocusState private var isKeyFocused: Bool
 
     // Step 4 (About you)
@@ -72,7 +73,7 @@ public struct OnboardingView: View {
     }
 
     private var canContinueStep3: Bool {
-        !byokRequired || (store.hasConfiguredModelKey && !isReplacingKey)
+        !byokRequired || ((store.hasConfiguredModelKey || store.hasSelectedHomeChat) && !isReplacingKey)
     }
 
     private var step3MarkState: MarkState {
@@ -114,6 +115,18 @@ public struct OnboardingView: View {
         .background(NoriColors.canvas.ignoresSafeArea())
         .onAppear {
             triggerMood(.hello, sparkles: true)
+        }
+        .task {
+            try? await store.refreshHomeConnectors()
+            try? await store.refreshModelSettings()
+        }
+        .sheet(isPresented: $showingModels) {
+            NavigationStack {
+                ModelsSettingsView(store: store)
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { showingModels = false } } }
+            }
+            .presentationBackground(NoriColors.sheetBackground)
+            .presentationCornerRadius(NoriRadius.sheet)
         }
         .onDisappear {
             happyTask?.cancel()
@@ -401,7 +414,7 @@ public struct OnboardingView: View {
 
     private var step3View: some View {
         VStack(spacing: 0) {
-            Text("Add your API key")
+            Text(store.homeConnectors?.enabled == true ? "Choose your AI model" : "Add your API key")
                 .font(.system(size: 28, weight: .bold))
                 .foregroundStyle(NoriColors.ink)
                 .multilineTextAlignment(.center)
@@ -434,8 +447,8 @@ public struct OnboardingView: View {
                         Spacer()
 
                         NoriPill(
-                            isValidatingKey ? "Validating" : keyConfigured ? "Configured" : byokRequired ? "Required" : "Optional",
-                            tone: isValidatingKey ? .working : keyConfigured ? .ok : byokRequired ? .warning : .neutral
+                            isValidatingKey ? "Validating" : keyConfigured ? "Configured" : byokRequired && store.homeConnectors?.enabled != true ? "Required" : "Optional",
+                            tone: isValidatingKey ? .working : keyConfigured ? .ok : byokRequired && store.homeConnectors?.enabled != true ? .warning : .neutral
                         )
                     }
 
@@ -513,6 +526,12 @@ public struct OnboardingView: View {
                 systemImage: "lock.fill"
             )
             .padding(.top, 12)
+
+            if store.homeConnectors?.enabled == true {
+                Button("Use a home AI server") { showingModels = true }
+                    .buttonStyle(NoriButtonStyle(.tonal, fullWidth: true))
+                    .padding(.top, 12)
+            }
 
             Button("Continue") {
                 triggerHaptic(.light)

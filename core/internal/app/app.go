@@ -14,6 +14,7 @@ import (
 	"nori/internal/api"
 	"nori/internal/connections"
 	"nori/internal/conversation"
+	"nori/internal/homeai"
 	"nori/internal/llmguard"
 	"nori/internal/modelprofiles"
 	"nori/internal/permissions"
@@ -52,6 +53,7 @@ type App struct {
 
 type openOptions struct {
 	skipCollapseDuplicates bool
+	home                   *homeai.Service
 }
 
 func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Settings, user users.User, storage *platform.Storage, opts openOptions) (*App, bool, error) {
@@ -133,9 +135,16 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 	if cfg.Models.BYOKRequired {
 		if services.ModelKeys != nil {
 			account = &modelprofiles.Account{Store: store, Keys: services.ModelKeys}
+			cfg.Models.CloudDispatchClient = llmguard.NewCheckedClient(account.CheckCloudDispatch)
+			if opts.home != nil {
+				account.HomeProfiles = func(ctx context.Context) ([]modelprofiles.Profile, error) {
+					devices, err := opts.home.List(ctx, user.ID)
+					return homeProfiles(devices, cfg.HomeAI.WorkEnabled), err
+				}
+			}
 		}
-		outer = &accountReplyModel{account: account, models: cfg.Models, userID: user.ID}
-		defaultTaskModel = &accountTaskModel{account: account, models: cfg.Models, meter: store, userID: user.ID}
+		outer = &accountReplyModel{account: account, models: cfg.Models, userID: user.ID, home: opts.home}
+		defaultTaskModel = &accountTaskModel{account: account, models: cfg.Models, meter: store, userID: user.ID, home: opts.home, homeWork: cfg.HomeAI.WorkEnabled}
 		summarizer = defaultTaskModel
 	} else {
 		outer = platform.ReplyModelForUser(cfg.Models, user.ID)
@@ -154,6 +163,15 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 		NextScheduled: services.Scheduler.NextScheduled, InboxUnread: services.Scheduler.UnreadCount,
 		NormalizeMemory: newMemoryNormalizer(summarizer, outer, store, cfg),
 	}
+	if opts.home != nil && account != nil {
+		result.Assistant.HomeAI = &api.HomeAISettings{
+			Service: opts.home, UserID: user.ID, Downloads: cfg.HomeAI.Downloads,
+			Test: func(ctx context.Context, deviceID string) error {
+				return testHomeAI(ctx, opts.home, account, cfg.Models, user.ID, deviceID)
+			},
+		}
+		result.Assistant.Features["homeConnectors"] = true
+	}
 	result.WakeRepair = platform.WorkWakes(store, waker, !cfg.Features.DisableBackgroundTasks)
 	if cfg.Features.DisableBackgroundTasks {
 		return result, collapsed, nil
@@ -162,6 +180,9 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 	var classifier conversation.IntentClassifier
 	if !cfg.Features.DisableJev {
 		classifier = platform.ClassifierForUser(cfg.Models, user.ID)
+		if account != nil {
+			classifier = accountClassifier{account: account, next: classifier}
+		}
 	}
 	runner := conversation.New(outer, classifier, summarizer, tasks)
 	runner.UserFacts = userFacts
@@ -171,6 +192,7 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 	if cfg.Models.BYOKRequired {
 		runner.AccountModel = outer.(*accountReplyModel).resolve
 		runner.AccountSelection = account.CurrentSelection
+		runner.HomeOnly = account.HomeOnly
 	} else {
 		runner.ModelForTurn = func(sel *state.ModelSelection) conversation.ReplyModel {
 			p, reasoning, explicit, err := profilesReg.ResolveChat(sel)
@@ -219,6 +241,9 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 
 	if cfg.Models.BYOKRequired {
 		result.TaskActivities.AccountModel = defaultTaskModel.(*accountTaskModel).resolve
+		if opts.home != nil && cfg.HomeAI.WorkEnabled {
+			result.TaskActivities.HomeModelAvailability = defaultTaskModel.(*accountTaskModel).availability
+		}
 	} else {
 		result.TaskActivities.ModelForRun = func(sel *state.ModelSelection) agent.Model {
 			p, reasoning, explicit, err := profilesReg.ResolveTask(sel)
@@ -757,6 +782,7 @@ type accountReplyModel struct {
 	account *modelprofiles.Account
 	models  settings.Models
 	userID  string
+	home    *homeai.Service
 }
 
 func (m *accountReplyModel) Name() string { return "account" }
@@ -766,6 +792,9 @@ func (m *accountReplyModel) resolve(ctx context.Context, sel *state.ModelSelecti
 	if err != nil {
 		return &unavailableReplyModel{name: p.Model, err: err}
 	}
+	if p.Backend == modelprofiles.BackendHome {
+		return homeReplyModel(m.home, m.models, m.userID, p)
+	}
 	return platform.ReplyModelForBYOK(m.models, m.userID, p, effort, key)
 }
 
@@ -774,10 +803,12 @@ func (m *accountReplyModel) Respond(ctx context.Context, req conversation.ReplyR
 }
 
 type accountTaskModel struct {
-	account *modelprofiles.Account
-	models  settings.Models
-	meter   usage.Meter
-	userID  string
+	account  *modelprofiles.Account
+	models   settings.Models
+	meter    usage.Meter
+	userID   string
+	home     *homeai.Service
+	homeWork bool
 }
 
 func (m *accountTaskModel) Provider() string { return "account" }
@@ -787,6 +818,12 @@ func (m *accountTaskModel) resolve(ctx context.Context, sel *state.ModelSelectio
 	p, effort, key, err := m.account.Resolve(ctx, modelprofiles.LaneTask, sel)
 	if err != nil {
 		return &unavailableTaskModel{name: p.Model, err: err}
+	}
+	if p.Backend == modelprofiles.BackendHome {
+		if !m.homeWork {
+			return &unavailableTaskModel{name: p.Model, err: modelprofiles.ErrHomeWorkUnavailable}
+		}
+		return homeTaskModel(m.home, m.models, m.meter, m.userID, p)
 	}
 	return platform.TaskModelForBYOK(m.models, m.meter, m.userID, p, effort, key)
 }

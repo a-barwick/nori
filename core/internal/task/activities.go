@@ -15,6 +15,8 @@ import (
 	"nori/internal/agent"
 	"nori/internal/contextview"
 	"nori/internal/extensions"
+	"nori/internal/homeai"
+	"nori/internal/llmguard"
 	"nori/internal/observability"
 	"nori/internal/permissions"
 	"nori/internal/prompts"
@@ -24,16 +26,17 @@ import (
 )
 
 type Activities struct {
-	Agent        *agent.Service
-	ModelForRun  func(*state.ModelSelection) agent.Model
-	AccountModel func(context.Context, *state.ModelSelection) agent.Model
-	Store        state.TaskStore
-	Executor     *Executor
-	UserID       string
-	Wakes        WakeNotifier
-	Now          func() time.Time
-	Sleep        func(context.Context, time.Duration) error
-	NewTicker    func(time.Duration) (<-chan time.Time, func())
+	Agent                 *agent.Service
+	ModelForRun           func(*state.ModelSelection) agent.Model
+	HomeModelAvailability func(context.Context, *state.ModelSelection) (bool, error)
+	AccountModel          func(context.Context, *state.ModelSelection) agent.Model
+	Store                 state.TaskStore
+	Executor              *Executor
+	UserID                string
+	Wakes                 WakeNotifier
+	Now                   func() time.Time
+	Sleep                 func(context.Context, time.Duration) error
+	NewTicker             func(time.Duration) (<-chan time.Time, func())
 }
 
 type receiptDeadlineKey struct{}
@@ -107,6 +110,7 @@ type ModelInput struct {
 type ModelOutcome struct {
 	Response        agent.Response
 	Failure         string
+	HomeUnavailable bool
 	ContextOverflow bool
 }
 type ToolInput struct {
@@ -392,6 +396,11 @@ func (a *Activities) Model(parent context.Context, in ModelInput) (ModelOutcome,
 	)
 	recordActivityFailure(modelCtx, e, "task.model")
 	outcome := ModelOutcome{Response: response, ContextOverflow: errors.Is(e, contextview.ErrOverflow)}
+	if svc.Model.Provider() == llmguard.ProviderHome &&
+		(errors.Is(e, homeai.ErrOffline) || errors.Is(e, homeai.ErrBusy) || errors.Is(e, homeai.ErrOllamaUnavailable)) {
+		outcome.HomeUnavailable = true
+		outcome.Response.NotSent = true
+	}
 	if e != nil {
 		outcome.Failure = e.Error()
 		if errors.Is(modelCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
@@ -403,13 +412,13 @@ func (a *Activities) Model(parent context.Context, in ModelInput) (ModelOutcome,
 		input, output, cached, thinking := u.InputTokens, u.OutputTokens, u.CachedTokens, u.ReasoningTokens
 		trace.InputTokens, trace.OutputTokens, trace.CachedTokens, trace.ThinkingTokens = &input, &output, &cached, &thinking
 	}
-	if response.CostKnown {
+	if response.CostLocal {
+		trace.CostStatus = "local"
+	} else if response.CostKnown {
 		trace.CostUSD, trace.CostStatus = &response.Cost, "reported"
 		if svc.Model.Provider() == "openai" {
 			trace.CostStatus = "calculated"
 		}
-	} else if response.CostLocal {
-		trace.CostStatus = "local"
 	} else if response.NotSent {
 		trace.CostStatus = "not_sent"
 	}

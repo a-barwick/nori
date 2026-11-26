@@ -1571,3 +1571,42 @@ func TestRunner_StaleWorkerFencedOut(t *testing.T) {
 		t.Fatalf("stale worker overwrote TaskControl: before=%+v after=%+v", finalCtrlBeforeStale, finalCtrlAfterStale)
 	}
 }
+
+func TestRunnerHomeModelWaitsAcrossWorkerRestart(t *testing.T) {
+	ctx := context.Background()
+	calls := 0
+	f := newRunnerFixture(t, func(context.Context, int, agent.Request) (agent.Response, error) {
+		calls++
+		return toolCallResponse("complete-home", "complete", map[string]any{
+			"answer": "Finished on the home server.", "evidence": []any{}, "unmet": []any{},
+		}, 0), nil
+	})
+	ready := false
+	f.act.HomeModelAvailability = func(context.Context, *state.ModelSelection) (bool, error) {
+		return ready, nil
+	}
+	run := f.startTask(ctx, "run-home-offline", "Wait for the home model")
+	outcome, err := f.claimAndRun(ctx, run.ID, "worker-first")
+	if err != nil || outcome != task.OutcomeBackoff || calls != 0 {
+		t.Fatalf("offline run = (%s, %v), %d calls", outcome, err, calls)
+	}
+	stored, err := f.store.GetRun(ctx, run.ID)
+	if err != nil || stored.Status != state.RunRunning || stored.Progress != "Waiting for Home AI Server" {
+		t.Fatalf("offline status = %+v, %v", stored, err)
+	}
+	leases, err := f.backend.ListTaskLeases(ctx, f.user.ID)
+	if err != nil || len(leases) != 1 || !leases[0].WakeAt.Equal(f.clock.Now().Add(30*time.Second)) {
+		t.Fatalf("waiting lease = %+v, %v", leases, err)
+	}
+
+	ready = true
+	f.clock.Advance(31 * time.Second)
+	outcome, err = f.claimAndRun(ctx, run.ID, "worker-after-reconnect")
+	if err != nil || outcome != task.OutcomeDone || calls != 1 {
+		t.Fatalf("resumed run = (%s, %v), %d calls", outcome, err, calls)
+	}
+	stored, err = f.store.GetRun(ctx, run.ID)
+	if err != nil || stored.Status != state.RunCompleted || stored.Spent != 0 || stored.Progress == "Waiting for Home AI Server" {
+		t.Fatalf("resumed status = %+v, %v", stored, err)
+	}
+}

@@ -17,7 +17,7 @@ FROM (
 	SELECT idx_created_at,
 	       (data->>'cost_usd')::double precision AS cost,
 	       greatest((data->>'estimated_exposure_usd')::double precision, 0) AS exposure,
-	       coalesce(data->>'cost_status','') NOT IN ('provider', 'calculated')
+	       coalesce(data->>'cost_status','') NOT IN ('provider', 'calculated', 'local')
 	         AND coalesce((data->>'cost_usd')::double precision, 0) <= 0 AS unknown
 	FROM nori_records
 	WHERE shard = $1 AND collection = $2 AND idx_created_at >= least($3::jsonb, $4::jsonb)

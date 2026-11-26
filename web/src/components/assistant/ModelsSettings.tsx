@@ -3,15 +3,17 @@
 import { useEffect, useState } from "react";
 import { AlertDialog } from "radix-ui";
 import { Button } from "@/components/ui/primitives";
-import { APIError, errorText, getJSON, saveModelSettings, type ModelProfile, type ModelSettings } from "@/lib/assistant/api";
+import { APIError, errorText, getJSON, saveModelSettings, type HomeConnectors, type ModelProfile, type ModelSettings } from "@/lib/assistant/api";
 import { announce } from "@/lib/assistant/announce";
 import { useResource, useResourceInvalidation } from "@/lib/assistant/useResource";
 import type { ModelSelection } from "@/lib/types";
 import { ApiKeysSettings } from "./ApiKeysSettings";
+import { HomeConnectorSettings } from "./HomeConnectorSettings";
 import { Empty, Failure, Field, inputClass, Loading, Notice, Section } from "./ui";
 
 export function ModelsSettings() {
-  const models = useResource<ModelSettings>("/settings/models", { poll: 30_000 });
+  const models = useResource<ModelSettings>("/settings/models", { poll: 10_000 });
+  const home = useResource<HomeConnectors>("/settings/home-connectors", { poll: 30_000, versioned: false });
   const invalidate = useResourceInvalidation();
   const [savedProvider, setSavedProvider] = useState<{ id: string; label: string } | null>(null);
   const [saving, setSaving] = useState(false);
@@ -59,6 +61,7 @@ export function ModelsSettings() {
               data={models.data}
               selection={draft?.selection ?? models.data.selection ?? {}}
               disabled={saving}
+              homeEnabled={!!home.data?.enabled}
               onChange={(next) => setDraft((current) => ({ selection: next, revision: current?.revision ?? models.data!.revision }))}
             />
             <div className="mt-3">
@@ -77,20 +80,26 @@ export function ModelsSettings() {
         />
       )}
 
-      <ApiKeysSettings onKeySaved={(provider) => setSavedProvider({ id: provider.provider, label: provider.label })} />
+      <HomeConnectorSettings />
+      <ApiKeysSettings hasHomeChat={hasSelectedHomeChat(models.data) || !!home.data?.enabled} onKeySaved={(provider) => setSavedProvider({ id: provider.provider, label: provider.label })} />
     </div>
   );
 }
 
-function ModelSelectors({ data, selection, disabled, onChange }: {
+export function hasSelectedHomeChat(data?: ModelSettings): boolean {
+  return !!data?.selection.chat_profile_id && (data.selection.home_only === true || data.selection.chat_profile_id.startsWith("home-") || data.model_profiles?.profiles.some((profile) => profile.id === data.selection.chat_profile_id && profile.backend === "home"));
+}
+
+function ModelSelectors({ data, selection, disabled, homeEnabled, onChange }: {
   data: ModelSettings;
   selection: ModelSelection;
   disabled: boolean;
+  homeEnabled: boolean;
   onChange: (next: ModelSelection) => void;
 }) {
   const profiles = data.model_profiles?.profiles ?? [];
   if (!profiles.length && !selection.chat_profile_id && !selection.task_profile_id) {
-    return <Empty>Add an API key to choose models.</Empty>;
+    return <Empty>Add an API key or connect a home computer to choose models.</Empty>;
   }
 
   return (
@@ -100,14 +109,21 @@ function ModelSelectors({ data, selection, disabled, onChange }: {
         profiles={profiles.filter((profile) => profile.lanes.includes("chat"))}
         selectedId={selection.chat_profile_id}
         reasoning={selection.chat_reasoning}
+        homeOnly={!!selection.home_only}
         disabled={disabled}
         onChange={(id, effort) => onChange({ ...selection, chat_profile_id: id, chat_reasoning: effort })}
       />
+      {(homeEnabled || selection.home_only) && <label className="flex items-start gap-3 sm:col-span-2">
+        <input type="checkbox" className="mt-1 accent-[var(--accent)]" checked={!!selection.home_only} disabled={disabled || (!selection.home_only && profiles.find((profile) => profile.id === selection.chat_profile_id)?.backend !== "home")} onChange={(event) => onChange({ ...selection, home_only: event.target.checked })} />
+        <span><span className="block text-row font-semibold">Use home models only</span><span className="text-meta text-ink-2">Model requests use your home computer. Nori still stores your conversations.</span></span>
+      </label>}
+      {selection.home_only && selection.task_profile_id && profiles.find((profile) => profile.id === selection.task_profile_id)?.backend !== "home" && <div className="sm:col-span-2"><Notice tone="warning">Choose a home Work model or clear the Work model before saving.</Notice></div>}
       <LaneSelector
         label="Work"
         profiles={profiles.filter((profile) => profile.lanes.includes("task"))}
         selectedId={selection.task_profile_id}
         reasoning={selection.task_reasoning}
+        homeOnly={!!selection.home_only}
         disabled={disabled}
         onChange={(id, effort) => onChange({ ...selection, task_profile_id: id, task_reasoning: effort })}
       />
@@ -115,12 +131,13 @@ function ModelSelectors({ data, selection, disabled, onChange }: {
   );
 }
 
-function LaneSelector({ label, profiles, selectedId, reasoning, disabled, onChange }: {
+function LaneSelector({ label, profiles, selectedId, reasoning, disabled, homeOnly, onChange }: {
   label: string;
   profiles: ModelProfile[];
   selectedId?: string;
   reasoning?: string;
   disabled: boolean;
+  homeOnly: boolean;
   onChange: (id: string, effort?: string) => void;
 }) {
   const selected = profiles.find((profile) => profile.id === selectedId);
@@ -133,23 +150,23 @@ function LaneSelector({ label, profiles, selectedId, reasoning, disabled, onChan
         <select
           aria-label={`${label} model`}
           className={inputClass}
-          disabled={disabled || !profiles.length}
+          disabled={disabled || (!profiles.length && (label !== "Work" || !selectedId))}
           value={selectedId ?? ""}
           onChange={(event) => {
             const next = profiles.find((profile) => profile.id === event.target.value);
-            if (!next) return;
+            if (!next) { if (label === "Work") onChange(""); return; }
             const nextEffort = reasoning && next.supported_reasoning?.includes(reasoning)
               ? reasoning
               : next.default_reasoning;
             onChange(next.id, nextEffort);
           }}
         >
-          {!selectedId && <option value="">Choose a model</option>}
+          {(label === "Work" || !selectedId) && <option value="">{label === "Work" ? "No Work model" : "Choose a model"}</option>}
           {unavailable && <option value={selectedId}>Unavailable — choose a model</option>}
-          {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label}</option>)}
+          {profiles.map((profile) => <option key={profile.id} value={profile.id} disabled={homeOnly && profile.backend !== "home"}>{profile.label}{profile.availability && profile.availability !== "online" ? " · " + (profile.availability === "offline" ? "Offline" : "Ollama unavailable") : ""}</option>)}
         </select>
       </Field>
-      {unavailable && <Notice tone="warning">Add its API key or choose another model.</Notice>}
+      {unavailable && <Notice tone="warning">Choose an available model.</Notice>}
       {efforts.length > 0 && (
         <Field label={`${label} reasoning`}>
           <select

@@ -44,6 +44,7 @@ type Assistant struct {
 	MCP                 *mcp.Service
 	ModelKeys           *modelkeys.Service
 	Models              *modelprofiles.Account
+	HomeAI              *HomeAISettings
 	AccountBYOK         bool
 	UnattendedWrites    string
 	NextScheduled       func(ctx context.Context) *time.Time
@@ -213,6 +214,9 @@ func (a *Assistant) register(mux *http.ServeMux) {
 	}
 	if a.Models != nil {
 		a.registerModelSettings(mux)
+	}
+	if a.HomeAI != nil {
+		a.HomeAI.register(mux)
 	}
 	mux.HandleFunc("GET /v1/diagnostics", a.diagnostics)
 	mux.HandleFunc("POST /v1/diagnostics/actions", jsonBody(a.diagnosticsAction))

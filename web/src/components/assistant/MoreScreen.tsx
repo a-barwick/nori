@@ -3,14 +3,15 @@
 import Link from "next/link";
 import { Activity, Brain, History, KeyRound, LayoutGrid, Monitor, Moon, RotateCcw, ShieldCheck, SlidersHorizontal, Sun, UserCircle } from "lucide-react";
 import { appearanceLabel, useAppearance, type NoriAppearance } from "@/lib/appearance";
-import type { ModelKeysResponse } from "@/lib/assistant/api";
+import type { ModelKeysResponse, ModelSettings } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { money, plural } from "@/lib/assistant/format";
 import { useSummary } from "@/lib/assistant/sources";
 import { useResource } from "@/lib/assistant/useResource";
 import type { Connection, MCPServer, MemoryFact, PermissionRule, Preferences, WorkingMemory } from "@/lib/contracts/assistant";
 import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "@/lib/runtime/messages";
-import { byokPromptLabel, needsByokSetup } from "./ApiKeysSettings";
+import { needsByokSetup } from "./ApiKeysSettings";
+import { hasSelectedHomeChat } from "./ModelsSettings";
 import { coreBudgetStats, formatByteBudget } from "./MemoryScreen";
 import { Notice, Pill, Row, Rows, Screen, Section } from "./ui";
 
@@ -34,6 +35,7 @@ export function MoreScreen() {
   const permissions = useResource<List<PermissionRule>>(has("permissions") ? "/permissions" : null, { poll: 30_000 });
   const preferences = useResource<Preferences>(has("preferences") ? "/preferences" : null, { poll: 60_000 });
   const modelKeys = useResource<ModelKeysResponse>("/settings/model-keys", { poll: 60_000, versioned: false });
+  const models = useResource<ModelSettings>("/settings/models", { poll: 60_000 });
 
   const mcpItems = mcp.data?.items ?? [];
   const connItems = (connections.data?.items ?? []).filter((c) => c.status !== "disconnected");
@@ -59,7 +61,7 @@ export function MoreScreen() {
 
   const AppearanceIcon = APPEARANCE_ICON[appearance];
   const configuredKeysCount = modelKeys.data?.providers.filter((p) => p.configured).length ?? 0;
-  const requiresByok = needsByokSetup(modelKeys.data);
+  const requiresByok = needsByokSetup(modelKeys.data, hasSelectedHomeChat(models.data));
 
   return (
     <Screen title="More" hideHeaderTitle>
@@ -69,11 +71,11 @@ export function MoreScreen() {
             tone="warning"
             action={
               <Link href="/settings/models" className="font-semibold underline underline-offset-2">
-                Add key
+                Choose model
               </Link>
             }
           >
-            Add your {byokPromptLabel(modelKeys.data)} API key to use Nori.
+            Choose a model to use Nori.
           </Notice>
         </div>
       )}

@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$(id -u)" -ne 0 ]; then
+  printf '%s\n' "Run this command with sudo." >&2
+  exit 1
+fi
+if [ "$#" -eq 0 ]; then
+  printf '%s\n' "Usage: sudo nori-connector-control <pair|status|doctor|unpair> [options]" >&2
+  exit 1
+fi
+case "$1" in
+  pair|status|doctor|unpair) ;;
+  *) printf '%s\n' "Unknown command." >&2; exit 1 ;;
+esac
+if [ -f /etc/nori-connector/connector.env ]; then
+  while IFS='=' read -r key value || [ -n "$key" ]; do
+    case "$value" in
+      '"'*'"'|"'"*"'" ) value="${value:1:${#value}-2}" ;;
+    esac
+    case "$key" in
+      NORI_CONNECTOR_RELAY_URL) NORI_CONNECTOR_RELAY_URL="$value" ;;
+      NORI_CONNECTOR_OLLAMA_URL) NORI_CONNECTOR_OLLAMA_URL="$value" ;;
+    esac
+  done < /etc/nori-connector/connector.env
+fi
+operation="$1"
+runuser -u nori-connector -- env NORI_CONNECTOR_STATE_DIR=/var/lib/nori-connector \
+  NORI_CONNECTOR_RELAY_URL="${NORI_CONNECTOR_RELAY_URL:-}" \
+  NORI_CONNECTOR_OLLAMA_URL="${NORI_CONNECTOR_OLLAMA_URL:-}" \
+  /usr/bin/nori-connector "$@"
+
+if [ "$operation" = "pair" ] && [ -d /run/systemd/system ]; then
+  systemctl restart nori-connector.service
+fi

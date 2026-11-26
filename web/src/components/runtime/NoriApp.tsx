@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Dialog } from "radix-ui";
-import { byokPromptLabel, needsByokSetup } from "@/components/assistant/ApiKeysSettings";
+import { needsByokSetup } from "@/components/assistant/ApiKeysSettings";
+import { hasSelectedHomeChat } from "@/components/assistant/ModelsSettings";
 import { Notice } from "@/components/assistant/ui";
 import { Thread } from "@/components/chat/Thread";
-import type { ModelKeysResponse } from "@/lib/assistant/api";
+import type { ModelKeysResponse, ModelSettings } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { mergeInlineInteractions, type InlineInteractionEntry } from "@/lib/assistant/interactions";
 import { usePendingInteractions } from "@/lib/assistant/sources";
@@ -41,7 +42,8 @@ export function ChatScreen() {
   const { session, pending, activeTasks, selected, loading, error } = runtime;
   const pendingInteractions = usePendingInteractions();
   const modelKeys = useResource<ModelKeysResponse>("/settings/model-keys", { poll: 60_000, versioned: false });
-  const requiresByok = needsByokSetup(modelKeys.data);
+  const models = useResource<ModelSettings>("/settings/models", { poll: 60_000 });
+  const requiresByok = needsByokSetup(modelKeys.data, hasSelectedHomeChat(models.data));
   const [sessionResolved, setSessionResolved] = useState<Record<string, InlineInteractionEntry>>({});
   const handleInteractionResolved = useCallback((resolved: Interaction, meta?: { rememberRule?: boolean }) => {
     setSessionResolved((current) => ({
@@ -248,11 +250,11 @@ export function ChatScreen() {
               tone="warning"
               action={
                 <Link href="/settings/models" className="font-semibold underline underline-offset-2">
-                  Add API key
+                  Choose model
                 </Link>
               }
             >
-              Add your {byokPromptLabel(modelKeys.data)} API key in Settings to use Nori.
+              Choose a model in Settings to use Nori.
             </Notice>
           </div>
         </div>

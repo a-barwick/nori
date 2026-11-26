@@ -18,6 +18,9 @@ import (
 )
 
 func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out agent.Inspection, err error) {
+	if c.ProviderName == llmguard.ProviderHome {
+		return out, errors.New("Image inspection requires a supported model.")
+	}
 	if !c.validModel() {
 		return out, errors.New("task model must be the selected GPT-6.1 Terra")
 	}

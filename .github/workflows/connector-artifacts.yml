@@ -1,0 +1,113 @@
+name: Build Connector Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Connector version
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: connector-release
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+      - name: Build packages
+        env:
+          NORI_CONNECTOR_RELAY_URL: ${{ vars.NORI_CONNECTOR_RELAY_URL }}
+          NORI_CONNECTOR_VERSION: ${{ inputs.version }}
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.49.0
+          connector/linux/build.sh "$RUNNER_TEMP/connector-linux"
+      - name: Sign checksums
+        env:
+          SIGNING_KEY: ${{ secrets.NORI_LINUX_GPG_PRIVATE_KEY }}
+          SIGNING_PASSPHRASE: ${{ secrets.NORI_LINUX_GPG_PASSPHRASE }}
+          SIGNING_FINGERPRINT: ${{ vars.NORI_LINUX_GPG_FINGERPRINT }}
+          NORI_CONNECTOR_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${SIGNING_KEY:?Set NORI_LINUX_GPG_PRIVATE_KEY}"
+          : "${SIGNING_PASSPHRASE:?Set NORI_LINUX_GPG_PASSPHRASE}"
+          : "${SIGNING_FINGERPRINT:?Set NORI_LINUX_GPG_FINGERPRINT}"
+          [[ "$SIGNING_FINGERPRINT" =~ ^[A-Fa-f0-9]{40,64}$ ]]
+          GNUPGHOME="$(mktemp -d)"
+          export GNUPGHOME
+          trap 'rm -rf "$GNUPGHOME"' EXIT
+          printf '%s' "$SIGNING_KEY" | base64 --decode | gpg --batch --import
+          gpg --batch --armor --export "$SIGNING_FINGERPRINT" > "$RUNNER_TEMP/connector-linux/nori-connector-signing-key.asc"
+          gpg --batch --yes --pinentry-mode loopback --passphrase-fd 3 \
+            --local-user "$SIGNING_FINGERPRINT" --armor --detach-sign \
+            "$RUNNER_TEMP/connector-linux/nori-connector-$NORI_CONNECTOR_VERSION-sha256.txt" 3<<<"$SIGNING_PASSPHRASE"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nori-connector-linux
+          path: ${{ runner.temp }}/connector-linux/
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    environment: connector-release
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+      - name: Build and notarize
+        env:
+          NORI_CONNECTOR_RELAY_URL: ${{ vars.NORI_CONNECTOR_RELAY_URL }}
+          NORI_CONNECTOR_VERSION: ${{ inputs.version }}
+          NORI_MAC_SIGNING_IDENTITY: ${{ vars.NORI_MAC_SIGNING_IDENTITY }}
+          SIGNING_P12: ${{ secrets.NORI_MAC_DEVELOPER_ID_P12 }}
+          SIGNING_PASSWORD: ${{ secrets.NORI_MAC_DEVELOPER_ID_PASSWORD }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${NORI_MAC_SIGNING_IDENTITY:?Set NORI_MAC_SIGNING_IDENTITY}"
+          : "${SIGNING_P12:?Set NORI_MAC_DEVELOPER_ID_P12}"
+          : "${SIGNING_PASSWORD:?Set NORI_MAC_DEVELOPER_ID_PASSWORD}"
+          : "${ASC_KEY_ID:?Set ASC_KEY_ID}"
+          : "${ASC_ISSUER_ID:?Set ASC_ISSUER_ID}"
+          : "${ASC_PRIVATE_KEY:?Set ASC_PRIVATE_KEY}"
+          [[ "$NORI_MAC_SIGNING_IDENTITY" == "Developer ID Application: "* ]]
+          umask 077
+          signing_dir="$(mktemp -d "$RUNNER_TEMP/connector-signing.XXXXXX")"
+          keychain="$signing_dir/signing.keychain-db"
+          trap 'security delete-keychain "$keychain" 2>/dev/null || true; rm -rf "$signing_dir"' EXIT
+          printf '%s' "$SIGNING_P12" | base64 -D > "$signing_dir/identity.p12"
+          printf '%s\n' "$ASC_PRIVATE_KEY" > "$signing_dir/AuthKey.p8"
+          keychain_password="$(openssl rand -hex 24)"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$signing_dir/identity.p12" -k "$keychain" -P "$SIGNING_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain"
+          xcrun notarytool store-credentials nori-connector --key "$signing_dir/AuthKey.p8" \
+            --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" --keychain "$keychain"
+          NORI_CONNECTOR_DMG=1 NORI_MAC_NOTARY_PROFILE=nori-connector NORI_MAC_NOTARY_KEYCHAIN="$keychain" \
+            connector/macos/build.sh "$RUNNER_TEMP/connector-macos"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nori-connector-macos
+          path: ${{ runner.temp }}/connector-macos/*.dmg
+          if-no-files-found: error

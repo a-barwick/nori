@@ -62,14 +62,15 @@ type CallRef struct {
 	Exec     *extensions.Exec `json:",omitempty"`
 }
 type RefModelOutcome struct {
-	Ref         string
-	Calls       []CallRef
-	Cost        float64
-	CostKnown   bool
-	NotSent     bool
-	Failure     string
-	Invalid     bool
-	Interrupted bool `json:",omitempty"`
+	Ref             string
+	Calls           []CallRef
+	Cost            float64
+	CostKnown       bool
+	NotSent         bool
+	Failure         string
+	Invalid         bool
+	HomeUnavailable bool `json:",omitempty"`
+	Interrupted     bool `json:",omitempty"`
 }
 type RefToolInput struct {
 	Step
@@ -351,12 +352,15 @@ func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefMod
 	if len(response.WebSearches) > 0 {
 		a.recordNativeWebSearches(ctx, in.RunID, in.Revision, modelID, response.WebSearches, response.Citations)
 	}
-	out = RefModelOutcome{Cost: response.Cost, CostKnown: response.CostKnown, NotSent: response.NotSent, Failure: outcome.Failure}
+	out = RefModelOutcome{
+		Cost: response.Cost, CostKnown: response.CostKnown, NotSent: response.NotSent,
+		Failure: outcome.Failure, HomeUnavailable: outcome.HomeUnavailable,
+	}
 	var entries []transcript.Message
 	if response.Message != nil {
 		entries = append(entries, *response.Message)
 	}
-	if out.Failure == "" {
+	if out.Failure == "" && !out.HomeUnavailable {
 		entries = finishModelRound(in, response.Calls, response.Tools, entries, &out)
 	}
 	data, e := json.Marshal(out)

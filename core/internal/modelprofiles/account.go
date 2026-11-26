@@ -12,9 +12,15 @@ import (
 	"nori/internal/state"
 )
 
+var (
+	ErrHomeOnly            = errors.New("Home-only mode requires a home model.")
+	ErrHomeWorkUnavailable = errors.New("This home model is unavailable for Work.")
+)
+
 type Account struct {
-	Keys  *modelkeys.Service
-	Store state.ResourceStore
+	Keys         *modelkeys.Service
+	Store        state.ResourceStore
+	HomeProfiles func(context.Context) ([]Profile, error)
 }
 
 type AccountView struct {
@@ -182,6 +188,32 @@ func (a *Account) EnsureSelection(ctx context.Context) error {
 	return err
 }
 
+func (a *Account) HomeOnly(ctx context.Context) (bool, error) {
+	if a == nil || a.Store == nil {
+		return false, nil
+	}
+	selection, _, err := a.stored(ctx)
+	return selection.HomeOnly, err
+}
+
+func (a *Account) CheckCloudDispatch(ctx context.Context) error {
+	homeOnly, err := a.HomeOnly(ctx)
+	if err != nil {
+		return err
+	}
+	if homeOnly {
+		return ErrHomeOnly
+	}
+	return nil
+}
+
+func (a *Account) homeProfiles(ctx context.Context) ([]Profile, error) {
+	if a.HomeProfiles == nil {
+		return nil, nil
+	}
+	return a.HomeProfiles(ctx)
+}
+
 func (a *Account) View(ctx context.Context) (AccountView, error) {
 	keys, err := a.Keys.List(ctx)
 	if err != nil {
@@ -191,10 +223,11 @@ func (a *Account) View(ctx context.Context) (AccountView, error) {
 	if err != nil {
 		return AccountView{}, err
 	}
-	return accountView(keys.Providers, sel, revision), nil
+	home, _ := a.homeProfiles(ctx)
+	return accountView(keys.Providers, home, sel, revision), nil
 }
 
-func accountView(keys []modelkeys.ProviderStatus, sel state.ModelSelection, revision int64) AccountView {
+func accountView(keys []modelkeys.ProviderStatus, home []Profile, sel state.ModelSelection, revision int64) AccountView {
 	var cat Catalog
 	out := AccountView{Selection: sel, Revision: revision, Recommendations: map[string]state.ModelSelection{}}
 	for _, key := range keys {
@@ -203,11 +236,12 @@ func accountView(keys []modelkeys.ProviderStatus, sel state.ModelSelection, revi
 			out.Recommendations[key.Provider] = byokRecommendation(key.Provider)
 		}
 	}
+	cat.Profiles = append(cat.Profiles, home...)
 	out.ModelProfiles = cat.Public()
 	return out
 }
 
-func (a *Account) Save(ctx context.Context, update state.ModelSelection, expected int64) (AccountView, error) {
+func (a *Account) Save(ctx context.Context, update state.ModelSelection, expected int64, homeOnly *bool) (AccountView, error) {
 	keys, err := a.Keys.List(ctx)
 	if err != nil {
 		return AccountView{}, err
@@ -220,29 +254,66 @@ func (a *Account) Save(ctx context.Context, update state.ModelSelection, expecte
 		return AccountView{}, state.ErrRevisionConflict
 	}
 	sel := state.ModelSelection{
+		HomeOnly:      current.HomeOnly,
 		ChatProfileID: strings.TrimSpace(update.ChatProfileID), ChatReasoning: strings.ToLower(strings.TrimSpace(update.ChatReasoning)),
 		TaskProfileID: strings.TrimSpace(update.TaskProfileID), TaskReasoning: strings.ToLower(strings.TrimSpace(update.TaskReasoning)),
 	}
-	check := func(lane, id, effort, oldID, oldEffort string) error {
+	if homeOnly != nil {
+		sel.HomeOnly = *homeOnly
+	}
+	home, homeErr := a.homeProfiles(ctx)
+	check := func(lane, id, effort, oldID, oldEffort string, oldPin *state.PinnedProfile) (*state.PinnedProfile, error) {
+		if id == "" {
+			optionalWork := lane == LaneTask && (oldID == "" || sel.ChatPinned != nil)
+			unconfiguredChat := lane == LaneChat && oldID == "" && !sel.HomeOnly
+			if optionalWork || unconfiguredChat {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("%w: Choose a model for %s.", state.ErrInvalidResource, lane)
+		}
+		if idx := slices.IndexFunc(home, func(p Profile) bool { return p.ID == id }); idx >= 0 {
+			p := home[idx]
+			if !p.SupportsLane(lane) || !p.SupportsReasoning(effort) {
+				return nil, fmt.Errorf("%w: Choose a supported model and reasoning level for %s.", state.ErrInvalidResource, lane)
+			}
+			return pinProfile(p, lane), nil
+		}
+		if id == oldID && effort == oldEffort && oldPin != nil && oldPin.Backend == BackendHome {
+			return oldPin, nil
+		}
+		if homeErr != nil && strings.HasPrefix(id, "home-") {
+			return nil, homeErr
+		}
+		if sel.HomeOnly {
+			return nil, fmt.Errorf("%w: Choose a home model for %s.", state.ErrInvalidResource, lane)
+		}
 		if id == oldID && effort == oldEffort {
-			return nil
+			return nil, nil
 		}
 		p, ok := accountProfile(id)
 		if !ok || !p.SupportsReasoning(effort) {
-			return fmt.Errorf("%w: Choose a model and a supported reasoning level for %s.", state.ErrInvalidResource, lane)
+			return nil, fmt.Errorf("%w: Choose a model and a supported reasoning level for %s.", state.ErrInvalidResource, lane)
 		}
 		for _, key := range keys.Providers {
 			if key.Provider == p.Backend && key.Configured {
-				return nil
+				return nil, nil
 			}
 		}
-		return fmt.Errorf("%w: Add a key for the selected %s model.", state.ErrInvalidResource, lane)
+		return nil, fmt.Errorf("%w: Add a key for the selected %s model.", state.ErrInvalidResource, lane)
 	}
-	if err := check("Chat", sel.ChatProfileID, sel.ChatReasoning, current.ChatProfileID, current.ChatReasoning); err != nil {
+	sel.ChatPinned, err = check(LaneChat, sel.ChatProfileID, sel.ChatReasoning, current.ChatProfileID, current.ChatReasoning, current.ChatPinned)
+	if err != nil {
 		return AccountView{}, err
 	}
-	if err := check("Work", sel.TaskProfileID, sel.TaskReasoning, current.TaskProfileID, current.TaskReasoning); err != nil {
+	sel.TaskPinned, err = check(LaneTask, sel.TaskProfileID, sel.TaskReasoning, current.TaskProfileID, current.TaskReasoning, current.TaskPinned)
+	if err != nil {
 		return AccountView{}, err
+	}
+	if sel.ChatPinned != nil {
+		sel.ChatProfileVersion = state.ModelSettingsVersion
+	}
+	if sel.TaskPinned != nil {
+		sel.TaskProfileVersion = state.ModelSettingsVersion
 	}
 	if !state.ModelSelectionEqual(&current, &sel) {
 		revision, err = a.write(ctx, sel, expected)
@@ -250,7 +321,7 @@ func (a *Account) Save(ctx context.Context, update state.ModelSelection, expecte
 			return AccountView{}, err
 		}
 	}
-	return accountView(keys.Providers, sel, revision), nil
+	return accountView(keys.Providers, home, sel, revision), nil
 }
 
 func (a *Account) Resolve(ctx context.Context, lane string, selection *state.ModelSelection) (Profile, string, string, error) {
@@ -278,6 +349,15 @@ func (a *Account) Resolve(ctx context.Context, lane string, selection *state.Mod
 	}
 	if pin == nil {
 		return Profile{}, "", "", fmt.Errorf("%w Choose a model in More → Models.", modelkeys.ErrModelAccess)
+	}
+	if pin.Backend == BackendHome {
+		if a.HomeProfiles == nil {
+			return Profile{}, "", "", fmt.Errorf("%w Home AI Server is unavailable.", modelkeys.ErrModelAccess)
+		}
+		return Profile{ID: id, Backend: pin.Backend, Model: pin.Model, HomeDeviceID: pin.HomeDeviceID, ModelDigest: pin.ModelDigest}, effort, "", nil
+	}
+	if err := a.CheckCloudDispatch(ctx); err != nil {
+		return Profile{}, "", "", err
 	}
 	if _, ok := modelkeys.LookupProvider(pin.Backend); !ok {
 		return Profile{}, "", "", fmt.Errorf("%w Choose a model in More → Models.", modelkeys.ErrModelAccess)

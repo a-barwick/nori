@@ -1,0 +1,25 @@
+[Unit]
+Description=Nori Home AI Connector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nori-connector
+Group=nori-connector
+Environment=NORI_CONNECTOR_STATE_DIR=/var/lib/nori-connector
+EnvironmentFile=-/etc/nori-connector/connector.env
+ExecStart=/usr/bin/nori-connector serve
+Restart=on-failure
+RestartSec=5s
+StateDirectory=nori-connector
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

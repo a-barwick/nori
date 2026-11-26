@@ -1,0 +1,28 @@
+name: nori-connector
+arch: ${NORI_PACKAGE_ARCH}
+platform: linux
+version: ${NORI_CONNECTOR_VERSION}
+maintainer: Nori
+description: Nori Home AI Server connector
+license: MIT
+contents:
+  - src: LICENSE
+    dst: /usr/share/doc/nori-connector/copyright
+    file_info:
+      mode: 0644
+  - src: ${NORI_PACKAGE_BINARY}
+    expand: true
+    dst: /usr/bin/nori-connector
+    file_info:
+      mode: 0755
+  - src: connector/linux/nori-connector-control
+    dst: /usr/bin/nori-connector-control
+    file_info:
+      mode: 0755
+  - src: connector/linux/nori-connector.service
+    dst: /lib/systemd/system/nori-connector.service
+    file_info:
+      mode: 0644
+scripts:
+  postinstall: connector/linux/postinstall.sh
+  preremove: connector/linux/preremove.sh

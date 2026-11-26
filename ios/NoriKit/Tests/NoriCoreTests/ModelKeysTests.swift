@@ -136,6 +136,24 @@ struct ModelKeysTests {
         #expect((object?["selection"] as? [String: String])?["chat_profile_id"] == "anthropic-opus")
     }
 
+    @Test("Home model selection keeps an explicit policy choice and satisfies Chat setup")
+    @MainActor
+    func homeModelSelection() async throws {
+        let mock = MockModelKeysTransport()
+        let store = NoriStore(transport: mock)
+        await mock.changeModelsElsewhere(ModelSelection(chatProfileID: "home-123", homeOnly: true))
+        await store.refreshModelKeys()
+        #expect(store.hasSelectedHomeChat)
+        #expect(!store.needsModelKeySetup)
+
+        let selection = ModelSelection(chatProfileID: "openai-sol", homeOnly: false)
+        let data = try JSONEncoder().encode(SaveModelSettingsRequest(selection: selection, expectedRevision: 1))
+        let body = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let savedSelection = try #require(body["selection"] as? [String: Any])
+        #expect(savedSelection["home_only"] as? Bool == false)
+        #expect(try JSONDecoder().decode(SaveModelSettingsRequest.self, from: data).selection.homeOnly == false)
+    }
+
     @Test("NoriStore tracks BYOK setup state across refresh, save, error, and delete")
     @MainActor
     func storeModelKeyLifecycle() async throws {

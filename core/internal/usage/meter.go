@@ -77,7 +77,9 @@ func RecordReportedCost(record *state.Usage, cost *float64) bool {
 }
 
 func Finish(ctx context.Context, meter Meter, u state.Usage) error {
-	if u.CostUSD == nil && u.EstimatedExposureUSD <= 0 && u.RequestStatus != "not_sent" {
+	if u.CostStatus == "local" {
+		u.EstimatedExposureUSD = 0
+	} else if u.CostUSD == nil && u.EstimatedExposureUSD <= 0 && u.RequestStatus != "not_sent" {
 		u.EstimatedExposureUSD = EstimateExposureUSD(u.Model)
 	}
 	save, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -133,11 +135,15 @@ func WithAdmission(local Meter, reader WindowReader, maxCallsPerHour int, maxUSD
 			if maxUSDPerDay > 0 {
 				dayCutoff = t.Add(-24 * time.Hour)
 			}
-			if u.EstimatedExposureUSD <= 0 {
+			spendLimit := maxUSDPerDay
+			if u.CostStatus == "local" {
+				spendLimit = 0
+				u.EstimatedExposureUSD = 0
+			} else if u.EstimatedExposureUSD <= 0 {
 				u.EstimatedExposureUSD = EstimateExposureUSD(u.Model)
 			}
 			if hasReserver {
-				allowed, err := reserver.ReserveUsage(ctx, u, hourCutoff, dayCutoff, maxCallsPerHour, maxUSDPerDay, defaultUnknownCallEstimateUSD)
+				allowed, err := reserver.ReserveUsage(ctx, u, hourCutoff, dayCutoff, maxCallsPerHour, spendLimit, defaultUnknownCallEstimateUSD)
 				if err == nil {
 					if !allowed {
 						slog.WarnContext(ctx, "per-user atomic usage reservation exceeded limit before provider I/O",
@@ -162,9 +168,9 @@ func WithAdmission(local Meter, reader WindowReader, maxCallsPerHour int, maxUSD
 					"calls_in_hour", hourCalls, "limit", maxCallsPerHour)
 				return ErrUserQuotaExceeded
 			}
-			if maxUSDPerDay > 0 {
+			if spendLimit > 0 {
 				exposure := daySpendUSD + float64(dayUnknownCalls)*defaultUnknownCallEstimateUSD + u.EstimatedExposureUSD
-				if exposure > maxUSDPerDay {
+				if exposure > spendLimit {
 					slog.WarnContext(ctx, "per-user daily spend limit exceeded before provider I/O",
 						"spend_usd", daySpendUSD, "unknown_calls", dayUnknownCalls, "exposure_usd", exposure, "limit_usd", maxUSDPerDay)
 					return ErrUserQuotaExceeded

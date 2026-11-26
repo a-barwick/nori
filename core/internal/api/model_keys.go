@@ -76,8 +76,11 @@ func (a *Assistant) getModelSettings(w http.ResponseWriter, r *http.Request) {
 
 func (a *Assistant) saveModelSettings(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Selection        *state.ModelSelection `json:"selection"`
-		ExpectedRevision *int64                `json:"expected_revision"`
+		Selection *struct {
+			state.ModelSelection
+			HomeOnly *bool `json:"home_only"`
+		} `json:"selection"`
+		ExpectedRevision *int64 `json:"expected_revision"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -86,7 +89,7 @@ func (a *Assistant) saveModelSettings(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, state.ErrInvalidResource, "", nil)
 		return
 	}
-	view, err := a.Models.Save(r.Context(), *body.Selection, *body.ExpectedRevision)
+	view, err := a.Models.Save(r.Context(), body.Selection.ModelSelection, *body.ExpectedRevision, body.Selection.HomeOnly)
 	if errors.Is(err, state.ErrRevisionConflict) {
 		current, _ := a.Models.View(r.Context())
 		writeAPIError(w, err, "", current)

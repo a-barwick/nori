@@ -1243,4 +1243,40 @@ public actor LiveNoriTransport: NoriTransport {
         let encodedProvider = provider.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? provider
         return try await deleteJSON("/v1/settings/model-keys/\(encodedProvider)")
     }
+
+    public func fetchHomeConnectors() async throws -> HomeConnectorsResponse {
+        try await getJSON("/v1/settings/home-connectors")
+    }
+
+    public func lookupHomePairing(_ code: String) async throws -> HomePairing {
+        try await sendJSON("/v1/settings/home-connectors/pairing/lookup", body: HomePairingRequest(userCode: code))
+    }
+
+    public func approveHomePairing(_ code: String) async throws {
+        try await sendWithoutResponse("/v1/settings/home-connectors/pairing/approve", method: "POST", body: HomePairingRequest(userCode: code))
+    }
+
+    public func testHomeConnector(_ id: String) async throws -> HomeConnectorTest {
+        let encodedID = id.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-_"))) ?? id
+        return try await sendJSON("/v1/settings/home-connectors/\(encodedID)/test", body: EmptyBody())
+    }
+
+    public func revokeHomeConnector(_ id: String) async throws {
+        let encodedID = id.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-_"))) ?? id
+        try await sendWithoutResponse("/v1/settings/home-connectors/\(encodedID)", method: "DELETE", body: EmptyBody())
+    }
+
+    private struct EmptyBody: Encodable {}
+
+    private func sendWithoutResponse<Body: Encodable>(_ path: String, method: String, body: Body) async throws {
+        try await withRequestSpan(route: normalizedRoute(for: path), method: method) { span in
+            let userID = try await ensureUserID()
+            span.setTag("nori.user.id", value: userID)
+            let url = try router.scopedURL(path: path, userID: userID)
+            var request = URLRequest(url: url)
+            request.httpMethod = method
+            request.httpBody = try encoder.encode(body)
+            _ = try await authenticatedData(request, contentType: "application/json", span: span)
+        }
+    }
 }
