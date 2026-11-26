@@ -10,31 +10,28 @@ import UIKit
 
 public struct ChatView: View {
     @Bindable private var store: NoriStore
+    private let scrollToBottomTrigger: Int
     private let onOpenActivity: () -> Void
     private let onOpenDocument: (NoriCore.LibraryItem) -> Void
     private let onNavigateToNeedsYou: () -> Void
     private let onOpenTask: (String) -> Void
 
-    @State private var draft: String = ""
-    @State private var draftAttachments: [DraftAttachment] = []
-    @State private var isAttachSheetPresented: Bool = false
-    @State private var isFileImporterPresented: Bool = false
-    @State private var isSending: Bool = false
     @State private var retryingMessageIDs: Set<String> = []
     @State private var cancellingReminderIDs: Set<String> = []
     @State private var editingReminder: ReminderEditTarget?
     @State private var visiblePendingInteractionIDs: Set<String> = []
-    @FocusState private var isInputFocused: Bool
     @Namespace private var noriAvatarNamespace
 
     public init(
         store: NoriStore,
+        scrollToBottomTrigger: Int = 0,
         onOpenActivity: @escaping () -> Void = {},
         onOpenDocument: @escaping (NoriCore.LibraryItem) -> Void = { _ in },
         onNavigateToNeedsYou: @escaping () -> Void = {},
         onOpenTask: @escaping (String) -> Void = { _ in }
     ) {
         self.store = store
+        self.scrollToBottomTrigger = scrollToBottomTrigger
         self.onOpenActivity = onOpenActivity
         self.onOpenDocument = onOpenDocument
         self.onNavigateToNeedsYou = onNavigateToNeedsYou
@@ -42,18 +39,7 @@ public struct ChatView: View {
     }
 
     private var effectiveMarkState: MarkState {
-        if store.isThinking { return .thinking }
-        if isInputFocused || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return .attentive
-        }
-        return .idle
-    }
-
-    private var canSend: Bool {
-        let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasReadyAttachments = draftAttachments.contains { $0.uploaded != nil }
-        let anyUploading = draftAttachments.contains { $0.isUploading }
-        return (hasText || hasReadyAttachments) && !anyUploading && !isSending
+        store.isThinking ? .thinking : .idle
     }
 
     private var isReconnecting: Bool {
@@ -115,55 +101,13 @@ public struct ChatView: View {
 
             threadArea
 
-            floatingComposer
+            ChatComposerView(store: store)
         }
         .background(NoriColors.canvas.ignoresSafeArea())
-        .onChange(of: isInputFocused) { _, focused in
-            store.isComposerFocused = focused
-        }
-        .onAppear {
-            consumePendingComposerDraft()
-        }
-        .onChange(of: store.pendingComposerDraft) { _, _ in
-            consumePendingComposerDraft()
-        }
-        .sheet(isPresented: $isAttachSheetPresented) {
-            AttachSheetView(
-                maxUploadBytes: store.capabilities?.uploadAccept?.maxBytes ?? ImageUploadNormalizer.defaultMaxBytes,
-                onPickedPhotoData: { data, filename, mediaType in
-                    isAttachSheetPresented = false
-                    uploadDraftAttachment(data: data, filename: filename, mediaType: mediaType)
-                },
-                onPhotoNormalizationError: { message in
-                    isAttachSheetPresented = false
-                    store.showToast("Photo failed: \(message)")
-                },
-                onRequestFilePicker: {
-                    isAttachSheetPresented = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                        isFileImporterPresented = true
-                    }
-                }
-            )
-        }
         .sheet(item: $editingReminder) { target in
             EditReminderSheet(store: store, target: target)
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
-        }
-        .fileImporter(
-            isPresented: $isFileImporterPresented,
-            allowedContentTypes: [.pdf, .commaSeparatedText, .image, .plainText, .data],
-            allowsMultipleSelection: true
-        ) { result in
-            switch result {
-            case .success(let urls):
-                for url in urls {
-                    importLocalFile(url: url)
-                }
-            case .failure(let error):
-                store.showToast(error.localizedDescription)
-            }
         }
         #if os(iOS)
         .toolbar(.hidden, for: .navigationBar)
@@ -294,6 +238,17 @@ public struct ChatView: View {
                 .onAppear {
                     proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
                 }
+                .onChange(of: scrollToBottomTrigger) { _, _ in
+                    withAnimation(.easeOut(duration: 0.24)) {
+                        proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
+                    }
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(60))
+                        withAnimation(.easeOut(duration: 0.24)) {
+                            proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
+                        }
+                    }
+                }
 
                 if shouldShowNeedsYouBanner {
                     InlineNeedsYouBanner(
@@ -360,13 +315,19 @@ public struct ChatView: View {
                 ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
                     let position = BubblePosition.forIndex(index, count: messages.count)
                     if isUser {
-                        UserMessageBubble(message: message, position: position)
+                        UserMessageBubble(
+                            message: message,
+                            position: position,
+                            animateArrival: message.receipt == .sending,
+                            onCopy: copyMessageText
+                        )
                     } else {
                         NoriMessageBubble(
                             message: message,
                             showAvatar: message.id == activeNoriMessageID,
                             markState: effectiveMarkState,
-                            avatarNamespace: noriAvatarNamespace
+                            avatarNamespace: noriAvatarNamespace,
+                            onCopy: copyMessageText
                         )
                     }
                 }
@@ -392,7 +353,8 @@ public struct ChatView: View {
                         message: message,
                         showAvatar: message.id == activeNoriMessageID,
                         markState: effectiveMarkState,
-                        avatarNamespace: noriAvatarNamespace
+                        avatarNamespace: noriAvatarNamespace,
+                        onCopy: copyMessageText
                     )
                 }
 
@@ -468,7 +430,78 @@ public struct ChatView: View {
     }
 
 
-    private var floatingComposer: some View {
+    private func copyMessageText(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        #if os(iOS)
+        UIPasteboard.general.string = text
+        #elseif os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        #endif
+        triggerLightHaptic()
+        store.showToast("Copied")
+    }
+
+    private func retryFailedMessage(_ message: Message) {
+        guard !retryingMessageIDs.contains(message.id) else { return }
+        triggerLightHaptic()
+        retryingMessageIDs.insert(message.id)
+        Task {
+            _ = await store.retryMessage(message)
+            retryingMessageIDs.remove(message.id)
+        }
+    }
+
+    private func openEditReminder(part: MessagePart, automation: Automation?) {
+        let initialTitle = automation?.title ?? part.reminderTitle
+        let rawISO = automation?.trigger.at ?? automation?.nextAt ?? part.scheduledAt
+        let initialDate = rawISO.flatMap { NoriDateFormatting.parse($0) }
+            ?? Date().addingTimeInterval(3600)
+        editingReminder = ReminderEditTarget(
+            automationID: part.id,
+            title: initialTitle,
+            scheduledAt: initialDate
+        )
+    }
+
+    private func cancelReminder(automationID: String) {
+        guard !cancellingReminderIDs.contains(automationID) else { return }
+        triggerLightHaptic()
+        cancellingReminderIDs.insert(automationID)
+        Task {
+            _ = await store.cancelAutomation(automationID: automationID)
+            cancellingReminderIDs.remove(automationID)
+        }
+    }
+
+    private func triggerLightHaptic() {
+        #if os(iOS)
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.impactOccurred()
+        #endif
+    }
+}
+
+
+private struct ChatComposerView: View {
+    @Bindable var store: NoriStore
+
+    @State private var draft: String = ""
+    @State private var draftAttachments: [DraftAttachment] = []
+    @State private var isAttachSheetPresented: Bool = false
+    @State private var isFileImporterPresented: Bool = false
+    @State private var isSending: Bool = false
+    @FocusState private var isInputFocused: Bool
+
+    private var canSend: Bool {
+        let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasReadyAttachments = draftAttachments.contains { $0.uploaded != nil }
+        let anyUploading = draftAttachments.contains { $0.isUploading }
+        return (hasText || hasReadyAttachments) && !anyUploading && !isSending
+    }
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !draftAttachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -581,8 +614,55 @@ public struct ChatView: View {
                 endPoint: .init(x: 0.5, y: 0.35)
             )
         )
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 12)
+                .onChanged { value in
+                    guard isInputFocused else { return }
+                    if value.translation.height > 20 && abs(value.translation.height) > abs(value.translation.width) {
+                        isInputFocused = false
+                    }
+                }
+        )
+        .onAppear {
+            consumePendingComposerDraft()
+        }
+        .onChange(of: store.pendingComposerDraft) { _, _ in
+            consumePendingComposerDraft()
+        }
+        .sheet(isPresented: $isAttachSheetPresented) {
+            AttachSheetView(
+                maxUploadBytes: store.capabilities?.uploadAccept?.maxBytes ?? ImageUploadNormalizer.defaultMaxBytes,
+                onPickedPhotoData: { data, filename, mediaType in
+                    isAttachSheetPresented = false
+                    uploadDraftAttachment(data: data, filename: filename, mediaType: mediaType)
+                },
+                onPhotoNormalizationError: { message in
+                    isAttachSheetPresented = false
+                    store.showToast("Photo failed: \(message)")
+                },
+                onRequestFilePicker: {
+                    isAttachSheetPresented = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        isFileImporterPresented = true
+                    }
+                }
+            )
+        }
+        .fileImporter(
+            isPresented: $isFileImporterPresented,
+            allowedContentTypes: [.pdf, .commaSeparatedText, .image, .plainText, .data],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case .success(let urls):
+                for url in urls {
+                    importLocalFile(url: url)
+                }
+            case .failure(let error):
+                store.showToast(error.localizedDescription)
+            }
+        }
     }
-
 
     private func consumePendingComposerDraft() {
         guard let pending = store.pendingComposerDraft else { return }
@@ -730,38 +810,6 @@ public struct ChatView: View {
                 }
                 store.showToast("Upload failed (\(filename)): \(reason)")
             }
-        }
-    }
-
-    private func retryFailedMessage(_ message: Message) {
-        guard !retryingMessageIDs.contains(message.id) else { return }
-        triggerLightHaptic()
-        retryingMessageIDs.insert(message.id)
-        Task {
-            _ = await store.retryMessage(message)
-            retryingMessageIDs.remove(message.id)
-        }
-    }
-
-    private func openEditReminder(part: MessagePart, automation: Automation?) {
-        let initialTitle = automation?.title ?? part.reminderTitle
-        let rawISO = automation?.trigger.at ?? automation?.nextAt ?? part.scheduledAt
-        let initialDate = rawISO.flatMap { NoriDateFormatting.parse($0) }
-            ?? Date().addingTimeInterval(3600)
-        editingReminder = ReminderEditTarget(
-            automationID: part.id,
-            title: initialTitle,
-            scheduledAt: initialDate
-        )
-    }
-
-    private func cancelReminder(automationID: String) {
-        guard !cancellingReminderIDs.contains(automationID) else { return }
-        triggerLightHaptic()
-        cancellingReminderIDs.insert(automationID)
-        Task {
-            _ = await store.cancelAutomation(automationID: automationID)
-            cancellingReminderIDs.remove(automationID)
         }
     }
 
@@ -1041,9 +1089,31 @@ private enum ChatThreadUnit: Identifiable {
 private struct UserMessageBubble: View {
     let message: Message
     let position: BubblePosition
+    let animateArrival: Bool
+    let onCopy: (String) -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hasAppeared: Bool
+
+    init(
+        message: Message,
+        position: BubblePosition,
+        animateArrival: Bool = false,
+        onCopy: @escaping (String) -> Void = { _ in }
+    ) {
+        self.message = message
+        self.position = position
+        self.animateArrival = animateArrival
+        self.onCopy = onCopy
+        self._hasAppeared = State(initialValue: !animateArrival)
+    }
 
     private var attachmentParts: [MessagePart] {
         (message.parts ?? []).filter { $0.type == "attachment" }
+    }
+
+    private var hasCopyableText: Bool {
+        !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
@@ -1078,7 +1148,46 @@ private struct UserMessageBubble: View {
                 NoriColors.brandPrimary,
                 in: UnevenRoundedRectangle(cornerRadii: position.userRadii, style: .continuous)
             )
+            .modifier(UserBubbleContextShape(radii: position.userRadii))
+            .contextMenu {
+                if hasCopyableText {
+                    Button {
+                        onCopy(message.text)
+                    } label: {
+                        Label("Copy", systemImage: "doc.on.doc")
+                    }
+                }
+            }
+            .opacity(hasAppeared ? 1 : 0)
+            .scaleEffect(hasAppeared || reduceMotion ? 1 : 0.94, anchor: .bottomTrailing)
+            .offset(y: hasAppeared || reduceMotion ? 0 : 22)
+            .onAppear {
+                guard !hasAppeared else { return }
+                let anim: Animation = reduceMotion
+                    ? .easeOut(duration: 0.16)
+                    : .spring(response: 0.34, dampingFraction: 0.78)
+                withAnimation(anim) {
+                    hasAppeared = true
+                }
+            }
         }
+    }
+}
+
+private struct UserBubbleContextShape: ViewModifier {
+    let radii: RectangleCornerRadii
+
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        content.contentShape(
+            .contextMenuPreview,
+            UnevenRoundedRectangle(cornerRadii: radii, style: .continuous)
+        )
+        #else
+        content.contentShape(
+            UnevenRoundedRectangle(cornerRadii: radii, style: .continuous)
+        )
+        #endif
     }
 }
 
@@ -1087,6 +1196,11 @@ private struct NoriMessageBubble: View {
     let showAvatar: Bool
     let markState: MarkState
     let avatarNamespace: Namespace.ID
+    let onCopy: (String) -> Void
+
+    private var hasCopyableText: Bool {
+        !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -1094,9 +1208,6 @@ private struct NoriMessageBubble: View {
                 NoriMark(size: 28, state: markState)
                     .matchedGeometryEffect(id: "active-nori-avatar", in: avatarNamespace)
                     .padding(.top, 2)
-            } else {
-                Color.clear
-                    .frame(width: 28, height: 1)
             }
 
             formattedMarkdownText(message.text)
@@ -1108,6 +1219,16 @@ private struct NoriMessageBubble: View {
                 .padding(.vertical, 4)
 
             Spacer(minLength: 28)
+        }
+        .contentShape(Rectangle())
+        .contextMenu {
+            if hasCopyableText {
+                Button {
+                    onCopy(message.text)
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+            }
         }
     }
 

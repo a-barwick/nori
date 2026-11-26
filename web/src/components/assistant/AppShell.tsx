@@ -88,6 +88,13 @@ function Frame({ children }: { children: ReactNode }) {
     },
   ];
 
+  const onNavClick = (item: NavItem, active: boolean) => (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (active && item.href === "/") {
+      event.preventDefault();
+      window.dispatchEvent(new CustomEvent("nori:chat-scroll-bottom"));
+    }
+  };
+
   const desktopNav = (
     <nav aria-label="Main" className="nori-pill-nav">
       {items.map((item) => {
@@ -96,6 +103,7 @@ function Frame({ children }: { children: ReactNode }) {
           <Link
             key={item.href}
             href={item.href}
+            onClick={onNavClick(item, active)}
             aria-current={active ? "page" : undefined}
             className="nori-pill-nav-item"
           >
@@ -122,6 +130,7 @@ function Frame({ children }: { children: ReactNode }) {
           <Link
             key={item.href}
             href={item.href}
+            onClick={onNavClick(item, active)}
             aria-current={active ? "page" : undefined}
             className={cn("nori-tab", active && "text-accent-text")}
           >

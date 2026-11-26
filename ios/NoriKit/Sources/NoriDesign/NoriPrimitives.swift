@@ -647,8 +647,8 @@ public struct NoriUnderlineTabs<Value: Hashable & Sendable>: View {
                             }
                         }
                         .padding(.horizontal, 4)
-                        .padding(.top, 10)
-                        .padding(.bottom, 9)
+                        .padding(.top, 11)
+                        .padding(.bottom, 10)
 
                         ZStack {
                             Color.clear

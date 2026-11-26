@@ -185,12 +185,14 @@ function latestNoriMessageId(units: Unit[]): string | undefined {
 function UnitView({
   unit,
   activeNoriMessageId,
+  justSentIds,
   onOpenDocument,
   onRetryMessage,
   retryingMessageId,
 }: {
   unit: Unit;
   activeNoriMessageId?: string;
+  justSentIds: ReadonlySet<string>;
   onOpenDocument: OpenDocument;
   onRetryMessage?: (item: TextItem) => void;
   retryingMessageId?: string;
@@ -226,6 +228,7 @@ function UnitView({
                 pos={posOf(i, unit.units.length)}
                 sender={unit.sender}
                 showAvatar={unit.sender === "nori" && u.item.id === activeNoriMessageId}
+                animateSend={unit.sender === "me" && (u.item.receipt === "sending" || justSentIds.has(u.item.id))}
               />
             </div>
           ))}
@@ -286,6 +289,8 @@ export function Thread({
   const seenIds = useRef(new Set(items.map((item) => item.id)));
   const previousFirst = useRef(items[0]?.id);
   const prependAnchor = useRef<{ id: string; top: number } | null>(null);
+  const touchStartY = useRef<number | null>(null);
+  const [justSentIds, setJustSentIds] = useState<Set<string>>(() => new Set());
   const [unreadIDs, setUnreadIDs] = useState<string[]>([]);
   const readIndex = items.findIndex((item) => item.id === readPosition?.message_id);
   const unreadItems = unreadIDs.filter((id) => {
@@ -359,13 +364,29 @@ export function Thread({
     const fromNori = added.filter((i) => i.sender === "nori");
     const lastNori = fromNori[fromNori.length - 1];
     if (lastNori) setAnnouncement(`Nori: ${firstSentence(lastNori.text)}`);
-    const mine = added.some((i) => i.sender === "me");
-    if (atBottom.current || mine) {
+    const mine = added.filter((i) => i.sender === "me");
+    if (mine.length) {
+      setJustSentIds((prev) => {
+        const next = new Set(prev);
+        for (const m of mine) next.add(m.id);
+        return next;
+      });
+    }
+    if (atBottom.current || mine.length > 0) {
       requestAnimationFrame(() => scrollToBottom(true));
     } else if (fromNori.length) {
       setUnreadIDs((ids) => [...ids, ...fromNori.map((item) => item.id)]);
     }
   }, [items]);
+
+  useEffect(() => {
+    const onScrollToBottom = () => {
+      setUnreadIDs([]);
+      scrollToBottom(true);
+    };
+    window.addEventListener("nori:chat-scroll-bottom", onScrollToBottom);
+    return () => window.removeEventListener("nori:chat-scroll-bottom", onScrollToBottom);
+  }, []);
 
   const interactionCount = interactions?.length ?? 0;
 
@@ -411,7 +432,25 @@ export function Thread({
   };
 
   return (
-    <div ref={scroller} onScroll={onScroll} className="scrollbar-quiet h-full overflow-y-auto overscroll-contain">
+    <div
+      ref={scroller}
+      onScroll={onScroll}
+      onTouchStart={(event) => {
+        touchStartY.current = event.touches[0]?.clientY ?? null;
+      }}
+      onTouchMove={(event) => {
+        if (touchStartY.current === null) return;
+        const dy = (event.touches[0]?.clientY ?? touchStartY.current) - touchStartY.current;
+        if (dy > 18 && document.activeElement instanceof HTMLTextAreaElement) {
+          document.activeElement.blur();
+          touchStartY.current = null;
+        }
+      }}
+      onTouchEnd={() => {
+        touchStartY.current = null;
+      }}
+      className="scrollbar-quiet h-full overflow-y-auto overscroll-contain"
+    >
       <div
         ref={content}
         role="log"
@@ -450,6 +489,7 @@ export function Thread({
           {units.map((u) => (
             <UnitView
               activeNoriMessageId={activeNoriMessageId}
+              justSentIds={justSentIds}
               onOpenDocument={onOpenDocument}
               onRetryMessage={onRetryMessage}
               retryingMessageId={retryingMessageId}

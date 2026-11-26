@@ -75,6 +75,32 @@ describe("Web UI simplification pass & design system parity", () => {
     const idleActiveMatches = idleHtml.match(/data-active-avatar="true"/g) ?? [];
     assert.equal(idleActiveMatches.length, 1);
     assert.ok(idleHtml.indexOf('data-item-id="m3"') < idleHtml.indexOf('data-active-avatar="true"'));
+    // Avatar-less Nori message (m1) sits flush left with no empty w-7 avatar gutter
+    const m1End = idleHtml.indexOf('data-item-id="m2"');
+    const m1Slice = idleHtml.slice(idleHtml.indexOf('data-item-id="m1"'), m1End);
+    assert.equal(m1Slice.includes("w-7 shrink-0"), false);
+    // Both user and Nori messages support copy
+    assert.equal((idleHtml.match(/data-copy-message="true"/g) ?? []).length, 3);
+
+    const sendingHtml = renderToStaticMarkup(
+      <AssistantProvider localMode>
+        <Thread
+          conversation={{
+            title: "Nori",
+            items: [
+              { id: "m_send", sender: "me", at: Date.parse("2026-11-25T09:05:00Z"), text: "Just sent", receipt: "sending" },
+            ],
+          }}
+          emptyMessage="Ask Nori anything"
+          hasOlder={false}
+          loadingOlder={false}
+          onLoadOlder={() => {}}
+          onOpenDocument={() => {}}
+          onUnread={() => {}}
+        />
+      </AssistantProvider>,
+    );
+    assert.match(sendingHtml, /nori-send-arrive/);
 
     const thinkingHtml = renderToStaticMarkup(
       <AssistantProvider localMode>

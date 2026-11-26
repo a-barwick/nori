@@ -89,7 +89,7 @@ public struct MoreHubView: View {
                 accountRows
             }
             .padding(.horizontal, 16)
-            .padding(.top, 4)
+            .padding(.top, 14)
             .padding(.bottom, 96)
         }
         .refreshable {

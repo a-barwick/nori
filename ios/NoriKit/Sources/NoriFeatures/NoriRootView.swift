@@ -16,6 +16,7 @@ public struct NoriRootView: View {
     }
 
     @State private var selectedTab: NoriTab = .chat
+    @State private var chatScrollToBottomTrigger: Int = 0
     @State private var workTabFilter: WorkTabFilter = .tasks
     @State private var workPath: [String] = []
     @State private var morePath: [MoreRoute] = []
@@ -113,12 +114,26 @@ public struct NoriRootView: View {
         }
     }
 
+    private var tabSelectionBinding: Binding<NoriTab> {
+        Binding(
+            get: { selectedTab },
+            set: { next in
+                if next == selectedTab && next == .chat {
+                    chatScrollToBottomTrigger &+= 1
+                } else {
+                    selectedTab = next
+                }
+            }
+        )
+    }
+
     @ViewBuilder
     private var signedInBody: some View {
         ZStack(alignment: .top) {
-            TabView(selection: $selectedTab) {
+            TabView(selection: tabSelectionBinding) {
                 ChatView(
                     store: store,
+                    scrollToBottomTrigger: chatScrollToBottomTrigger,
                     onOpenActivity: { isActivitySheetPresented = true },
                     onOpenDocument: openDocument,
                     onNavigateToNeedsYou: jumpToNeedsYou,

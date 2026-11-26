@@ -43,7 +43,7 @@ export function Screen({
           <div
             className={cn(
               "nori-page-col",
-              hideHeaderTitle ? "pt-2 pb-0" : "pt-5 sm:pt-6",
+              hideHeaderTitle ? "pt-4 pb-0 sm:pt-5" : "pt-5 sm:pt-6",
               !hideHeaderTitle && (tabs ? "pb-0" : "pb-4"),
             )}
           >
@@ -76,7 +76,9 @@ export function Screen({
         </header>
       )}
       <div className="scrollbar-quiet min-h-0 flex-1 overflow-y-auto">
-        <div className="nori-page-col pt-5 pb-16">{children}</div>
+        <div className={cn("nori-page-col pb-16", hideHeaderTitle && !showHeader ? "pt-6 sm:pt-7" : "pt-5")}>
+          {children}
+        </div>
       </div>
     </main>
   );
@@ -424,7 +426,7 @@ export function UnderlineTabs<T extends string>({
             aria-selected={active}
             onClick={() => onChange(item.id)}
             className={cn(
-              "relative inline-flex shrink-0 items-center gap-1.5 px-3.5 pt-2.5 pb-2.5 text-[13.5px] transition-colors",
+              "relative inline-flex shrink-0 items-center gap-1.5 px-3.5 pt-3 pb-2.5 text-[13.5px] transition-colors",
               active ? "font-semibold text-ink" : "font-medium text-ink-2 hover:text-ink",
             )}
           >

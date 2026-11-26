@@ -458,6 +458,11 @@
   to { opacity: 1; transform: none; }
 }
 
+@keyframes send-arrive {
+  from { opacity: 0; transform: translateY(18px) scale(0.94); transform-origin: bottom right; }
+  to { opacity: 1; transform: none; transform-origin: bottom right; }
+}
+
 @keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -489,6 +494,7 @@
 }
 
 .arrive { animation: arrive var(--dur-arrive) var(--ease-out) both; }
+.nori-send-arrive { animation: send-arrive 300ms var(--ease-spring) both; }
 .anim-pop { animation: pop-in 200ms var(--ease-out) both; }
 .anim-fade { animation: fade-in var(--dur-fast) var(--ease-standard) both; }
 .pulse-dot { animation: signal-pulse 1.6s var(--ease-standard) infinite; }
@@ -518,7 +524,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .arrive, .anim-pop { animation-name: fade-in; }
+  .arrive, .anim-pop, .nori-send-arrive { animation-name: fade-in; }
   .sheet-right[data-state="open"] { animation: fade-in var(--dur-fast) var(--ease-standard); }
   .sheet-right[data-state="closed"] { animation: fade-out var(--dur-fast) var(--ease-standard); }
   .mark *, .mark .mark-eye { animation: none !important; transition: none !important; }
@@ -598,7 +604,7 @@
 }
 
 .nori-message > div { line-height: 1.58; }
-.nori-message > div.bg-bubble { padding-left: 0; }
+.nori-message .bg-bubble { padding-left: 0; }
 
 .nori-tab {
   display: flex;
