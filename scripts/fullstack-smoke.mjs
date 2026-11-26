@@ -25,7 +25,10 @@ if (!BASE_PG_URL) {
 }
 
 const SMOKE_EMAIL = "smoke@example.com";
+const SMOKE_MESSAGE = "Hello fullstack smoke";
 const SMOKE_REPLY = "Smoke reply from real core";
+const SMOKE_WELCOME = "Smoke welcome from real core";
+const modelRequests = [];
 
 function freePort() {
   return new Promise((resolvePort, reject) => {
@@ -44,11 +47,12 @@ function startModelStub() {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
+    modelRequests.push(`${req.method} ${req.url}`);
     if (req.url === "/v1/chat/completions") {
       const schemaName = body.response_format?.json_schema?.name;
-      const content = schemaName === "nori_response"
-        ? JSON.stringify({ actions: [], text: SMOKE_REPLY })
-        : SMOKE_REPLY;
+      // Nori's welcome turn runs before the user's first message; answer it with distinct text.
+      const text = JSON.stringify(body.messages ?? []).includes(SMOKE_MESSAGE) ? SMOKE_REPLY : SMOKE_WELCOME;
+      const content = schemaName === "nori_response" ? JSON.stringify({ actions: [], text }) : text;
       const metadata = {
         model: body.model || "gpt-6.1-terra",
         service_tier: "default",
@@ -234,13 +238,32 @@ async function main() {
     const snapRes = await fetch(`${webBase}/api/v1/snapshot`, { headers: browser });
     assert.equal(snapRes.status, 200, `snapshot status=${snapRes.status}`);
 
-    // 4. Open real SSE stream, send a turn through Web -> Core -> ModelStub, and assert assistant reply arrives.
+    // 4. Open real SSE stream and wait for Nori's welcome, as a new user does before typing.
     const sseController = new AbortController();
     const sseRes = await fetch(`${webBase}/api/v1/events`, {
       headers: { ...browser, Accept: "text/event-stream" },
       signal: sseController.signal,
     });
     assert.equal(sseRes.status, 200, `events status=${sseRes.status}`);
+    const reader = sseRes.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const readUntil = async (text) => {
+      const deadline = Date.now() + 20_000;
+      while (!buffer.includes(text) && Date.now() < deadline) {
+        let timer;
+        const { value, done } = await Promise.race([
+          reader.read(),
+          new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("SSE read timeout")), Math.max(1000, deadline - Date.now())); }),
+        ]).finally(() => clearTimeout(timer));
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+      }
+      assert.ok(buffer.includes(text), `Did not receive "${text}" over SSE. Buffer:\n${buffer}`);
+    };
+    await readUntil(SMOKE_WELCOME);
+
+    // 5. Send a turn through Web -> Core -> ModelStub and assert the assistant reply arrives.
 
     const turnRes = await fetch(`${webBase}/api/turn`, {
       method: "POST",
@@ -249,30 +272,15 @@ async function main() {
         Origin: webBase,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ id: randomUUID(), message: "Hello fullstack smoke" }),
+      body: JSON.stringify({ id: randomUUID(), message: SMOKE_MESSAGE }),
     });
     assert.equal(turnRes.status, 202, `turn status=${turnRes.status}: ${await turnRes.text()}`);
 
-    const reader = sseRes.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let gotReply = false;
-    const deadline = Date.now() + 20_000;
-    while (!gotReply && Date.now() < deadline) {
-      const { value, done } = await Promise.race([
-        reader.read(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("SSE read timeout")), Math.max(1000, deadline - Date.now()))),
-      ]);
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      if (buffer.includes(SMOKE_REPLY)) {
-        gotReply = true;
-      }
-    }
+    await readUntil(SMOKE_REPLY);
     sseController.abort();
-    assert.ok(gotReply, `Did not receive "${SMOKE_REPLY}" over SSE. Buffer:\n${buffer}`);
     console.log("Full-stack Web <-> Core smoke passed.");
   } catch (err) {
+    console.error(`--- model stub requests ---\n${modelRequests.join("\n") || "(none)"}`);
     for (const child of procs) console.error(`--- ${child.spawnargs.slice(0, 2).join(" ")} (last 8000 bytes) ---\n${child.getLogs()}`);
     throw err;
   } finally {
