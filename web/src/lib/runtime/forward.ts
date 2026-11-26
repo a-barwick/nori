@@ -1,12 +1,15 @@
-import { accessFailureResponse, evictResolvedUser, resolveUser, sameOrigin, sameOriginRead, type ScopedRuntime } from "./auth";
+import { accessFailureResponse, evictResolvedUser, identityHeaders, resolveUser, sameOrigin, sameOriginRead, type ScopedRuntime } from "./auth";
 import { isRuntimeMethod, isRuntimeRead } from "./methods";
 import { runtimeHeaders } from "./credentials";
 import { signedOutCookie } from "./session";
 import { localDevelopment, runtimeMode, runtimeTarget, type Mode } from "./target";
 import { reportUpstreamFailure, reportUpstreamRejection, rejectionHeaders, upstreamTraceHeaders } from "@/lib/observability/upstream";
 import { MAX_FILE_BYTES } from "../submission";
+import { readBytesLimited, readTextLimited } from "./read-body";
 
 const READ_TIMEOUT_MS = 170_000;
+const MAX_CONCURRENT_UPLOADS = 10;
+let activeUploads = 0;
 const RELAYED = ["content-disposition", "content-security-policy", "content-length"];
 const json = (type: string) => type.includes("application/json");
 const eventStream = (type: string) => type.startsWith("text/event-stream");
@@ -19,12 +22,15 @@ type RelayPolicy = {
   operation?: string;
 };
 
-async function relay(request: Request, { base, userID, mode }: ScopedRuntime, path: string, init: RequestInit, { timeout, allowed, operation }: RelayPolicy) {
+async function relay(request: Request, { base, userID, mode, identity }: ScopedRuntime, path: string, init: RequestInit, { timeout, allowed, operation }: RelayPolicy) {
   const label = operation ?? path.split("?")[0].replace(/^v1\/(uploads|results)\/.*/, "v1/$1/file");
   try {
     const trace = upstreamTraceHeaders(request);
+    const deleteIdentity = mode === "hosted" && init.method === "POST" && path.split("?")[0] === "v1/settings/account/delete"
+      ? { ...identityHeaders(identity), "X-Nori-Identity-Email": encodeURIComponent(identity.email) }
+      : {};
     const upstream = await fetch(new URL(`users/${encodeURIComponent(userID)}/${path}`, base), {
-      ...init, headers: { ...(init.headers as Record<string, string>), ...await runtimeHeaders(mode), ...trace, "X-Nori-Client": "web" },
+      ...init, headers: { ...(init.headers as Record<string, string>), ...await runtimeHeaders(mode), ...trace, ...deleteIdentity, "X-Nori-Client": "web" },
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(timeout)]), redirect: "error", cache: "no-store",
     });
     if (upstream.status >= 500) reportUpstreamFailure(label, mode, userID, upstream.status);
@@ -104,6 +110,11 @@ async function forward(request: Request, mode: Mode, path: string, init: Request
   if (target instanceof Response) return target;
   const user = await resolveUser(request.headers, target);
   if ("status" in user) return accessFailureResponse(user);
+  return forwardForUser(request, user, path, init, allowed);
+}
+
+async function forwardForUser(request: Request, user: ScopedRuntime, path: string, init: RequestInit, allowed: RelayPolicy["allowed"]) {
+  const { mode } = user;
   const read = !init.method || init.method === "GET";
   if (read && mode === "hosted" && SHARED_READS.has(path)) return sharedRead(request, user, path, allowed);
   const response = await relay(request, user, path, init, { timeout: READ_TIMEOUT_MS, allowed });
@@ -124,56 +135,6 @@ async function forward(request: Request, mode: Mode, path: string, init: Request
 
 function allowedCaller(request: Request, mode: Mode, sameSite: (request: Request) => boolean) {
   return sameSite(request) && (mode !== "local" || localDevelopment(request.headers));
-}
-
-type ReadResult<T> = { ok: true; value: T } | { ok: false; status: 400 | 413 };
-
-async function readBytesLimited(request: Request, limit: number): Promise<ReadResult<ArrayBuffer>> {
-  const length = Number(request.headers.get("content-length") ?? 0);
-  if (Number.isFinite(length) && length > limit) {
-    await request.body?.cancel().catch(() => undefined);
-    return { ok: false, status: 413 };
-  }
-  if (!request.body) return { ok: true, value: new ArrayBuffer(0) };
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      total += value.byteLength;
-      if (total > limit) {
-        await reader.cancel().catch(() => undefined);
-        return { ok: false, status: 413 };
-      }
-      chunks.push(value);
-    }
-  } catch {
-    await reader.cancel().catch(() => undefined);
-    return { ok: false, status: 400 };
-  } finally {
-    reader.releaseLock();
-  }
-  const buffer = new ArrayBuffer(total);
-  const out = new Uint8Array(buffer);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return { ok: true, value: buffer };
-}
-
-async function readTextLimited(request: Request, limit: number): Promise<ReadResult<string>> {
-  const bytes = await readBytesLimited(request, limit);
-  if (!bytes.ok) return bytes;
-  try {
-    return { ok: true, value: new TextDecoder("utf-8", { fatal: true }).decode(bytes.value) };
-  } catch {
-    return { ok: false, status: 400 };
-  }
 }
 
 const SEGMENT = /^[A-Za-z0-9._:@-]{1,200}$/;
@@ -236,14 +197,29 @@ export async function readRoute(request: Request, name: string) {
 export async function uploadRoute(request: Request, path = "v1/uploads") {
   const mode = runtimeMode(request.headers);
   if (!allowedCaller(request, mode, sameOrigin)) return forbidden();
-  const incoming = new URL(request.url).searchParams;
-  const query = new URLSearchParams({ id: incoming.get("id") ?? "", filename: incoming.get("filename") ?? "" });
-  const read = await readBytesLimited(request, MAX_FILE_BYTES);
-  if (!read.ok) {
-    if (read.status === 413) return Response.json({ error: "A file can be at most 10 MB." }, { status: 413 });
-    return Response.json({ error: "The upload was interrupted, so nothing was saved. Try again.", retryable: true }, { status: 400 });
+  const target = runtimeTarget(mode);
+  if (target instanceof Response) return target;
+  const user = await resolveUser(request.headers, target);
+  if ("status" in user) return accessFailureResponse(user);
+  if (activeUploads >= MAX_CONCURRENT_UPLOADS) {
+    return Response.json({ error: "Nori is busy. Try uploading again shortly.", retryable: true }, {
+      status: 429,
+      headers: { "Cache-Control": "no-store", "Retry-After": "5" },
+    });
   }
-  return forward(request, mode, `${path}?${query}`, { method: "POST", body: read.value, headers: { "Content-Type": request.headers.get("content-type") || "application/octet-stream" } }, json);
+  activeUploads++;
+  try {
+    const incoming = new URL(request.url).searchParams;
+    const query = new URLSearchParams({ id: incoming.get("id") ?? "", filename: incoming.get("filename") ?? "" });
+    const read = await readBytesLimited(request, MAX_FILE_BYTES);
+    if (!read.ok) {
+      if (read.status === 413) return Response.json({ error: "A file can be at most 10 MB." }, { status: 413 });
+      return Response.json({ error: "The upload was interrupted, so nothing was saved. Try again.", retryable: true }, { status: 400 });
+    }
+    return await forwardForUser(request, user, `${path}?${query}`, { method: "POST", body: read.value, headers: { "Content-Type": request.headers.get("content-type") || "application/octet-stream" } }, json);
+  } finally {
+    activeUploads--;
+  }
 }
 
 export async function fileRoute(request: Request, path: string) {

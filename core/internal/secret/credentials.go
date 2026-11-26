@@ -12,14 +12,20 @@ var (
 )
 
 type Credential struct {
-	Version int64
-	Data    []byte
+	Version    int64
+	Data       []byte
+	VersionTag [32]byte
 }
 
 type CredentialStore interface {
 	Get(ctx context.Context, connectionID string) (Credential, error)
 	Replace(ctx context.Context, connectionID string, expected int64, data []byte) (int64, error)
 	Delete(ctx context.Context, connectionID string) error
+}
+
+// VersionedCredentialDeleter removes only the credential version that was read.
+type VersionedCredentialDeleter interface {
+	DeleteVersion(ctx context.Context, connectionID string, expected Credential) error
 }
 
 type Unavailable struct{}

@@ -131,8 +131,9 @@ type Server struct {
 
 type stored struct {
 	Server
-	CommandRef string            `json:"command_ref,omitempty"`
-	Tools      map[string]string `json:"tools,omitempty"`
+	CommandRef      string            `json:"command_ref,omitempty"`
+	CredentialEpoch string            `json:"credential_epoch,omitempty"`
+	Tools           map[string]string `json:"tools,omitempty"`
 }
 
 type Tool struct {
@@ -223,7 +224,7 @@ func (s *Service) project(ctx context.Context, server stored) Server {
 	if p.Auth == "configured" || p.Auth == "oauth" {
 		p.Observed.Credential = "missing"
 		if s.Credentials != nil {
-			if _, err := s.Credentials.Get(ctx, "mcp-"+server.ID); err == nil {
+			if credential, err := s.Credentials.Get(ctx, "mcp-"+server.ID); err == nil && credentialMatches(server, credential.Data) {
 				p.Observed.Credential = "present"
 			}
 		}
@@ -277,7 +278,12 @@ func (s *Service) Save(ctx context.Context, id, requestID string, expected int64
 		id = "mcp_" + strings.ReplaceAll(uuid.NewSHA1(uuid.NameSpaceOID, []byte("mcp:"+requestID)).String(), "-", "")[:16]
 		method, target, status = "POST", "/v1/mcp", 201
 	}
+	var previousCredential secret.Credential
+	if id != "" && s.Credentials != nil {
+		previousCredential, _ = s.Credentials.Get(ctx, "mcp-"+id)
+	}
 	var endpointChanged bool
+	nextCredentialEpoch := uuid.NewString()
 	receipt, err := s.Store.Mutate(ctx, state.Mutation{
 		RequestID: requestID, Method: method, Target: target, ExpectedRevision: expected, Payload: value, Collection: CollectionServers, ID: id,
 		Apply: func(current *state.Resource, _ func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
@@ -290,8 +296,9 @@ func (s *Service) Save(ctx context.Context, id, requestID string, expected int64
 					return state.MutationResult{}, err
 				}
 				revision = current.Revision + 1
-				if server.Endpoint != value.Endpoint || server.Transport != value.Transport {
+				if server.Endpoint != value.Endpoint || server.Transport != value.Transport || server.Auth != value.Auth {
 					endpointChanged = true
+					server.CredentialEpoch = nextCredentialEpoch
 					server.Tools, server.Observed = nil, Observed{Status: "disconnected"}
 				}
 			}
@@ -306,8 +313,8 @@ func (s *Service) Save(ctx context.Context, id, requestID string, expected int64
 	if err != nil {
 		return state.MutationReceipt{}, err
 	}
-	if endpointChanged && s.Credentials != nil {
-		if delErr := s.Credentials.Delete(ctx, "mcp-"+id); delErr != nil && !errors.Is(delErr, secret.ErrCredentialUnavailable) {
+	if endpointChanged && previousCredential.Version > 0 {
+		if delErr := s.deleteCredentialVersion(ctx, id, previousCredential); delErr != nil {
 			return state.MutationReceipt{}, delErr
 		}
 	}
@@ -325,13 +332,21 @@ func (s *Service) write(server stored, revision int64, status int) (state.Mutati
 }
 
 func (s *Service) SetCredential(ctx context.Context, id, token string) error {
-	if _, _, err := s.server(ctx, id); err != nil {
+	server, _, err := s.server(ctx, id)
+	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(token) == "" || len(token) > 8192 {
 		return state.ErrInvalidResource
 	}
 	key := "mcp-" + id
+	if s.Credentials == nil {
+		return secret.ErrCredentialUnavailable
+	}
+	server, err = s.advanceCredentialEpoch(ctx, server)
+	if err != nil {
+		return err
+	}
 	current, err := s.Credentials.Get(ctx, key)
 	version := current.Version
 	if errors.Is(err, secret.ErrCredentialNotFound) {
@@ -339,7 +354,18 @@ func (s *Service) SetCredential(ctx context.Context, id, token string) error {
 	} else if err != nil {
 		return err
 	}
-	_, err = s.Credentials.Replace(ctx, key, version, []byte(token))
+	encoded, err := encodeConfiguredCredential(server.CredentialEpoch, token)
+	if err != nil {
+		return err
+	}
+	latest, _, err := s.server(ctx, id)
+	if err != nil {
+		return err
+	}
+	if latest.CredentialEpoch != server.CredentialEpoch {
+		return state.ErrRevisionConflict
+	}
+	_, err = s.Credentials.Replace(ctx, key, version, encoded)
 	return err
 }
 
@@ -376,10 +402,14 @@ func (s *Service) connectWith(ctx context.Context, server stored, elicit func(co
 			if err != nil {
 				return nil, fmt.Errorf("the server's credential is not available: %w", err)
 			}
-			httpClient.Transport = bearer{token: string(credential.Data), base: base}
+			token, err := configuredToken(server, credential.Data)
+			if err != nil {
+				return nil, err
+			}
+			httpClient.Transport = bearer{token: token, base: base}
 		}
 		if server.Auth == "oauth" {
-			transport, err := s.oauthTransport(ctx, server.ID, base)
+			transport, err := s.oauthTransport(ctx, server, base)
 			if err != nil {
 				return nil, err
 			}
@@ -805,7 +835,7 @@ func (a Adapter) SignInNeeded(ctx context.Context, call invoke.Call, returnTo st
 	if err != nil || server.Auth != "oauth" {
 		return nil, nil
 	}
-	if cred, err := a.Service.oauthCredential(ctx, serverID); err == nil && cred.Token != nil && server.Observed.Status != "needs_sign_in" {
+	if cred, err := a.Service.oauthCredential(ctx, serverID); err == nil && cred.CredentialEpoch == server.CredentialEpoch && cred.Token != nil && server.Observed.Status != "needs_sign_in" {
 		return nil, nil
 	}
 	attempt, err := a.Service.SignIn(ctx, serverID, returnTo)
@@ -825,12 +855,16 @@ func (a Adapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Prepared
 	if !server.Enabled {
 		return invoke.Prepared{}, fmt.Errorf("%w: the MCP server is disabled", invoke.ErrInvalidArguments)
 	}
+	if err := a.checkTool(ctx, server, tool, call.Exec.Tool); err != nil {
+		return invoke.Prepared{}, err
+	}
 	data, _ := json.Marshal(call.Args)
 	sum := sha256.Sum256(data)
 	preview := clip(string(data), 600)
 	return invoke.Prepared{
 		Summary: fmt.Sprintf("Run %s on the MCP server %s with %s", tool, server.Name, preview), Effect: call.Exec.Policy.Effect,
-		Spec: map[string]string{"server": serverID, "endpoint": server.Endpoint, "tool": tool, "arguments_sha256": hex.EncodeToString(sum[:])},
+		Spec: map[string]string{"config_binding": actionConfigBinding(server, tool), "server": serverID,
+			"tool": tool, "arguments_sha256": hex.EncodeToString(sum[:])},
 	}, nil
 }
 
@@ -839,6 +873,21 @@ func (a Adapter) Execute(ctx context.Context, call invoke.Call, p invoke.Prepare
 	server, _, err := a.Service.server(ctx, serverID)
 	if err != nil {
 		return invoke.Result{Outcome: "failed", Err: err}
+	}
+	if !server.Enabled {
+		return invoke.Result{Outcome: "failed", Err: errors.New("the MCP server is disabled")}
+	}
+	if err := a.checkTool(ctx, server, tool, call.Exec.Tool); err != nil {
+		return invoke.Result{Outcome: "failed", Err: err}
+	}
+	data, err := json.Marshal(call.Args)
+	if err != nil {
+		return invoke.Result{Outcome: "failed", Err: err}
+	}
+	sum := sha256.Sum256(data)
+	if p.Spec["config_binding"] != actionConfigBinding(server, tool) || p.Spec["server"] != serverID ||
+		p.Spec["tool"] != tool || p.Spec["arguments_sha256"] != hex.EncodeToString(sum[:]) {
+		return invoke.Result{Outcome: "failed", Err: errors.New("the MCP server or action changed after it was prepared")}
 	}
 	var mu sync.Mutex
 	var elicitations []map[string]any
@@ -965,6 +1014,46 @@ func (a Adapter) Execute(ctx context.Context, call invoke.Call, p invoke.Prepare
 		return invoke.Result{Outcome: "failed", Content: content, Err: errors.New("the MCP tool reported an error: " + clip(text, 500))}
 	}
 	return invoke.Result{Outcome: "confirmed", Content: content}
+}
+
+func toolExposure(server stored, tool string) string {
+	exposure := server.Exposure.Default
+	if override, ok := server.Exposure.Overrides[tool]; ok {
+		exposure = override
+	}
+	if exposure == "" {
+		return string(extensions.ExposureDiscoverable)
+	}
+	return exposure
+}
+
+func actionConfigBinding(server stored, tool string) string {
+	data, _ := json.Marshal([]string{server.ID, server.Endpoint, server.Transport, server.Auth,
+		server.CommandRef, server.CredentialEpoch, toolExposure(server, tool)})
+	sum := sha256.Sum256(data)
+	return "v1:" + hex.EncodeToString(sum[:])
+}
+
+func (a Adapter) checkTool(ctx context.Context, server stored, tool string, ref extensions.DefinitionRef) error {
+	if toolExposure(server, tool) == string(extensions.ExposureDisabled) {
+		return fmt.Errorf("%w: the MCP tool is disabled", invoke.ErrInvalidArguments)
+	}
+	if ref.Digest == "" {
+		return nil
+	}
+	key := server.Tools[tool]
+	if key == "" {
+		return fmt.Errorf("%w: the MCP tool is no longer available", invoke.ErrInvalidArguments)
+	}
+	resource, err := a.Service.Store.Resource(ctx, CollectionDefinitions, key)
+	if err != nil {
+		return fmt.Errorf("%w: the MCP tool definition is no longer available", invoke.ErrInvalidArguments)
+	}
+	var doc definitionDoc
+	if resource.Decode(&doc) != nil || doc.Definition.Ref != ref {
+		return fmt.Errorf("%w: the MCP tool definition has changed", invoke.ErrInvalidArguments)
+	}
+	return nil
 }
 
 func protocolTools(capabilities []string) []*sdk.Tool {

@@ -1,5 +1,6 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import { macAccessPolicy } from "./macAccess";
+import { macAccessPolicy, macAllowedIdentities } from "./macAccess";
+import { GOOGLE_ISSUER, googleEmailAuthoritative, validSubject, type VerifiedIdentity } from "./identity";
 
 let discovery: { issuer: string; expires: number; keys: ReturnType<typeof createRemoteJWKSet> } | undefined;
 
@@ -32,7 +33,7 @@ function assertion(headers: Headers): string | undefined {
   return entry ? decodeURIComponent(entry.slice(name.length + 1)) : undefined;
 }
 
-export async function oidcIdentity(headers: Headers): Promise<{ email: string } | null> {
+export async function oidcIdentity(headers: Headers): Promise<VerifiedIdentity | null> {
   try {
     const issuer = process.env.NORI_OIDC_ISSUER;
     const audience = process.env.NORI_OIDC_AUDIENCE;
@@ -42,7 +43,7 @@ export async function oidcIdentity(headers: Headers): Promise<{ email: string } 
       issuer, audience, requiredClaims: ["sub", "iat", "exp"], clockTolerance: 30,
       algorithms: ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512", "EdDSA"],
     });
-    if (typeof payload.sub !== "string" || !payload.sub || typeof payload.email !== "string" ||
+    if (!validSubject(payload.sub) || typeof payload.email !== "string" || !payload.email.trim() ||
         payload.email_verified !== true || typeof payload.iat !== "number" || typeof payload.exp !== "number" ||
         payload.iat > Date.now() / 1000 + 30 || payload.exp <= payload.iat ||
         (payload.token_use !== undefined && payload.token_use !== "id") ||
@@ -50,7 +51,20 @@ export async function oidcIdentity(headers: Headers): Promise<{ email: string } 
         (payload.azp !== undefined && payload.azp !== audience)) return null;
     const email = payload.email.trim().toLowerCase();
     const source = process.env.NORI_OIDC_IAP_POLICY_RESOURCE;
-    if (!email || (source !== undefined && !(await macAccessPolicy(source))?.has(email))) return null;
-    return { email };
+    const allowedIdentities = process.env.NORI_OIDC_IAP_ALLOWED_IDENTITIES;
+    if (source !== undefined || allowedIdentities !== undefined) {
+      const identities = macAllowedIdentities(allowedIdentities);
+      if (!source || issuer !== GOOGLE_ISSUER || identities?.get(payload.sub) !== email ||
+          !(await macAccessPolicy(source))?.has(email)) return null;
+    }
+    const emailAuthoritative = issuer === GOOGLE_ISSUER && googleEmailAuthoritative(email, payload.hd);
+    const name = typeof payload.name === "string" ? payload.name.trim() : "";
+    return {
+      email,
+      ...(name ? { name } : {}),
+      issuer,
+      subject: payload.sub,
+      emailAuthoritative,
+    };
   } catch { return null; }
 }

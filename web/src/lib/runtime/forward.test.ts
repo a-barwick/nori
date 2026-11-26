@@ -4,6 +4,7 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { MAX_FILE_BYTES } from "../submission";
 import { assistantRoute, fileRoute, operationRoute, uploadRoute, validSegment } from "./forward";
 import * as settingsRoute from "@/app/api/v1/settings/[[...path]]/route";
+import { POST as redeemInviteRoute } from "@/app/api/invite/redeem/route";
 
 const RUN_ID = crypto.randomUUID();
 const ISSUER = `https://oidc-forward-${RUN_ID}.example.test`;
@@ -190,6 +191,81 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     assert.equal(okRes.status, 200);
     assert.equal(runtimeCalled, true);
     assert.deepEqual(await okRes.json(), { id: "u1", size: 10 });
+  });
+
+  test("uploads authenticate before reading the request body", async () => {
+    const request = new Request(`${APP_ORIGIN}/api/v1/uploads?id=u1&filename=note.txt`, {
+      method: "POST",
+      headers: { origin: APP_ORIGIN, "sec-fetch-site": "same-origin" },
+      body: "private upload",
+    });
+    const response = await uploadRoute(request);
+    assert.equal(response.status, 403);
+    assert.equal(request.bodyUsed, false);
+  });
+
+  test("upload buffering is bounded per process and slots are released", async () => {
+    const email = "upload-concurrency@example.test";
+    const userID = "22222222-2222-4222-8222-222222222212";
+    await mockUpstream({ [email]: userID }, () => Response.json({ ok: true }));
+    const headers = await authHeaders(email);
+    const controllers: ReadableStreamDefaultController<Uint8Array>[] = [];
+    const requests = Array.from({ length: 10 }, (_, index) => new Request(`${APP_ORIGIN}/api/v1/uploads?id=${index}`, {
+      method: "POST",
+      headers,
+      body: new ReadableStream<Uint8Array>({ start(controller) { controllers.push(controller); } }),
+    }));
+    const pending = requests.map((request) => uploadRoute(request));
+    try {
+      for (let attempt = 0; attempt < 100 && !requests.every((request) => request.bodyUsed); attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assert.equal(requests.every((request) => request.bodyUsed), true);
+      const overflow = new Request(`${APP_ORIGIN}/api/v1/uploads?id=overflow`, { method: "POST", headers, body: "data" });
+      assert.equal((await uploadRoute(overflow)).status, 429);
+      assert.equal(overflow.bodyUsed, false);
+    } finally {
+      for (const controller of controllers) controller.close();
+      await Promise.all(pending);
+    }
+    const afterRelease = new Request(`${APP_ORIGIN}/api/v1/uploads?id=after`, { method: "POST", headers, body: "data" });
+    assert.equal((await uploadRoute(afterRelease)).status, 200);
+  });
+
+  test("invite redemption bounds declared and streamed bodies before parsing", async () => {
+    const headers = { origin: APP_ORIGIN, "sec-fetch-site": "same-origin" };
+    const oversized = new Request(`${APP_ORIGIN}/api/invite/redeem`, {
+      method: "POST",
+      headers: { ...headers, "content-length": "128001" },
+      body: "{}",
+    });
+    assert.equal((await redeemInviteRoute(oversized)).status, 413);
+
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) { controller.enqueue(new Uint8Array(64_000)); },
+      cancel() { cancelled = true; },
+    });
+    const streamed = new Request(`${APP_ORIGIN}/api/invite/redeem`, {
+      method: "POST",
+      headers,
+      body: stream,
+    });
+    assert.equal((await redeemInviteRoute(streamed)).status, 413);
+    assert.equal(cancelled, true);
+
+    const malformed = new Request(`${APP_ORIGIN}/api/invite/redeem`, {
+      method: "POST",
+      headers,
+      body: "{invalid",
+    });
+    assert.equal((await redeemInviteRoute(malformed)).status, 400);
+    const valid = new Request(`${APP_ORIGIN}/api/invite/redeem`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ invite_code: "NORI-TEST" }),
+    });
+    assert.equal((await redeemInviteRoute(valid)).status, 403);
   });
 
   test("assistantRoute and operationRoute enforce JSON body size caps (413) and reject malformed JSON (400)", async () => {
@@ -594,13 +670,20 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
   });
 
   test("settings account delete forwards POST, evicts resolved user cache, clears session cookies, and rejects GET", async () => {
-    const email = "settings-delete-user@example.test";
+    const email = "settings+delete-user@example.test";
     const userID = "22222222-2222-4222-8222-222222222212";
     const activeUsers: Record<string, string> = { [email]: userID };
-    let seen: { path: string; body?: string } | undefined;
+    let seen: { path: string; body?: string; issuer: string | null; subject: string | null; email: string | null } | undefined;
 
     await mockUpstream(activeUsers, (url, init) => {
-      seen = { path: url.pathname, body: typeof init?.body === "string" ? init.body : undefined };
+      const headers = new Headers(init?.headers);
+      seen = {
+        path: url.pathname,
+        body: typeof init?.body === "string" ? init.body : undefined,
+        issuer: headers.get("x-nori-identity-issuer"),
+        subject: headers.get("x-nori-identity-subject"),
+        email: headers.get("x-nori-identity-email"),
+      };
       delete activeUsers[email];
       return new Response(null, { status: 204 });
     });
@@ -617,7 +700,7 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     const response = await settingsRoute.POST(
       new Request(`${APP_ORIGIN}/api/v1/settings/account/delete`, {
         method: "POST",
-        headers: await authHeaders(email, { "content-type": "application/json" }),
+        headers: await authHeaders(email, { "content-type": "application/json", "x-nori-identity-email": "spoofed@example.test" }),
         body: JSON.stringify({ confirmation: email }),
       }),
       { params: Promise.resolve({ path: ["account", "delete"] }) },
@@ -626,6 +709,9 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     assert.deepEqual(seen, {
       path: `/users/${userID}/v1/settings/account/delete`,
       body: JSON.stringify({ confirmation: email }),
+      issuer: ISSUER,
+      subject: email,
+      email: encodeURIComponent(email),
     });
     const setCookie = response.headers.get("set-cookie") ?? "";
     assert.match(setCookie, /nori_signed_out=1/);

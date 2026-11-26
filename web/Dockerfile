@@ -16,8 +16,9 @@ RUN --mount=type=secret,id=sentry_auth_token,required=false \
     if [ -f /run/secrets/sentry_auth_token ]; then export SENTRY_AUTH_TOKEN="$(cat /run/secrets/sentry_auth_token)"; fi && \
     mkdir -p public && bun run build
 
-FROM node:24-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS runtime
+FROM node:24.22.3-trixie-slim@sha256:4d00acb4bcc42c454c4eb801526f7ad7f772ea3bd4fd168c5cc2e384abcbb9d4 AS runtime
 WORKDIR /app
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 ARG SENTRY_RELEASE
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \

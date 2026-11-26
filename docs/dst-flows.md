@@ -35,7 +35,7 @@ Every flow below is driven through real production code under seeded fault injec
 
 ### Safety Invariants
 - **No cross-tenant read or write:** User A can never observe, mutate, cancel, approve, decline, download, or search any record, artifact, credential, task run, lease, or event belonging to User B.
-- **No cross-tenant reference leakage:** Every stored run, command, message, interaction, automation, occurrence, and artifact stays strictly inside its owner's storage prefix and owner-bound encryption AAD.
+- **Tenant isolation.** Runs, commands, messages, interactions, automations, occurrences, and artifacts stay within their owner's storage scope. Credential encryption and application-level artifact encryption authenticate the owner with additional authenticated data (AAD).
 - **Strict auth before telemetry/work:** Unauthenticated or malformed HS256 requests are rejected with 401 before triggering trace sampling, trace flushing, or storage reads.
 - **Hosted route observability:** Multi-user `/users/{id}/...` paths resolve to canonical route metrics/spans without leaking user IDs or secrets.
 - **Strict JSON & size enforcement:** Unknown JSON fields, trailing payloads, null change values, and oversized bodies are rejected with deterministic 400/413 errors.

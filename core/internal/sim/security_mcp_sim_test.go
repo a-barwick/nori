@@ -797,6 +797,100 @@ func (m *mockMCPServerState) handler() http.Handler {
 	})
 }
 
+func executePreparedMCP(ctx context.Context, adapter mcp.Adapter, call invoke.Call) invoke.Result {
+	prepared, err := adapter.Prepare(ctx, call)
+	if err != nil {
+		return invoke.Result{Outcome: "failed", Err: err}
+	}
+	return adapter.Execute(ctx, call, prepared)
+}
+
+func TestMCPCredentialChangesInvalidatePreparedActions(t *testing.T) {
+	ctx := context.Background()
+	clock := env.NewClock(env.DefaultBaseTime)
+	ids := env.NewIDGen(rand.New(rand.NewPCG(301, 401)))
+	backend := memstore.New()
+	_, store, creds := newSimMCPUserStore(t, backend, clock, ids, "mcp-generation@example.com")
+	svc := &mcp.Service{Store: store, Credentials: creds, LocalProcesses: true, Now: clock.Now}
+	editable := mcp.Editable{Name: "Server", Transport: "http", Endpoint: "http://127.0.0.1:18001/mcp", Auth: "configured", Enabled: true}
+	receipt, err := svc.Save(ctx, "", "generation-create", 0, editable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var server mcp.Server
+	if err := json.Unmarshal(receipt.Resource, &server); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetCredential(ctx, server.ID, "first-token"); err != nil {
+		t.Fatal(err)
+	}
+	adapter := mcp.Adapter{Service: svc}
+	call := invoke.Call{Exec: extensions.Exec{Binding: extensions.Binding{Adapter: extensions.AdapterMCP, Target: server.ID + "/example"}, Policy: extensions.Policy{Effect: extensions.EffectUnknown}}}
+	prepared, err := adapter.Prepare(ctx, call)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range prepared.Spec {
+		if strings.Contains(value, editable.Endpoint) {
+			t.Fatal("prepared action contains the raw server endpoint")
+		}
+	}
+	legacy := prepared
+	legacy.Spec = map[string]string{"server": server.ID, "endpoint": editable.Endpoint, "tool": "example"}
+	if result := adapter.Execute(ctx, call, legacy); result.Outcome != "failed" {
+		t.Fatalf("legacy action without binding must fail: %+v", result)
+	}
+	if err := svc.SetCredential(ctx, server.ID, "replacement-token"); err != nil {
+		t.Fatal(err)
+	}
+	if result := adapter.Execute(ctx, call, prepared); result.Outcome != "failed" {
+		t.Fatalf("action authorized for previous credential must fail: %+v", result)
+	}
+	prepared, err = adapter.Prepare(ctx, call)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := svc.Get(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	editable.Enabled = false
+	if _, err := svc.Save(ctx, server.ID, "generation-disable", current.Revision, editable); err != nil {
+		t.Fatal(err)
+	}
+	if result := adapter.Execute(ctx, call, prepared); result.Outcome != "failed" {
+		t.Fatalf("action against a disabled server must fail: %+v", result)
+	}
+}
+
+func TestCredentialVersionDeleteKeepsReplacement(t *testing.T) {
+	ctx := context.Background()
+	clock := env.NewClock(env.DefaultBaseTime)
+	ids := env.NewIDGen(rand.New(rand.NewPCG(302, 402)))
+	backend := memstore.New()
+	_, _, creds := newSimMCPUserStore(t, backend, clock, ids, "credential-version@example.com")
+	if _, err := creds.Replace(ctx, "mcp-test", 0, []byte("old")); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := creds.Get(ctx, "mcp-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := creds.Delete(ctx, "mcp-test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := creds.Replace(ctx, "mcp-test", 0, []byte("replacement")); err != nil {
+		t.Fatal(err)
+	}
+	if err := creds.DeleteVersion(ctx, "mcp-test", previous); !errors.Is(err, secret.ErrCredentialConflict) {
+		t.Fatalf("stale deletion should fail: %v", err)
+	}
+	current, err := creds.Get(ctx, "mcp-test")
+	if err != nil || string(current.Data) != "replacement" {
+		t.Fatalf("replacement credential was not preserved: %v", err)
+	}
+}
+
 func TestMCPEndpointChangeRevokesCredentialAndBounds(t *testing.T) {
 	ctx := context.Background()
 	clock := env.NewClock(env.DefaultBaseTime)
@@ -922,7 +1016,11 @@ func TestMCPEndpointChangeRevokesCredentialAndBounds(t *testing.T) {
 	if err := svc.SetCredential(ctx, created.ID, "secret-token-for-B"); err != nil {
 		t.Fatalf("SetCredential for B failed: %v", err)
 	}
-	if _, err := svc.Save(ctx, created.ID, "req-change-transport", discoveredB.Revision, mcp.Editable{
+	configuredB, err := svc.Get(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("Get configured server B: %v", err)
+	}
+	if _, err := svc.Save(ctx, created.ID, "req-change-transport", configuredB.Revision, mcp.Editable{
 		Name:       "ServerStdio",
 		Transport:  "stdio",
 		CommandRef: "sleep",
@@ -1057,13 +1155,13 @@ func TestMCPEndpointChangeRevokesCredentialAndBounds(t *testing.T) {
 	}
 
 	adapter := mcp.Adapter{Service: svc}
-	protoRes := adapter.Execute(ctx, invoke.Call{
+	protoRes := executePreparedMCP(ctx, adapter, invoke.Call{
 		Exec: extensions.Exec{
 			Binding: extensions.Binding{Adapter: extensions.AdapterMCP, Target: malServer.ID + "/@resource_read"},
 			Policy:  extensions.Policy{Effect: extensions.EffectRead},
 		},
 		Args: map[string]any{"uri": "mock://res/0001"},
-	}, invoke.Prepared{})
+	})
 	if protoRes.Outcome != "confirmed" {
 		t.Fatalf("@resource_read failed: %+v", protoRes)
 	}
@@ -1081,12 +1179,12 @@ func TestMCPEndpointChangeRevokesCredentialAndBounds(t *testing.T) {
 	maliciousState.promptPagesFetched = 0
 	maliciousState.mu.Unlock()
 
-	resList := adapter.Execute(ctx, invoke.Call{
+	resList := executePreparedMCP(ctx, adapter, invoke.Call{
 		Exec: extensions.Exec{
 			Binding: extensions.Binding{Adapter: extensions.AdapterMCP, Target: malServer.ID + "/@resources_list"},
 			Policy:  extensions.Policy{Effect: extensions.EffectRead},
 		},
-	}, invoke.Prepared{})
+	})
 	if resList.Outcome != "confirmed" {
 		t.Fatalf("@resources_list failed: %+v", resList)
 	}
@@ -1101,12 +1199,12 @@ func TestMCPEndpointChangeRevokesCredentialAndBounds(t *testing.T) {
 	}
 	maliciousState.mu.Unlock()
 
-	promptList := adapter.Execute(ctx, invoke.Call{
+	promptList := executePreparedMCP(ctx, adapter, invoke.Call{
 		Exec: extensions.Exec{
 			Binding: extensions.Binding{Adapter: extensions.AdapterMCP, Target: malServer.ID + "/@prompts_list"},
 			Policy:  extensions.Policy{Effect: extensions.EffectRead},
 		},
-	}, invoke.Prepared{})
+	})
 	if promptList.Outcome != "confirmed" {
 		t.Fatalf("@prompts_list failed: %+v", promptList)
 	}
@@ -1139,6 +1237,7 @@ func TestMCPEndpointChangeRevokesCredentialAndBounds(t *testing.T) {
 			Binding: extensions.Binding{Adapter: extensions.AdapterMCP, Target: malServer.ID + "/tool_0000"},
 			Policy:  extensions.Policy{Effect: extensions.EffectUnknown},
 		},
+		Args: map[string]any{"payload": strings.Repeat("日本語😀", 200)},
 	}, prep)
 	if execRes.Outcome != "confirmed" {
 		t.Fatalf("Execute tool_0000 failed: %+v", execRes)
@@ -1186,12 +1285,12 @@ func TestMCPEndpointChangeRevokesCredentialAndBounds(t *testing.T) {
 	}
 	var elicitSrv mcp.Server
 	_ = json.Unmarshal(elicitReceipt.Resource, &elicitSrv)
-	elicitRes := adapter.Execute(ctx, invoke.Call{
+	elicitRes := executePreparedMCP(ctx, adapter, invoke.Call{
 		Exec: extensions.Exec{
 			Binding: extensions.Binding{Adapter: extensions.AdapterMCP, Target: elicitSrv.ID + "/flood"},
 			Policy:  extensions.Policy{Effect: extensions.EffectUnknown},
 		},
-	}, invoke.Prepared{})
+	})
 	if elicitRes.Outcome != "confirmed" {
 		t.Fatalf("elicit tool failed: %+v", elicitRes)
 	}
@@ -1219,23 +1318,23 @@ func TestMCPEndpointChangeRevokesCredentialAndBounds(t *testing.T) {
 	cancelCtx, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
 	defer cancel()
 	startTime := time.Now()
-	_ = adapter.Execute(cancelCtx, invoke.Call{
+	_ = executePreparedMCP(cancelCtx, adapter, invoke.Call{
 		Exec: extensions.Exec{
 			Binding: extensions.Binding{Adapter: extensions.AdapterMCP, Target: stdioSrv.ID + "/anything"},
 			Policy:  extensions.Policy{Effect: extensions.EffectRead},
 		},
-	}, invoke.Prepared{})
+	})
 	if time.Since(startTime) > 3*time.Second {
 		t.Fatalf("stdio child process did not respect context cancellation")
 	}
 
 	delete(svc.Commands, "sleep")
-	missingCmdRes := adapter.Execute(ctx, invoke.Call{
+	missingCmdRes := executePreparedMCP(ctx, adapter, invoke.Call{
 		Exec: extensions.Exec{
 			Binding: extensions.Binding{Adapter: extensions.AdapterMCP, Target: stdioSrv.ID + "/anything"},
 			Policy:  extensions.Policy{Effect: extensions.EffectRead},
 		},
-	}, invoke.Prepared{})
+	})
 	if missingCmdRes.Outcome != "failed" || missingCmdRes.Err == nil {
 		t.Fatalf("expected failed result for missing CommandRef, got %+v", missingCmdRes)
 	}
@@ -1437,6 +1536,14 @@ func TestMCPOAuthRedirectReplayAndSignOutSafety(t *testing.T) {
 		t.Fatalf("expected 1 authorization_code exchange, got %d", authCodeExchanges.Load())
 	}
 
+	currentCred, err := creds.Get(ctx, "mcp-"+oauthServer.ID)
+	if err != nil {
+		t.Fatalf("get stored oauth cred: %v", err)
+	}
+	var storedCredential map[string]any
+	if err := json.Unmarshal(currentCred.Data, &storedCredential); err != nil {
+		t.Fatalf("decode stored oauth cred: %v", err)
+	}
 	expiredCredPayload, _ := json.Marshal(map[string]any{
 		"token": &oauth2.Token{
 			AccessToken:  "expired-access",
@@ -1444,22 +1551,27 @@ func TestMCPOAuthRedirectReplayAndSignOutSafety(t *testing.T) {
 			TokenType:    "Bearer",
 			Expiry:       time.Now().Add(-10 * time.Minute),
 		},
-		"client_id":     "dyn-client-1",
-		"client_secret": "dyn-secret-1",
-		"auth_url":      baseURL + "/authorize",
-		"token_url":     baseURL + "/token",
-		"revoke_url":    baseURL + "/revoke",
-		"resource":      baseURL + "/mcp",
+		"credential_epoch": storedCredential["credential_epoch"],
+		"client_id":        "dyn-client-1",
+		"client_secret":    "dyn-secret-1",
+		"auth_url":         baseURL + "/authorize",
+		"token_url":        baseURL + "/token",
+		"revoke_url":       baseURL + "/revoke",
+		"resource":         baseURL + "/mcp",
 	})
-	currentCred, err := creds.Get(ctx, "mcp-"+oauthServer.ID)
-	if err != nil {
-		t.Fatalf("get stored oauth cred: %v", err)
-	}
 	if _, err := creds.Replace(ctx, "mcp-"+oauthServer.ID, currentCred.Version, expiredCredPayload); err != nil {
 		t.Fatalf("write expired oauth cred: %v", err)
 	}
 
 	adapter := mcp.Adapter{Service: svc}
+	refreshCall := invoke.Call{Exec: extensions.Exec{
+		Binding: extensions.Binding{Adapter: extensions.AdapterMCP, Target: oauthServer.ID + "/tool_0000"},
+		Policy:  extensions.Policy{Effect: extensions.EffectRead},
+	}}
+	preparedBeforeRefresh, err := adapter.Prepare(ctx, refreshCall)
+	if err != nil {
+		t.Fatalf("prepare before refresh: %v", err)
+	}
 	const refreshWorkers = 4
 	refreshResults := make([]invoke.Result, refreshWorkers)
 	refreshStart := make(chan struct{})
@@ -1469,12 +1581,12 @@ func TestMCPOAuthRedirectReplayAndSignOutSafety(t *testing.T) {
 		go func(idx int) {
 			defer rwg.Done()
 			<-refreshStart
-			refreshResults[idx] = adapter.Execute(ctx, invoke.Call{
+			refreshResults[idx] = executePreparedMCP(ctx, adapter, invoke.Call{
 				Exec: extensions.Exec{
 					Binding: extensions.Binding{Adapter: extensions.AdapterMCP, Target: oauthServer.ID + "/tool_0000"},
 					Policy:  extensions.Policy{Effect: extensions.EffectRead},
 				},
-			}, invoke.Prepared{})
+			})
 		}(i)
 	}
 	close(refreshStart)
@@ -1489,6 +1601,9 @@ func TestMCPOAuthRedirectReplayAndSignOutSafety(t *testing.T) {
 	if refreshOK == 0 {
 		t.Fatalf("expected concurrent OAuth refresh to succeed, results=%+v", refreshResults)
 	}
+	if result := adapter.Execute(ctx, refreshCall, preparedBeforeRefresh); result.Outcome != "confirmed" {
+		t.Fatalf("normal token refresh invalidated a prepared action: %+v", result)
+	}
 	updatedCred, err := creds.Get(ctx, "mcp-"+oauthServer.ID)
 	if err != nil {
 		t.Fatalf("read refreshed credential: %v", err)
@@ -1496,21 +1611,37 @@ func TestMCPOAuthRedirectReplayAndSignOutSafety(t *testing.T) {
 	if !strings.Contains(string(updatedCred.Data), "refresh-rotated-") {
 		t.Fatalf("expected rotated refresh token to be persisted, got %s", string(updatedCred.Data))
 	}
-	followUpRes := adapter.Execute(ctx, invoke.Call{
+	followUpRes := executePreparedMCP(ctx, adapter, invoke.Call{
 		Exec: extensions.Exec{
 			Binding: extensions.Binding{Adapter: extensions.AdapterMCP, Target: oauthServer.ID + "/tool_0000"},
 			Policy:  extensions.Policy{Effect: extensions.EffectRead},
 		},
-	}, invoke.Prepared{})
+	})
 	if followUpRes.Outcome != "confirmed" {
 		t.Fatalf("follow-up call after OAuth refresh failed: %+v", followUpRes)
 	}
 
+	pendingAttempt, err := svc.SignIn(ctx, oauthServer.ID, "/apps")
+	if err != nil {
+		t.Fatalf("start pending sign-in: %v", err)
+	}
+	pendingURL, err := url.Parse(pendingAttempt.AuthorizeURL)
+	if err != nil {
+		t.Fatalf("parse pending authorization URL: %v", err)
+	}
 	if err := svc.SignOut(ctx, oauthServer.ID); err != nil {
 		t.Fatalf("SignOut with valid RevokeURL failed: %v", err)
 	}
 	if revokeCalls.Load() != 1 {
 		t.Fatalf("expected 1 revocation call on SignOut, got %d", revokeCalls.Load())
+	}
+	redirect, err := svc.Callback(ctx, pendingURL.Query().Get("state"), "unused-code", "")
+	if err != nil {
+		t.Fatalf("callback after sign-out: %v", err)
+	}
+	redirectURL, err := url.Parse(redirect)
+	if err != nil || redirectURL.Query().Get("reason") != "server_changed" || authCodeExchanges.Load() != 1 {
+		t.Fatalf("pending sign-in was not invalidated on sign-out: redirect=%q exchanges=%d err=%v", redirect, authCodeExchanges.Load(), err)
 	}
 
 	nilTokenPayload, _ := json.Marshal(map[string]any{
@@ -1522,12 +1653,12 @@ func TestMCPOAuthRedirectReplayAndSignOutSafety(t *testing.T) {
 	if _, err := creds.Replace(ctx, "mcp-"+oauthServer.ID, 0, nilTokenPayload); err != nil {
 		t.Fatalf("write nil token cred: %v", err)
 	}
-	nilRes := adapter.Execute(ctx, invoke.Call{
+	nilRes := executePreparedMCP(ctx, adapter, invoke.Call{
 		Exec: extensions.Exec{
 			Binding: extensions.Binding{Adapter: extensions.AdapterMCP, Target: oauthServer.ID + "/tool_0000"},
 			Policy:  extensions.Policy{Effect: extensions.EffectRead},
 		},
-	}, invoke.Prepared{})
+	})
 	if nilRes.Outcome != "failed" || nilRes.Err == nil {
 		t.Fatalf("expected clean failure for nil OAuth token, got %+v", nilRes)
 	}

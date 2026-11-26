@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"nori/internal/api"
+	"nori/internal/serviceauth"
 	"nori/internal/state/docstore"
 	"nori/internal/users"
 )
@@ -106,7 +107,7 @@ func (s *Service) deleteUserAccount(ctx context.Context, row users.User, confirm
 	if !ok {
 		return fmt.Errorf("account deletion requires a delete-capable store")
 	}
-	if strings.TrimSpace(confirmation) == "" || !strings.EqualFold(strings.TrimSpace(confirmation), strings.TrimSpace(row.Email)) {
+	if strings.TrimSpace(confirmation) == "" {
 		return api.ErrAccountDeleteEmailMismatch
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
@@ -123,7 +124,11 @@ func (s *Service) deleteUserAccount(ctx context.Context, row users.User, confirm
 	if row.ID == users.LegacyID {
 		return api.ErrAccountDeleteOwnerForbidden
 	}
-	if !strings.EqualFold(strings.TrimSpace(confirmation), strings.TrimSpace(row.Email)) {
+	identity, identityOK := serviceauth.VerifiedIdentity(ctx)
+	verifiedEmail, emailOK := serviceauth.VerifiedEmail(ctx)
+	storedEmailMatches := strings.EqualFold(strings.TrimSpace(confirmation), strings.TrimSpace(row.Email))
+	verifiedEmailMatches := identityOK && emailOK && row.HasIdentity(identity) && strings.EqualFold(strings.TrimSpace(confirmation), verifiedEmail)
+	if !storedEmailMatches && !verifiedEmailMatches {
 		return api.ErrAccountDeleteEmailMismatch
 	}
 	pending, err := store.IsAccountDeletePending(ctx, row.ID)

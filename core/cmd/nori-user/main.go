@@ -35,10 +35,45 @@ func openDefaultUsers(ctx context.Context) (users.Directory, error) {
 }
 
 func runCLI(ctx context.Context, args []string, openUsers func(context.Context) (users.Directory, error), out io.Writer) error {
-	if len(args) > 0 && args[0] == "invite" {
-		return runInviteCLI(ctx, args[1:], openUsers, out)
+	if len(args) > 0 {
+		switch args[0] {
+		case "invite":
+			return runInviteCLI(ctx, args[1:], openUsers, out)
+		case "bind-identity":
+			return runBindIdentity(ctx, args[1:], openUsers, out)
+		}
 	}
 	return runCreateUser(ctx, args, openUsers)
+}
+
+func runBindIdentity(ctx context.Context, args []string, openUsers func(context.Context) (users.Directory, error), out io.Writer) error {
+	fs := flag.NewFlagSet("nori-user bind-identity", flag.ContinueOnError)
+	id := fs.String("id", "", "existing Nori user ID")
+	issuer := fs.String("issuer", "", "verified identity issuer")
+	subject := fs.String("subject", "", "verified identity subject")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	identity := users.Identity{Issuer: *issuer, Subject: *subject}
+	if !users.ValidID(*id) || identity.Validate() != nil || fs.NArg() != 0 {
+		return errors.New("usage: nori-user bind-identity --id ID --issuer ISSUER --subject SUBJECT")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	directory, err := openUsers(ctx)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	store, ok := directory.(users.IdentityDirectory)
+	if !ok {
+		return errors.New("configured user directory does not support identity binding")
+	}
+	if _, err := store.BindIdentity(ctx, *id, identity); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Bound sign-in identity for %s\n", *id)
+	return nil
 }
 
 func runCreateUser(ctx context.Context, args []string, openUsers func(context.Context) (users.Directory, error)) error {

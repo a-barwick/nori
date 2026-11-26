@@ -75,7 +75,8 @@ func main() {
 		}()
 	}
 
-	server := httpserver.New(ctx, net.JoinHostPort("127.0.0.1", cmp.Or(s.Port, "8080")), nori.Handler(true))
+	handler := httpserver.RequireLoopbackHost(nori.Handler(true))
+	server := httpserver.New(ctx, net.JoinHostPort("127.0.0.1", cmp.Or(s.Port, "8080")), handler)
 	slog.InfoContext(runCtx, "nori-local listening", "addr", server.Addr, "model", s.Models.Outer, "backend", s.Store.Backend)
 	if err := httpserver.Listen(runCtx, server, 5*time.Second); err != nil {
 		recordErr("http.listen", err)

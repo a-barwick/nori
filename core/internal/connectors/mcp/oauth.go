@@ -30,14 +30,15 @@ const (
 var ErrNoRegistration = errors.New("this MCP server's sign-in needs an app registered with the provider; it does not offer dynamic client registration")
 
 type oauthCredential struct {
-	Token        *oauth2.Token `json:"token"`
-	ClientID     string        `json:"client_id"`
-	ClientSecret string        `json:"client_secret,omitempty"`
-	AuthURL      string        `json:"auth_url"`
-	TokenURL     string        `json:"token_url"`
-	RevokeURL    string        `json:"revoke_url,omitempty"`
-	Resource     string        `json:"resource"`
-	Scopes       []string      `json:"scopes,omitempty"`
+	Token           *oauth2.Token `json:"token"`
+	CredentialEpoch string        `json:"credential_epoch,omitempty"`
+	ClientID        string        `json:"client_id"`
+	ClientSecret    string        `json:"client_secret,omitempty"`
+	AuthURL         string        `json:"auth_url"`
+	TokenURL        string        `json:"token_url"`
+	RevokeURL       string        `json:"revoke_url,omitempty"`
+	Resource        string        `json:"resource"`
+	Scopes          []string      `json:"scopes,omitempty"`
 }
 
 func (c oauthCredential) config(redirect string) *oauth2.Config {
@@ -293,12 +294,12 @@ func (s *Service) SignIn(ctx context.Context, id, returnTo string) (AuthAttempt,
 	if err != nil {
 		return AuthAttempt{}, err
 	}
-	credential := oauthCredential{AuthURL: meta.AuthorizationEndpoint, TokenURL: meta.TokenEndpoint, RevokeURL: meta.RevocationEndpoint,
+	credential := oauthCredential{CredentialEpoch: server.CredentialEpoch, AuthURL: meta.AuthorizationEndpoint, TokenURL: meta.TokenEndpoint, RevokeURL: meta.RevocationEndpoint,
 		Resource: prm.Resource, Scopes: prm.ScopesSupported}
 	if credential.Resource == "" {
 		credential.Resource = server.Endpoint
 	}
-	if stored, err := s.oauthCredential(ctx, id); err == nil && stored.ClientID != "" && stored.TokenURL == meta.TokenEndpoint {
+	if stored, err := s.oauthCredential(ctx, id); err == nil && stored.CredentialEpoch == server.CredentialEpoch && stored.ClientID != "" && stored.TokenURL == meta.TokenEndpoint {
 		credential.ClientID, credential.ClientSecret = stored.ClientID, stored.ClientSecret
 	}
 	if credential.ClientID == "" {
@@ -375,6 +376,9 @@ func (s *Service) Callback(ctx context.Context, stateValue, code, providerError 
 	if providerError != "" {
 		return fail(providerError)
 	}
+	if err := s.checkCredentialEpoch(ctx, attempt.ServerID, attempt.Credential.CredentialEpoch); err != nil {
+		return fail("server_changed")
+	}
 	exchange, cancel := context.WithTimeout(context.WithValue(ctx, oauth2.HTTPClient, s.httpClient()), 30*time.Second)
 	defer cancel()
 	token, err := attempt.Credential.config(s.RedirectURL).Exchange(exchange, code, oauth2.VerifierOption(attempt.Verifier),
@@ -382,7 +386,16 @@ func (s *Service) Callback(ctx context.Context, stateValue, code, providerError 
 	if err != nil {
 		return fail("token_exchange")
 	}
+	server, _, err := s.server(ctx, attempt.ServerID)
+	if err != nil || server.Transport != "http" || server.CredentialEpoch != attempt.Credential.CredentialEpoch {
+		return fail("server_changed")
+	}
+	server, err = s.advanceCredentialEpoch(ctx, server)
+	if err != nil {
+		return fail("server_changed")
+	}
 	credential := attempt.Credential
+	credential.CredentialEpoch = server.CredentialEpoch
 	credential.Token = token
 	if err := s.storeOAuth(ctx, attempt.ServerID, credential); err != nil {
 		if isIOSOAuthCallback(attempt.ReturnTo) {
@@ -390,7 +403,7 @@ func (s *Service) Callback(ctx context.Context, stateValue, code, providerError 
 		}
 		return "", err
 	}
-	if err := s.setAuth(ctx, attempt.ServerID, "oauth"); err != nil {
+	if err := s.setAuth(ctx, attempt.ServerID, "oauth", credential.CredentialEpoch); err != nil {
 		if isIOSOAuthCallback(attempt.ReturnTo) {
 			return fail("save_failed")
 		}
@@ -434,10 +447,16 @@ func (s *Service) storeOAuth(ctx context.Context, id string, c oauthCredential) 
 		return err
 	}
 	for range 3 {
+		if err := s.checkCredentialEpoch(ctx, id, c.CredentialEpoch); err != nil {
+			return err
+		}
 		version := int64(0)
 		if current, err := s.Credentials.Get(ctx, "mcp-"+id); err == nil {
 			version = current.Version
 		} else if !errors.Is(err, secret.ErrCredentialNotFound) {
+			return err
+		}
+		if err := s.checkCredentialEpoch(ctx, id, c.CredentialEpoch); err != nil {
 			return err
 		}
 		_, err = s.Credentials.Replace(ctx, "mcp-"+id, version, data)
@@ -448,7 +467,18 @@ func (s *Service) storeOAuth(ctx context.Context, id string, c oauthCredential) 
 	return secret.ErrCredentialConflict
 }
 
-func (s *Service) setAuth(ctx context.Context, id, auth string) error {
+func (s *Service) checkCredentialEpoch(ctx context.Context, id, epoch string) error {
+	server, _, err := s.server(ctx, id)
+	if err != nil {
+		return err
+	}
+	if server.Transport != "http" || server.CredentialEpoch != epoch {
+		return errors.New("the MCP server configuration changed")
+	}
+	return nil
+}
+
+func (s *Service) setAuth(ctx context.Context, id, auth, epoch string) error {
 	_, err := s.Store.Mutate(ctx, state.Mutation{RequestID: "mcp-auth-" + id + "-" + uuid.NewString(), Method: "POST", Target: "/v1/mcp/" + id,
 		Payload: auth, Collection: CollectionServers, ID: id, SkipRevisionCheck: true,
 		Apply: func(current *state.Resource, _ func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
@@ -459,19 +489,25 @@ func (s *Service) setAuth(ctx context.Context, id, auth string) error {
 			if err != nil {
 				return state.MutationResult{}, err
 			}
+			if server.Transport != "http" || server.CredentialEpoch != epoch {
+				return state.MutationResult{}, state.ErrRevisionConflict
+			}
 			server.Auth = auth
 			return s.write(server, current.Revision+1, 200)
 		}})
 	return err
 }
 
-func (s *Service) oauthTransport(ctx context.Context, id string, base http.RoundTripper) (http.RoundTripper, error) {
-	c, version, err := s.oauthCredentialWithVersion(ctx, id)
+func (s *Service) oauthTransport(ctx context.Context, server stored, base http.RoundTripper) (http.RoundTripper, error) {
+	c, version, err := s.oauthCredentialWithVersion(ctx, server.ID)
 	if err != nil {
 		return nil, fmt.Errorf("the server needs sign-in: %w", err)
 	}
 	if c.Token == nil {
 		return nil, errors.New("the server needs sign-in: stored OAuth token is missing")
+	}
+	if c.CredentialEpoch != server.CredentialEpoch {
+		return nil, errors.New("the server's credential does not match its current configuration")
 	}
 	refreshClient := &http.Client{
 		Transport:     base,
@@ -481,7 +517,7 @@ func (s *Service) oauthTransport(ctx context.Context, id string, base http.Round
 	refreshCtx := context.WithValue(context.WithoutCancel(ctx), oauth2.HTTPClient, refreshClient)
 	source := &savingSource{
 		service:    s,
-		serverID:   id,
+		serverID:   server.ID,
 		refreshCtx: refreshCtx,
 		cred:       c,
 		version:    version,
@@ -506,9 +542,15 @@ func (s *savingSource) Token() (*oauth2.Token, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t, err := s.inner.Token()
+	checkCtx, cancel := context.WithTimeout(s.refreshCtx, 5*time.Second)
+	checkErr := s.service.checkCredentialEpoch(checkCtx, s.serverID, s.cred.CredentialEpoch)
+	cancel()
+	if checkErr != nil {
+		return nil, checkErr
+	}
 	if err != nil {
 		latest, latestVersion, reloadErr := s.service.oauthCredentialWithVersion(s.refreshCtx, s.serverID)
-		if reloadErr == nil && latestVersion != s.version && latest.Token != nil && latest.Token.Valid() {
+		if reloadErr == nil && latest.CredentialEpoch == s.cred.CredentialEpoch && latestVersion != s.version && latest.Token != nil && latest.Token.Valid() {
 			s.cred = latest
 			s.version = latestVersion
 			s.inner = latest.config(s.service.RedirectURL).TokenSource(s.refreshCtx, latest.Token)
@@ -534,7 +576,7 @@ func (s *savingSource) Token() (*oauth2.Token, error) {
 			}
 			if errors.Is(replaceErr, secret.ErrCredentialConflict) {
 				latest, latestVersion, reloadErr := s.service.oauthCredentialWithVersion(s.refreshCtx, s.serverID)
-				if reloadErr == nil && latest.Token != nil {
+				if reloadErr == nil && latest.CredentialEpoch == s.cred.CredentialEpoch && latest.Token != nil {
 					s.cred = latest
 					s.version = latestVersion
 					s.inner = latest.config(s.service.RedirectURL).TokenSource(s.refreshCtx, latest.Token)
@@ -566,13 +608,46 @@ func (s *savingSource) Token() (*oauth2.Token, error) {
 }
 
 func (s *Service) SignOut(ctx context.Context, id string) error {
-	if _, _, err := s.server(ctx, id); err != nil {
+	server, _, err := s.server(ctx, id)
+	if err != nil {
 		return err
 	}
 	if s.Credentials == nil {
 		return secret.ErrCredentialUnavailable
 	}
-	if c, err := s.oauthCredential(ctx, id); err == nil && c.RevokeURL != "" && c.Token != nil {
+	credential, credentialErr := s.Credentials.Get(ctx, "mcp-"+id)
+	if credentialErr != nil && !errors.Is(credentialErr, secret.ErrCredentialNotFound) {
+		return credentialErr
+	}
+	nextEpoch := uuid.NewString()
+	_, err = s.Store.Mutate(ctx, state.Mutation{
+		RequestID: "mcp-signout-" + id + "-" + uuid.NewString(), Method: "POST", Target: "/v1/mcp/" + id,
+		Payload: "sign_out", Collection: CollectionServers, ID: id, SkipRevisionCheck: true,
+		Apply: func(current *state.Resource, _ func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
+			if current == nil {
+				return state.MutationResult{}, state.ErrNotFound
+			}
+			latest, err := decode(*current)
+			if err != nil {
+				return state.MutationResult{}, err
+			}
+			if latest.CredentialEpoch != server.CredentialEpoch {
+				return state.MutationResult{}, state.ErrRevisionConflict
+			}
+			latest.CredentialEpoch = nextEpoch
+			if latest.Auth == "oauth" && latest.Enabled {
+				latest.Observed.Status = "needs_sign_in"
+			} else if latest.Auth == "configured" && latest.Enabled {
+				latest.Observed.Status = "disconnected"
+			}
+			return s.write(latest, current.Revision+1, 200)
+		},
+	})
+	if err != nil {
+		return err
+	}
+	var c oauthCredential
+	if credentialErr == nil && json.Unmarshal(credential.Data, &c) == nil && c.CredentialEpoch == server.CredentialEpoch && c.RevokeURL != "" && c.Token != nil {
 		if s.validEndpoint(c.RevokeURL) == nil {
 			value := c.Token.RefreshToken
 			if value == "" {
@@ -589,34 +664,10 @@ func (s *Service) SignOut(ctx context.Context, id string) error {
 			}
 		}
 	}
-	if err := s.Credentials.Delete(ctx, "mcp-"+id); err != nil {
-		return err
+	if credentialErr == nil {
+		return s.deleteCredentialVersion(ctx, id, credential)
 	}
-	_, err := s.Store.Mutate(ctx, state.Mutation{
-		RequestID:         "mcp-signout-" + id + "-" + uuid.NewString(),
-		Method:            "POST",
-		Target:            "/v1/mcp/" + id,
-		Payload:           "sign_out",
-		Collection:        CollectionServers,
-		ID:                id,
-		SkipRevisionCheck: true,
-		Apply: func(current *state.Resource, _ func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
-			if current == nil {
-				return state.MutationResult{}, state.ErrNotFound
-			}
-			server, err := decode(*current)
-			if err != nil {
-				return state.MutationResult{}, err
-			}
-			if server.Auth == "oauth" && server.Enabled {
-				server.Observed.Status = "needs_sign_in"
-			} else if server.Auth == "configured" && server.Enabled {
-				server.Observed.Status = "disconnected"
-			}
-			return s.write(server, current.Revision+1, 200)
-		},
-	})
-	return err
+	return nil
 }
 
 func randomToken() string {
