@@ -1,5 +1,3 @@
-// Package users defines the people Nori runs for. A user is selected by verified
-// sign-in or durable work, never by browser-supplied request data.
 package users
 
 import (
@@ -13,7 +11,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// LegacyID owns the existing single-owner documents, files and workflows.
 const LegacyID = "owner"
 const LegacyOwner = ""
 
@@ -51,7 +48,6 @@ func (u User) Validate() error {
 	return nil
 }
 
-// DataOwner preserves the old documents without moving or rewriting them.
 func (u User) DataOwner() string {
 	if u.ID == LegacyID {
 		if LegacyOwner != "" {
@@ -65,7 +61,6 @@ func (u User) DataOwner() string {
 	return u.ID
 }
 
-// FilePrefix leaves only the current user's existing files at their old paths.
 func (u User) FilePrefix() string {
 	if u.ID == LegacyID {
 		return ""
@@ -89,19 +84,12 @@ func WithID(ctx context.Context, id string) context.Context {
 }
 func ID(ctx context.Context) string { id, _ := ctx.Value(contextKey{}).(string); return id }
 
-// Facts contains only the user details models need; credentials and infrastructure
-// addresses never enter a prompt.
 func (u User) Facts() string { return u.FactsIn(u.TimeZone) }
 
-// FactsIn is Facts with the time zone the user currently prefers, which can differ from the zone the row was created
-// with (D-054).
 func (u User) FactsIn(zone string) string {
-	// The sign-in address is how the user reaches Nori, not a mailbox Nori sends from or to: "email me" means the
-	// connected mail account's own address. Labelled so the model doesn't take it for "my own address".
 	b, _ := json.Marshal(map[string]string{"display_name": u.DisplayName, "nori_sign_in": u.Email, "time_zone": zone,
 		"note": "nori_sign_in is the address the user signs in to Nori with, not their mailbox; for \"email me\" use the connected mail account's own address"})
 	return string(b)
 }
 
-// Profile returns, at the time of use, the user facts for model prompts and the time zone they are written in.
 type Profile func(ctx context.Context) (facts string, location *time.Location)

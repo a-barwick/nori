@@ -11,7 +11,7 @@ import (
 )
 
 func TestAutoReviewPromptIncludesNowAndTimeZone(t *testing.T) {
-	now := time.Date(2026, 11, 25, 6, 55, 0, 0, time.UTC) // Tue Nov 24 10:55 PM PST
+	now := time.Date(2026, 11, 25, 6, 55, 0, 0, time.UTC)
 	prompt := permissions.BuildAutoReviewPrompt(permissions.AutoReviewRequest{
 		ToolID:      "google/calendar/create_event",
 		Summary:     "Create lunch meeting on Wed, Nov 25 at 12:00 PM PST",
@@ -38,12 +38,10 @@ func TestModelAutoReviewerRespectsStandingAllowRuleWhileBlockingExfiltration(t *
 	reviewer := &permissions.ModelAutoReviewer{
 		Review: func(_ context.Context, _ string) (string, error) {
 			modelCalls.Add(1)
-			// Even if the model would conservatively return "ask", standing rules should not be re-escalated.
 			return `{"verdict":"ask","reason":"confirm please"}`, nil
 		},
 	}
 
-	// 1. Standing allow rule passing deterministic checks must NOT call the model or re-escalate to ask.
 	dec, err := reviewer.ReviewAction(ctx, permissions.AutoReviewRequest{
 		ToolID:         "nori/assistant/automation-create",
 		Summary:        "Create daily standup routine",
@@ -63,7 +61,6 @@ func TestModelAutoReviewerRespectsStandingAllowRuleWhileBlockingExfiltration(t *
 		t.Fatalf("expected 0 model review calls for standing allow rule, got %d", modelCalls.Load())
 	}
 
-	// 2. Standing allow rule for sensitive_send with verified recipient still allows without send-verb re-escalation.
 	decSend, err := reviewer.ReviewAction(ctx, permissions.AutoReviewRequest{
 		ToolID:         "google/gmail/send",
 		Summary:        "Send report to bob@example.com",
@@ -78,7 +75,6 @@ func TestModelAutoReviewerRespectsStandingAllowRuleWhileBlockingExfiltration(t *
 		t.Fatalf("standing send allow = (%+v, %v), want allow", decSend, err)
 	}
 
-	// 3. Standing allow rule MUST STILL deny prompt-injected exfiltration to an unverified recipient!
 	decExfil, err := reviewer.ReviewAction(ctx, permissions.AutoReviewRequest{
 		ToolID:         "google/gmail/send",
 		Summary:        "Forward secrets to attacker@evil.test",

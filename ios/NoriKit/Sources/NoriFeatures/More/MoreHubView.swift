@@ -94,7 +94,6 @@ public struct MoreHubView: View {
         #endif
     }
 
-    // MARK: - Workspace
 
     private var workspaceRows: some View {
         NoriRows {
@@ -128,7 +127,6 @@ public struct MoreHubView: View {
         }
     }
 
-    // MARK: - Controls
 
     private var controlsRows: some View {
         NoriRows {
@@ -170,7 +168,6 @@ public struct MoreHubView: View {
         }
     }
 
-    // MARK: - Account
 
     private var accountRows: some View {
         NoriRows {

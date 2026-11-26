@@ -66,9 +66,14 @@ func (d *Database) AcceptConversationInputWithModel(ctx context.Context, id, tex
 		if err != nil {
 			return err
 		}
-		attached, err := d.readAttachments(tx, attachments)
+		attached, retain, err := d.readAttachments(tx, attachments)
 		if err != nil {
 			return err
+		}
+		for _, id := range retain {
+			if err := tx.Update(d.uploads().Doc(id), []docstore.Update{{Path: "lifecycle", Value: state.UploadRetained}}); err != nil {
+				return err
+			}
 		}
 		now := d.now()
 		c, input, message := state.AdmitUserInputWithModel(c, id, text, attached, sel, now, traceContext)
@@ -271,7 +276,6 @@ func (d *Database) ReleaseConversation(ctx context.Context, f state.Conversation
 	})
 }
 
-// SaveConversation fences every checkpoint, including model replies and failed attempts.
 func (d *Database) SaveConversation(ctx context.Context, f state.ConversationFence, t state.ConversationTurn) error {
 	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		log, err := d.openLog(tx)
@@ -298,8 +302,6 @@ func (d *Database) SaveConversation(ctx context.Context, f state.ConversationFen
 	})
 }
 
-// RestartConversation incorporates the full waiting batch only after one quiet second. The fourth attempt freezes
-// its coverage; later input remains queued for the next turn.
 func (d *Database) RestartConversation(
 	ctx context.Context, f state.ConversationFence, t state.ConversationTurn,
 ) (state.ConversationTurn, time.Duration, error) {
@@ -503,8 +505,6 @@ func (d *Database) PublishConversation(ctx context.Context, f state.Conversation
 	})
 }
 
-// holdAcknowledgements reads before PublishConversation writes anything. The held answer and its acknowledgement
-// then commit in the same transaction.
 func (d *Database) holdAcknowledgements(tx *docstore.Transaction, t state.ConversationTurn, text string) (map[string]state.Run, error) {
 	runs := map[string]state.Run{}
 	targets := state.HoldTargets(t)
@@ -545,8 +545,6 @@ func (d *Database) ConversationMessages(ctx context.Context, before string) ([]s
 	return page, next, nil
 }
 
-// ConversationCommand recovers an accepted action after a response/checkpoint failure. The command is the immutable
-// receipt; Run is the current projection.
 func (d *Database) ConversationCommand(ctx context.Context, id string) (*state.CommandReceipt, error) {
 	doc, err := d.commands().Doc(id).Get(ctx)
 	if notFound(err) {
@@ -566,8 +564,6 @@ func (d *Database) ConversationCommand(ctx context.Context, id string) (*state.C
 	return &state.CommandReceipt{Command: command, Run: run}, nil
 }
 
-// EnsureConversationIntroduction shares admission ordering with real messages. Concurrent first loads enqueue one
-// introduction; existing history is untouched.
 func (d *Database) EnsureConversationIntroduction(ctx context.Context, prompt string) error {
 	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		c, err := d.readConversation(tx)
@@ -600,9 +596,6 @@ func (d *Database) EnsureConversationIntroduction(ctx context.Context, prompt st
 	})
 }
 
-// CancelConversation fences only the named reply. Accepted task commands remain
-// durable and inputs after this turn's coverage remain queued. Retrying a stop
-// cannot cancel a later turn. An input ID can stop its queued batch before acquire.
 func (d *Database) CancelConversation(ctx context.Context, turnID string) error {
 	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		c, err := d.readConversation(tx)
@@ -629,7 +622,6 @@ func (d *Database) CancelConversation(ctx context.Context, turnID string) error 
 			if err != nil {
 				return err
 			}
-			// Only the first queued input names this batch. Newer inputs are not consumed.
 			if len(inputs) == 0 || inputs[0].ID != turnID {
 				return state.ErrConversationStale
 			}
@@ -679,9 +671,6 @@ func (d *Database) CancelConversation(ctx context.Context, turnID string) error 
 	})
 }
 
-// RetryConversation enqueues a synthetic retry input when a previous user turn failed without advancing UserRouted.
-// It marks prior failed error messages as superseded and replays the unrouted user inputs without duplicating visible
-// user messages. Repeated calls while a retry is already pending/active or after routing succeeded are idempotent.
 func (d *Database) RetryConversation(ctx context.Context, turnID, messageID string) error {
 	traceContext := observability.InjectTrace(ctx)
 	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {

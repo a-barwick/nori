@@ -92,7 +92,6 @@ class MCPStub(BaseHTTPRequestHandler):
             self.reply_json({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}, 400)
             return
 
-        # JSON-RPC notifications have no "id" and expect 202 Accepted with an empty body.
         if "id" not in message:
             self.send_response(202)
             self.send_header("Content-Length", "0")

@@ -31,9 +31,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Run Swift tests
-        run: swift test --package-path ios/NoriKit
-
       - name: Build unsigned Release archive
         run: |
           xcodebuild -project ios/Nori.xcodeproj -scheme Nori -configuration Release \

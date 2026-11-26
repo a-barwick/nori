@@ -8,9 +8,6 @@ import (
 	"nori/internal/state"
 )
 
-// Both modes use unnamed SSE messages with the same envelope. Assistant records
-// are hydrated server-side, in log order, without coalescing cursor positions.
-// Payloads are current upserts, not historical versions of mutable records.
 func (s *server) assistantEvents(w http.ResponseWriter, r *http.Request) {
 	store := s.Tasks.Store
 	after, _, valid := resumePosition(r)

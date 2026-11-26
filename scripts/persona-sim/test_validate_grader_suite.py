@@ -139,7 +139,6 @@ def _make_valid_persona_bundle(root: Path, slug: str = "01-test-user") -> Path:
         {"id": "e25_settle_2", "day": 14, "local_time": "23:00", "kind": "settle", "snapshot_label": "week2", "assert_invariants": True},
         {"id": "e26_settle_3", "day": 21, "local_time": "23:00", "kind": "settle", "snapshot_label": "week3"},
     ]
-    # Add probes and pad to >= 40 events and day >= 28
     for i in range(10):
         day = 15 + i
         events.append({
@@ -611,14 +610,14 @@ class GraderTests(unittest.TestCase):
 
             self.assertNotIn("p_incl", call_counts)
             self.assertEqual(call_counts["p_ok"], 3)
-            self.assertEqual(call_counts["p_err"], 1)  # 401 fails fast without sleeping
+            self.assertEqual(call_counts["p_err"], 1)
             self.assertEqual(sleep_calls, [2.0, 4.0])
 
             p_rep = sc["personas"][0]
             self.assertTrue(p_rep["tier_a"]["passed"])
             self.assertEqual(p_rep["tier_b_error_count"], 1)
             self.assertEqual(p_rep["tier_b_inconclusive_count"], 1)
-            self.assertEqual(p_rep["tier_b_scored_count"], 2)  # p_ok + eom
+            self.assertEqual(p_rep["tier_b_scored_count"], 2)
             self.assertEqual(p_rep["tier_b_score"], 1.0)
             by_id = {it["id"]: it for it in p_rep["tier_b_items"]}
             self.assertEqual(by_id["p_incl"]["verdict"], "INCONCLUSIVE")
@@ -673,7 +672,6 @@ class GraderTests(unittest.TestCase):
             )
 
             log = grader._extract_approval_log(pdir, summary)
-            # int_1, int_2, int_3 (once each) + e17_stale_cancel (stale_verified) + int_4 (not in interactions.json)
             self.assertEqual(len(log), 5)
             ids = [x.get("id") or x.get("interaction_id") for x in log]
             self.assertEqual(ids.count("int_1"), 1)
@@ -699,12 +697,10 @@ class SuiteTests(unittest.TestCase):
             suite.select_area_personas(["nonexistent"])
 
     def test_preflight_stub_gateway_openai_direct_and_openrouter(self) -> None:
-        # 1. --stub-models skips live preflight completely
         with mock.patch("urllib.request.urlopen") as m_open:
             suite.preflight_credits(15.0, extra=["--stub-models"], env={})
             m_open.assert_not_called()
 
-        # 2. Gateway mode requires gateway settings and skips OpenAI/OpenRouter HTTP calls
         with self.assertRaises(SystemExit):
             suite.preflight_credits(15.0, env={"NORI_MODEL_PROVIDER": "gateway"})
         with mock.patch("urllib.request.urlopen") as m_open:
@@ -720,11 +716,9 @@ class SuiteTests(unittest.TestCase):
             )
             m_open.assert_not_called()
 
-        # 3. Missing OPENAI_API_KEY aborts
         with self.assertRaises(SystemExit):
             suite.preflight_credits(15.0, env={"OPENROUTER_API_KEY": "or_123"})
 
-        # 4. Direct OpenAI inner (MODEL_NAME=gpt-6.1-terra) skips OpenRouter credits
         called_urls: list[str] = []
 
         class OkResp:
@@ -747,7 +741,6 @@ class SuiteTests(unittest.TestCase):
             suite.preflight_credits(15.0, env={"OPENAI_API_KEY": "oa_123", "MODEL_NAME": "gpt-6.1-terra"})
         self.assertEqual(called_urls, ["https://api.openai.com/v1/chat/completions"])
 
-        # 5. OpenRouter inner checks credits + OpenRouter probe and aborts on low credits
         called_urls.clear()
         with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
             suite.preflight_credits(15.0, env={"OPENAI_API_KEY": "oa_123", "OPENROUTER_API_KEY": "or_123", "MODEL_NAME": "openai/gpt-6.1-terra"})
@@ -791,7 +784,6 @@ class SuiteTests(unittest.TestCase):
             probed.append((req.full_url, body))
             return OkResp()
 
-        # Stale NORI_TASK_MODEL=gpt-6.1-terra with MODEL_NAME unset MUST NOT bypass OpenRouter preflight
         with mock.patch("urllib.request.urlopen", side_effect=capture_urlopen):
             with self.assertRaises(SystemExit) as ctx:
                 suite.preflight_credits(
@@ -801,7 +793,6 @@ class SuiteTests(unittest.TestCase):
             self.assertIn("OPENROUTER_API_KEY", str(ctx.exception))
             self.assertEqual([u for u, _ in probed], ["https://api.openai.com/v1/chat/completions"])
 
-        # When OPENROUTER_API_KEY is present, it probes OpenRouter with default openai/gpt-6.1-terra
         probed.clear()
         with mock.patch("urllib.request.urlopen", side_effect=capture_urlopen):
             suite.preflight_credits(
@@ -865,7 +856,6 @@ class SuiteTests(unittest.TestCase):
             self.assertIn("TOTAL", table)
             self.assertIn("62.5%", table)
 
-            # End-to-end suite.main --collect-only --no-grade --max-usd 2.00 -> exit 1
             runs_dir = root / ".sim-runs"
             with mock.patch.object(suite, "RUNS_DIR", runs_dir):
                 with mock.patch.object(sys, "argv", [
@@ -1007,16 +997,13 @@ class SuiteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             (root / ".env").write_text("OPENAI_API_KEY=sk-dev-123\nOPENROUTER_API_KEY=sk-or-dev\n", encoding="utf-8")
-            # Refuses default local dev key when no .env.vst or *_TEST_API_KEY is present.
             with self.assertRaises(SystemExit) as cm:
                 suite.resolve_suite_env(root=root, environ={})
             self.assertIn("refusing to run persona-sim against the default local dev key", str(cm.exception))
 
-            # Explicit --allow-dev-key allows it.
             allowed = suite.resolve_suite_env(allow_dev_key=True, root=root, environ={})
             self.assertEqual(allowed["OPENAI_API_KEY"], "sk-dev-123")
 
-            # Dedicated *_TEST_API_KEY succeeds without --allow-dev-key and never leaks dev keys from .env.
             isolated = suite.resolve_suite_env(
                 root=root,
                 environ={"OPENAI_TEST_API_KEY": "sk-test-999"},
@@ -1024,7 +1011,6 @@ class SuiteTests(unittest.TestCase):
             self.assertEqual(isolated["OPENAI_API_KEY"], "sk-test-999")
             self.assertNotIn("OPENROUTER_API_KEY", isolated)
 
-            # Reusing the same key value as dev .env is rejected.
             with self.assertRaises(SystemExit) as cm2:
                 suite.resolve_suite_env(
                     root=root,
@@ -1032,7 +1018,6 @@ class SuiteTests(unittest.TestCase):
                 )
             self.assertIn("matches the default local dev key", str(cm2.exception))
 
-            # .env.vst succeeds cleanly.
             (root / ".env.vst").write_text("OPENAI_API_KEY=sk-vst-555\n", encoding="utf-8")
             vst = suite.resolve_suite_env(root=root, environ={})
             self.assertEqual(vst["OPENAI_API_KEY"], "sk-vst-555")

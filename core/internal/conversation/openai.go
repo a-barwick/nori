@@ -25,7 +25,6 @@ import (
 	"nori/internal/usage"
 )
 
-// The default outer model is GPT-6.1 Sol through OpenAI's platform API.
 const (
 	openAIChatURL     = "https://api.openai.com/v1/chat/completions"
 	openRouterChatURL = "https://openrouter.ai/api/v1/chat/completions"
@@ -34,29 +33,23 @@ const (
 )
 
 type OpenAIModel struct {
-	name       string
-	key        string
-	gatewayURL string
-	openRouter bool
-	Client     *http.Client
-	Guard      *llmguard.Guard
-	UserID     string
-	// TestURL replaces the provider endpoint with a local stub (settings.Models.TestURL).
-	TestURL string
-	// ReasoningEffort overrides the direct OpenAI reasoning_effort (defaults to "low").
-	ReasoningEffort string
-	// AllowGatewayReasoning enables sending reasoning_effort when routing through gatewayURL.
+	name                  string
+	key                   string
+	gatewayURL            string
+	openRouter            bool
+	Client                *http.Client
+	Guard                 *llmguard.Guard
+	UserID                string
+	TestURL               string
+	ReasoningEffort       string
 	AllowGatewayReasoning bool
-	// LocalOnly marks requests routed to a local-only inference server (e.g. Ollama).
-	LocalOnly bool
-	// Optional determinism hooks. Nil defaults to time.Now and uuid.NewString.
-	Now   func() time.Time
-	NewID func() string
-	// Optional retry configuration hooks for transient provider errors (429, 5xx, network).
-	MaxRetries     int
-	RetryBaseDelay time.Duration
-	MaxRetryAfter  time.Duration
-	Sleep          func(context.Context, time.Duration) error
+	LocalOnly             bool
+	Now                   func() time.Time
+	NewID                 func() string
+	MaxRetries            int
+	RetryBaseDelay        time.Duration
+	MaxRetryAfter         time.Duration
+	Sleep                 func(context.Context, time.Duration) error
 }
 
 func (m *OpenAIModel) guard() *llmguard.Guard {
@@ -178,8 +171,6 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	if _, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, bytes.NewReader(body)); err != nil {
 		return reply, fmt.Errorf("invalid model request")
 	}
-	// Persist an unknown-cost attempt before provider I/O. A crash or failed
-	// response projection can leave its cost unknown, but cannot erase the call.
 	reply.Usage.RequestStatus = "pending"
 	if request.RecordUsage != nil {
 		if err := request.RecordUsage(ctx, reply.Usage); err != nil {
@@ -239,7 +230,12 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 		return reply, fmt.Errorf("model request interrupted or unavailable")
 	}
 	reply.Usage.RequestStatus = "received"
-	defer res.Body.Close()
+	defer func() {
+		if reply.Usage.CostUSD != nil {
+			llmguard.RecordResponseCost(res, *reply.Usage.CostUSD)
+		}
+		res.Body.Close()
+	}()
 	if res.StatusCode != http.StatusOK {
 		if m.gatewayURL != "" {
 			if (res.StatusCode == 400 || res.StatusCode == 413) && contextview.Refusal(res.Body) {
@@ -258,8 +254,6 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	return m.decodeOpenAIReply(res, reply, request.NoDispatch, span)
 }
 
-// logRefusal records why the provider refused a request: its error type and code and its rate-limit headers. The
-// error's message is left out because it can quote the account.
 func logRefusal(ctx context.Context, res *http.Response) bool {
 	var body struct {
 		Error struct {
@@ -333,15 +327,12 @@ func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span tr
 		body["response_format"] = foregroundFormat(request.Tools)
 	}
 	if !request.NoDispatch {
-		// Direct reply calls use an ID-free schema: per-turn ID enums would change the cached prompt prefix on every new
-		// memory or task. Their IDs are validated against the request instead (validateReplyIDs).
 		stable := m.gatewayURL == "" && !request.CommandPlan
 		body["response_format"] = responseFormat(request.TaskIDs, request.WorkRequests, request.MemoryIDs, request.CommandPlan, m.gatewayURL != "", stable)
 	}
 	return json.Marshal(body)
 }
 
-// decodeOpenAIReply preserves observed usage even when the provider response is unusable.
 func (m *OpenAIModel) decodeOpenAIReply(res *http.Response, reply Reply, noDispatch bool, span trace.Span) (Reply, error) {
 	var err error
 	var response struct {
@@ -408,8 +399,6 @@ func (m *OpenAIModel) decodeOpenAIReply(res *http.Response, reply Reply, noDispa
 	}
 	choice := response.Choices[0]
 	if choice.Finish != "stop" && choice.Finish != "tool_calls" {
-		// Retain the provider request identity without exposing error bodies,
-		// which can contain account details or prompt content.
 		reason := "unknown"
 		switch choice.Finish {
 		case "error", "length", "content_filter", "function_call", "cancelled":
@@ -485,7 +474,6 @@ func (m *OpenAIModel) observeCall(ctx context.Context, span trace.Span, requestS
 		span.SetAttributes(attribute.Int64("llm.token_count.total", *reply.Usage.TotalTokens))
 	}
 	if reply.Usage.CostUSD != nil {
-		m.guard().RecordActualCost(*reply.Usage.CostUSD)
 		span.SetAttributes(attribute.Float64("nori.cost.usd", *reply.Usage.CostUSD), attribute.Float64("llm.cost.total", *reply.Usage.CostUSD))
 	}
 	if a, ok := observability.ContentAttribute("output.value", reply.Text); ok {
@@ -505,9 +493,6 @@ func (m *OpenAIModel) observeCall(ctx context.Context, span trace.Span, requestS
 	span.End()
 }
 
-// collapseActionFreeReplay deduplicates historical action-free structured turns that
-// stored both assistant({"actions":[],"text":X}) and a consecutive identical assistant(X).
-// Turns with actions, receipts, or distinct published text (e.g. rejections) are preserved verbatim.
 func collapseActionFreeReplay(messages []json.RawMessage, breakpoints []int) ([]json.RawMessage, []int) {
 	if len(messages) < 2 {
 		return messages, breakpoints
@@ -520,7 +505,6 @@ func collapseActionFreeReplay(messages []json.RawMessage, breakpoints []int) ([]
 	outBPs := make([]int, 0, len(breakpoints))
 	for i := 0; i < len(messages); i++ {
 		if i+1 < len(messages) && isDuplicateActionFreePair(messages[i], messages[i+1]) {
-			// Skip the redundant JSON wrapper; preserve any breakpoint on the kept published message.
 			if marked[i] {
 				marked[i+1] = true
 			}
@@ -559,10 +543,6 @@ func isDuplicateActionFreePair(first, second json.RawMessage) bool {
 	return strings.TrimSpace(env.Text) == strings.TrimSpace(*b.Content)
 }
 
-// openAIConversation sends only text and historical command facts to the structured-output model, without altering
-// the stored originals. Retained attempts can contain another provider's opaque reasoning and native tool messages.
-// openAIConversation renders saved messages for Chat Completions. A message whose index is in breakpoints is sent as
-// one text part carrying an explicit prompt_cache_breakpoint, marking the end of a reusable prefix.
 func openAIConversation(messages []json.RawMessage, breakpoints []int) ([]map[string]any, error) {
 	messages, breakpoints = collapseActionFreeReplay(messages, breakpoints)
 	marked := make(map[int]bool, len(breakpoints))
@@ -605,8 +585,6 @@ func openAIConversation(messages []json.RawMessage, breakpoints []int) ([]map[st
 	return input, nil
 }
 
-// decodeOpenAIStream uses the same response validator and token pricing as the
-// ordinary adapter. A truncated stream retains partial text and unknown cost.
 func (m *OpenAIModel) decodeOpenAIStream(res *http.Response, reply Reply, request ReplyRequest, span trace.Span) (Reply, error) {
 	scanner := bufio.NewScanner(io.LimitReader(res.Body, 2<<20))
 	scanner.Buffer(make([]byte, 4096), 256<<10)
@@ -773,7 +751,6 @@ func decodeForeground(text string) (string, []ToolCall, error) {
 	return response.Text, calls, nil
 }
 
-// Extract only a completed JSON string prefix, never the action arguments.
 func foregroundPartial(text string) string {
 	depth := 0
 	inString := false

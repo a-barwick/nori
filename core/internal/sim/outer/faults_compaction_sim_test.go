@@ -341,9 +341,6 @@ func TestOuterConcurrentReplicaCompactionMerge(t *testing.T) {
 
 	worker1 := newPlainWorkerRunner(rig, 301, nil)
 
-	// Drive enough turns (> state.RecentTurnLimit=20) so worker1's hot-window
-	// maintenance stages lossless Excerpts and advances Through while keeping
-	// FlushedThrough at zero.
 	initialTurns := state.RecentTurnLimit + 2
 	for i := range initialTurns {
 		rig.clock.Advance(time.Second)
@@ -382,13 +379,10 @@ func TestOuterConcurrentReplicaCompactionMerge(t *testing.T) {
 			if hookRan {
 				return nil
 			}
-			// Only race on flush_and_compact (never on extract_only calls).
 			if len(req.Tools) == 0 || req.Tools[0].Name != "flush_and_compact" {
 				return nil
 			}
 			hookRan = true
-			// Drive enough new turns (> RecentTurnLimit - CompactKeep + 1) so worker1
-			// advances summary.Through again while worker0 is mid-flight in flush_and_compact.
 			concurrentTurns := state.RecentTurnLimit - state.CompactKeep + 2
 			for i := range concurrentTurns {
 				rig.clock.Advance(time.Second)
@@ -440,8 +434,6 @@ func TestOuterConcurrentReplicaCompactionMerge(t *testing.T) {
 		t.Fatalf("expected FlushedThrough in [%s, %s) after rebase merge, got %s",
 			sumBefore.Through, midSummary.Through, flushed)
 	}
-	// Retired excerpts <= FlushedThrough must be pruned while newer unflushed
-	// excerpts from (FlushedThrough, midSummary.Through] remain preserved.
 	if len(finalSummary.Excerpts) == 0 {
 		t.Fatalf("expected newer unflushed excerpts in (FlushedThrough, Through] to be preserved")
 	}
@@ -454,8 +446,6 @@ func TestOuterConcurrentReplicaCompactionMerge(t *testing.T) {
 		t.Fatalf("CheckOuterInvariants after merge: %v", err)
 	}
 
-	// Subsequent idle flush passes must bring FlushedThrough all the way up to midSummary.Through
-	// and clear retired Excerpts.
 	for range 4 {
 		if err := worker0.Process(ctx); err != nil {
 			t.Fatalf("idle catch-up worker0.Process: %v", err)

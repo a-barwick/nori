@@ -88,7 +88,6 @@ func Init(ctx context.Context, service string, s settings.Settings) func(context
 				}
 				return scrubEvent(event)
 			},
-			// All traces use the filtered and rate-limited OpenTelemetry exporter.
 			BeforeSendTransaction: func(*sentry.Event, *sentry.EventHint) *sentry.Event { return nil },
 			BeforeBreadcrumb:      func(*sentry.Breadcrumb, *sentry.BreadcrumbHint) *sentry.Breadcrumb { return nil },
 			BeforeSendLog: func(event *sentry.Log) *sentry.Log {
@@ -145,14 +144,11 @@ func Init(ctx context.Context, service string, s settings.Settings) func(context
 	space, key := cfg.ArizeSpace, cfg.ArizeKey
 	if space != "" && key != "" {
 		endpoint := cfg.ArizeEndpoint
-		// Credentials must never be sent to an unencrypted collector.
 		if !strings.HasPrefix(endpoint, "https://") {
 			fmt.Fprintln(os.Stderr, "observability: Arize endpoint must use HTTPS")
 		} else {
 			arizeOptions := []otlptracehttp.Option{otlptracehttp.WithEndpointURL(endpoint), otlptracehttp.WithHeaders(map[string]string{"arize-space-id": space, "arize-api-key": key}), otlptracehttp.WithTimeout(2 * time.Second), otlptracehttp.WithRetry(otlptracehttp.RetryConfig{Enabled: false})}
 			certificateValid := true
-			// Trust an explicitly configured collector CA for Arize only. Global
-			// OTLP certificate options also change Sentry's independent exporter.
 			if path := cfg.ArizeCertificate; path != "" {
 				pool, poolErr := x509.SystemCertPool()
 				certificate, readErr := os.ReadFile(path)
@@ -227,9 +223,7 @@ func firstNonempty(values ...string) string {
 	return ""
 }
 
-// Flush makes a bounded best effort before a request-bound instance goes idle.
 func Flush(ctx context.Context) {
-	// Independent exports share wall time, never consume each other's deadline.
 	var work sync.WaitGroup
 	if tp := tracerProvider.Load(); tp != nil {
 		work.Add(1)
@@ -260,14 +254,10 @@ func Shutdown(stop func(context.Context) error) {
 
 type suppressErrorCaptureKey struct{}
 
-// SuppressErrorCapture leaves span status and logs intact when the caller
-// records the same failure as an exception at its own boundary.
 func SuppressErrorCapture(ctx context.Context) context.Context {
 	return context.WithValue(ctx, suppressErrorCaptureKey{}, true)
 }
 
-// RecordErrorCategory captures a caller stack and safe grouping category,
-// while never sending the original error text or request data.
 func RecordErrorCategory(ctx context.Context, category string, err error, attrs ...attribute.KeyValue) {
 	if err == nil {
 		return
@@ -304,7 +294,7 @@ func RecordErrorCategory(ctx context.Context, category string, err error, attrs 
 			if safe.Key == "nori.error.category" || safe.Key == "error.type" {
 				continue
 			}
-			event.Tags[string(safe.Key)] = safe.Value.Emit()
+			event.Tags[string(safe.Key)] = safe.Value.String()
 		}
 	}
 	event.User = sentry.User{ID: event.Tags["nori.user.id"]}
@@ -379,13 +369,11 @@ func scrubEvent(event *sentry.Event) *sentry.Event {
 	return event
 }
 
-// Fatal captures startup failures before exiting; log.Fatal skips deferred flushes.
 func Fatal(err error) {
 	RecordErrorCategory(context.Background(), "startup", err)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	Flush(ctx)
-	// A missing setting is named: the error holds a variable name and no value.
 	var missing *settings.MissingError
 	if errors.As(err, &missing) {
 		fmt.Fprintln(os.Stderr, "nori: startup stopped: "+missing.Error())
@@ -420,8 +408,6 @@ var diagnosticMu sync.Mutex
 var diagnosticCounts = map[string]int{}
 var diagnosticLast = map[string]time.Time{}
 
-// Local diagnostics cannot recurse into either telemetry exporter. Names are
-// static at call sites and counters include suppressed repetitions.
 func diagnostic(destination, reason string, count int) {
 	diagnosticMu.Lock()
 	defer diagnosticMu.Unlock()

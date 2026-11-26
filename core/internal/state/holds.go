@@ -2,8 +2,6 @@ package state
 
 import "time"
 
-// TaskHold is a conversation question waiting for one task's outcome. It does
-// not change the task's instructions, budget, or open worker question.
 type TaskHold struct {
 	ID             string    `json:"id" firestore:"id"`
 	TaskID         string    `json:"task_id" firestore:"task_id"`
@@ -50,8 +48,6 @@ func HoldTargets(turn ConversationTurn) map[string]map[string]bool {
 	return wanted
 }
 
-// AcknowledgeHolds marks the named holds on a task as answered by the turn, or failed when the turn errored or
-// published something other than the attempt's own reply. Holds that were answered before stay as they are.
 func AcknowledgeHolds(run Run, ids map[string]bool, turn ConversationTurn, text string) Run {
 	run.Holds = append([]TaskHold{}, run.Holds...)
 	for i := range run.Holds {

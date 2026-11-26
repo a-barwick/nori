@@ -1,7 +1,5 @@
 import SwiftUI
 
-/// User-selectable color appearance for Nori iOS.
-/// Defaults to `.system` and applies immediately across views, mascot, sheets, keyboard, and native glass chrome.
 public enum NoriAppearance: String, CaseIterable, Identifiable, Sendable {
     case system
     case light

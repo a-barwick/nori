@@ -20,42 +20,32 @@ const (
 )
 
 type OperationRecord struct {
-	ID          string `json:"id" firestore:"id"`
-	CallID      string `json:"call_id" firestore:"call_id"`
-	Name        string `json:"name" firestore:"name"`
-	EffectClass string `json:"effect_class" firestore:"effect_class"`
-	Outcome     string `json:"outcome" firestore:"outcome"`
-	ResultRef   string `json:"result_ref" firestore:"result_ref"`
-	Revision    int64  `json:"revision" firestore:"revision"`
-	Attempt     int    `json:"attempt" firestore:"attempt"`
-	// RecoveryUntil is the admitting activity's deadline for settling its receipt.
-	RecoveryUntil time.Time `json:"-" firestore:"recovery_until,omitempty"`
-	ArtifactIDs   []string  `json:"artifact_ids" firestore:"artifact_ids"`
-	Action        *Action   `json:"action,omitempty" firestore:"action,omitempty"`
-	// Cleared says why a failed or uncertain operation no longer blocks later ones. The outcome and result stay as saved.
-	Cleared string `json:"cleared,omitempty" firestore:"cleared,omitempty"`
-	// Tool is the registry definition the call was pinned to; its digest identifies the binding. Records made before
-	// pinning have none. Like the fields below, it is fixed once recorded.
-	Tool *DefinitionRef `json:"tool,omitempty" firestore:"tool,omitempty"`
-	// ConnectionID is the account the call used. AuthorityRef is the server-issued reference to the evaluated
-	// authority. ParentOperationID links a nested call to the operation that issued it.
-	ConnectionID      string `json:"connection_id,omitempty" firestore:"connection_id,omitempty"`
-	AuthorityRef      string `json:"-" firestore:"authority_ref,omitempty"`
-	ParentOperationID string `json:"parent_operation_id,omitempty" firestore:"parent_operation_id,omitempty"`
-	// ProviderRefs are the provider's identities for what the call read or changed. Later evidence may add to them.
-	ProviderRefs []ProviderRef `json:"provider_refs,omitempty" firestore:"provider_refs,omitempty"`
-	// CreatedAt is when the operation was first recorded. Nil on older records predating this field.
-	CreatedAt *time.Time `json:"created_at,omitempty" firestore:"created_at,omitempty"`
+	ID                string         `json:"id" firestore:"id"`
+	CallID            string         `json:"call_id" firestore:"call_id"`
+	Name              string         `json:"name" firestore:"name"`
+	EffectClass       string         `json:"effect_class" firestore:"effect_class"`
+	Outcome           string         `json:"outcome" firestore:"outcome"`
+	ResultRef         string         `json:"result_ref" firestore:"result_ref"`
+	Revision          int64          `json:"revision" firestore:"revision"`
+	Attempt           int            `json:"attempt" firestore:"attempt"`
+	RecoveryUntil     time.Time      `json:"-" firestore:"recovery_until,omitempty"`
+	ArtifactIDs       []string       `json:"artifact_ids" firestore:"artifact_ids"`
+	Action            *Action        `json:"action,omitempty" firestore:"action,omitempty"`
+	Cleared           string         `json:"cleared,omitempty" firestore:"cleared,omitempty"`
+	Tool              *DefinitionRef `json:"tool,omitempty" firestore:"tool,omitempty"`
+	ConnectionID      string         `json:"connection_id,omitempty" firestore:"connection_id,omitempty"`
+	AuthorityRef      string         `json:"-" firestore:"authority_ref,omitempty"`
+	ParentOperationID string         `json:"parent_operation_id,omitempty" firestore:"parent_operation_id,omitempty"`
+	ProviderRefs      []ProviderRef  `json:"provider_refs,omitempty" firestore:"provider_refs,omitempty"`
+	CreatedAt         *time.Time     `json:"created_at,omitempty" firestore:"created_at,omitempty"`
 }
 
-// DefinitionRef names an immutable registry definition.
 type DefinitionRef struct {
 	ID      string `json:"id" firestore:"id"`
 	Version string `json:"version" firestore:"version"`
 	Digest  string `json:"digest" firestore:"digest"`
 }
 
-// ProviderRef is a provider resource an operation touched, with the provider's revision when known.
 type ProviderRef struct {
 	ConnectionID     string `json:"connection_id" firestore:"connection_id"`
 	Kind             string `json:"kind" firestore:"kind"`
@@ -65,26 +55,16 @@ type ProviderRef struct {
 }
 
 const (
-	// ClearedDidNotRun is a command that never started.
 	ClearedDidNotRun = "did_not_run"
-	// ClearedReadOnly is a shell command the task declared would only read.
-	ClearedReadOnly = "read_only"
-	// ClearedAnswered is an operation named in a question the user answered.
-	ClearedAnswered = "answered"
-	// ClearedContained is a call that ran sealed in the sandbox (no network, its own namespaces and files), so its
-	// failure can't have changed anything outside it.
+	ClearedReadOnly  = "read_only"
+	ClearedAnswered  = "answered"
 	ClearedContained = "contained"
 )
 
-// Action is the requested write. Digest covers the tool, account and Spec.
 type Action struct {
-	Digest string            `json:"digest" firestore:"digest"`
-	Text   string            `json:"text" firestore:"text"`
-	Spec   map[string]string `json:"spec" firestore:"spec"`
-	// Intent marks a record saved with the whole prepared action before the first attempt: Precondition (the provider
-	// revision the action was approved against) and Keys (its provider idempotency keys). Recovery settles an
-	// interrupted attempt from this saved intent rather than from a fresh read of provider state, which would
-	// already show the attempt's own effect. Records without it predate this and recover from a fresh read.
+	Digest       string            `json:"digest" firestore:"digest"`
+	Text         string            `json:"text" firestore:"text"`
+	Spec         map[string]string `json:"spec" firestore:"spec"`
 	Intent       bool              `json:"intent,omitempty" firestore:"intent,omitempty"`
 	Precondition string            `json:"precondition,omitempty" firestore:"precondition,omitempty"`
 	Keys         map[string]string `json:"keys,omitempty" firestore:"keys,omitempty"`
@@ -169,8 +149,6 @@ func CheckEvidenceCount(count int64) error {
 	return nil
 }
 
-// CheckOperationCapacity and CheckCompletionCapacity enforce the per-task record caps. count is the number of records
-// already kept, so a task at the cap cannot add another.
 func CheckOperationCapacity(count int64) error {
 	if count >= MaxTaskOperations {
 		return errors.New("task exceeds 4096 operation records")
@@ -185,7 +163,6 @@ func CheckCompletionCapacity(count int64) error {
 	return nil
 }
 
-// ValidateOperation checks a write request for an operation record and returns the form to save.
 func ValidateOperation(runID string, op OperationRecord) (OperationRecord, error) {
 	if !ValidEvidenceID(runID) || !validOperation(op) {
 		return op, errors.New("invalid task operation record")
@@ -203,15 +180,11 @@ func ValidateOperation(runID string, op OperationRecord) (OperationRecord, error
 	return op, nil
 }
 
-// SavedOperation is an operation document as stored. EvidenceRecorded is false for a record that only proves the
-// operation was admitted.
 type SavedOperation struct {
 	Record           OperationRecord
 	EvidenceRecorded bool
 }
 
-// LateWriteEvent reports a provider answer saved after the task's terminal event.
-// The caller validates the transition and commits this event with the operation.
 func LateWriteEvent(run Run, saved *SavedOperation, op OperationRecord, now time.Time) (TaskEvent, bool) {
 	if run.Status == RunRunning || saved == nil || saved.Record.Outcome == op.Outcome ||
 		op.Action == nil || op.Attempt == 0 || op.ResultRef == "" {
@@ -239,13 +212,10 @@ func LateWriteEvent(run Run, saved *SavedOperation, op OperationRecord, now time
 }
 
 type OperationWrite struct {
-	Noop bool
-	// NewRecord is set when this is the first evidence for the operation, so it counts toward the task's cap.
+	Noop      bool
 	NewRecord bool
 }
 
-// PlanOperation decides whether op may be saved over the stored record, if any. Evidence is immutable once recorded,
-// except that an uncertain outcome can later resolve to confirmed or failed.
 func PlanOperation(saved *SavedOperation, op OperationRecord) (OperationWrite, error) {
 	if saved == nil {
 		return OperationWrite{NewRecord: true}, nil
@@ -299,7 +269,6 @@ func PlanOperation(saved *SavedOperation, op OperationRecord) (OperationWrite, e
 	return OperationWrite{}, nil
 }
 
-// prefixRefs reports whether next keeps every provider reference already recorded, in order.
 func prefixRefs(old, next []ProviderRef) bool {
 	if len(next) < len(old) {
 		return false
@@ -312,8 +281,6 @@ func prefixRefs(old, next []ProviderRef) bool {
 	return true
 }
 
-// outcomeMayFollow lists the only changes to a saved outcome. A write leaves attempted only for what the provider
-// shows, and nothing leaves a terminal outcome.
 func outcomeMayFollow(old, next string) bool {
 	switch old {
 	case "pending":
@@ -330,8 +297,6 @@ func outcomeMayFollow(old, next string) bool {
 	return false
 }
 
-// ReadOperation validates a stored operation for reading. A record that only proves admission shows an attempt, never
-// a completed effect.
 func ReadOperation(op OperationRecord, evidenceRecorded bool, documentID string) (OperationRecord, error) {
 	if !evidenceRecorded {
 		op.EffectClass, op.Outcome = "unknown", "uncertain"
@@ -343,7 +308,6 @@ func ReadOperation(op OperationRecord, evidenceRecorded bool, documentID string)
 	return op, nil
 }
 
-// ValidateCompletionCheck checks a completion check write and returns the form to save.
 func ValidateCompletionCheck(runID string, check CompletionCheck) (CompletionCheck, error) {
 	if !ValidEvidenceID(runID) || !ValidEvidenceID(check.ID) || check.Revision < 0 || check.Position < 0 ||
 		!boundedEvidenceText(check.Proposal.Evidence) ||
@@ -366,7 +330,6 @@ func normalizeCompletionCheck(check CompletionCheck) CompletionCheck {
 	return check
 }
 
-// CheckCompletionIdentity ensures a retried save does not replace a different result.
 func CheckCompletionIdentity(saved, check CompletionCheck) error {
 	if reflect.DeepEqual(normalizeCompletionCheck(saved), check) {
 		return nil
@@ -423,17 +386,13 @@ func (s *SourceInputs) Inputs() []ConversationInput {
 	return inputs
 }
 
-// CitedResult is a bounded copy of a saved tool result that a task's answer cites.
 type CitedResult struct {
 	Operation string `json:"operation"`
 	Tool      string `json:"tool"`
-	// Summary is the result's own one-line summary (or its error), kept whole when Result is shortened, so a report
-	// can still be checked against what the tool said it did.
-	Summary string `json:"summary,omitempty"`
-	Result  string `json:"result"`
+	Summary   string `json:"summary,omitempty"`
+	Result    string `json:"result"`
 }
 
-// CitedSummary returns a saved tool result's summary, or its error, bounded to 600 bytes.
 func CitedSummary(result []byte) string {
 	var fields struct {
 		Summary string `json:"summary"`
@@ -457,7 +416,6 @@ func CitedSummary(result []byte) string {
 	return text
 }
 
-// TaskOutcome is what a task's last completion proposal claims and cites.
 type TaskOutcome struct {
 	Unmet     []string      `json:"unmet,omitempty"`
 	Evidence  []CitedResult `json:"evidence,omitempty"`
@@ -469,12 +427,9 @@ const (
 	maxOutcomeUnmet         = 32
 )
 
-// LastProposal returns the completion check that describes how the task ended: the latest by revision, position and
-// then ID.
 func LastProposal(checks []CompletionCheck) (last CompletionCheck, ok bool) {
 	found := false
 	for _, check := range checks {
-		// Check IDs end in an increasing number, so a longer ID is a later check.
 		if !found || check.Revision > last.Revision || check.Revision == last.Revision &&
 			(check.Position > last.Position || check.Position == last.Position &&
 				(len(check.ID) > len(last.ID) || len(check.ID) == len(last.ID) && check.ID > last.ID)) {
@@ -495,8 +450,6 @@ func NewTaskOutcome(proposal CompletionCheck) TaskOutcome {
 	return outcome
 }
 
-// CitedOperations lists, in the order given, the operations with a saved result that the proposal cites by operation,
-// result or artifact ID.
 func CitedOperations(proposal CompletionCheck, ops []OperationRecord) []OperationRecord {
 	cited := map[string]bool{}
 	for _, ref := range proposal.Proposal.Evidence {
@@ -522,7 +475,6 @@ func (o *TaskOutcome) FitEvidence() {
 	share := maxOutcomeEvidenceBytes / len(o.Evidence)
 	for i := range o.Evidence {
 		if text := o.Evidence[i].Result; len(text) > share {
-			// Page text matters at its start and job output at its end, so keep both.
 			o.Evidence[i].Result = strings.ToValidUTF8(text[:share/2], "") + "…" + strings.ToValidUTF8(text[len(text)-share/2:], "")
 			o.Shortened = true
 		}

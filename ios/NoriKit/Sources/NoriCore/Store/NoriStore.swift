@@ -1,7 +1,6 @@
 import Foundation
 import Observation
 
-// MARK: - Navigation & Status Types
 
 public enum NoriTab: String, Sendable, Hashable, CaseIterable, Identifiable {
     case chat
@@ -94,24 +93,28 @@ public struct StatusLine: Sendable, Hashable {
     }
 }
 
-// MARK: - NoriStore
 
 @Observable
 @MainActor
 public final class NoriStore {
-    // MARK: Auth & Connection State
     public var authState: AuthState = .signedOut
     public var authError: String?
     public var connectionState: ConnectionState = .offline
     public var capabilities: Capabilities?
     public var assistantSummary: AssistantSummary?
     public var lastPing: HealthCheckResult?
-    public var modelSelection: ModelSelection = NoriStore.loadStoredModelSelection()
+    public private(set) var modelSelection = ModelSelection()
 
     private static let modelSelectionStorageKey = "nori.diagnostics.modelSelection.v1"
 
-    private static func loadStoredModelSelection() -> ModelSelection {
-        guard let data = UserDefaults.standard.data(forKey: modelSelectionStorageKey),
+    private var modelSelectionKey: String? {
+        guard case .signedIn(let email) = authState else { return nil }
+        return Self.modelSelectionStorageKey + "." + email.lowercased()
+    }
+
+    private func loadStoredModelSelection() -> ModelSelection {
+        guard let key = modelSelectionKey,
+              let data = UserDefaults.standard.data(forKey: key),
               let decoded = try? JSONDecoder().decode(ModelSelection.self, from: data)
         else {
             return ModelSelection()
@@ -120,43 +123,19 @@ public final class NoriStore {
     }
 
     public func setModelSelection(_ next: ModelSelection) {
+        guard let key = modelSelectionKey else { return }
         modelSelection = next
         if next.isEmpty {
-            UserDefaults.standard.removeObject(forKey: Self.modelSelectionStorageKey)
+            UserDefaults.standard.removeObject(forKey: key)
         } else if let encoded = try? JSONEncoder().encode(next) {
-            UserDefaults.standard.set(encoded, forKey: Self.modelSelectionStorageKey)
+            UserDefaults.standard.set(encoded, forKey: key)
         }
     }
 
-    /// Returns the active model selection pruned against the server's currently advertised catalog.
     public var effectiveModelSelection: ModelSelection {
-        guard let catalog = capabilities?.modelProfiles else { return ModelSelection() }
-        guard !catalog.profiles.isEmpty else { return ModelSelection() }
-        var out = ModelSelection()
-        let chatTargetID = modelSelection.chatProfileID ?? catalog.defaultChatProfileID
-        let chatProfile = catalog.profiles.first { $0.lanes.contains("chat") && $0.id == chatTargetID }
-        if let cid = modelSelection.chatProfileID,
-           catalog.profiles.contains(where: { $0.lanes.contains("chat") && $0.id == cid }) {
-            out.chatProfileID = cid
-        }
-        if let cr = modelSelection.chatReasoning,
-           chatProfile?.supportedReasoning?.contains(cr) == true {
-            out.chatReasoning = cr
-        }
-        let taskTargetID = modelSelection.taskProfileID ?? catalog.defaultTaskProfileID
-        let taskProfile = catalog.profiles.first { $0.lanes.contains("task") && $0.id == taskTargetID }
-        if let tid = modelSelection.taskProfileID,
-           catalog.profiles.contains(where: { $0.lanes.contains("task") && $0.id == tid }) {
-            out.taskProfileID = tid
-        }
-        if let tr = modelSelection.taskReasoning,
-           taskProfile?.supportedReasoning?.contains(tr) == true {
-            out.taskReasoning = tr
-        }
-        return out
+        modelSelection.normalized(using: capabilities?.modelProfiles)
     }
 
-    // MARK: Domain State
     public var session: Session
     public var workItems: [WorkItem]
     public var workDetails: [String: WorkDetail]
@@ -174,7 +153,6 @@ public final class NoriStore {
     public var permissions: [PermissionRule]
     public var preferences: Preferences
 
-    // MARK: UI Coordination State
     public var isLoading: Bool = false
     public var isThinking: Bool = false
     public var streamingAssistantText: String?
@@ -182,13 +160,14 @@ public final class NoriStore {
     public var isComposerFocused: Bool = false
     public var pendingComposerDraft: String?
     public var lastError: String?
+    public var memoryRefreshError: String?
     public var toastMessage: String?
     public var pendingDeepLink: NoriDeepLink?
 
-    // MARK: Internals
     private let authProvider: AuthTokenProvider
     private let liveTransport: LiveNoriTransport?
-    private var transport: any NoriTransport
+    var transport: any NoriTransport
+    var sessionGeneration: UInt64 = 0
     private var eventTask: Task<Void, Never>?
     private var toastTask: Task<Void, Never>?
     @ObservationIgnored private var submitSpans: [String: (span: any NoriTelemetrySpan, timeout: Task<Void, Never>)] = [:]
@@ -228,7 +207,6 @@ public final class NoriStore {
         self.preferences = Preferences()
     }
 
-    // MARK: - Derived Properties
 
     public var messages: [Message] {
         session.messages
@@ -304,15 +282,18 @@ public final class NoriStore {
         min(1.0, Double(coreMemoryUsedBytes) / Double(coreMemoryBudgetBytes))
     }
 
-    // MARK: - Lifecycle, Auth & Snapshot Sync
 
     public func bootstrapIfNeeded() async {
         guard !hasBootstrapped else { return }
         hasBootstrapped = true
-        if let saved = await authProvider.loadSession() {
+        let generation = sessionGeneration
+        let savedSession = await authProvider.loadSession()
+        guard generation == sessionGeneration else { return }
+        if let saved = savedSession {
             authState = .signedIn(email: saved.email)
+            modelSelection = loadStoredModelSelection()
             await refreshAll()
-            if authState.isSignedIn {
+            if generation == sessionGeneration, authState.isSignedIn {
                 startEventStream()
             }
         } else {
@@ -322,30 +303,46 @@ public final class NoriStore {
     }
 
     public func completeGoogleSignIn(callbackURL: URL, pkce: GoogleOAuthPKCE) async {
+        sessionGeneration &+= 1
+        let generation = sessionGeneration
+        clearUserState()
         authError = nil
         authState = .signingIn
+        await clearTransportIdentity()
+        guard generation == sessionGeneration else { return }
         do {
             let code = try pkce.extractAuthorizationCode(from: callbackURL)
             let session = try await pkce.exchangeCode(code)
+            guard generation == sessionGeneration else { return }
             await authProvider.saveSession(session)
+            guard generation == sessionGeneration else { return }
             await clearTransportIdentity()
+            guard generation == sessionGeneration else { return }
             let snapshot = try await transport.fetchFullSnapshot()
+            guard generation == sessionGeneration else { return }
             applySnapshot(snapshot)
             authState = .signedIn(email: session.email)
+            modelSelection = loadStoredModelSelection()
             connectionState = .connected
             lastError = nil
             NoriLogger.auth.info("auth.signed_in", breadcrumb: true)
             startEventStream()
         } catch let apiErr as NoriAPIError where apiErr.statusCode == 401 || apiErr.statusCode == 403 {
+            guard generation == sessionGeneration else { return }
             await authProvider.clearSession()
+            guard generation == sessionGeneration else { return }
             await clearTransportIdentity()
+            guard generation == sessionGeneration else { return }
             authState = .signedOut
             connectionState = .offline
             authError = "This Google account is not authorized to access Nori."
             NoriLogger.auth.warning("auth.unauthorized", attributes: ["http.status_code": String(apiErr.statusCode)])
         } catch {
+            guard generation == sessionGeneration else { return }
             await authProvider.clearSession()
+            guard generation == sessionGeneration else { return }
             await clearTransportIdentity()
+            guard generation == sessionGeneration else { return }
             authState = .signedOut
             connectionState = .offline
             authError = error.localizedDescription
@@ -356,14 +353,21 @@ public final class NoriStore {
     }
 
     public func signOut() async {
+        sessionGeneration &+= 1
+        clearUserState()
+        NoriLogger.auth.info("auth.signed_out", breadcrumb: true)
+        await clearTransportIdentity()
+        await authProvider.clearSession()
+    }
+
+    private func clearUserState() {
         stopEventStream()
+        toastTask?.cancel()
         for turnID in Array(submitSpans.keys) {
             finishSubmitSpan(turnID: turnID, outcome: "cancelled", status: .cancelled)
         }
         reportedFailedTaskIDs.removeAll()
-        NoriLogger.auth.info("auth.signed_out", breadcrumb: true)
-        await authProvider.clearSession()
-        await clearTransportIdentity()
+        NoriTelemetryRuntime.shared.setUser(id: nil)
         authState = .signedOut
         authError = nil
         connectionState = .offline
@@ -387,6 +391,16 @@ public final class NoriStore {
         permissions = []
         preferences = Preferences()
         isThinking = false
+        isLoading = false
+        isComposerFocused = false
+        pendingComposerDraft = nil
+        pendingDeepLink = nil
+        lastError = nil
+        memoryRefreshError = nil
+        toastMessage = nil
+        streamingAssistantText = nil
+        streamingTurnID = nil
+        modelSelection = ModelSelection()
     }
 
     private func clearTransportIdentity() async {
@@ -397,9 +411,11 @@ public final class NoriStore {
         }
     }
 
-    private func handleAuthFailureIfNeeded(_ error: Error) async -> Bool {
+    func handleAuthFailureIfNeeded(_ error: Error) async -> Bool {
         if let apiErr = error as? NoriAPIError, apiErr.isAuthError {
+            let nextGeneration = sessionGeneration &+ 1
             await signOut()
+            guard nextGeneration == sessionGeneration else { return true }
             authError = "Your session expired or your account is not authorized. Please sign in again."
             return true
         }
@@ -422,20 +438,27 @@ public final class NoriStore {
     }
 
     public func refreshSummary() async {
+        let generation = sessionGeneration
         do {
-            assistantSummary = try await transport.fetchAssistantSummary()
+            let latest = try await transport.fetchAssistantSummary()
+            guard generation == sessionGeneration else { return }
+            assistantSummary = latest
         } catch {
+            guard generation == sessionGeneration else { return }
             _ = await handleAuthFailureIfNeeded(error)
         }
     }
 
     public func refreshSession() async {
+        let generation = sessionGeneration
         do {
             let freshSession = try await transport.fetchSession(before: nil)
+            guard generation == sessionGeneration else { return }
             self.session = freshSession
             self.isThinking = freshSession.conversation?.processing == true
             finishObservedReplies(in: freshSession.messages)
         } catch {
+            guard generation == sessionGeneration else { return }
             if !(await handleAuthFailureIfNeeded(error)) {
                 lastError = error.localizedDescription
             }
@@ -443,6 +466,7 @@ public final class NoriStore {
     }
 
     public func refreshWorkAndInteractions() async {
+        let generation = sessionGeneration
         let activeTransport = transport
         async let workResult: Result<[WorkItem], Error> = {
             do { return .success(try await activeTransport.fetchWorkItems(bucket: nil)) }
@@ -454,6 +478,7 @@ public final class NoriStore {
         }()
 
         let (workRes, interRes) = await (workResult, interactionsResult)
+        guard generation == sessionGeneration else { return }
         if case .failure(let err) = workRes, await handleAuthFailureIfNeeded(err) { return }
         if case .failure(let err) = interRes, await handleAuthFailureIfNeeded(err) { return }
 
@@ -471,6 +496,7 @@ public final class NoriStore {
     }
 
     public func refreshApps() async {
+        let generation = sessionGeneration
         let activeTransport = transport
         async let serversResult: Result<[MCPServer], Error> = {
             do { return .success(try await activeTransport.fetchMCPServers()) }
@@ -482,6 +508,7 @@ public final class NoriStore {
         }()
 
         let (serversRes, connsRes) = await (serversResult, connectionsResult)
+        guard generation == sessionGeneration else { return }
         if case .failure(let err) = serversRes, await handleAuthFailureIfNeeded(err) { return }
         if case .failure(let err) = connsRes, await handleAuthFailureIfNeeded(err) { return }
 
@@ -506,6 +533,7 @@ public final class NoriStore {
                 }
                 return collected
             }
+            guard generation == sessionGeneration else { return }
             self.mcpTools = toolsByServer
         }
         if case .success(let conns) = connsRes {
@@ -517,9 +545,13 @@ public final class NoriStore {
     }
 
     public func refreshLibrary() async {
+        let generation = sessionGeneration
         do {
-            libraryItems = try await transport.fetchLibrary()
+            let latest = try await transport.fetchLibrary()
+            guard generation == sessionGeneration else { return }
+            libraryItems = latest
         } catch {
+            guard generation == sessionGeneration else { return }
             if !(await handleAuthFailureIfNeeded(error)) {
                 lastError = error.localizedDescription
             }
@@ -527,6 +559,7 @@ public final class NoriStore {
     }
 
     public func refreshRoutinesAndGoals() async {
+        let generation = sessionGeneration
         let activeTransport = transport
         async let autosResult: Result<[Automation], Error> = {
             do { return .success(try await activeTransport.fetchAutomations()) }
@@ -538,6 +571,7 @@ public final class NoriStore {
         }()
 
         let (autosRes, goalsRes) = await (autosResult, goalsResult)
+        guard generation == sessionGeneration else { return }
         if case .failure(let err) = autosRes, await handleAuthFailureIfNeeded(err) { return }
         if case .failure(let err) = goalsRes, await handleAuthFailureIfNeeded(err) { return }
 
@@ -550,6 +584,7 @@ public final class NoriStore {
     }
 
     public func refreshPermissionsAndPreferences() async {
+        let generation = sessionGeneration
         let activeTransport = transport
         async let permsResult: Result<[PermissionRule], Error> = {
             do { return .success(try await activeTransport.fetchPermissions()) }
@@ -561,6 +596,7 @@ public final class NoriStore {
         }()
 
         let (permsRes, prefsRes) = await (permsResult, prefsResult)
+        guard generation == sessionGeneration else { return }
         if case .failure(let err) = permsRes, await handleAuthFailureIfNeeded(err) { return }
         if case .failure(let err) = prefsRes, await handleAuthFailureIfNeeded(err) { return }
 
@@ -572,36 +608,23 @@ public final class NoriStore {
         }
     }
 
-    public func refreshMemory() async {
-        let activeTransport = transport
-        async let factsTask = try? activeTransport.fetchCoreMemories()
-        async let logsTask = try? activeTransport.fetchMemoryLogs()
-        async let workingTask = try? activeTransport.fetchWorkingMemory()
-
-        if let facts = await factsTask {
-            self.coreMemories = facts
-        }
-        if let logs = await logsTask {
-            self.memoryLogs = logs
-        }
-        if let working = await workingTask {
-            self.workingMemory = working
-        }
-    }
-
     public func refreshAll() async {
+        let generation = sessionGeneration
         isLoading = true
-        defer { isLoading = false }
+        defer { if generation == sessionGeneration { isLoading = false } }
         connectionState = .connecting
         do {
             let snapshot = try await transport.fetchFullSnapshot()
+            guard generation == sessionGeneration else { return }
             applySnapshot(snapshot)
             connectionState = .connected
             lastError = nil
         } catch let apiErr as NoriAPIError where apiErr.statusCode == 401 || apiErr.statusCode == 403 {
+            guard generation == sessionGeneration else { return }
             await signOut()
             authError = "Your session expired or your account is not authorized. Please sign in again."
         } catch {
+            guard generation == sessionGeneration else { return }
             lastError = error.localizedDescription
             connectionState = .reconnecting
         }
@@ -713,6 +736,7 @@ public final class NoriStore {
     }
 
     private func handleStreamEvent(_ event: NoriStreamEvent) async {
+        let generation = sessionGeneration
         if case .connectionState(let state) = event {
             connectionState = state
             return
@@ -721,6 +745,7 @@ public final class NoriStore {
         if case .reset(let pos) = event {
             session.position = pos
             await refreshAll()
+            guard generation == sessionGeneration else { return }
             if session.position == nil {
                 session.position = pos
             }
@@ -764,13 +789,12 @@ public final class NoriStore {
                 session.runs.insert(run, at: 0)
             }
             await refreshWorkAndInteractions()
+            guard generation == sessionGeneration else { return }
             if !Task.isCancelled, run.status == .failed {
                 reportFailedTaskIfNeeded(taskID: run.id)
             }
         case .result:
-            if let items = try? await transport.fetchLibrary() {
-                self.libraryItems = items
-            }
+            await refreshLibrary()
         case .readPosition(_, let pos):
             session.readPosition = pos
         case .conversation(_, let presence), .presence(let presence):
@@ -792,10 +816,10 @@ public final class NoriStore {
         }
     }
 
-    // MARK: - Chat & Uploads
 
     @discardableResult
     public func sendMessage(_ text: String, attachments: [Attachment] = []) async -> Bool {
+        let generation = sessionGeneration
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !attachments.isEmpty else { return false }
 
@@ -836,15 +860,29 @@ public final class NoriStore {
 
         do {
             let activeSelection = effectiveModelSelection
+            let attachmentIDs = attachments.map(\.id)
             var updated = try await NoriTelemetryRuntime.$parentSpan.withValue(submitSpan) {
-                try await transport.sendTurn(
-                    id: clientID,
-                    message: trimmed,
-                    attachmentIDs: attachments.map(\.id),
-                    modelSelection: activeSelection.isEmpty ? nil : activeSelection
-                )
+                do {
+                    return try await transport.sendTurn(
+                        id: clientID,
+                        message: trimmed,
+                        attachmentIDs: attachmentIDs,
+                        modelSelection: activeSelection.isEmpty ? nil : activeSelection
+                    )
+                } catch let error as NoriAPIError where !activeSelection.isEmpty && error.code == "model_selection_unavailable" {
+                    guard generation == sessionGeneration else { throw CancellationError() }
+                    let latest = try? await transport.fetchCapabilities()
+                    guard generation == sessionGeneration else { throw CancellationError() }
+                    capabilities = latest
+                    return try await transport.sendTurn(
+                        id: clientID,
+                        message: trimmed,
+                        attachmentIDs: attachmentIDs,
+                        modelSelection: nil
+                    )
+                }
             }
-            // Keep the confirmed user message visible while the core worker processes the turn.
+            guard generation == sessionGeneration else { return false }
             if !updated.messages.contains(where: { $0.id == expectedUserMessageID || $0.turnID == clientID && $0.role == .user }) {
                 var savedBubble = optimistic
                 savedBubble.receipt = .saved
@@ -855,6 +893,7 @@ public final class NoriStore {
             finishObservedReplies(in: updated.messages)
             return true
         } catch {
+            guard generation == sessionGeneration else { return false }
             session.messages.removeAll { $0.id == expectedUserMessageID }
             isThinking = false
             lastError = error.localizedDescription
@@ -873,6 +912,7 @@ public final class NoriStore {
 
     @discardableResult
     public func retryMessage(_ message: Message) async -> Bool {
+        let generation = sessionGeneration
         isThinking = true
         lastError = nil
         do {
@@ -880,10 +920,12 @@ public final class NoriStore {
                 turnID: message.turnID,
                 messageID: message.id
             )
+            guard generation == sessionGeneration else { return false }
             self.session = updated
             isThinking = updated.conversation?.processing == true || updated.conversation?.pending == true
             return true
         } catch {
+            guard generation == sessionGeneration else { return false }
             isThinking = false
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
@@ -892,24 +934,30 @@ public final class NoriStore {
     }
 
     public func uploadAttachment(data: Data, filename: String, mediaType: String) async throws -> Attachment {
+        let generation = sessionGeneration
         let uploadID = UUID().uuidString.lowercased()
-        return try await transport.uploadFile(id: uploadID, filename: filename, mediaType: mediaType, data: data)
+        let attachment = try await transport.uploadFile(id: uploadID, filename: filename, mediaType: mediaType, data: data)
+        guard generation == sessionGeneration else { throw CancellationError() }
+        return attachment
     }
 
-    // MARK: - Work & Interactions
 
     public func loadWorkDetail(taskID: String) async -> WorkDetail? {
+        let generation = sessionGeneration
         do {
             let detail = try await transport.fetchWorkDetail(taskID: taskID)
+            guard generation == sessionGeneration else { return nil }
             workDetails[taskID] = detail
             return detail
         } catch {
+            guard generation == sessionGeneration else { return nil }
             lastError = error.localizedDescription
             return workDetails[taskID]
         }
     }
 
     public func resolveInteraction(_ interaction: Interaction, answer: InteractionAnswer) async {
+        let generation = sessionGeneration
         let requestID = UUID().uuidString.lowercased()
         do {
             let receipt = try await transport.respondToInteraction(
@@ -918,10 +966,10 @@ public final class NoriStore {
                 answer: answer,
                 requestID: requestID
             )
+            guard generation == sessionGeneration else { return }
             if let idx = interactions.firstIndex(where: { $0.id == interaction.id }) {
                 interactions[idx] = receipt.resource
             }
-            // Targeted refresh (avoid 14+ request fetchFullSnapshot() fan-out).
             async let workAndInteractionsTask: Void = refreshWorkAndInteractions()
             async let summaryTask: Void = refreshSummary()
             let shouldRefreshPermissions: Bool
@@ -936,9 +984,9 @@ public final class NoriStore {
                 : nil
 
             _ = await (workAndInteractionsTask, summaryTask)
-            if let freshPermissions = await permissionsTask {
-                self.permissions = freshPermissions
-            }
+            let freshPermissions = await permissionsTask
+            guard generation == sessionGeneration else { return }
+            if let freshPermissions { self.permissions = freshPermissions }
 
             switch answer {
             case .approve(_, let rememberRule):
@@ -952,6 +1000,7 @@ public final class NoriStore {
             case .chooseAccount: showToast("Account selected")
             }
         } catch {
+            guard generation == sessionGeneration else { return }
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
         }
@@ -977,55 +1026,71 @@ public final class NoriStore {
     }
 
     public func steerTask(taskID: String, instruction: String) async {
+        let generation = sessionGeneration
         let trimmed = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         do {
             let cmd = TaskCommand(id: UUID().uuidString.lowercased(), runID: taskID, kind: .steer, text: trimmed)
             _ = try await transport.sendTaskCommand(cmd)
-            if let detail = try? await transport.fetchWorkDetail(taskID: taskID) {
+            guard generation == sessionGeneration else { return }
+            let detail = try? await transport.fetchWorkDetail(taskID: taskID)
+            guard generation == sessionGeneration else { return }
+            if let detail {
                 workDetails[taskID] = detail
             }
-            if let items = try? await transport.fetchWorkItems(bucket: nil) {
+            let items = try? await transport.fetchWorkItems(bucket: nil)
+            guard generation == sessionGeneration else { return }
+            if let items {
                 workItems = items
             }
             showToast("Steered task")
         } catch {
+            guard generation == sessionGeneration else { return }
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
         }
     }
 
     public func stopTask(taskID: String) async {
+        let generation = sessionGeneration
         do {
             let receipt = try await transport.stopWork(taskID: taskID, requestID: UUID().uuidString.lowercased())
+            guard generation == sessionGeneration else { return }
             if let idx = workItems.firstIndex(where: { $0.taskID == taskID }) {
                 workItems[idx] = receipt.resource
             }
-            if let detail = try? await transport.fetchWorkDetail(taskID: taskID) {
+            let detail = try? await transport.fetchWorkDetail(taskID: taskID)
+            guard generation == sessionGeneration else { return }
+            if let detail {
                 workDetails[taskID] = detail
             }
             showToast("Task stopped")
         } catch {
+            guard generation == sessionGeneration else { return }
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
         }
     }
 
     public func continueTask(taskID: String, budgetUSD: Double = 2.00) async {
+        let generation = sessionGeneration
         do {
             let receipt = try await transport.continueWork(taskID: taskID, budgetUSD: budgetUSD, requestID: UUID().uuidString.lowercased())
+            guard generation == sessionGeneration else { return }
             workItems.insert(receipt.resource, at: 0)
-            if let detail = try? await transport.fetchWorkDetail(taskID: receipt.resource.taskID) {
+            let detail = try? await transport.fetchWorkDetail(taskID: receipt.resource.taskID)
+            guard generation == sessionGeneration else { return }
+            if let detail {
                 workDetails[receipt.resource.taskID] = detail
             }
             showToast("Continuing with $\(String(format: "%.2f", budgetUSD)) budget")
         } catch {
+            guard generation == sessionGeneration else { return }
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
         }
     }
 
-    // MARK: - Apps: MCP & Connections
 
     public func addMCPServer(
         name: String,
@@ -1033,6 +1098,7 @@ public final class NoriStore {
         auth: MCPAuthKind = .oauth,
         defaultExposure: MCPToolExposure = .discoverable
     ) async {
+        let generation = sessionGeneration
         let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanEndpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanName.isEmpty, !cleanEndpoint.isEmpty else { return }
@@ -1046,18 +1112,23 @@ public final class NoriStore {
                 exposure: MCPExposureConfig(default: defaultExposure)
             )
             let receipt = try await transport.createMCPServer(input: input, requestID: UUID().uuidString.lowercased())
+            guard generation == sessionGeneration else { return }
             mcpServers.append(receipt.resource)
-            if let tools = try? await transport.fetchMCPTools(serverID: receipt.resource.id) {
+            let tools = try? await transport.fetchMCPTools(serverID: receipt.resource.id)
+            guard generation == sessionGeneration else { return }
+            if let tools {
                 mcpTools[receipt.resource.id] = tools
             }
             showToast("Added \(cleanName)")
         } catch {
+            guard generation == sessionGeneration else { return }
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
         }
     }
 
     public func setToolExposure(serverID: String, toolName: String, exposure: MCPToolExposure) async {
+        let generation = sessionGeneration
         guard let server = mcpServers.first(where: { $0.id == serverID }) else { return }
         do {
             let receipt = try await transport.setMCPToolExposure(
@@ -1067,20 +1138,25 @@ public final class NoriStore {
                 exposure: exposure,
                 requestID: UUID().uuidString.lowercased()
             )
+            guard generation == sessionGeneration else { return }
             if let idx = mcpServers.firstIndex(where: { $0.id == serverID }) {
                 mcpServers[idx] = receipt.resource
             }
-            if let tools = try? await transport.fetchMCPTools(serverID: serverID) {
+            let tools = try? await transport.fetchMCPTools(serverID: serverID)
+            guard generation == sessionGeneration else { return }
+            if let tools {
                 mcpTools[serverID] = tools
             }
             showToast("Tool set to \(exposure.displayLabel)")
         } catch {
+            guard generation == sessionGeneration else { return }
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
         }
     }
 
     public func reconnectMCPServer(serverID: String) async {
+        let generation = sessionGeneration
         guard let server = mcpServers.first(where: { $0.id == serverID }) else { return }
         do {
             let receipt = try await transport.performMCPAction(
@@ -1089,14 +1165,18 @@ public final class NoriStore {
                 action: "reconnect",
                 requestID: UUID().uuidString.lowercased()
             )
+            guard generation == sessionGeneration else { return }
             if let idx = mcpServers.firstIndex(where: { $0.id == serverID }) {
                 mcpServers[idx] = receipt.resource
             }
-            if let tools = try? await transport.fetchMCPTools(serverID: serverID) {
+            let tools = try? await transport.fetchMCPTools(serverID: serverID)
+            guard generation == sessionGeneration else { return }
+            if let tools {
                 mcpTools[serverID] = tools
             }
             showToast("Reconnected \(server.name)")
         } catch {
+            guard generation == sessionGeneration else { return }
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
         }
@@ -1104,6 +1184,7 @@ public final class NoriStore {
 
     @discardableResult
     public func startMCPOAuth(serverID: String) async -> AuthAttempt? {
+        let generation = sessionGeneration
         guard let server = mcpServers.first(where: { $0.id == serverID }) else { return nil }
         do {
             let receipt = try await transport.performMCPAction(
@@ -1113,10 +1194,13 @@ public final class NoriStore {
                 returnTo: NoriConfig.oauthCallbackURL,
                 requestID: UUID().uuidString.lowercased()
             )
+            guard generation == sessionGeneration else { return nil }
             if let idx = mcpServers.firstIndex(where: { $0.id == serverID }) {
                 mcpServers[idx] = receipt.resource
             }
-            if let tools = try? await transport.fetchMCPTools(serverID: serverID) {
+            let tools = try? await transport.fetchMCPTools(serverID: serverID)
+            guard generation == sessionGeneration else { return nil }
+            if let tools {
                 mcpTools[serverID] = tools
             }
             if receipt.auth == nil {
@@ -1124,6 +1208,7 @@ public final class NoriStore {
             }
             return receipt.auth
         } catch {
+            guard generation == sessionGeneration else { return nil }
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
             return nil
@@ -1132,11 +1217,13 @@ public final class NoriStore {
 
     @discardableResult
     public func completeMCPOAuth(serverID: String, callbackURL: URL? = nil) async -> AuthAttempt? {
+        let generation = sessionGeneration
         if callbackURL != nil {
             async let appsTask: Void = refreshApps()
             async let workTask: Void = refreshWorkAndInteractions()
             async let summaryTask: Void = refreshSummary()
             _ = await (appsTask, workTask, summaryTask)
+            guard generation == sessionGeneration else { return nil }
             if let server = mcpServers.first(where: { $0.id == serverID }),
                server.observed.status == .connected {
                 showToast("Signed in to \(server.name)")
@@ -1148,6 +1235,7 @@ public final class NoriStore {
 
     @discardableResult
     public func saveMCPCredential(serverID: String, secret: String) async -> Bool {
+        let generation = sessionGeneration
         let trimmed = secret.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               let server = mcpServers.first(where: { $0.id == serverID }) else {
@@ -1160,15 +1248,19 @@ public final class NoriStore {
                 secret: trimmed,
                 requestID: UUID().uuidString.lowercased()
             )
+            guard generation == sessionGeneration else { return false }
             if let idx = mcpServers.firstIndex(where: { $0.id == serverID }) {
                 mcpServers[idx] = receipt.resource
             }
-            if let tools = try? await transport.fetchMCPTools(serverID: serverID) {
+            let tools = try? await transport.fetchMCPTools(serverID: serverID)
+            guard generation == sessionGeneration else { return false }
+            if let tools {
                 mcpTools[serverID] = tools
             }
             showToast("Saved credential for \(server.name)")
             return true
         } catch {
+            guard generation == sessionGeneration else { return false }
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
             return false
@@ -1177,6 +1269,7 @@ public final class NoriStore {
 
     @discardableResult
     public func connectConnection(connectionID: String) async -> AuthAttempt? {
+        let generation = sessionGeneration
         guard let conn = connections.first(where: { $0.id == connectionID }) else { return nil }
         do {
             let receipt = try await transport.performConnectionAction(
@@ -1186,6 +1279,7 @@ public final class NoriStore {
                 returnTo: NoriConfig.oauthCallbackURL,
                 requestID: UUID().uuidString.lowercased()
             )
+            guard generation == sessionGeneration else { return nil }
             if let idx = connections.firstIndex(where: { $0.id == connectionID }) {
                 connections[idx] = receipt.resource
             }
@@ -1194,17 +1288,19 @@ public final class NoriStore {
             }
             return receipt.auth
         } catch {
+            guard generation == sessionGeneration else { return nil }
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
             return nil
         }
     }
 
-    // MARK: - Library & Search
 
     public func loadLibraryItem(id: String) async -> LibraryItem? {
+        let generation = sessionGeneration
         do {
             let item = try await transport.fetchLibraryItem(id: id)
+            guard generation == sessionGeneration else { return nil }
             if let idx = libraryItems.firstIndex(where: { $0.id == item.id }) {
                 var merged = item
                 if merged.bodyText == nil {
@@ -1217,13 +1313,16 @@ public final class NoriStore {
                 return item
             }
         } catch {
+            guard generation == sessionGeneration else { return nil }
             lastError = error.localizedDescription
             return libraryItems.first(where: { $0.id == id })
         }
     }
 
     public func loadLibraryItemFile(id: String, format: String? = nil) async throws -> LibraryFilePayload {
+        let generation = sessionGeneration
         let payload = try await transport.fetchLibraryItemFile(id: id, format: format)
+        guard generation == sessionGeneration else { throw CancellationError() }
         if payload.mediaType.lowercased().hasPrefix("text/"),
            let text = payload.utf8Text,
            let idx = libraryItems.firstIndex(where: { $0.id == id }) {
@@ -1233,6 +1332,7 @@ public final class NoriStore {
     }
 
     public func searchLibrary(query: String) async {
+        let generation = sessionGeneration
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             searchHits = []
@@ -1240,14 +1340,17 @@ public final class NoriStore {
         }
         do {
             let response = try await transport.search(query: trimmed)
+            guard generation == sessionGeneration else { return }
             searchHits = response.items
         } catch {
+            guard generation == sessionGeneration else { return }
             lastError = error.localizedDescription
         }
     }
 
     @discardableResult
     public func reviseDocument(itemID: String, instruction: String) async -> LibraryRevisionResult? {
+        let generation = sessionGeneration
         let trimmed = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         let item: LibraryItem
@@ -1265,6 +1368,7 @@ public final class NoriStore {
                 instruction: trimmed,
                 requestID: UUID().uuidString.lowercased()
             )
+            guard generation == sessionGeneration else { return nil }
             if let idx = libraryItems.firstIndex(where: { $0.id == itemID }) {
                 libraryItems[idx] = receipt.resource
             } else {
@@ -1273,6 +1377,7 @@ public final class NoriStore {
             if receipt.status == .queued {
                 showToast("Revision started")
                 await refreshWorkAndInteractions()
+                guard generation == sessionGeneration else { return nil }
             } else {
                 showToast("Revision saved (v\(receipt.resource.version))")
             }
@@ -1282,249 +1387,13 @@ public final class NoriStore {
                 item: receipt.resource
             )
         } catch {
+            guard generation == sessionGeneration else { return nil }
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
             return nil
         }
     }
 
-    // MARK: - 3-Layer Memory
-
-    public func addMemory(text: String, section: String? = nil, about: String? = nil, pinned: Bool = false) async {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        do {
-            let receipt = try await transport.createMemory(
-                text: trimmed,
-                section: section,
-                about: about,
-                pinned: pinned,
-                requestID: UUID().uuidString.lowercased()
-            )
-            upsertCoreMemory(receipt.resource)
-            if let working = try? await transport.fetchWorkingMemory() {
-                workingMemory = working
-            }
-            showToast("Saved to Core Memory")
-        } catch {
-            lastError = error.localizedDescription
-            showToast(error.localizedDescription)
-        }
-    }
-
-    private func upsertCoreMemory(_ fact: MemoryFact) {
-        if let idx = coreMemories.firstIndex(where: { $0.id == fact.id }) {
-            coreMemories[idx] = fact
-        } else {
-            coreMemories.insert(fact, at: 0)
-        }
-    }
-
-    public func togglePinMemory(memoryID: String) async {
-        guard let fact = coreMemories.first(where: { $0.id == memoryID }) else { return }
-        let action = fact.pinned ? "unpin" : "pin"
-        do {
-            let receipt = try await transport.performMemoryAction(
-                id: memoryID,
-                expectedRevision: fact.revision,
-                action: action,
-                requestID: UUID().uuidString.lowercased()
-            )
-            if case .fact(let updated) = receipt.resource {
-                upsertCoreMemory(updated)
-                showToast(updated.pinned ? "Pinned to Core Memory" : "Unpinned memory")
-            } else if let freshFacts = try? await transport.fetchCoreMemories() {
-                coreMemories = freshFacts
-                let nowPinned = coreMemories.first(where: { $0.id == memoryID })?.pinned ?? !fact.pinned
-                showToast(nowPinned ? "Pinned to Core Memory" : "Unpinned memory")
-            } else {
-                showToast(!fact.pinned ? "Pinned to Core Memory" : "Unpinned memory")
-            }
-        } catch {
-            lastError = error.localizedDescription
-            showToast(error.localizedDescription)
-        }
-    }
-
-    public func demoteMemory(memoryID: String) async {
-        guard let fact = coreMemories.first(where: { $0.id == memoryID }) else { return }
-        do {
-            _ = try await transport.performMemoryAction(
-                id: memoryID,
-                expectedRevision: fact.revision,
-                action: "demote",
-                requestID: UUID().uuidString.lowercased()
-            )
-            coreMemories.removeAll { $0.id == memoryID }
-            let activeTransport = transport
-            async let logsTask = try? activeTransport.fetchMemoryLogs()
-            async let workingTask = try? activeTransport.fetchWorkingMemory()
-            if let logs = await logsTask {
-                memoryLogs = logs
-            }
-            if let working = await workingTask {
-                workingMemory = working
-            }
-            showToast("Moved to Daily Log")
-        } catch {
-            lastError = error.localizedDescription
-            showToast(error.localizedDescription)
-        }
-    }
-
-    public func forgetMemory(memoryID: String) async {
-        guard let fact = coreMemories.first(where: { $0.id == memoryID }) else { return }
-        do {
-            _ = try await transport.performMemoryAction(
-                id: memoryID,
-                expectedRevision: fact.revision,
-                action: "forget",
-                requestID: UUID().uuidString.lowercased()
-            )
-            coreMemories.removeAll { $0.id == memoryID }
-            if let working = try? await transport.fetchWorkingMemory() {
-                workingMemory = working
-            }
-            showToast("Memory forgotten")
-        } catch {
-            lastError = error.localizedDescription
-            showToast(error.localizedDescription)
-        }
-    }
-
-    public func promoteLogEntry(date: String, entryID: String, pinned: Bool = false) async {
-        guard let log = memoryLogs.first(where: { $0.date == date }) else { return }
-        do {
-            let receipt = try await transport.performMemoryLogEntryAction(
-                date: date,
-                entryID: entryID,
-                expectedRevision: log.revision,
-                action: "promote",
-                pinned: pinned,
-                requestID: UUID().uuidString.lowercased()
-            )
-            switch receipt.resource {
-            case .promoted(let fact):
-                upsertCoreMemory(fact)
-                if let logIdx = memoryLogs.firstIndex(where: { $0.date == date }),
-                   let entryIdx = memoryLogs[logIdx].entries.firstIndex(where: { $0.id == entryID }) {
-                    memoryLogs[logIdx].entries[entryIdx].promoted = true
-                }
-            case .log(let updatedLog):
-                if let idx = memoryLogs.firstIndex(where: { $0.date == date }) {
-                    memoryLogs[idx] = updatedLog
-                }
-                if let facts = try? await transport.fetchCoreMemories() {
-                    coreMemories = facts
-                }
-            case .forgotten:
-                if let facts = try? await transport.fetchCoreMemories() {
-                    coreMemories = facts
-                }
-            }
-            if let working = try? await transport.fetchWorkingMemory() {
-                workingMemory = working
-            }
-            showToast("Promoted to Core Memory")
-        } catch {
-            lastError = error.localizedDescription
-            showToast(error.localizedDescription)
-        }
-    }
-
-    public func forgetLogEntry(date: String, entryID: String) async {
-        guard let log = memoryLogs.first(where: { $0.date == date }) else { return }
-        do {
-            let receipt = try await transport.performMemoryLogEntryAction(
-                date: date,
-                entryID: entryID,
-                expectedRevision: log.revision,
-                action: "forget",
-                pinned: false,
-                requestID: UUID().uuidString.lowercased()
-            )
-            switch receipt.resource {
-            case .log(let updatedLog):
-                if let idx = memoryLogs.firstIndex(where: { $0.date == date }) {
-                    memoryLogs[idx] = updatedLog
-                }
-            case .forgotten, .promoted:
-                if let logIdx = memoryLogs.firstIndex(where: { $0.date == date }) {
-                    memoryLogs[logIdx].entries.removeAll { $0.id == entryID }
-                    if memoryLogs[logIdx].entries.isEmpty {
-                        memoryLogs.remove(at: logIdx)
-                    }
-                }
-                if let freshLogs = try? await transport.fetchMemoryLogs() {
-                    memoryLogs = freshLogs
-                }
-            }
-            showToast("Removed log entry")
-        } catch {
-            lastError = error.localizedDescription
-            showToast(error.localizedDescription)
-        }
-    }
-
-    public func promoteWorkingMemoryItem(itemID: String) async {
-        do {
-            let receipt = try await transport.performWorkingMemoryAction(
-                itemID: itemID,
-                expectedRevision: workingMemory.revision,
-                action: "promote",
-                requestID: UUID().uuidString.lowercased()
-            )
-            switch receipt.resource {
-            case .promoted(let fact):
-                upsertCoreMemory(fact)
-            case .workingMemory(let updatedWorking):
-                workingMemory = updatedWorking
-                if let facts = try? await transport.fetchCoreMemories() {
-                    coreMemories = facts
-                }
-            case .dismissed(let dismissed):
-                workingMemory.items.removeAll { $0.id == dismissed.dismissedItemID || $0.id == itemID }
-                if let facts = try? await transport.fetchCoreMemories() {
-                    coreMemories = facts
-                }
-            }
-            if let freshWorking = try? await transport.fetchWorkingMemory() {
-                workingMemory = freshWorking
-            }
-            showToast("Saved to Core Memory")
-        } catch {
-            lastError = error.localizedDescription
-            showToast(error.localizedDescription)
-        }
-    }
-
-    public func dismissWorkingMemoryItem(itemID: String) async {
-        do {
-            let receipt = try await transport.performWorkingMemoryAction(
-                itemID: itemID,
-                expectedRevision: workingMemory.revision,
-                action: "dismiss",
-                requestID: UUID().uuidString.lowercased()
-            )
-            switch receipt.resource {
-            case .workingMemory(let updatedWorking):
-                workingMemory = updatedWorking
-            case .dismissed(let dismissed):
-                workingMemory.items.removeAll { $0.id == dismissed.dismissedItemID || $0.id == itemID }
-                if let freshWorking = try? await transport.fetchWorkingMemory() {
-                    workingMemory = freshWorking
-                }
-            case .promoted:
-                workingMemory.items.removeAll { $0.id == itemID }
-            }
-            showToast("Dismissed working note")
-        } catch {
-            lastError = error.localizedDescription
-            showToast(error.localizedDescription)
-        }
-    }
-
-    // MARK: - Automations & Preferences
 
     private func upsertAutomation(_ automation: Automation) {
         if let idx = automations.firstIndex(where: { $0.id == automation.id }) {
@@ -1535,21 +1404,26 @@ public final class NoriStore {
     }
 
     public func loadAutomation(id: String) async -> Automation? {
+        let generation = sessionGeneration
         do {
             let fresh = try await transport.fetchAutomation(id: id)
+            guard generation == sessionGeneration else { return nil }
             upsertAutomation(fresh)
             return fresh
         } catch {
+            guard generation == sessionGeneration else { return nil }
             return automations.first(where: { $0.id == id })
         }
     }
 
     @discardableResult
     public func cancelAutomation(automationID: String) async -> Bool {
+        let generation = sessionGeneration
         let target: Automation
         if let fresh = await loadAutomation(id: automationID) {
             target = fresh
         } else {
+            guard generation == sessionGeneration else { return false }
             showToast("Reminder not found")
             return false
         }
@@ -1560,10 +1434,12 @@ public final class NoriStore {
                 action: "cancel",
                 requestID: UUID().uuidString.lowercased()
             )
+            guard generation == sessionGeneration else { return false }
             upsertAutomation(receipt.resource)
             showToast("Reminder cancelled")
             return true
         } catch {
+            guard generation == sessionGeneration else { return false }
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
             return false
@@ -1572,9 +1448,11 @@ public final class NoriStore {
 
     @discardableResult
     public func updateReminder(automationID: String, title: String, scheduledAt: Date) async -> Automation? {
+        let generation = sessionGeneration
         let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanTitle.isEmpty else { return nil }
         guard let current = await loadAutomation(id: automationID) else {
+            guard generation == sessionGeneration else { return nil }
             showToast("Reminder not found")
             return nil
         }
@@ -1599,10 +1477,12 @@ public final class NoriStore {
                 value: editable,
                 requestID: UUID().uuidString.lowercased()
             )
+            guard generation == sessionGeneration else { return nil }
             upsertAutomation(receipt.resource)
             showToast("Reminder updated")
             return receipt.resource
         } catch {
+            guard generation == sessionGeneration else { return nil }
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
             return nil
@@ -1610,6 +1490,7 @@ public final class NoriStore {
     }
 
     public func toggleAutomation(automationID: String) async {
+        let generation = sessionGeneration
         guard let auto = automations.first(where: { $0.id == automationID }) else { return }
         let action = auto.status == .enabled ? "pause" : "resume"
         do {
@@ -1619,17 +1500,20 @@ public final class NoriStore {
                 action: action,
                 requestID: UUID().uuidString.lowercased()
             )
+            guard generation == sessionGeneration else { return }
             if let idx = automations.firstIndex(where: { $0.id == automationID }) {
                 automations[idx] = receipt.resource
             }
             showToast(receipt.resource.status == .enabled ? "Resumed \(auto.title)" : "Paused \(auto.title)")
         } catch {
+            guard generation == sessionGeneration else { return }
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
         }
     }
 
     public func runAutomationNow(automationID: String) async {
+        let generation = sessionGeneration
         guard let auto = automations.first(where: { $0.id == automationID }) else { return }
         do {
             let receipt = try await transport.performAutomationAction(
@@ -1638,22 +1522,28 @@ public final class NoriStore {
                 action: "run_now",
                 requestID: UUID().uuidString.lowercased()
             )
+            guard generation == sessionGeneration else { return }
             if let idx = automations.firstIndex(where: { $0.id == automationID }) {
                 automations[idx] = receipt.resource
             }
-            if let items = try? await transport.fetchWorkItems(bucket: nil) {
+            let items = try? await transport.fetchWorkItems(bucket: nil)
+            guard generation == sessionGeneration else { return }
+            if let items {
                 workItems = items
             }
             showToast("Running \"\(auto.title)\" now")
         } catch {
+            guard generation == sessionGeneration else { return }
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
         }
     }
 
     public func createPermissionRule(_ rule: PermissionRuleEditable) async -> Bool {
+        let generation = sessionGeneration
         do {
             let receipt = try await transport.createPermissionRule(rule, requestID: UUID().uuidString.lowercased())
+            guard generation == sessionGeneration else { return false }
             if let idx = permissions.firstIndex(where: { $0.id == receipt.resource.id }) {
                 permissions[idx] = receipt.resource
             } else {
@@ -1662,6 +1552,7 @@ public final class NoriStore {
             showToast("Permission rule saved")
             return true
         } catch {
+            guard generation == sessionGeneration else { return false }
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
             return false
@@ -1669,6 +1560,7 @@ public final class NoriStore {
     }
 
     public func revokePermissionRule(id: String) async {
+        let generation = sessionGeneration
         guard let rule = permissions.first(where: { $0.id == id }) else { return }
         do {
             _ = try await transport.revokePermissionRule(
@@ -1676,35 +1568,40 @@ public final class NoriStore {
                 expectedRevision: rule.revision,
                 requestID: UUID().uuidString.lowercased()
             )
+            guard generation == sessionGeneration else { return }
             permissions.removeAll { $0.id == id }
             showToast("Permission rule removed")
         } catch {
+            guard generation == sessionGeneration else { return }
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
         }
     }
 
     public func updatePreferences(_ updated: Preferences) async {
+        let generation = sessionGeneration
         do {
             let receipt = try await transport.savePreferences(updated, requestID: UUID().uuidString.lowercased())
+            guard generation == sessionGeneration else { return }
             preferences = receipt.resource
             showToast("Preferences saved")
         } catch {
+            guard generation == sessionGeneration else { return }
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
         }
     }
 
-    // MARK: - Server Connection, Keychain Token & Profile Switching
 
     public func pingServer() async -> HealthCheckResult {
+        let generation = sessionGeneration
         let result = await transport.ping()
+        guard generation == sessionGeneration else { return result }
         lastPing = result
         connectionState = result.ok ? .connected : .offline
         return result
     }
 
-    // MARK: - Incoming URL & Toast
 
     public func handleIncomingURL(_ url: URL) {
         guard let link = NoriDeepLink.parse(url) else { return }

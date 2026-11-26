@@ -1,7 +1,6 @@
 import type { Interaction, InteractionResponse } from "@/lib/contracts/assistant";
 import { getJSON, mutate, newRequestID } from "./api";
 import { relative } from "./format";
-import { invalidate } from "./useResource";
 
 export type ApprovalDecision = "allow_once" | "always_allow" | "deny";
 export type ApprovalResponseValue = Extract<
@@ -85,6 +84,7 @@ export function resolveInteractionLocally(
 export async function submitInteractionResponse(
   interaction: Interaction,
   value: InteractionResponse["value"],
+  invalidate: (...prefixes: string[]) => void = () => {},
 ): Promise<
   | { ok: true; resolved: Interaction; rememberRule?: boolean }
   | { ok: false; current: Interaction; message: string }
@@ -159,11 +159,6 @@ function interactionTimestamp(interaction: Interaction): number {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-/**
- * Merges live pending interactions with interactions resolved during the active chat view session,
- * keeping stable chronological order so acting on an inline card shows immediate confirmation
- * instead of disappearing abruptly.
- */
 export function mergeInlineInteractions(
   pending: Interaction[],
   sessionResolved: Record<string, InlineInteractionEntry>,

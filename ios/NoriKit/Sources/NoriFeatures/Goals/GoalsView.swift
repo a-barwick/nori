@@ -128,7 +128,6 @@ public struct GoalsView: View {
         }
     }
 
-    // MARK: - Quick-Start Starter Tiles
 
     private var quickStartGrid: some View {
         let columns = [GridItem(.adaptive(minimum: 260), spacing: 10)]
@@ -174,14 +173,12 @@ public struct GoalsView: View {
         }
     }
 
-    // MARK: - Goal Card
 
     private func goalCard(_ goal: Goal) -> some View {
         let ratio = completionRatio(for: goal)
 
         return NoriCard(padding: 15) {
             VStack(alignment: .leading, spacing: 11) {
-                // Header: Title + Status Pill
                 HStack(alignment: .top, spacing: 8) {
                     Text(goal.title)
                         .font(.system(size: 15.5, weight: .bold))
@@ -195,7 +192,6 @@ public struct GoalsView: View {
                     )
                 }
 
-                // Slim violet completion progress bar + summary
                 VStack(alignment: .leading, spacing: 6) {
                     if !goal.completionCriteria.isEmpty {
                         GeometryReader { proxy in
@@ -218,7 +214,6 @@ public struct GoalsView: View {
                         .foregroundStyle(NoriColors.ink2)
                 }
 
-                // Tappable lavender blocker banner -> Work Tasks tab
                 ForEach(goal.blockers) { blocker in
                     Button {
                         onJumpToNeedsYou()
@@ -260,7 +255,6 @@ public struct GoalsView: View {
                     .accessibilityLabel("Action needed: \(blocker.text). Review in Tasks.")
                 }
 
-                // Completion Criteria Checklist
                 if !goal.completionCriteria.isEmpty {
                     VStack(alignment: .leading, spacing: 7) {
                         ForEach(goal.completionCriteria) { criterion in
@@ -284,7 +278,6 @@ public struct GoalsView: View {
         }
     }
 
-    // MARK: - Helpers
 
     private func completionRatio(for goal: Goal) -> CGFloat {
         let total = goal.completionCriteria.count

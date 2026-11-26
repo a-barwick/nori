@@ -26,8 +26,6 @@ const (
 	provider    = "anthropic"
 )
 
-// Client implements agent.Model using Anthropic's Messages API,
-// routed exclusively through llmguard.
 type Client struct {
 	Key              string
 	ModelName        string
@@ -51,8 +49,6 @@ func New(key, model string, meter usage.Meter) *Client {
 	}
 }
 
-// NewGateway creates an Anthropic Messages client routed through a model gateway
-// (e.g. Vercel AI Gateway's /v1/messages endpoint) using Bearer authentication.
 func NewGateway(baseURL, key, model string, meter usage.Meter) *Client {
 	c := New(key, model, meter)
 	c.gatewayURL = strings.TrimRight(baseURL, "/") + "/messages"
@@ -280,7 +276,7 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		if cost, costErr := usage.AnthropicCost(modelName, u.Input, u.Output, cached, written); costErr == nil {
 			record.CostUSD, record.CostStatus = &cost, "calculated"
 			out.Cost, out.CostKnown = cost, true
-			c.guard().RecordActualCost(cost)
+			llmguard.RecordResponseCost(res, cost)
 		}
 	}
 
@@ -417,7 +413,7 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 		if cost, costErr := usage.AnthropicCost(modelName, u.Input, u.Output, cached, written); costErr == nil {
 			record.CostUSD, record.CostStatus = &cost, "calculated"
 			out.Cost, out.CostKnown = cost, true
-			c.guard().RecordActualCost(cost)
+			llmguard.RecordResponseCost(res, cost)
 		}
 	}
 	var texts []string
@@ -577,8 +573,6 @@ func anthropicMessages(messages []transcript.Message) ([]map[string]any, error) 
 			"content": []map[string]any{{"type": "text", "text": "[Task resumed]"}},
 		}}, out...)
 	}
-	// Mark the penultimate message for prompt caching so multi-step tool loops
-	// reuse the cached prefix across turns (3rd of 4 allowed breakpoints).
 	if len(out) >= 2 {
 		if blocks, ok := out[len(out)-2]["content"].([]map[string]any); ok && len(blocks) > 0 {
 			blocks[len(blocks)-1]["cache_control"] = map[string]string{"type": "ephemeral"}

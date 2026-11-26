@@ -9,46 +9,30 @@ import (
 	"unicode"
 )
 
-// AutoReviewer independently reviews tentatively-allowed non-read external actions at the action
-// boundary. Callers pass only the prepared action metadata, matched permission rule summaries,
-// and verified user-authored source inputs — NEVER untrusted tool, web, or email outputs.
 type AutoReviewer interface {
 	ReviewAction(ctx context.Context, req AutoReviewRequest) (AutoReviewDecision, error)
 }
 
-// AutoReviewRequest is the sanitized action-boundary review input.
 type AutoReviewRequest struct {
 	ToolID         string
 	Summary        string
-	Effect         string // reversible_write, sensitive_send, unknown
+	Effect         string
 	ConnectionID   string
 	Recipients     []string
 	Resources      []string
-	Origin         string // user, automation, goal
+	Origin         string
 	RuleSummaries  []string
-	DecisionSource string // permission_rule, user_request, etc.
-	// Now and TimeZone supply the current wall clock and user's IANA time zone so the reviewer
-	// can verify relative schedule expressions (e.g. "tomorrow at noon") accurately.
-	Now      time.Time
-	TimeZone string
-	// UserSources holds verified user-authored inputs from ReadTaskSourceInputs (never untrusted outputs).
-	UserSources []string
+	DecisionSource string
+	Now            time.Time
+	TimeZone       string
+	UserSources    []string
 }
 
-// AutoReviewDecision is the verdict returned by an AutoReviewer.
 type AutoReviewDecision struct {
-	Verdict string // "allow", "ask", "deny"
+	Verdict string
 	Reason  string
 }
 
-// DeterministicAutoReviewer enforces fast, deterministic action-boundary guardrails without
-// external network dependencies:
-//   - Blocks actions when the user explicitly requested a hypothetical/read-only dry run.
-//   - Blocks untrusted recipient exfiltration on sends/unknown actions when external recipients
-//     are not named or authorized by verified user sources or explicit recipient-scoped rules.
-//   - Escalates reversible writes with unverified external recipients or destructive verbs not
-//     requested by the user, as well as user-origin reversible writes whose user sources appear
-//     purely read-only, empty, or unrelated.
 type DeterministicAutoReviewer struct{}
 
 func (DeterministicAutoReviewer) ReviewAction(_ context.Context, req AutoReviewRequest) (AutoReviewDecision, error) {
@@ -63,7 +47,6 @@ func (DeterministicAutoReviewer) ReviewAction(_ context.Context, req AutoReviewR
 		latest = strings.ToLower(sources[len(sources)-1])
 	}
 
-	// 1. Explicit hypothetical / read-only / do-not-mutate prohibition in the latest user request.
 	if hasWriteProhibition(latest, req.Effect) {
 		return AutoReviewDecision{
 			Verdict: "deny",
@@ -71,7 +54,6 @@ func (DeterministicAutoReviewer) ReviewAction(_ context.Context, req AutoReviewR
 		}, nil
 	}
 
-	// 2. Recipient exfiltration guard whenever external recipients/attendees are present.
 	if len(req.Recipients) > 0 {
 		unverified := findUnverifiedRecipients(req.Recipients, joined, req.RuleSummaries)
 		if len(unverified) > 0 {
@@ -81,7 +63,6 @@ func (DeterministicAutoReviewer) ReviewAction(_ context.Context, req AutoReviewR
 					Reason:  fmt.Sprintf("Blocked by action-boundary review: recipient %q is not named or authorized in any verified user request.", unverified[0]),
 				}, nil
 			}
-			// For reversible writes (e.g. calendar event invites), escalate unmentioned attendees to human approval.
 			return AutoReviewDecision{
 				Verdict: "ask",
 				Reason:  fmt.Sprintf("Recipient %q was not mentioned in your request; please confirm before inviting or sharing.", unverified[0]),
@@ -89,7 +70,6 @@ func (DeterministicAutoReviewer) ReviewAction(_ context.Context, req AutoReviewR
 		}
 	}
 
-	// 3. No verified user sources at all -> fail safe.
 	if len(sources) == 0 {
 		if req.Effect == "sensitive_send" {
 			return AutoReviewDecision{
@@ -103,7 +83,6 @@ func (DeterministicAutoReviewer) ReviewAction(_ context.Context, req AutoReviewR
 		}, nil
 	}
 
-	// 4. Unrequested destructive/bulk operation check.
 	if isDestructiveAction(req.ToolID, req.Summary) && !hasDestructiveIntent(joined) {
 		return AutoReviewDecision{
 			Verdict: "ask",
@@ -111,8 +90,6 @@ func (DeterministicAutoReviewer) ReviewAction(_ context.Context, req AutoReviewR
 		}, nil
 	}
 
-	// 5. Sensitive send without send intent in verified user sources (unless covered by a standing allow rule
-	// or explicitly named recipient matched a standing rule).
 	if req.Effect == "sensitive_send" && req.DecisionSource != "permission_rule" && !hasSendIntent(joined) && !hasExplicitRuleRecipientMatch(req.Recipients, req.RuleSummaries) {
 		return AutoReviewDecision{
 			Verdict: "ask",
@@ -120,7 +97,6 @@ func (DeterministicAutoReviewer) ReviewAction(_ context.Context, req AutoReviewR
 		}, nil
 	}
 
-	// 6. User-origin reversible writes without a standing allow rule must align with verified user sources.
 	if req.Effect == "reversible_write" && req.Origin == "user" && req.DecisionSource != "permission_rule" {
 		if !hasWriteIntent(joined) && !sharesTargetWithAction(joined, req) {
 			return AutoReviewDecision{
@@ -133,13 +109,8 @@ func (DeterministicAutoReviewer) ReviewAction(_ context.Context, req AutoReviewR
 	return AutoReviewDecision{Verdict: "allow"}, nil
 }
 
-// ModelReviewFunc optionally evaluates an action-boundary review prompt with a fast outer model
-// and returns raw model text (expected to contain JSON {"verdict":"allow|ask|deny","reason":"..."}).
 type ModelReviewFunc func(ctx context.Context, prompt string) (string, error)
 
-// ModelAutoReviewer always enforces DeterministicAutoReviewer first, then optionally consults
-// a fast outer model on actions that passed deterministic checks. Model errors or malformed
-// responses fail safe to "ask".
 type ModelAutoReviewer struct {
 	Deterministic DeterministicAutoReviewer
 	Review        ModelReviewFunc
@@ -153,9 +124,6 @@ func (m *ModelAutoReviewer) ReviewAction(ctx context.Context, req AutoReviewRequ
 	if det.Verdict != "allow" || m.Review == nil {
 		return det, nil
 	}
-	// Standing "Always allow" rules that already passed deterministic guardrails
-	// (write-prohibition, recipient exfiltration, unrequested destructive checks)
-	// must not be re-escalated by the model reviewer.
 	if req.DecisionSource == "permission_rule" {
 		return det, nil
 	}
@@ -176,8 +144,6 @@ func (m *ModelAutoReviewer) ReviewAction(ctx context.Context, req AutoReviewRequ
 	return parsed, nil
 }
 
-// BuildAutoReviewPrompt formats a compact, injection-resistant prompt containing ONLY the
-// prepared action, matched rule summaries, current clock/timezone context, and verified user inputs.
 func BuildAutoReviewPrompt(req AutoReviewRequest) string {
 	var b strings.Builder
 	b.WriteString("You are Nori's independent action-boundary safety reviewer.\n")
@@ -225,7 +191,6 @@ func BuildAutoReviewPrompt(req AutoReviewRequest) string {
 	return b.String()
 }
 
-// ParseModelAutoReview extracts a structured AutoReviewDecision from model JSON output.
 func ParseModelAutoReview(raw string) (AutoReviewDecision, bool) {
 	trimmed := strings.TrimSpace(raw)
 	if start := strings.IndexByte(trimmed, '{'); start >= 0 {
@@ -263,7 +228,6 @@ func hasWriteProhibition(latestLower, effect string) bool {
 	if latestLower == "" {
 		return false
 	}
-	// Explicit override such as "for real (not hypothetical!) go ahead and book..."
 	overrides := []string{"for real", "not hypothetical", "go ahead and send", "go ahead and book", "go ahead and create", "go ahead and update"}
 	for _, ov := range overrides {
 		if strings.Contains(latestLower, ov) {
@@ -328,11 +292,9 @@ func findUnverifiedRecipients(recipients []string, joinedSources string, ruleSum
 }
 
 func recipientAuthorized(addrLower, joinedSources string, ruleSummaries []string) bool {
-	// 1. Exact email/address named verbatim in verified user sources.
 	if joinedSources != "" && strings.Contains(joinedSources, addrLower) {
 		return true
 	}
-	// 2. Explicit non-wildcard recipient listed in the matched permission rule summary.
 	for _, summary := range ruleSummaries {
 		if strings.Contains(strings.ToLower(summary), addrLower) {
 			return true
@@ -341,11 +303,6 @@ func recipientAuthorized(addrLower, joinedSources string, ruleSummaries []string
 	if joinedSources == "" {
 		return false
 	}
-	// 3. Name-token match for a recipient the user explicitly asked to contact by name
-	// (e.g. user said "Email Dana Chen" -> "dana.chen@cascadecloud.sim.local", or "Email Alice" -> "alice@company.com").
-	// Requires at least one meaningful local-part name token (>= 3 letters, non-generic) to appear as a whole
-	// word in verified user sources AND all multi-part personal name tokens to be consistent (no unmentioned
-	// role/exfil prefixes like "audit-export" or "attacker").
 	local, _, hasAt := strings.Cut(addrLower, "@")
 	if !hasAt || local == "" {
 		return false
@@ -443,7 +400,6 @@ func hasWriteIntent(joinedLower string) bool {
 			return true
 		}
 	}
-	// Multi-word action phrases.
 	for _, phrase := range []string{"put on my calendar", "put it on", "follow up", "follow-up", "set up"} {
 		if strings.Contains(joinedLower, phrase) {
 			return true

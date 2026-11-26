@@ -267,7 +267,6 @@ func (h *testHarness) drainUserWakes(ctx context.Context) {
 				_ = h.backend.ReleaseUserWake(ctx, claim.UserID, claim.Lane, "sim-conv-drain", claim.WakeSeq, time.Time{})
 			}
 		} else {
-			// A prior fault-interrupted conversation turn lease has not expired yet; release with short retry.
 			_ = h.backend.ReleaseUserWake(ctx, claim.UserID, claim.Lane, "sim-conv-drain", claim.WakeSeq, h.clock.Now().Add(time.Second))
 			break
 		}
@@ -312,10 +311,8 @@ func TestReadWriteApprovalAndSteerSupersedes(t *testing.T) {
 		case 2:
 			return scriptedCall("c2", inner.ToolNameWrite, map[string]any{"target": "config", "value": "v1", "resource_id": "config"}, 0.05), nil, true
 		case 3:
-			// After steering supersedes rev 1 approval card, request a new write under rev 2.
 			return scriptedCall("c3", inner.ToolNameWrite, map[string]any{"target": "config", "value": "v2", "resource_id": "config"}, 0.05), nil, true
 		case 4:
-			// After approving rev 2 card, retry the exact same call unchanged!
 			return scriptedCall("c4", inner.ToolNameWrite, map[string]any{"target": "config", "value": "v2", "resource_id": "config"}, 0.05), nil, true
 		default:
 			return scriptedCall(fmt.Sprintf("c%d", turn), "complete", map[string]any{
@@ -329,7 +326,6 @@ func TestReadWriteApprovalAndSteerSupersedes(t *testing.T) {
 	run := h.startTask(ctx, "Read and update config")
 	h.stepUntilParkedOrDone(ctx, run.ID, 30)
 
-	// Task should be parked waiting for approval of v1 under revision 1.
 	pending, _, err := h.perms.Interactions(ctx, "pending", run.ID, "", 20)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("expected 1 pending approval interaction, got %d (err=%v)", len(pending), err)
@@ -338,19 +334,16 @@ func TestReadWriteApprovalAndSteerSupersedes(t *testing.T) {
 	if card1.Kind != "approval" || card1.ActionDigest == "" || card1.InstructionRevision == nil || *card1.InstructionRevision != 1 {
 		t.Fatalf("unexpected rev-1 approval card: %+v", card1)
 	}
-	// Verify zero writes have executed yet.
 	for _, ex := range h.driver.Adapter.Executed() {
 		if ex.ToolName == inner.ToolNameWrite {
 			t.Fatalf("write executed before approval: %+v", ex)
 		}
 	}
 
-	// Steer mid-approval -> bumps revision to 2 and supersedes card1!
 	if err := h.steerTask(ctx, run.ID, "Actually write v2 instead"); err != nil {
 		t.Fatalf("steerTask: %v", err)
 	}
 
-	// Stale approval of card1 MUST be rejected with ErrInteractionStale!
 	if _, _, err := h.perms.Respond(ctx, card1.ID, h.nextReqID(), card1.Revision, permissions.Response{
 		Kind:         "approve",
 		ActionDigest: card1.ActionDigest,
@@ -358,7 +351,6 @@ func TestReadWriteApprovalAndSteerSupersedes(t *testing.T) {
 		t.Fatalf("expected ErrInteractionStale for superseded approval card, got: %v", err)
 	}
 
-	// Step forward: rev 2 opens a new approval card for v2.
 	h.stepUntilParkedOrDone(ctx, run.ID, 30)
 	pending, _, err = h.perms.Interactions(ctx, "pending", run.ID, "", 20)
 	if err != nil || len(pending) != 1 {
@@ -369,7 +361,6 @@ func TestReadWriteApprovalAndSteerSupersedes(t *testing.T) {
 		t.Fatalf("expected card2 bound to rev 2, got %+v", card2)
 	}
 
-	// Wrong action digest MUST be rejected with ErrInteractionStale!
 	if _, _, err := h.perms.Respond(ctx, card2.ID, h.nextReqID(), card2.Revision, permissions.Response{
 		Kind:         "approve",
 		ActionDigest: card1.ActionDigest,
@@ -377,7 +368,6 @@ func TestReadWriteApprovalAndSteerSupersedes(t *testing.T) {
 		t.Fatalf("expected ErrInteractionStale for mismatched digest, got: %v", err)
 	}
 
-	// Approve card2 with matching digest and deliver answer.
 	_, ans, err := h.perms.Respond(ctx, card2.ID, h.nextReqID(), card2.Revision, permissions.Response{
 		Kind:         "approve",
 		ActionDigest: card2.ActionDigest,
@@ -390,7 +380,6 @@ func TestReadWriteApprovalAndSteerSupersedes(t *testing.T) {
 	}
 	h.perms.MarkDelivered(ctx, card2.ID)
 
-	// Step to completion.
 	h.stepUntilParkedOrDone(ctx, run.ID, 30)
 
 	finalRun, err := h.store.GetRun(ctx, run.ID)
@@ -401,7 +390,6 @@ func TestReadWriteApprovalAndSteerSupersedes(t *testing.T) {
 		t.Fatalf("expected RunCompleted, got %s (err=%q)", finalRun.Status, finalRun.Error)
 	}
 
-	// Confirm exactly one write executed (v2 at rev 2, matching card2.ActionDigest).
 	writeCount := 0
 	for _, ex := range h.driver.Adapter.Executed() {
 		if ex.ToolName == inner.ToolNameWrite {
@@ -424,7 +412,6 @@ func TestRecipientScopedRules(t *testing.T) {
 	ctx := context.Background()
 	h := newTestHarness(t, 102, harnessOpts{disableFaults: true, userSends: "ask"})
 
-	// Save an allow rule for alice@example.com and a deny rule for blocked@example.com.
 	if _, err := h.perms.SaveRule(ctx, "", h.nextReqID(), 0, permissions.RuleEditable{
 		Effect:        "allow",
 		ToolIDs:       []string{inner.ToolIDSend},
@@ -470,7 +457,6 @@ func TestRecipientScopedRules(t *testing.T) {
 	run := h.startTask(ctx, "Send test messages")
 	h.stepUntilParkedOrDone(ctx, run.ID, 30)
 
-	// alice executed immediately via allow rule; blocked was denied without opening a card; bob opened an approval card.
 	pending, _, err := h.perms.Interactions(ctx, "pending", run.ID, "", 10)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("expected 1 pending interaction for bob, got %d (err=%v)", len(pending), err)
@@ -479,7 +465,6 @@ func TestRecipientScopedRules(t *testing.T) {
 		t.Fatalf("expected bob approval prompt, got %q", pending[0].Prompt)
 	}
 
-	// Decline bob.
 	_, ans, err := h.perms.Respond(ctx, pending[0].ID, h.nextReqID(), pending[0].Revision, permissions.Response{
 		Kind:         "decline",
 		ActionDigest: pending[0].ActionDigest,
@@ -492,7 +477,6 @@ func TestRecipientScopedRules(t *testing.T) {
 	}
 	h.stepUntilParkedOrDone(ctx, run.ID, 30)
 
-	// Verify ONLY alice@example.com was ever executed in FakeAdapter!
 	executed := h.driver.Adapter.Executed()
 	if len(executed) != 1 || executed[0].Args["to"] != "alice@example.com" {
 		t.Fatalf("expected only alice@example.com in Executed, got: %+v", executed)
@@ -552,10 +536,8 @@ func TestSubtaskSpawningAndFinishingBarrier(t *testing.T) {
 		}
 		childID := children[0].ID
 
-		// Step child to completion -> atomically records CommandSubtaskResult and wakes parent lease.
 		h.stepUntilParkedOrDone(ctx, childID, 30)
 
-		// Step parent to completion.
 		h.stepUntilParkedOrDone(ctx, parent.ID, 30)
 
 		finalParent, _ := h.store.GetRun(ctx, parent.ID)
@@ -591,13 +573,11 @@ func TestSubtaskSpawningAndFinishingBarrier(t *testing.T) {
 		}
 		childID := children[0].ID
 
-		// Stop parent while child is still running!
 		if err := h.stopTask(ctx, parent.ID); err != nil {
 			t.Fatalf("stopTask parent: %v", err)
 		}
 		h.stepUntilParkedOrDone(ctx, parent.ID, 20)
 
-		// Parent MUST still be in Status=RunRunning with Finishing!=nil while child is running!
 		midParent, err := h.store.GetRun(ctx, parent.ID)
 		if err != nil {
 			t.Fatalf("GetRun parent: %v", err)
@@ -606,13 +586,10 @@ func TestSubtaskSpawningAndFinishingBarrier(t *testing.T) {
 			t.Fatalf("expected parent held at finishing barrier while child running, got status=%s finishing=%v", midParent.Status, midParent.Finishing)
 		}
 
-		// Parent's stopSubtasks already wrote the stop command and woke child's lease in the same tx.
 		h.stepUntilParkedOrDone(ctx, childID, 20)
-		// Step parent once more so late-wake cleanup deletes its now-terminal task lease.
 		h.stepUntilParkedOrDone(ctx, parent.ID, 10)
 		h.drainUserWakes(ctx)
 
-		// Once child finishes and cleans up, parent MUST now be terminal RunCancelled with Finishing==nil!
 		finalParent, err := h.store.GetRun(ctx, parent.ID)
 		if err != nil {
 			t.Fatalf("GetRun final parent: %v", err)
@@ -638,12 +615,6 @@ func TestSubtaskSpawningAndFinishingBarrier(t *testing.T) {
 
 func TestBudgetExhaustionSharedFamily(t *testing.T) {
 	ctx := context.Background()
-	// Family budget = $0.40, each model call costs $0.18:
-	// Parent call 1 -> $0.18 (spent=0.18 < 0.40) -> request_work
-	// Child call 1 -> $0.18 (family=0.36 < 0.40) -> sim_read
-	// Child call 2 -> $0.18 (family=0.54 >= 0.40!)
-	// Next turn: Child MUST hit budget ceiling (NO 3rd call!), publish RunFailed + ExpectedIncomplete=true!
-	// Parent resumes: sees Others=0.36 + Spent=0.18 = 0.54 >= 0.40 -> MUST hit budget ceiling (NO 2nd parent call!), publish RunFailed + ExpectedIncomplete=true!
 	h := newTestHarness(t, 105, harnessOpts{
 		disableFaults: true,
 		budgetUSD:     0.40,
@@ -685,7 +656,6 @@ func TestBudgetExhaustionSharedFamily(t *testing.T) {
 		t.Fatalf("expected parent RunFailed on shared family budget exhaustion, got %s", finalParent.Status)
 	}
 
-	// Exactly 3 model calls total (1 parent + 2 child); NEVER a 3rd child call or 2nd parent call!
 	calls := h.driver.Model.ModelCalls()
 	if len(calls) != 3 {
 		t.Fatalf("expected 3 total model calls (1 parent + 2 child), got %d: %+v", len(calls), calls)
@@ -696,7 +666,6 @@ func TestBudgetExhaustionSharedFamily(t *testing.T) {
 		}
 	}
 
-	// Verify both published with ExpectedIncomplete == true and BypassRouting == false.
 	pubs := h.driver.Publications()
 	if len(pubs) != 2 {
 		t.Fatalf("expected 2 publications, got %d: %+v", len(pubs), pubs)
@@ -716,7 +685,6 @@ func TestToolTemporaryRetryAndUncertainReconcile(t *testing.T) {
 	ctx := context.Background()
 	h := newTestHarness(t, 106, harnessOpts{disableFaults: true})
 
-	// Allow sim_write via rule so we directly exercise Execute + Reconcile.
 	if _, err := h.perms.SaveRule(ctx, "", h.nextReqID(), 0, permissions.RuleEditable{
 		Effect:        "allow",
 		ToolIDs:       []string{inner.ToolIDWrite},
@@ -728,10 +696,6 @@ func TestToolTemporaryRetryAndUncertainReconcile(t *testing.T) {
 		t.Fatalf("SaveRule: %v", err)
 	}
 
-	// Queue:
-	// 1. sim_read -> TemporaryError, then confirmed (proves safe read retries via externalSleep!)
-	// 2. sim_write -> uncertain (side effect applied), Reconcile succeeds (proves zero duplicate write!)
-	// 3. sim_write -> uncertain (side effect applied) + ReconcileMiss -> opens uncertain-action question!
 	h.driver.Adapter.QueueForcedOutcome(
 		inner.ForcedOutcome{Outcome: "temporary_error"},
 		inner.ForcedOutcome{Outcome: "confirmed"},
@@ -761,13 +725,11 @@ func TestToolTemporaryRetryAndUncertainReconcile(t *testing.T) {
 	run := h.startTask(ctx, "Test retries and uncertain writes")
 	h.stepUntilParkedOrDone(ctx, run.ID, 40)
 
-	// Task should now be parked on the uncertain-action question from t3!
 	midRun, err := h.store.GetRun(ctx, run.ID)
 	if err != nil || midRun.Question == nil || len(midRun.Question.Clears) == 0 {
 		t.Fatalf("expected task parked on uncertain-action question with Clears, got: %+v (err=%v)", midRun.Question, err)
 	}
 
-	// Answer the question via CommandAnswer so the unresolved write is cleared and task finishes.
 	if err := h.deliverAnswer(ctx, &permissions.Answer{
 		CommandID: h.ids.Next(),
 		TaskID:    run.ID,
@@ -786,7 +748,6 @@ func TestToolTemporaryRetryAndUncertainReconcile(t *testing.T) {
 		t.Fatalf("expected at least 2 Reconcile invocations, got %d", h.driver.Adapter.ReconcileCount())
 	}
 
-	// Verify read retried once (2 entries for same read op), while each write ran ONCE.
 	readEntries := 0
 	writeEntries := 0
 	for _, ex := range h.driver.Adapter.Executed() {
@@ -865,12 +826,10 @@ func TestUserRoutingPendingHeldPublication(t *testing.T) {
 	})
 
 	run := h.startTask(ctx, "Hold publication while user input routes")
-	// Enqueue an unrouted user message so UserRoutingPending() == true!
 	if err := h.store.AcceptConversationInput(ctx, h.ids.Next(), "Wait, one quick thing", nil); err != nil {
 		t.Fatalf("AcceptConversationInput: %v", err)
 	}
 
-	// Step task until it tries to publish and gets held on UserRoutingPending.
 	h.stepUntilParkedOrDone(ctx, run.ID, 20)
 
 	heldRun, err := h.store.GetRun(ctx, run.ID)
@@ -881,13 +840,10 @@ func TestUserRoutingPendingHeldPublication(t *testing.T) {
 		t.Fatalf("expected run held with PublicationPending=true, got status=%s pending=%v", heldRun.Status, heldRun.PublicationPending)
 	}
 
-	// Claim and commit the conversation turn so UserRoutingPending becomes false
-	// and PublishConversation atomically wakes tasks waiting on WaitRoutingPending.
 	if !h.routeOneConversationTurn(ctx, "Acknowledged.") {
 		t.Fatalf("expected conversation turn to be acquired and published")
 	}
 
-	// Step task -> publication now commits and task completes!
 	h.stepUntilParkedOrDone(ctx, run.ID, 20)
 	h.drainUserWakes(ctx)
 
@@ -907,7 +863,6 @@ func TestMidStepCrashAndStopPausedRecovery(t *testing.T) {
 	ctx := context.Background()
 	h := newTestHarness(t, 108, harnessOpts{disableFaults: true})
 
-	// Script deterministic read -> complete turns so crash recovery completes cleanly without blocking on an approval card.
 	run1Turn := 0
 	var run1ID string
 	h.driver.Model.SetScript(func(_ context.Context, runID string, _ agent.Request) (agent.Response, error, bool) {
@@ -925,11 +880,8 @@ func TestMidStepCrashAndStopPausedRecovery(t *testing.T) {
 		}, 0.05), nil, true
 	})
 
-	// 1. Mid-step worker crash -> lease & TaskControl stay fenced until TaskLease (30s) expires,
-	// then a second worker takes over with Fence+1 and finishes the task cleanly!
 	run1 := h.startTask(ctx, "Task that crashes mid-execution")
 	run1ID = run1.ID
-	// Advance 2 steps (sync + model) then crash the worker!
 	_, _ = h.driver.StepRun(ctx, run1.ID)
 	_, _ = h.driver.StepRun(ctx, run1.ID)
 	if !h.driver.CrashRun(run1.ID) {
@@ -940,13 +892,11 @@ func TestMidStepCrashAndStopPausedRecovery(t *testing.T) {
 		t.Fatalf("GetTaskControl before expiry: %v", err)
 	}
 
-	// Before 30s expiry, another worker MUST NOT steal the crashed task.
 	h.clock.Advance(10 * time.Second)
 	if progressed, err := h.driver.StepRun(ctx, run1.ID); err != nil || progressed {
 		t.Fatalf("expected crashed task fenced before 30s expiry, got progressed=%v err=%v", progressed, err)
 	}
 
-	// After 30s lease expiry, Worker 2 takes over with Fence+1 and completes cleanly.
 	h.clock.Advance(state.TaskLease + time.Second)
 	h.stepUntilParkedOrDone(ctx, run1.ID, 40)
 
@@ -965,7 +915,6 @@ func TestMidStepCrashAndStopPausedRecovery(t *testing.T) {
 		t.Fatalf("expected takeover fence > crashed fence (%d), got %d", ctrlBefore.Fence, ctrlAfter.Fence)
 	}
 
-	// 2. Paused Stop + StopPaused via RepairAll (zero model calls while paused).
 	run2 := h.startTask(ctx, "Task stopped while system paused")
 	_, _ = h.driver.StepRun(ctx, run2.ID)
 	if err := h.setPaused(ctx, true); err != nil {
@@ -1018,8 +967,6 @@ func TestContextOverflowRetry(t *testing.T) {
 	}
 }
 
-// runRandomizedSim executes a full randomized inner-loop simulation for a given seed
-// and returns the final harness for digest and invariant verification.
 func runRandomizedSim(t *testing.T, seed int64, steps int) *testHarness {
 	t.Helper()
 	ctx := context.Background()
@@ -1040,7 +987,6 @@ func runRandomizedSim(t *testing.T, seed int64, steps int) *testHarness {
 		cleanupErrProb: 0.12,
 	})
 
-	// Seed one recipient-scoped allow rule and one deny rule to exercise rule matching alongside approvals.
 	h.faults.SetEnabled(false)
 	_, _ = h.perms.SaveRule(ctx, "", h.nextReqID(), 0, permissions.RuleEditable{
 		Effect:        "allow",
@@ -1080,7 +1026,6 @@ func runRandomizedSim(t *testing.T, seed int64, steps int) *testHarness {
 		}
 	}
 
-	// Start 2 initial tasks.
 	startNew(1)
 	startNew(2)
 
@@ -1090,7 +1035,6 @@ func runRandomizedSim(t *testing.T, seed int64, steps int) *testHarness {
 		roll := h.rng.IntN(100)
 		switch {
 		case roll < 46:
-			// Step a currently claimable task lease through real task.Runner.
 			leases, err := h.backend.ListTaskLeases(ctx, h.user.ID)
 			if err == nil {
 				now := h.clock.Now()
@@ -1107,7 +1051,6 @@ func runRandomizedSim(t *testing.T, seed int64, steps int) *testHarness {
 			}
 
 		case roll < 60:
-			// Respond to a pending interaction (approve, decline, or answer question).
 			if pending, _, err := h.perms.Interactions(ctx, "pending", "", "", 20); err == nil && len(pending) > 0 {
 				card := pending[h.rng.IntN(len(pending))]
 				var resp permissions.Response
@@ -1129,7 +1072,6 @@ func runRandomizedSim(t *testing.T, seed int64, steps int) *testHarness {
 			}
 
 		case roll < 70:
-			// Spawn a subtask for any parent parked on QuestionWork.
 			if open, err := h.store.OpenTasks(ctx); err == nil {
 				for _, r := range open {
 					if r.ParentID == "" && r.Question != nil && r.Question.Kind == state.QuestionWork && r.Question.ResolvedBy == "" {
@@ -1144,43 +1086,36 @@ func runRandomizedSim(t *testing.T, seed int64, steps int) *testHarness {
 			}
 
 		case roll < 77:
-			// Steer an open task (often mid-approval to supersede revision!).
 			if open, err := h.store.OpenTasks(ctx); err == nil && len(open) > 0 {
 				target := open[h.rng.IntN(len(open))]
 				_ = h.steerTask(ctx, target.ID, fmt.Sprintf("Steer at step %d", step))
 			}
 
 		case roll < 81:
-			// Stop an open task (exercises finishing barrier if it has children!).
 			if open, err := h.store.OpenTasks(ctx); err == nil && len(open) > 0 {
 				target := open[h.rng.IntN(len(open))]
 				_ = h.stopTask(ctx, target.ID)
 			}
 
 		case roll < 87:
-			// Start a fresh task (cap total tasks so run stays snappy).
 			if len(runIDs) < 12 {
 				startNew(len(runIDs) + 1)
 			}
 
 		case roll < 92:
-			// Run Postgres-native lease & StopPaused repair sweep.
 			_ = h.driver.RepairAll(ctx)
 
 		case roll < 94:
-			// Simulate a mid-step worker crash on a claimable running task.
 			if open, err := h.store.OpenTasks(ctx); err == nil && len(open) > 0 {
 				victim := open[h.rng.IntN(len(open))]
 				h.driver.CrashRun(victim.ID)
 			}
 
 		case roll < 97:
-			// Toggle system pause/resume (atomically wakes WaitPaused on unpause).
 			paused = !paused
 			_ = h.setPaused(ctx, paused)
 
 		default:
-			// Enqueue or route a conversation user input to exercise UserRoutingPending holds.
 			if !h.routeOneConversationTurn(ctx, "Routed.") {
 				_ = h.store.AcceptConversationInput(ctx, h.ids.Next(), fmt.Sprintf("Chat ping %d", step), nil)
 			}
@@ -1193,24 +1128,18 @@ func runRandomizedSim(t *testing.T, seed int64, steps int) *testHarness {
 		}
 	}
 
-	// Fault-free quiescence drain: unpause, disable faults, route any pending user inputs,
-	// resolve pending interactions/questions, step all remaining runs, and repair.
 	h.faults.SetEnabled(false)
 	h.driver.SetFaultsEnabled(false)
 	if err := h.setPaused(ctx, false); err != nil {
 		t.Fatalf("unpause: %v", err)
 	}
-	// Advance past any simulated hard-crashed worker's 30s TaskLease / TaskControl lease
-	// before draining to quiescence (live drain workers must still release cleanly).
 	h.clock.Advance(state.TaskLease + time.Second)
 
 	for drain := 0; drain < 200; drain++ {
 		h.clock.Advance(200 * time.Millisecond)
 
-		// Route any pending user conversation inputs and park conversation user wakes.
 		h.drainUserWakes(ctx)
 
-		// Deliver any undelivered resolved interaction answers.
 		if answers, ids, err := h.perms.UndeliveredAnswers(ctx); err == nil {
 			for i := range answers {
 				if h.deliverAnswer(ctx, &answers[i]) == nil {
@@ -1219,7 +1148,6 @@ func runRandomizedSim(t *testing.T, seed int64, steps int) *testHarness {
 			}
 		}
 
-		// Resolve any still-pending interactions so parked tasks can finish.
 		if pending, _, err := h.perms.Interactions(ctx, "pending", "", "", 50); err == nil {
 			for _, card := range pending {
 				var resp permissions.Response
@@ -1236,7 +1164,6 @@ func runRandomizedSim(t *testing.T, seed int64, steps int) *testHarness {
 			}
 		}
 
-		// Resolve any open QuestionWork or raw Question without an interaction.
 		if open, err := h.store.OpenTasks(ctx); err == nil {
 			for _, r := range open {
 				if r.Question != nil && r.Question.ResolvedBy == "" {
@@ -1282,7 +1209,6 @@ func runRandomizedSim(t *testing.T, seed int64, steps int) *testHarness {
 			if nextAt, ok := h.driver.NextWakeTime(ctx); ok && nextAt.After(h.clock.Now()) {
 				h.clock.Advance(nextAt.Sub(h.clock.Now()) + time.Millisecond)
 			} else if routingPending {
-				// Advance past any fault-interrupted conversation turn lease so routing can complete.
 				h.clock.Advance(5 * time.Second)
 			}
 		}

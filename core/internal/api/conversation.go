@@ -90,7 +90,6 @@ func (s *server) turn(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	// AcceptConversationInput already writes LaneConversation in-tx via WakeWriter.
 	writeJSON(w, http.StatusAccepted, session)
 }
 
@@ -145,8 +144,6 @@ func (s *server) process(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 9*time.Minute)
 	defer cancel()
 	if err := s.Ops.Process(ctx); err != nil {
-		// Return 503 while another request owns the lease or a bounded slice still
-		// has work so the caller retries.
 		slog.WarnContext(ctx, "conversation process requires retry", "err", err)
 		writeJSON(w, 503, map[string]any{"error": "Conversation processing will retry.", "retryable": true})
 		return

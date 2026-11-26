@@ -13,9 +13,6 @@ import (
 	"nori/internal/state"
 )
 
-// Only these proposals can be independently validated by CommandPlan. Work-request
-// subtasks retain their exact-question admission and shared parent budget on non-user turns,
-// and are never authorized through CommandPlan on coalesced turns.
 func plannedCommand(call ToolCall) bool {
 	switch call.Function.Name {
 	case "steer", "stop", "answer", "hold":
@@ -151,8 +148,6 @@ func (r *Runner) planUserCommands(ctx context.Context, t *state.ConversationTurn
 	return savedPlannedReply(reply), nil
 }
 
-// Store only the final commands in the normal durable reply. Recovery must never
-// re-admit the worker-aware proposal, including after a crash before admission.
 func savedPlannedReply(reply Reply) Reply {
 	actions := []any{}
 	for _, call := range reply.Calls {
@@ -164,8 +159,6 @@ func savedPlannedReply(reply Reply) Reply {
 	return reply
 }
 
-// This is an allowlist projection, never a filtered model transcript. In particular,
-// task requests/command text can contain worker text even after acceptance.
 func (r *Runner) commandPlanMessages(ctx context.Context, t *state.ConversationTurn, view historyView, visible []Message, tasks TaskContext) ([]json.RawMessage, error) {
 	type userMessage struct {
 		ID    string   `json:"id"`
@@ -453,8 +446,6 @@ func (r *Runner) commandPlanMessages(ctx context.Context, t *state.ConversationT
 	return []json.RawMessage{systemMsg, ctxMsg, currentMsg}, nil
 }
 
-// assistantReplyText extracts the clean assistant reply text from a non-event turn
-// for reference-only context resolution on coalesced turns.
 func assistantReplyText(turn state.ConversationTurn) string {
 	if text := strings.TrimSpace(turn.Attempt.Text); text != "" {
 		return text

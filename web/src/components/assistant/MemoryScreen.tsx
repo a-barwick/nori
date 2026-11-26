@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDownToLine, ArrowUpRight, Pencil, Pin, PinOff, Plus, Search, Sparkles, X } from "lucide-react";
+import { ArrowDownToLine, ArrowUpRight, Pencil, Pin, PinOff, Plus, Search, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { APIError, mutate, newRequestID } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { plural, relative, when } from "@/lib/assistant/format";
-import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
+import { MemorySearchControls, useMemorySearch } from "./MemorySearchControls";
+import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant/useResource";
 import type {
   MemoryAction,
   MemoryFact,
@@ -18,7 +19,6 @@ import type {
   MemoryLogEntryAction,
   MemoryProvenance,
   MemorySearchHit,
-  MemorySearchResponse,
   WorkingMemory,
   WorkingMemoryItem,
   WorkingMemoryItemAction,
@@ -45,7 +45,6 @@ import {
 
 type List<T> = { items: T[] };
 export type MemoryTab = "core" | "logs" | "working";
-export type SearchLayerFilter = "all" | "log" | "core";
 
 export const MAX_MEMORY_TEXT_BYTES = 2000;
 export const DEFAULT_CORE_BUDGET_BYTES = 24 * 1024;
@@ -140,7 +139,7 @@ export function messageJumpHref(id?: string, kind: "message" | "input" = "messag
   return `/#${encodeURIComponent(anchor)}`;
 }
 
-export const PROVENANCE_META: Record<MemoryProvenance, { label: string; tone: Tone }> = {
+const PROVENANCE_META: Record<MemoryProvenance, { label: string; tone: Tone }> = {
   user_explicit: { label: "Explicit", tone: "accent" },
   pre_compact_flush: { label: "Auto-saved", tone: "neutral" },
   summary_evicted: { label: "Archived", tone: "neutral" },
@@ -218,6 +217,7 @@ function buildEditableValue(input: { text: string; about: string; section: strin
 }
 
 export function MemoryScreen() {
+  const invalidate = useResourceInvalidation();
   const { has } = useAssistant();
   const params = useSearchParams();
   const router = useRouter();
@@ -368,6 +368,7 @@ function CoreMemoryTab({
   adding: boolean;
   setAdding: (open: boolean) => void;
 }) {
+  const invalidate = useResourceInvalidation();
   const action = useAction();
   const [query, setQuery] = useState(initialQuery);
   const [editingId, setEditingId] = useState<string>();
@@ -795,11 +796,8 @@ function DailyLogsTab({
   initialQuery: string;
   onJump: (href: string) => void;
 }) {
+  const invalidate = useResourceInvalidation();
   const action = useAction();
-  const [query, setQuery] = useState(initialQuery);
-  const [settled, setSettled] = useState(initialQuery.trim());
-  const [layer, setLayer] = useState<SearchLayerFilter>("all");
-
   const [reviewingKey, setReviewingKey] = useState<string>();
   const [promoteText, setPromoteText] = useState("");
   const [promoteSection, setPromoteSection] = useState("");
@@ -808,21 +806,13 @@ function DailyLogsTab({
   const [promoteReviewed, setPromoteReviewed] = useState(false);
 
   useEffect(() => {
-    const timer = setTimeout(() => setSettled(query.trim()), 250);
-    return () => clearTimeout(timer);
-  }, [query]);
-
-  useEffect(() => {
     const targetId = selectedEntry ? `log-entry-${selectedEntry}` : selectedDate ? `log-date-${selectedDate}` : undefined;
     if (!targetId) return;
     const el = document.getElementById(targetId);
     el?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [selectedDate, selectedEntry, items.length]);
 
-  const searchPath = settled
-    ? `/memory/search?q=${encodeURIComponent(settled)}${layer !== "all" ? `&layer=${layer}` : ""}&limit=20`
-    : null;
-  const search = useResource<MemorySearchResponse>(searchPath, { poll: 0, versioned: false });
+  const { query, setQuery, settled, layer, setLayer, search, clearSearch } = useMemorySearch(initialQuery);
 
   const runLogAction = (
     key: string,
@@ -894,56 +884,7 @@ function DailyLogsTab({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <label className="relative block flex-1">
-          <span className="sr-only">Search memory</span>
-          <Search size={17} className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-ink-3" aria-hidden />
-          <input
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search daily logs and core memories…"
-            className={cn(inputClass, "h-11 pr-9 pl-10")}
-          />
-          {query && (
-            <button
-              type="button"
-              aria-label="Clear search"
-              onClick={() => {
-                setQuery("");
-                setSettled("");
-              }}
-              className="absolute top-1/2 right-2.5 -translate-y-1/2 rounded-full p-1 text-ink-3 hover:bg-fill-1 hover:text-ink"
-            >
-              <X size={15} aria-hidden />
-            </button>
-          )}
-        </label>
-        <div className="flex shrink-0 items-center gap-1" role="group" aria-label="Search layer">
-          {(
-            [
-              { id: "all", label: "All" },
-              { id: "log", label: "Logs" },
-              { id: "core", label: "Core" },
-            ] as const
-          ).map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              aria-pressed={layer === option.id}
-              onClick={() => setLayer(option.id)}
-              className={cn(
-                "h-9 rounded-full border px-3 text-meta font-medium",
-                layer === option.id
-                  ? "border-chip-selected-border bg-chip-selected-bg text-chip-selected-fg"
-                  : "border-transparent bg-fill-1 text-ink-2 hover:text-ink",
-              )}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <MemorySearchControls query={query} setQuery={setQuery} layer={layer} setLayer={setLayer} clearSearch={clearSearch} />
 
       {action.error && <Notice tone="danger">{action.error}</Notice>}
 
@@ -963,8 +904,7 @@ function DailyLogsTab({
                     key={hit.chunk_id}
                     onClick={() => {
                       if (hit.layer === "log") {
-                        setQuery("");
-                        setSettled("");
+                        clearSearch();
                       }
                       onJump(href);
                     }}
@@ -996,10 +936,7 @@ function DailyLogsTab({
               <Button
                 size="sm"
                 variant="neutral"
-                onClick={() => {
-                  setQuery("");
-                  setSettled("");
-                }}
+                onClick={clearSearch}
               >
                 Clear search
               </Button>
@@ -1204,6 +1141,7 @@ function WorkingMemoryTab({
 }: {
   working: ReturnType<typeof useResource<WorkingMemory>>;
 }) {
+  const invalidate = useResourceInvalidation();
   const action = useAction();
   const data = working.data;
 

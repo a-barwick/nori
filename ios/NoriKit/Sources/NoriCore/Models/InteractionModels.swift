@@ -83,7 +83,6 @@ public struct ApprovalPayload: Sendable, Codable, Hashable {
     public var resources: [ResourceRef]
     public var recipients: [String]?
     public var materialEffects: [String]?
-    /// Optional rich subject/heading for presentation when summary contains body text.
     public var summaryHead: String?
 
     enum CodingKeys: String, CodingKey {
@@ -137,8 +136,6 @@ public struct ApprovalPayload: Sendable, Codable, Hashable {
             && !hasAccountLabel
     }
 
-    /// Warning text filtered for calm presentation.
-    /// Suppresses the generic "This modifies external records." sentence for internal Nori schedules.
     public var displayWarning: String? {
         guard var trimmed = warning?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
             return nil

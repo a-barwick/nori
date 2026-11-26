@@ -1,8 +1,5 @@
 "use client";
 
-// Each screen reads the assistant API when the core advertises it, and otherwise the
-// legacy runtime snapshot the app already streams, projected into the same contract
-// shapes. The legacy projection is live data, not a fixture.
 import { useMemo } from "react";
 import type { AssistantSummary, Interaction, LibraryItem, WorkDetail, WorkItem } from "@/lib/contracts/assistant";
 import type { Run, SavedResult, Session } from "@/lib/types";
@@ -14,7 +11,7 @@ type List<T> = { items: T[]; next_cursor?: string };
 const legacyTitle = (run: Run, session?: Session) =>
   run.request || session?.messages.find((message) => message.run_id === run.id && message.role === "user")?.text || "Task";
 
-export function legacyInteraction(run: Run): Interaction | undefined {
+function legacyInteraction(run: Run): Interaction | undefined {
   const question = run.question;
   if (!question || run.status !== "running" || question.resolved_by || question.kind !== "input") return undefined;
   return {
@@ -23,7 +20,7 @@ export function legacyInteraction(run: Run): Interaction | undefined {
   };
 }
 
-export function legacyWorkItem(run: Run, session?: Session): WorkItem {
+function legacyWorkItem(run: Run, session?: Session): WorkItem {
   const waiting = run.status === "running" && !!((run.question && !run.question.resolved_by) || run.waiting);
   return {
     task_id: run.id, title: legacyTitle(run, session), status: run.status,
@@ -39,9 +36,8 @@ export function legacyWorkItem(run: Run, session?: Session): WorkItem {
   };
 }
 
-export function legacyLibraryItem(result: SavedResult): LibraryItem {
+function legacyLibraryItem(result: SavedResult): LibraryItem {
   return {
-    // Legacy results are display-only; 0 marks an item that is not yet a managed Library resource (r2.1).
     id: result.id, revision: 0, root_id: result.root_id, version: result.version, revises: result.revises, superseded_by: result.superseded_by,
     kind: result.kind, title: result.title, name: result.name, media_type: result.media_type, size: result.size,
     url: result.kind === "link" ? result.url : result.kind === "file" || result.kind === "screenshot" ? `/api/v1/results/${result.id}/file` : undefined,
@@ -49,7 +45,6 @@ export function legacyLibraryItem(result: SavedResult): LibraryItem {
   };
 }
 
-/** Work list: /v1/work when live, otherwise the runtime's runs. */
 export function useWork() {
   const { has, runtime } = useAssistant();
   const live = has("work");
@@ -95,7 +90,6 @@ export function useLibrary(query = "") {
   return live ? { items: remote.data?.items, error: remote.error, loading: remote.loading, reload: remote.reload, live } : { items: runtime.session ? legacy : undefined, error: undefined, loading: runtime.loading && !runtime.session, reload: runtime.refreshHistory, live };
 }
 
-/** Navigation badges. */
 export function useSummary(): Partial<AssistantSummary> {
   const { has, runtime } = useAssistant();
   const live = has("work") && has("interactions");

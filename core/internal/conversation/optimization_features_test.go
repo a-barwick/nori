@@ -79,7 +79,6 @@ func TestAnthropicStreaming_EmitsActionFreeOnlyAndBlocksActions(t *testing.T) {
 	m.Client = &http.Client{Transport: rt}
 	m.Guard = llmguard.New(llmguard.Config{AllowLiveInTests: true})
 
-	// 1. Action-free reply streams clean text only (no raw JSON).
 	mode = "action_free"
 	var emitted []string
 	reply, err := m.Respond(context.Background(), ReplyRequest{
@@ -104,7 +103,6 @@ func TestAnthropicStreaming_EmitsActionFreeOnlyAndBlocksActions(t *testing.T) {
 		}
 	}
 
-	// 2. Action-bearing reply emits ZERO deltas.
 	mode = "with_action"
 	emitted = nil
 	reply2, err := m.Respond(context.Background(), ReplyRequest{
@@ -235,7 +233,6 @@ func TestCollapseActionFreeReplay_PreservesRejectionsAndDedupsCleanTurns(t *test
 		modelMessage(map[string]string{"role": "user", "content": "hi"}),
 		modelMessage(map[string]string{"role": "assistant", "content": string(wrapped)}),
 		modelMessage(map[string]string{"role": "assistant", "content": "Hello!"}),
-		// Rejected turn: published text differs from draft -> MUST preserve both!
 		modelMessage(map[string]string{"role": "assistant", "content": string(wrapped)}),
 		modelMessage(map[string]string{"role": "assistant", "content": "Action rejected."}),
 	}
@@ -255,7 +252,6 @@ func TestAtomicReserveUsage_PreventsConcurrentQuotaRace(t *testing.T) {
 	u := users.User{ID: "11111111-1111-4111-8111-111111111111", Email: "quota@example.com"}
 	store := state.Compose(records.NewShared(backend, u, 1.0), memstore.NewArtifacts())
 
-	// Cap at $0.10/day with opus ($0.05 exposure each) -> at most 2 concurrent calls may pass!
 	meter := usage.WithAdmission(store, store.(usage.WindowReader), 100, 0.10, func() time.Time { return now })
 
 	const workers = 8

@@ -1,8 +1,3 @@
-// Package prompts holds the instructions, tool descriptions and runtime strings Nori sends to models, as text files
-// built into the binary. Each file's final newline is not part of its text. A top-level .txt file can include another
-// with {{template "name"}}, where name is the other file's name without .txt. Files in runtime/ are short strings the
-// model reads in tool results, notes and task requests; their {{.Field}} placeholders are filled when the message is
-// built.
 package prompts
 
 import (
@@ -36,8 +31,6 @@ var (
 	}()
 )
 
-// TaskTool returns the description of one task worker tool. Every tool the worker offers has a file, so a missing
-// one is a build mistake.
 func TaskTool(name string) string {
 	description, ok := taskTools[name]
 	if !ok {
@@ -59,8 +52,6 @@ var runtimeStrings = func() map[string]*template.Template {
 	return set
 }()
 
-// Runtime renders one runtime string with data, which may be nil when the string has no placeholders. A missing
-// file or field is a build mistake.
 func Runtime(name string, data any) string {
 	t, ok := runtimeStrings[name]
 	if !ok {

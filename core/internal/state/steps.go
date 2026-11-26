@@ -4,8 +4,6 @@ import "time"
 
 const TaskStepLimit = 100
 
-// TaskStep records observed provider/tool activity. A missing cost or token
-// count is unknown; no model reasoning is collected.
 type TaskStep struct {
 	ID             string      `json:"id" firestore:"id"`
 	Kind           string      `json:"kind" firestore:"kind"`

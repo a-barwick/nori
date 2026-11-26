@@ -205,7 +205,6 @@ func TestMemoryToolsAndConversationFindContextFrom(t *testing.T) {
 	svc := &Service{Store: store, Now: func() time.Time { return now }}
 	ctx := context.Background()
 
-	// 1. memory_read includes section, pinned, provenance and ContextFrom-filtered summary.
 	readOut, err := svc.CallRuntimeTool(ctx, "run-1", "memory_read", map[string]any{})
 	if err != nil {
 		t.Fatalf("memory_read: %v", err)
@@ -218,7 +217,6 @@ func TestMemoryToolsAndConversationFindContextFrom(t *testing.T) {
 		t.Fatalf("expected conversation_summary in memory_read output")
 	}
 
-	// 2. memory_search passes ContextFrom, uses injected clock, filters pre-ContextFrom hits, and caps snippets <= 700B.
 	searchOut, err := svc.CallRuntimeTool(ctx, "run-1", "memory_search", map[string]any{"query": "tokyo", "layer": "", "limit": "5"})
 	if err != nil {
 		t.Fatalf("memory_search: %v", err)
@@ -240,7 +238,6 @@ func TestMemoryToolsAndConversationFindContextFrom(t *testing.T) {
 		t.Fatalf("expected memoryNote on memory_search")
 	}
 
-	// 3. memory_get core returns full Core Memories.
 	coreOut, err := svc.CallRuntimeTool(ctx, "run-1", "memory_get", map[string]any{"target": "core"})
 	if err != nil {
 		t.Fatalf("memory_get core: %v", err)
@@ -250,7 +247,6 @@ func TestMemoryToolsAndConversationFindContextFrom(t *testing.T) {
 		t.Fatalf("unexpected memory_get core: %+v", coreItems)
 	}
 
-	// 4. memory_get log filters pre-ContextFrom entries and supports entry_id lookup.
 	logOut, err := svc.CallRuntimeTool(ctx, "run-1", "memory_get", map[string]any{"target": "log", "date": "2026-11-23"})
 	if err != nil {
 		t.Fatalf("memory_get log: %v", err)
@@ -267,7 +263,6 @@ func TestMemoryToolsAndConversationFindContextFrom(t *testing.T) {
 		t.Fatalf("memory_get specific entry failed: out=%+v err=%v", entryOut, err)
 	}
 
-	// 5. conversation_find enforces ContextFrom (Audit Finding 5).
 	findOut, err := svc.CallRuntimeTool(ctx, "run-1", "conversation_find", map[string]any{"query": "tokyo"})
 	if err != nil {
 		t.Fatalf("conversation_find: %v", err)

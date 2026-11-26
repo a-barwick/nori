@@ -5,9 +5,6 @@ import (
 	"strings"
 )
 
-// OpenAIWebSearchCallCostUSD is OpenAI's listed Responses API web_search tool
-// call fee of $10.00 per 1,000 calls. Search result tokens are billed separately
-// through the model's standard input token usage.
 const OpenAIWebSearchCallCostUSD = 0.01
 
 func matchOpenAIModel(model, name string) bool {
@@ -18,8 +15,6 @@ func SolCost(model, tier string, input, output, total *int64, cached int64) (flo
 	return SolCostWithWrites(model, tier, input, output, total, cached, 0)
 }
 
-// SolCostWithWrites prices a gpt-6.1-sol call with prompt caching: cache reads at 0.05x and 30-minute cache writes
-// at 1.25x the $2/M input rate (total rates, not surcharges). Ordinary input is input - cached - written.
 func SolCostWithWrites(model, tier string, input, output, total *int64, cached, written int64) (float64, error) {
 	if (!matchOpenAIModel(model, "gpt-6.1-sol") && !matchOpenAIModel(model, "gpt-6.2-sol")) || tier != "default" || input == nil || output == nil || total == nil ||
 		*input < 0 || *input > 272_000 || *output < 0 || *output > 4096 || *total != *input+*output || cached < 0 || written < 0 ||
@@ -46,12 +41,6 @@ func TerraCostWithWrites(model, tier string, input, output, total *int64, cached
 	return float64((*input-cached-written)*inputRate+cached*cacheRate+written*writeRate+*output*outputRate) / 1e9, nil
 }
 
-func LunaCost(model, tier string, input, output, total *int64, cached int64) (float64, error) {
-	return LunaCostWithWrites(model, tier, input, output, total, cached, 0)
-}
-
-// LunaCostWithWrites prices a gpt-6-luna call with prompt caching: $0.10/M input,
-// $0.01/M cached read (0.1x), $0.125/M 30-minute cache write (1.25x), and $0.50/M output.
 func LunaCostWithWrites(model, tier string, input, output, total *int64, cached, written int64) (float64, error) {
 	if (!matchOpenAIModel(model, "gpt-6-luna") && !matchOpenAIModel(model, "gpt-6.1-luna") && !matchOpenAIModel(model, "gpt-6.2-luna")) ||
 		tier != "default" || input == nil || output == nil || total == nil ||

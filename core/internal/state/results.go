@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// Result kinds. A task's answer is always saved. A task saves files and links itself.
 const (
 	ResultAnswer     = "answer"
 	ResultFile       = "file"
@@ -21,61 +20,46 @@ const (
 )
 
 const (
-	// RecentResultLimit is how many results a snapshot and the outer loop's context list.
 	RecentResultLimit = 20
 	MaxResultTitle    = 200
 )
 
-// Result is one saved output of a task. Its ID never changes. A revision is a new result that links to the one it
-// revises, so an old result stays readable as history.
-//
-// CreatedAt, CheckedAt, ReportedAt and DeliveredAt are separate facts. A result can be saved and not yet checked, and a
-// reply can be saved and not yet seen. None of them says an action happened: an operation's own record says that.
 type Result struct {
-	ID string `json:"id" firestore:"id"`
-	// RootID is the first result in this one's revision history, and Version counts from 1.
-	RootID       string `json:"root_id" firestore:"root_id"`
-	Version      int    `json:"version" firestore:"version"`
-	Revises      string `json:"revises,omitempty" firestore:"revises,omitempty"`
-	SupersededBy string `json:"superseded_by,omitempty" firestore:"superseded_by,omitempty"`
-	RunID        string `json:"run_id" firestore:"run_id"`
-	Revision     int64  `json:"revision" firestore:"revision"`
-	Kind         string `json:"kind" firestore:"kind"`
-	Title        string `json:"title" firestore:"title"`
-	Text         string `json:"text,omitempty" firestore:"text,omitempty"`
-	// Name, MediaType and Size describe a stored file. ArtifactID names a task's screenshot and URL a link.
-	Name       string `json:"name,omitempty" firestore:"name,omitempty"`
-	MediaType  string `json:"media_type,omitempty" firestore:"media_type,omitempty"`
-	Size       int64  `json:"size,omitempty" firestore:"size,omitempty"`
-	ArtifactID string `json:"artifact_id,omitempty" firestore:"artifact_id,omitempty"`
-	URL        string `json:"url,omitempty" firestore:"url,omitempty"`
-	// Evidence names the saved tool results a check accepted, and Unmet what the task said it didn't finish.
-	Evidence []string `json:"evidence,omitempty" firestore:"evidence,omitempty"`
-	Unmet    []string `json:"unmet,omitempty" firestore:"unmet,omitempty"`
+	ID           string   `json:"id" firestore:"id"`
+	RootID       string   `json:"root_id" firestore:"root_id"`
+	Version      int      `json:"version" firestore:"version"`
+	Revises      string   `json:"revises,omitempty" firestore:"revises,omitempty"`
+	SupersededBy string   `json:"superseded_by,omitempty" firestore:"superseded_by,omitempty"`
+	RunID        string   `json:"run_id" firestore:"run_id"`
+	Revision     int64    `json:"revision" firestore:"revision"`
+	Kind         string   `json:"kind" firestore:"kind"`
+	Title        string   `json:"title" firestore:"title"`
+	Text         string   `json:"text,omitempty" firestore:"text,omitempty"`
+	Name         string   `json:"name,omitempty" firestore:"name,omitempty"`
+	MediaType    string   `json:"media_type,omitempty" firestore:"media_type,omitempty"`
+	Size         int64    `json:"size,omitempty" firestore:"size,omitempty"`
+	ArtifactID   string   `json:"artifact_id,omitempty" firestore:"artifact_id,omitempty"`
+	URL          string   `json:"url,omitempty" firestore:"url,omitempty"`
+	Evidence     []string `json:"evidence,omitempty" firestore:"evidence,omitempty"`
+	Unmet        []string `json:"unmet,omitempty" firestore:"unmet,omitempty"`
 
-	CreatedAt time.Time `json:"created_at" firestore:"created_at"`
-	// CheckedAt is when the task's completion check accepted this.
-	CheckedAt *time.Time `json:"checked_at,omitempty" firestore:"checked_at,omitempty"`
-	// ReportedAt and MessageID are when a reply naming this was saved, and that reply.
-	ReportedAt *time.Time `json:"reported_at,omitempty" firestore:"reported_at,omitempty"`
-	MessageID  string     `json:"message_id,omitempty" firestore:"message_id,omitempty"`
-	// DeliveredAt is when a browser reported showing that reply.
+	CreatedAt   time.Time  `json:"created_at" firestore:"created_at"`
+	CheckedAt   *time.Time `json:"checked_at,omitempty" firestore:"checked_at,omitempty"`
+	ReportedAt  *time.Time `json:"reported_at,omitempty" firestore:"reported_at,omitempty"`
+	MessageID   string     `json:"message_id,omitempty" firestore:"message_id,omitempty"`
 	DeliveredAt *time.Time `json:"delivered_at,omitempty" firestore:"delivered_at,omitempty"`
 }
 
 func ResultKey(id string) string { return "results/" + id }
 
 type ResultDraft struct {
-	Checked  bool
-	Evidence []string
-	Unmet    []string
-	// Artifacts are the task's screenshots the answer cites, which are saved as results too.
+	Checked   bool
+	Evidence  []string
+	Unmet     []string
 	Artifacts []string
-	// Cited are the saved results the answer cites. Only these count as checked.
-	Cited []string
+	Cited     []string
 }
 
-// ResultID is stable for the same content, so a retried save finds the same record.
 func ResultID(parts ...string) string {
 	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("result:"+strings.Join(parts, ":"))).String()
 }
@@ -108,10 +92,6 @@ func ValidLink(address string) error {
 	return nil
 }
 
-// PublishResults decides what a task's end does to its results. existing holds what the task already saved, and prior
-// the result it revises, if any. The task's main result is its first file, or else its answer, and that's the one
-// linked to prior. It returns every result to write, including prior when it's now superseded. If another task already
-// revised prior, these outputs stay separate and the returned notice explains why they didn't replace it.
 func PublishResults(run Run, req PublishRequest, existing []Result, prior *Result, now time.Time) ([]Result, string) {
 	results := append([]Result{}, existing...)
 	sort.SliceStable(results, func(i, j int) bool { return results[i].CreatedAt.Before(results[j].CreatedAt) })
@@ -137,7 +117,6 @@ func PublishResults(run Run, req PublishRequest, existing []Result, prior *Resul
 			results[i].CheckedAt = &now
 		}
 	}
-	// A task that didn't finish can't replace what it was revising.
 	if prior == nil || len(results) == 0 || !checked {
 		return results, ""
 	}
@@ -151,8 +130,6 @@ func PublishResults(run Run, req PublishRequest, existing []Result, prior *Resul
 			main = &results[i]
 		}
 	}
-	// Publication reads prior inside the same transaction that writes its successor. A concurrent completion must
-	// keep that successor and its history, rather than silently treating work based on an older version as current.
 	if prior.SupersededBy != "" && prior.SupersededBy != main.ID {
 		notice := fmt.Sprintf("Revision conflict: saved result %s was already replaced by %s. This task's output is saved separately; it did not replace either result.", prior.ID, prior.SupersededBy)
 		for i := range results {
@@ -171,9 +148,6 @@ func PublishResults(run Run, req PublishRequest, existing []Result, prior *Resul
 	return append(results, superseded), ""
 }
 
-// ReportResults marks results as named in a reply and returns the parts that show them. A result reported earlier keeps
-// its first report. A task's reply already says what its answer says, so an answer's text appears only when the outer
-// model chose to show it.
 func ReportResults(results []Result, shown []string, messageID string, now time.Time) ([]Result, []Part) {
 	parts := []Part{}
 	marked := make([]Result, 0, len(results))
@@ -191,7 +165,6 @@ func ReportResults(results []Result, shown []string, messageID string, now time.
 	return marked, parts
 }
 
-// ResultPart is how a stored result appears in a message. An answer's text is already in the reply, so it has none.
 func ResultPart(result Result) (Part, bool) {
 	switch result.Kind {
 	case ResultFile:

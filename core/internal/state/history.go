@@ -16,9 +16,6 @@ const (
 	MaxHistoryBlocks     = 512
 )
 
-// HistoryBlock is one immutable exact JSON payload of a task's history, including opaque provider items. A block's
-// reference binds the task, its parent and its payload, and blocks form a chain through Parent. No history is
-// exported to tracing. Only references, not cumulative transcripts, belong in workflows.
 type HistoryBlock struct {
 	RunID  string `firestore:"run_id"`
 	Parent string `firestore:"parent"`
@@ -27,8 +24,6 @@ type HistoryBlock struct {
 	Bytes  int    `firestore:"bytes"`
 }
 
-// TaskModelCheckpoint records the intent and outcome of one durable model step.
-// Its input binds it to the exact revision and parent transcript it read.
 type TaskModelCheckpoint struct {
 	ID            string    `firestore:"id"`
 	Revision      int64     `firestore:"revision"`
@@ -48,7 +43,6 @@ func (c TaskModelCheckpoint) Validate() error {
 	return nil
 }
 
-// ValidHistoryRef reports whether ref has the form of a history reference: a lowercase SHA-256 in hex.
 func ValidHistoryRef(ref string) bool {
 	decoded, err := hex.DecodeString(ref)
 	return err == nil && len(decoded) == sha256.Size && ref == strings.ToLower(ref)
@@ -68,7 +62,6 @@ func ValidHistoryLookup(runID, ref string) bool {
 	return ValidEvidenceID(runID) && ValidHistoryRef(ref)
 }
 
-// ValidateSavedHistoryBlock checks that a block read from storage is the block its reference names.
 func ValidateSavedHistoryBlock(runID, ref string, block HistoryBlock) error {
 	if block.RunID != runID || HistoryID(runID, block.Parent, block.Data) != ref ||
 		len(block.Data) == 0 || len(block.Data) > MaxHistoryBlockBytes || !json.Valid(block.Data) ||
@@ -98,7 +91,6 @@ func NextHistoryBlock(runID, parentRef string, parent *HistoryBlock, data []byte
 	return block, HistoryID(runID, parentRef, data), nil
 }
 
-// CheckHistoryReplay verifies that the block already saved under a reference is the one being appended again.
 func CheckHistoryReplay(saved, block HistoryBlock) error {
 	if saved.Parent != block.Parent || !bytes.Equal(saved.Data, block.Data) || saved.Depth != block.Depth || saved.Bytes != block.Bytes {
 		return errors.New("task history identity conflict")
@@ -106,8 +98,6 @@ func CheckHistoryReplay(saved, block HistoryBlock) error {
 	return nil
 }
 
-// HistoryChain walks a history from its newest block back to its first, failing closed on anything missing, foreign,
-// malformed or over the limits rather than returning partial context.
 type HistoryChain struct {
 	blocks        [][]byte
 	seen          map[string]bool
@@ -141,7 +131,6 @@ func (c *HistoryChain) Add(block HistoryBlock) (string, error) {
 	return block.Parent, nil
 }
 
-// Payloads returns the exact payloads in chronological order once the chain has been walked to its start.
 func (c *HistoryChain) Payloads() ([][]byte, error) {
 	if len(c.blocks) > 0 && (c.expectedDepth != 0 || c.expectedBytes != 0) {
 		return nil, errors.New("task history chain is incomplete")

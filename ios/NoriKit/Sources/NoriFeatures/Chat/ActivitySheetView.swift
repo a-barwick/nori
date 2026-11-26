@@ -64,7 +64,6 @@ public struct ActivitySheetView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    // Compact status header strip
                     HStack(spacing: 12) {
                         NoriMark(size: 34, state: heroMarkState)
                         HStack(spacing: 6) {
@@ -89,7 +88,6 @@ public struct ActivitySheetView: View {
                     .padding(.top, 6)
                     .padding(.bottom, 4)
 
-                    // Active Tasks Section
                     NoriSectionHeader("Active") {
                         if !activeTasks.isEmpty {
                             Text("\(activeTasks.count)")
@@ -121,7 +119,6 @@ public struct ActivitySheetView: View {
                         }
                     }
 
-                    // Recent Tasks Section
                     if !recentTasks.isEmpty {
                         NoriSectionHeader("Recent")
                         NoriRows {

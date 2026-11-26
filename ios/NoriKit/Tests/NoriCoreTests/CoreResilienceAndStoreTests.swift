@@ -2,7 +2,6 @@ import Foundation
 import Testing
 @testable import NoriCore
 
-// MARK: - Thread-Safe Stub URLProtocol
 
 private final class StubURLProtocol: URLProtocol, @unchecked Sendable {
     typealias Handler = @Sendable (URLRequest) throws -> (HTTPURLResponse, Data)
@@ -88,7 +87,6 @@ private func httpResponse(
     HTTPURLResponse(url: url, statusCode: statusCode, httpVersion: "HTTP/1.1", headerFields: headers)!
 }
 
-// MARK: - Auth & LiveNoriTransport HTTP/SSE Tests (Serialized for URLProtocol isolation)
 
 @Suite("Auth Refresh & LiveNoriTransport Resilience", .serialized)
 struct AuthAndLiveTransportTests {
@@ -101,7 +99,40 @@ struct AuthAndLiveTransportTests {
         )
     }
 
-    // MARK: 1. AuthTokenProvider Token Refresh Resilience
+
+    @Test("Sends the advertised model on the authenticated turn request")
+    func selectedModelTurnWirePayload() async throws {
+        let urlSession = StubURLProtocol.makeSession()
+        let provider = makeProvider(session: urlSession)
+        await provider.saveSession(AuthSession(
+            idToken: makeFakeJWT(email: "alex@example.com"),
+            refreshToken: "refresh",
+            expiresAt: Date().addingTimeInterval(3_600),
+            email: "alex@example.com"
+        ))
+        defer { StubURLProtocol.setHandler(nil) }
+        StubURLProtocol.setHandler { request in
+            let url = try #require(request.url)
+            if url.path == "/api/users/resolve" {
+                return (httpResponse(url: url, statusCode: 200), Data(#"{"id":"usr-1"}"#.utf8))
+            }
+            #expect(url.path == "/users/usr-1/api/turn")
+            #expect(request.httpMethod == "POST")
+            let body = try #require(JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any])
+            #expect(body["id"] as? String == "turn-one")
+            #expect(body["message"] as? String == "Hello")
+            #expect(body["model"] as? [String: String] == ["chat_profile_id": "chat-fixture", "chat_reasoning": "high", "task_profile_id": "task-fixture"])
+            return (httpResponse(url: url, statusCode: 202), Data(#"{"messages":[],"runs":[],"results":[],"paused":false,"position":7}"#.utf8))
+        }
+        let transport = LiveNoriTransport(baseURL: URL(string: "https://nori.test")!, authProvider: provider, urlSession: urlSession)
+        let session = try await transport.sendTurn(
+            id: "turn-one",
+            message: "Hello",
+            attachmentIDs: [],
+            modelSelection: ModelSelection(chatProfileID: "chat-fixture", chatReasoning: "high", taskProfileID: "task-fixture")
+        )
+        #expect(session.position == 7)
+    }
 
     @Test("Preserves session on transient network timeout and 5xx token endpoint errors")
     func authRefreshPreservesSessionOnTransientErrors() async throws {
@@ -115,7 +146,6 @@ struct AuthAndLiveTransportTests {
         )
         await provider.saveSession(expiredSession)
 
-        // 1) Transient URLError(.timedOut) must NOT clear session.
         StubURLProtocol.setHandler { _ in
             throw URLError(.timedOut)
         }
@@ -128,7 +158,6 @@ struct AuthAndLiveTransportTests {
         }
         #expect(await provider.loadSession() == expiredSession)
 
-        // 2) Transient HTTP 503 from Google must NOT clear session.
         StubURLProtocol.setHandler { req in
             (httpResponse(url: req.url!, statusCode: 503), Data(#"{"error":"temporarily_unavailable"}"#.utf8))
         }
@@ -141,7 +170,6 @@ struct AuthAndLiveTransportTests {
         }
         #expect(await provider.loadSession() == expiredSession)
 
-        // 3) Transient HTTP 429 must NOT clear session.
         StubURLProtocol.setHandler { req in
             (httpResponse(url: req.url!, statusCode: 429), Data("{}".utf8))
         }
@@ -169,7 +197,6 @@ struct AuthAndLiveTransportTests {
         )
         await provider.saveSession(expiredSession)
 
-        // HTTP 400 invalid_grant -> clears session.
         StubURLProtocol.setHandler { req in
             (httpResponse(url: req.url!, statusCode: 400), Data(#"{"error":"invalid_grant","error_description":"Token has been expired or revoked."}"#.utf8))
         }
@@ -183,7 +210,6 @@ struct AuthAndLiveTransportTests {
         }
         #expect(await provider.loadSession() == nil)
 
-        // HTTP 401 -> also clears session.
         await provider.saveSession(expiredSession)
         StubURLProtocol.setHandler { req in
             (httpResponse(url: req.url!, statusCode: 401), Data(#"{"error":"unauthorized_client"}"#.utf8))
@@ -222,12 +248,10 @@ struct AuthAndLiveTransportTests {
             )
         }
 
-        // Without forceRefresh, returns cached token without network call.
         let cachedToken = try await provider.validIDToken(forceRefresh: false)
         #expect(cachedToken == "cached-still-valid")
         #expect(callCounter.value == 0)
 
-        // With forceRefresh: true, hits Google token endpoint and updates session.
         let refreshedToken = try await provider.validIDToken(forceRefresh: true)
         #expect(refreshedToken == newJWT)
         #expect(callCounter.value == 1)
@@ -237,7 +261,6 @@ struct AuthAndLiveTransportTests {
         StubURLProtocol.setHandler(nil)
     }
 
-    // MARK: 2. SSE Resilience (401 retry, terminal 401/403, reset backward cursor, connection states)
 
     @Test("SSE retries once with force-refreshed token on 401 and succeeds on 200")
     func sseRetriesOn401WithForceRefresh() async throws {
@@ -354,7 +377,6 @@ struct AuthAndLiveTransportTests {
             #expect(err.statusCode == 401)
             #expect(err.retryable == false)
         }
-        // Exactly 2 SSE attempts: initial 401 + single retry after force refresh.
         #expect(sseAttempts.value == 2)
 
         StubURLProtocol.setHandler(nil)
@@ -379,7 +401,6 @@ struct AuthAndLiveTransportTests {
             sseRolloverDelayMilliseconds: 5
         )
 
-        // 1) 403 terminates immediately without looping.
         let attempts403 = LockedCounter()
         StubURLProtocol.setHandler { req in
             let url = req.url!
@@ -397,7 +418,6 @@ struct AuthAndLiveTransportTests {
         }
         #expect(attempts403.value == 1)
 
-        // 2) 401 followed by invalid_grant from Google clears session & terminates stream.
         let attemptsInvalidGrant = LockedCounter()
         StubURLProtocol.setHandler { req in
             let url = req.url!
@@ -450,17 +470,13 @@ struct AuthAndLiveTransportTests {
 
                 switch n {
                 case 1:
-                    // Transient 503 -> should emit .reconnecting
                     return (httpResponse(url: url, statusCode: 503), Data())
                 case 2:
-                    // Offline URLError -> should emit .offline
                     throw URLError(.notConnectedToInternet)
                 case 3:
-                    // Server sends reset moving cursor backward from 50 -> 12
                     let body = "event: reset\ndata: {\"position\":12}\n\n"
                     return (httpResponse(url: url, statusCode: 200, headers: ["Content-Type": "text/event-stream"]), Data(body.utf8))
                 default:
-                    // Next reconnect must request after=12
                     let body = "id: 13\nevent: memory\ndata: {\"ref\":\"m13\"}\n\n"
                     return (httpResponse(url: url, statusCode: 200, headers: ["Content-Type": "text/event-stream"]), Data(body.utf8))
                 }
@@ -500,7 +516,6 @@ struct AuthAndLiveTransportTests {
         StubURLProtocol.setHandler(nil)
     }
 
-    // MARK: 3. LiveNoriTransport Endpoints: File Fetch, Revise 202, MCP Credential, OAuth return_to, Summary, Parallel MCP Tools
 
     @Test("LiveNoriTransport handles library file fetch, MCP credential payload, OAuth return_to, summary, and parallel MCP tools")
     func liveTransportEndpointsAndPayloads() async throws {
@@ -666,19 +681,16 @@ struct AuthAndLiveTransportTests {
             urlSession: urlSession
         )
 
-        // File fetch
         let payload = try await transport.fetchLibraryItemFile(id: "doc-1", format: "md")
         #expect(payload.utf8Text == "# Quarterly Report\n\nFull markdown body.")
         #expect(payload.mediaType == "text/markdown; charset=utf-8")
         #expect(payload.filename == "Quarterly Report.md")
         #expect(capturedQueries.get("/users/usr-1/v1/library/doc-1/file") == "format=md")
 
-        // Queued revision HTTP 202
         let revReceipt = try await transport.reviseLibraryItem(id: "doc-1", expectedRevision: 1, instruction: "Make concise", requestID: "req-rev")
         #expect(revReceipt.status == .queued)
         #expect(revReceipt.work?.taskID == "task-rev-42")
 
-        // MCP credential matches Go mcp.CredentialInput (`request_id` + `token`)
         let credReceipt = try await transport.setMCPCredential(serverID: "mcp-1", expectedRevision: 1, secret: "sk-live-secret", requestID: "req-cred")
         #expect(credReceipt.resource.observed.credential == "present")
         let credJSON = try JSONSerialization.jsonObject(with: capturedBodies.get("/users/usr-1/v1/mcp/mcp-1/credential") ?? Data()) as? [String: Any]
@@ -686,7 +698,6 @@ struct AuthAndLiveTransportTests {
         #expect(credJSON?["token"] as? String == "sk-live-secret")
         #expect(credJSON?["value"] == nil)
 
-        // MCP OAuth action includes return_to
         let mcpAuthReceipt = try await transport.performMCPAction(
             serverID: "mcp-1",
             expectedRevision: 1,
@@ -700,7 +711,6 @@ struct AuthAndLiveTransportTests {
         #expect(mcpActionVal?["action"] as? String == "sign_in")
         #expect(mcpActionVal?["return_to"] as? String == "nori://oauth/callback")
 
-        // Connection OAuth action includes return_to
         let connAuthReceipt = try await transport.performConnectionAction(
             connectionID: "conn-1",
             expectedRevision: 1,
@@ -714,7 +724,6 @@ struct AuthAndLiveTransportTests {
         #expect(connActionVal?["action"] as? String == "connect")
         #expect(connActionVal?["return_to"] as? String == "nori://oauth/callback")
 
-        // Assistant summary
         let summary = try await transport.fetchAssistantSummary()
         #expect(summary.revision == 99)
         #expect(summary.needsYou == 2)
@@ -723,7 +732,6 @@ struct AuthAndLiveTransportTests {
         #expect(summary.inboxUnread == 4)
         #expect(summary.nextScheduledAt == "2026-11-25T09:00:00Z")
 
-        // Full snapshot fetches MCP tools for all servers via TaskGroup
         let snap = try await transport.fetchFullSnapshot()
         #expect(snap.mcpServers.count == 2)
         #expect(Set(snap.mcpTools.keys) == Set(["s1", "s2"]))
@@ -733,16 +741,53 @@ struct AuthAndLiveTransportTests {
     }
 }
 
-// MARK: - Memory Mutation Receipt Decoding & NoriStore Tests
 
 @Suite("Memory Receipts & NoriStore Domain Logic")
 struct MemoryReceiptsAndStoreTests {
+
+    @Test("A delayed session response cannot restore a previous identity's state")
+    @MainActor
+    func ignoresSessionResponseAfterSignOut() async {
+        let transport = FullMockTransport()
+        let provider = AuthTokenProvider(keychain: KeychainStore(service: "com.nori.ios.tests.\(UUID().uuidString)"))
+        let store = NoriStore(transport: transport, authProvider: provider)
+        store.authState = .signedIn(email: "first@example.com")
+        await transport.suspendNextSession()
+        let refresh = Task { await store.refreshSession() }
+        await transport.waitForSuspendedSession()
+        await store.signOut()
+        store.authState = .signedIn(email: "second@example.com")
+        store.session = Session(position: 3)
+        await transport.finishSuspendedSession(Session(messages: [
+            Message(id: "private", role: .assistant, text: "First account history", createdAt: "2026-11-24T10:00:00Z"),
+        ], position: 99))
+        await refresh.value
+        #expect(store.messages.isEmpty)
+        #expect(store.session.position == 3)
+    }
+
+    @Test("Partial memory refresh reports the failure and preserves the last working memory")
+    @MainActor
+    func preservesMemoryWhenOneSourceFails() async {
+        let transport = FullMockTransport()
+        let store = NoriStore(transport: transport)
+        store.workingMemory = WorkingMemory(revision: 12, items: [WorkingMemoryItem(id: "kept", kind: .fact, quote: "Keep this")])
+        await transport.setWorkingMemoryFailure(true)
+        await store.refreshMemory()
+        #expect(store.memoryLogs.first?.revision == 21)
+        #expect(store.workingMemory.items.first?.id == "kept")
+        #expect(store.memoryRefreshError == "Working memory unavailable")
+
+        await transport.setWorkingMemoryFailure(false)
+        await store.refreshMemory()
+        #expect(store.workingMemory.revision == 35)
+        #expect(store.memoryRefreshError == nil)
+    }
 
     @Test("Decodes all 6 backend memory action receipt shapes from core/internal/api/memory.go")
     func decodeAllMemoryActionReceipts() throws {
         let decoder = JSONDecoder()
 
-        // 1. Core pin / unpin -> MemoryFact
         let pinJSON = """
         {
           "request_id": "r1",
@@ -765,7 +810,6 @@ struct MemoryReceiptsAndStoreTests {
         #expect(pinReceipt.resource.fact?.id == "mem-1")
         #expect(pinReceipt.resource.fact?.pinned == true)
 
-        // 2. Core forget -> {"note", "forgotten"}
         let forgetCoreJSON = """
         {
           "request_id": "r2",
@@ -788,7 +832,6 @@ struct MemoryReceiptsAndStoreTests {
         #expect(forgetCoreReceipt.resource.forgetResult?.note == "Nori will no longer use this.")
         #expect(forgetCoreReceipt.resource.forgetResult?.forgotten?.id == "mem-1")
 
-        // 3. Core demote -> {"demoted", "log_entry", "note"}
         let demoteJSON = """
         {
           "request_id": "r3",
@@ -818,7 +861,6 @@ struct MemoryReceiptsAndStoreTests {
         #expect(demoteReceipt.resource.demoteResult?.logEntry?.id == "demote_mem-2")
         #expect(demoteReceipt.resource.demoteResult?.note == "Moved to daily log.")
 
-        // 4. Log entry promote -> MemoryFact
         let promoteLogJSON = """
         {
           "request_id": "r4",
@@ -840,7 +882,6 @@ struct MemoryReceiptsAndStoreTests {
         #expect(promoteLogReceipt.resource.promotedFact?.id == "mem-promoted-1")
         #expect(promoteLogReceipt.resource.promotedFact?.pinned == true)
 
-        // 5. Log entry forget -> {"note", "forgotten"}
         let forgetLogJSON = """
         {
           "request_id": "r5",
@@ -861,7 +902,6 @@ struct MemoryReceiptsAndStoreTests {
         #expect(forgetLogReceipt.resource.forgetResult?.note == "Nori removed this daily log entry.")
         #expect(forgetLogReceipt.resource.forgetResult?.forgotten?.id == "entry-9")
 
-        // 6a. Working memory promote -> MemoryFact
         let promoteWorkingJSON = """
         {
           "request_id": "r6a",
@@ -880,7 +920,6 @@ struct MemoryReceiptsAndStoreTests {
         let promoteWorkingReceipt = try decoder.decode(MutationReceipt<WorkingMemoryActionResource>.self, from: Data(promoteWorkingJSON.utf8))
         #expect(promoteWorkingReceipt.resource.promotedFact?.id == "mem-from-working")
 
-        // 6b. Working memory dismiss -> WorkingMemory
         let dismissWorkingFullJSON = """
         {
           "request_id": "r6b",
@@ -900,7 +939,6 @@ struct MemoryReceiptsAndStoreTests {
         #expect(dismissFullReceipt.resource.workingMemory?.revision == 4002)
         #expect(dismissFullReceipt.resource.workingMemory?.items.isEmpty == true)
 
-        // 6c. Working memory dismiss fallback -> {"dismissed_item_id"}
         let dismissWorkingIDJSON = """
         {
           "request_id": "r6c",
@@ -934,35 +972,27 @@ struct MemoryReceiptsAndStoreTests {
         let wm2 = WorkingMemoryItem(id: "wm-2", kind: .fact, quote: "Dismiss me")
         store.workingMemory = WorkingMemory(revision: 30, items: [wm1, wm2])
 
-        // 1. Pin m1
         await store.togglePinMemory(memoryID: "m1")
         #expect(store.coreMemories.first(where: { $0.id == "m1" })?.pinned == true)
 
-        // 2. Demote m2
         await store.demoteMemory(memoryID: "m2")
         #expect(store.coreMemories.contains(where: { $0.id == "m2" }) == false)
 
-        // 3. Forget m3
         await store.forgetMemory(memoryID: "m3")
         #expect(store.coreMemories.contains(where: { $0.id == "m3" }) == false)
 
-        // 4. Promote log entry le-1
         await store.promoteLogEntry(date: "2026-11-24", entryID: "le-1", pinned: true)
         #expect(store.coreMemories.contains(where: { $0.id == "promoted-le-1" && $0.pinned == true }))
 
-        // 5. Forget log entry le-2
         await store.forgetLogEntry(date: "2026-11-24", entryID: "le-2")
         #expect(store.memoryLogs.flatMap(\.entries).contains(where: { $0.id == "le-2" }) == false)
 
-        // 6. Promote working memory item wm-1
         await store.promoteWorkingMemoryItem(itemID: "wm-1")
         #expect(store.coreMemories.contains(where: { $0.id == "promoted-wm-1" }))
 
-        // 7a. Dismiss working memory item (WorkingMemory payload)
         await store.dismissWorkingMemoryItem(itemID: "wm-2")
         #expect(store.workingMemory.items.contains(where: { $0.id == "wm-2" }) == false)
 
-        // 7b. Dismiss working memory item (dismissed_item_id fallback payload)
         store.workingMemory = WorkingMemory(revision: 31, items: [WorkingMemoryItem(id: "wm-3", kind: .fact, quote: "Dismiss fallback")])
         await mock.setDismissReturnsIDOnly(true)
         await store.dismissWorkingMemoryItem(itemID: "wm-3")
@@ -975,18 +1005,15 @@ struct MemoryReceiptsAndStoreTests {
         let mock = FullMockTransport()
         let store = NoriStore(transport: mock)
 
-        // Empty input returns false without hitting transport.
         let emptyResult = await store.sendMessage("   \n  ")
         #expect(emptyResult == false)
 
-        // Failure returns false and removes optimistic bubble.
         await mock.setShouldFailSendTurn(true)
         let failedResult = await store.sendMessage("Draft to keep")
         #expect(failedResult == false)
         #expect(store.messages.isEmpty)
         #expect(store.isThinking == false)
 
-        // Success returns true.
         await mock.setShouldFailSendTurn(false)
         let successResult = await store.sendMessage("Hello Nori")
         #expect(successResult == true)
@@ -999,17 +1026,14 @@ struct MemoryReceiptsAndStoreTests {
         let mock = FullMockTransport()
         let store = NoriStore(transport: mock)
 
-        // Hydrate an uncached document via loadLibraryItem
         let loaded = await store.loadLibraryItem(id: "deep-doc-1")
         #expect(loaded?.id == "deep-doc-1")
         #expect(store.libraryItems.contains(where: { $0.id == "deep-doc-1" }))
 
-        // Fetch full markdown file payload
         let file = try await store.loadLibraryItemFile(id: "deep-doc-1", format: "md")
         #expect(file.utf8Text == "# Full Doc\n\nBody text.")
         #expect(store.libraryItems.first(where: { $0.id == "deep-doc-1" })?.bodyText == "# Full Doc\n\nBody text.")
 
-        // Queued revision (HTTP 202) -> toast "Revision started", refreshes work items, returns taskID
         await mock.setReviseStatus(.queued)
         let queuedResult = await store.reviseDocument(itemID: "deep-doc-1", instruction: "Shorten")
         #expect(queuedResult?.status == .queued)
@@ -1018,7 +1042,6 @@ struct MemoryReceiptsAndStoreTests {
         #expect(store.toastMessage == "Revision started")
         #expect(await mock.fetchWorkItemsCallCount >= 1)
 
-        // Synchronous revision -> toast "Revision saved (v2)"
         await mock.setReviseStatus(.applied)
         let appliedResult = await store.reviseDocument(itemID: "deep-doc-1", instruction: "Polish")
         #expect(appliedResult?.status == .applied)
@@ -1035,18 +1058,15 @@ struct MemoryReceiptsAndStoreTests {
         store.connections = [Connection(id: "conn-1", revision: 2, integrationID: "gmail", title: "Work Gmail", status: .notConnected)]
         store.mcpServers = [MCPServer(id: "mcp-1", revision: 3, name: "Linear", endpoint: "https://mcp.linear.app", observed: MCPObservedState(status: .needsSignIn), auth: .oauth)]
 
-        // Connection OAuth returns AuthAttempt and does NOT toast "Connected ..." while pending OAuth
         let connAttempt = await store.connectConnection(connectionID: "conn-1")
         #expect(connAttempt?.id == "att-conn-1")
         #expect(await mock.lastConnectionReturnTo == "nori://oauth/callback")
         #expect(store.toastMessage == nil)
 
-        // MCP OAuth start passes return_to and returns AuthAttempt
         let mcpAttempt = await store.startMCPOAuth(serverID: "mcp-1")
         #expect(mcpAttempt?.id == "att-mcp-1")
         #expect(await mock.lastMCPReturnTo == "nori://oauth/callback")
 
-        // MCP credential save
         let emptyCred = await store.saveMCPCredential(serverID: "mcp-1", secret: "   ")
         #expect(emptyCred == false)
 
@@ -1065,7 +1085,6 @@ struct MemoryReceiptsAndStoreTests {
         store.authState = .signedIn(email: "alex@example.com")
         store.session = Session(position: 50)
 
-        // 1. Stream emits .offline -> store.connectionState reflects .offline
         await mock.setStreamEvents([
             .connectionState(.connecting),
             .connectionState(.connected),
@@ -1076,7 +1095,6 @@ struct MemoryReceiptsAndStoreTests {
         try await Task.sleep(for: .milliseconds(50))
         #expect(store.connectionState == .offline)
 
-        // 2. Stream emits .reset(position: 8) when session.position is 50 -> moves backward to 8 even if snapshot fails
         await mock.setShouldFailSnapshot(true)
         await mock.setStreamEvents([.reset(position: 8)], terminalError: nil)
         store.startEventStream()
@@ -1084,7 +1102,6 @@ struct MemoryReceiptsAndStoreTests {
         #expect(store.session.position == 8)
         await mock.setShouldFailSnapshot(false)
 
-        // 3. pauseForBackground keeps user signed in; resumeFromBackground refreshes lightweight endpoints
         store.pauseForBackground()
         #expect(store.authState.isSignedIn == true)
 
@@ -1096,7 +1113,6 @@ struct MemoryReceiptsAndStoreTests {
         #expect(await mock.fetchSessionCallCount >= 1)
         #expect(await mock.fetchWorkItemsCallCount >= 1)
 
-        // 4. Terminal 401 from SSE signs out and sets authError
         await mock.setStreamEvents([], terminalError: NoriAPIError(message: "Unauthorized", statusCode: 401))
         store.startEventStream()
         try await Task.sleep(for: .milliseconds(50))
@@ -1116,7 +1132,6 @@ struct MemoryReceiptsAndStoreTests {
         #expect(store.activeTasksCount == 2)
         #expect(store.appsAttentionCount == 1)
 
-        // Targeted refresh for OAuth callback does NOT call fetchFullSnapshot
         store.handleIncomingURL(URL(string: "nori://oauth/callback?result=connected")!)
         try await Task.sleep(for: .milliseconds(60))
         #expect(await mock.fetchFullSnapshotCallCount == 0)
@@ -1148,7 +1163,6 @@ struct MemoryReceiptsAndStoreTests {
         #expect(store.isThinking == true)
         #expect(store.messages.first?.status == .superseded)
 
-        // Update reminder via PUT /v1/automations/{id}
         let targetDate = Date(timeIntervalSince1970: 1_795_640_400)
         let updated = await store.updateReminder(
             automationID: "auto_1234",
@@ -1159,14 +1173,12 @@ struct MemoryReceiptsAndStoreTests {
         #expect(updated?.title == "Check supernino updates at 2 PM")
         #expect(store.automations.first(where: { $0.id == "auto_1234" })?.title == "Check supernino updates at 2 PM")
 
-        // Cancel reminder via POST /v1/automations/{id}/actions
         let cancelled = await store.cancelAutomation(automationID: "auto_1234")
         #expect(cancelled == true)
         #expect(store.automations.first(where: { $0.id == "auto_1234" })?.status == .cancelled)
     }
 }
 
-// MARK: - Test Concurrency Helpers
 
 private final class LockedCounter: @unchecked Sendable {
     private let lock = NSLock()
@@ -1209,12 +1221,26 @@ private final class LockedDict<Key: Hashable & Sendable, Value: Sendable>: @unch
     }
 }
 
-// MARK: - Full Mock Transport for NoriStore Unit Tests
 
 actor FullMockTransport: NoriTransport {
     var fetchFullSnapshotCallCount = 0
     var fetchSummaryCallCount = 0
     var fetchSessionCallCount = 0
+    private var delaySession = false
+    private var suspendedSession: CheckedContinuation<Session, Never>?
+    private var sessionStarted: CheckedContinuation<Void, Never>?
+
+    func suspendNextSession() { delaySession = true }
+
+    func waitForSuspendedSession() async {
+        if suspendedSession != nil { return }
+        await withCheckedContinuation { sessionStarted = $0 }
+    }
+
+    func finishSuspendedSession(_ session: Session) {
+        suspendedSession?.resume(returning: session)
+        suspendedSession = nil
+    }
     var fetchWorkItemsCallCount = 0
     var fetchMCPServersCallCount = 0
     var fetchConnectionsCallCount = 0
@@ -1250,6 +1276,14 @@ actor FullMockTransport: NoriTransport {
     }
     func fetchSession(before cursor: String?) async throws -> Session {
         fetchSessionCallCount += 1
+        if delaySession {
+            delaySession = false
+            return await withCheckedContinuation {
+                suspendedSession = $0
+                sessionStarted?.resume()
+                sessionStarted = nil
+            }
+        }
         return Session()
     }
     func fetchFullSnapshot() async throws -> NoriFullSnapshot {
@@ -1277,7 +1311,7 @@ actor FullMockTransport: NoriTransport {
         }
     }
 
-    func sendTurn(id: String, message: String, attachmentIDs: [String]) async throws -> Session {
+    func sendTurn(id: String, message: String, attachmentIDs: [String], modelSelection: ModelSelection?) async throws -> Session {
         if shouldFailSendTurn {
             throw NoriAPIError(message: "Network dropped", statusCode: 503, retryable: true)
         }
@@ -1371,8 +1405,13 @@ actor FullMockTransport: NoriTransport {
     func fetchMemoryLogs() async throws -> [MemoryLog] {
         [MemoryLog(date: "2026-11-24", revision: 21, entries: [MemoryLogEntry(id: "le-1", text: "Promote me", promoted: true)])]
     }
+    private var workingMemoryFailure = false
+    func setWorkingMemoryFailure(_ value: Bool) { workingMemoryFailure = value }
     func fetchWorkingMemory() async throws -> WorkingMemory {
-        WorkingMemory(revision: 35, items: [WorkingMemoryItem(id: "wm-2", kind: .fact, quote: "Dismiss me")], coreBytes: 512)
+        if workingMemoryFailure {
+            throw NoriAPIError(message: "Working memory unavailable", statusCode: 503)
+        }
+        return WorkingMemory(revision: 35, items: [WorkingMemoryItem(id: "wm-2", kind: .fact, quote: "Dismiss me")], coreBytes: 512)
     }
     func createMemory(text: String, section: String?, about: String?, pinned: Bool, requestID: String) async throws -> MutationReceipt<MemoryFact> {
         MutationReceipt(requestID: requestID, resource: MemoryFact(id: "new-mem", text: text, pinned: pinned))

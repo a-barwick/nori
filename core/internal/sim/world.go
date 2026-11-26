@@ -28,38 +28,24 @@ var simTimeZones = []string{
 	"America/New_York",
 }
 
-// WorldConfig configures a deterministic Stage 2 Coordination World simulation.
 type WorldConfig struct {
-	// NumUsers controls how many isolated users share the backend. When <= 0,
-	// NewWorld deterministically chooses 2 or 3 users from the seed.
 	NumUsers int
 
-	// UnattendedWrites configures permissions.Service.UnattendedWrites
-	// ("confirm_writes" or "require_rule"). When empty, chosen from the seed.
 	UnattendedWrites string
 
-	// UserSends configures permissions.Service.UserSends ("ask" or "allow").
-	// When empty, chosen from the seed.
 	UserSends string
 
-	// TaskBudgetUSD sets the default per-task budget. Defaults to 1.0 when <= 0.
 	TaskBudgetUSD float64
 
-	// StartTime initializes the virtual clock. Defaults to env.DefaultBaseTime.
 	StartTime time.Time
 
-	// TraceCapacity bounds retained trace entries (ring buffer). Defaults to 2048.
 	TraceCapacity int
 
-	// DisableFaults disables all default fault injection when true.
 	DisableFaults bool
 
-	// StoreFaults overrides the default chaos fault profile when non-zero
-	// (unless DisableFaults is true).
 	StoreFaults memstore.FaultConfig
 }
 
-// DefaultStoreFaults returns the default adversarial memstore fault profile.
 func DefaultStoreFaults() memstore.FaultConfig {
 	return memstore.FaultConfig{
 		GetErrProb:        0.025,
@@ -71,7 +57,6 @@ func DefaultStoreFaults() memstore.FaultConfig {
 	}
 }
 
-// WorldStats summarizes workload coverage observed during a Stage 2 coordination run.
 type WorldStats struct {
 	WorkerSteps      int
 	WorkerCrashes    int
@@ -109,8 +94,6 @@ type trackedInput struct {
 	text string
 }
 
-// UserWorld holds all wired Nori Postgres-native coordination services for a
-// single simulated user.
 type UserWorld struct {
 	User        users.User
 	DB          *records.Database
@@ -119,25 +102,20 @@ type UserWorld struct {
 	Permissions *permissions.Service
 	Scheduler   *scheduler.Service
 
-	// Workload bookkeeping (strictly slices/maps accessed in sorted order).
-	submittedCmds     []state.Command
-	ops               []*trackedOp
-	historyHead       map[string]string
-	interactions      []*trackedInteraction
-	ruleIDs           []string
-	automationIDs     []string
-	goalIDs           []string
-	inputs            []trackedInput
-	assistantMsgIDs   []string
-	activeConvFence   *state.ConversationFence
-	activeConvTurn    *state.ConversationTurn
-	nextOpSeq         int
-	nextActionCounter int
+	submittedCmds   []state.Command
+	ops             []*trackedOp
+	historyHead     map[string]string
+	interactions    []*trackedInteraction
+	ruleIDs         []string
+	automationIDs   []string
+	goalIDs         []string
+	inputs          []trackedInput
+	assistantMsgIDs []string
+	activeConvFence *state.ConversationFence
+	activeConvTurn  *state.ConversationTurn
+	nextOpSeq       int
 }
 
-// World is a self-contained, single-seed deterministic coordination simulator
-// running Nori's real records, TaskControl fencing, Postgres-native leases/wakes,
-// permissions, and scheduler packages across multiple isolated users.
 type World struct {
 	Seed   int64
 	Config WorldConfig
@@ -158,7 +136,6 @@ type World struct {
 	Stats     WorldStats
 }
 
-// NewWorld constructs a fully wired deterministic Coordination World from seed.
 func NewWorld(seed int64, cfg WorldConfig) *World {
 	rootRNG := rand.New(rand.NewPCG(uint64(seed), uint64(seed)^0x9e3779b97f4a7c15))
 	deriveRNG := func() *rand.Rand {
@@ -170,7 +147,7 @@ func NewWorld(seed int64, cfg WorldConfig) *World {
 	storeFaultRNG := deriveRNG()
 
 	if cfg.NumUsers <= 0 {
-		cfg.NumUsers = 2 + workloadRNG.IntN(2) // 2 or 3 users
+		cfg.NumUsers = 2 + workloadRNG.IntN(2)
 	}
 	if cfg.TaskBudgetUSD <= 0 {
 		cfg.TaskBudgetUSD = 1.0
@@ -231,7 +208,6 @@ func NewWorld(seed int64, cfg WorldConfig) *World {
 	for i := range cfg.NumUsers {
 		tz := simTimeZones[i%len(simTimeZones)]
 		uid := idGen.Next()
-		// Exercise LegacyID (ID="owner" != DataOwner=email) on user 0 for even seeds.
 		if i == 0 && seed%2 == 0 {
 			uid = users.LegacyID
 		}
@@ -291,7 +267,6 @@ func NewWorld(seed int64, cfg WorldConfig) *World {
 		w.usersByID[u.ID] = uw
 	}
 
-	// Keep Users slice in canonical ID-sorted order for deterministic iteration.
 	slices.SortFunc(w.Users, func(a, b *UserWorld) int {
 		return strings.Compare(a.User.ID, b.User.ID)
 	})
@@ -299,23 +274,19 @@ func NewWorld(seed int64, cfg WorldConfig) *World {
 	return w
 }
 
-// User looks up a UserWorld by user ID.
 func (w *World) User(userID string) *UserWorld {
 	return w.usersByID[userID]
 }
 
-// nextWorkerOwner produces a deterministic worker owner identity.
 func (w *World) nextWorkerOwner(prefix string) string {
 	w.workerSeq++
 	return fmt.Sprintf("%s-%d", prefix, w.workerSeq)
 }
 
-// SetFaultsEnabled toggles fault injection across memstore.
 func (w *World) SetFaultsEnabled(enabled bool) {
 	w.Faults.SetEnabled(enabled)
 }
 
-// SetPaused updates system/control.paused and emits matching pause/unpause wakes fault-free.
 func (w *World) SetPaused(ctx context.Context, paused bool) error {
 	wasEnabled := w.Faults.Enabled()
 	if wasEnabled {
@@ -325,7 +296,6 @@ func (w *World) SetPaused(ctx context.Context, paused bool) error {
 	return w.UsersDir.SetPaused(ctx, paused)
 }
 
-// Paused reads system/control.paused fault-free.
 func (w *World) Paused(ctx context.Context) (bool, error) {
 	wasEnabled := w.Faults.Enabled()
 	if wasEnabled {
@@ -335,7 +305,6 @@ func (w *World) Paused(ctx context.Context) (bool, error) {
 	return w.UsersDir.Paused(ctx)
 }
 
-// UserTargets returns UserTarget handles for all simulated users in canonical order.
 func (w *World) UserTargets() []invariants.UserTarget {
 	targets := make([]invariants.UserTarget, len(w.Users))
 	for i, uw := range w.Users {
@@ -349,13 +318,10 @@ func (w *World) UserTargets() []invariants.UserTarget {
 	return targets
 }
 
-// Record appends a diagnostic event to the deterministic simulation trace.
 func (w *World) Record(userID, actor, action, detail string) {
 	w.Trace.Record(w.step, w.Clock.Now(), userID, actor, action, detail)
 }
 
-// DebugDump returns a fault-free diagnostic dump of open runs, pending commands,
-// task leases, and user wakes for all users.
 func (w *World) DebugDump(ctx context.Context) string {
 	wasStore := w.Faults.Enabled()
 	w.Faults.SetEnabled(false)
@@ -394,9 +360,6 @@ func (w *World) DebugDump(ctx context.Context) string {
 	return b.String()
 }
 
-// Digest returns a canonical hex-encoded SHA-256 hash combining the shared
-// memstore backend (including nori_task_leases and nori_user_wakes), every
-// user's artifacts store, the trace log, and the virtual clock.
 func (w *World) Digest() string {
 	h := sha256.New()
 	writeHashString(h, "sim.world.v2")

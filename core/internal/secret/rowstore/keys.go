@@ -15,14 +15,11 @@ import (
 
 var dataKeyAAD = []byte("nori-data-key")
 
-// MasterKey wraps per-row data keys with a 256-bit AES-GCM master key loaded from
-// a local key file (development) or a base64/hex environment or secret value.
 type MasterKey struct {
 	key []byte
 	id  string
 }
 
-// LocalKey is kept as an alias for MasterKey.
 type LocalKey = MasterKey
 
 func OpenLocalKey(path string) (*LocalKey, error) {
@@ -71,8 +68,6 @@ func OpenLocalKey(path string) (*LocalKey, error) {
 	return newMasterKey("local", data)
 }
 
-// ParseMasterKey decodes a 256-bit master key encoded as 64 hex characters or
-// base64 (standard, raw, or URL-safe).
 func ParseMasterKey(encoded string) (*MasterKey, error) {
 	trimmed := strings.TrimSpace(encoded)
 	if trimmed == "" {

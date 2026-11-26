@@ -10,7 +10,7 @@ import { assistantURL, mutate, newRequestID } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { eventTime, plainText, relative, when } from "@/lib/assistant/format";
 import { useLibrary } from "@/lib/assistant/sources";
-import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
+import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant/useResource";
 import type { LibraryItem, LibraryItem as BaseItem, SearchHit, SearchResponse } from "@/lib/contracts/assistant";
 import { useBlobURL } from "@/lib/useBlobURL";
 import { cn } from "@/lib/utils";
@@ -53,7 +53,6 @@ function KindIcon({ item }: { item: Pick<BaseItem, "kind" | "media_type"> }) {
   );
 }
 
-/** Copied-versus-live provenance and the source account's state, in a few words. */
 export function provenanceLabel(item: Pick<BaseItem, "provenance">) {
   const { content, connection_status } = item.provenance;
   const gone = connection_status && connection_status !== "connected";
@@ -98,7 +97,6 @@ export function jumpHref(hit: SearchHit) {
   }
 }
 
-/** Embeddable Artifacts / Library content used inside Work -> Artifacts and standalone /library. */
 export function LibraryContent({ syncURL = false }: { syncURL?: boolean }) {
   const { has } = useAssistant();
   const params = useSearchParams();
@@ -278,6 +276,7 @@ export function LibraryScreen() {
 }
 
 export function LibraryDetailScreen({ id }: { id: string }) {
+  const invalidate = useResourceInvalidation();
   const { has } = useAssistant();
   const live = has("library");
   const remote = useResource<LibraryItem>(live ? `/library/${encodeURIComponent(id)}` : null, { poll: 30_000 });
@@ -696,7 +695,7 @@ function FilePreview({ url, mediaType, name }: { url: string; mediaType?: string
   return mediaType === "application/pdf" ? (
     <iframe src={file.url} title={name} className="h-[70vh] w-full rounded-card border border-hairline" />
   ) : (
-    // eslint-disable-next-line @next/next/no-img-element -- blob URL
+    // eslint-disable-next-line @next/next/no-img-element
     <img src={file.url} alt={name} className="max-h-[70vh] max-w-full rounded-card border border-hairline object-contain" />
   );
 }

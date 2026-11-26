@@ -1,12 +1,5 @@
 package main
 
-// Scenarios are ordered request/response sequences for the baseline's
-// verification obligations: idempotent retries, revision conflicts, owner
-// isolation, stale approvals, lost wakes. Offline, every request body and
-// every expected response shape is checked against its schema. With -live,
-// the steps run against a core, addressing each user through the same
-// /users/{id} prefix the authenticated web server uses.
-
 import (
 	"bytes"
 	"crypto/rand"
@@ -33,7 +26,7 @@ type scenario struct {
 	Name       string            `json:"name"`
 	Obligation string            `json:"obligation"`
 	Note       string            `json:"note,omitempty"`
-	Requires   []string          `json:"requires,omitempty"` // capability features that must be advertised before -live runs it
+	Requires   []string          `json:"requires,omitempty"`
 	Users      map[string]string `json:"users"`
 	Steps      []step            `json:"steps"`
 }
@@ -46,23 +39,22 @@ type step struct {
 	Body       json.RawMessage   `json:"body,omitempty"`
 	BodySchema string            `json:"body_schema,omitempty"`
 	Expect     expectation       `json:"expect"`
-	Capture    map[string]string `json:"capture,omitempty"` // variable -> JSON pointer into the response; "<pointer>#query:<name>" takes a query parameter of the URL found there
+	Capture    map[string]string `json:"capture,omitempty"`
 	Wait       *wait             `json:"wait,omitempty"`
 }
 
 type expectation struct {
 	Status         []int                      `json:"status"`
 	Schema         string                     `json:"schema,omitempty"`
-	ResourceSchema string                     `json:"resource_schema,omitempty"` // applied to /resource of a receipt
-	ItemsSchema    string                     `json:"items_schema,omitempty"`    // applied to every element of /items
-	Match          map[string]json.RawMessage `json:"match,omitempty"`           // JSON pointer -> expected value
-	Absent         []string                   `json:"absent,omitempty"`          // JSON pointers that must not exist
-	SameAs         string                     `json:"same_as,omitempty"`         // earlier step whose response body must be identical
-	Headers        map[string]string          `json:"headers,omitempty"`         // header -> substring the value must contain
-	Count          map[string]int             `json:"count,omitempty"`           // JSON pointer to an array -> exact length
+	ResourceSchema string                     `json:"resource_schema,omitempty"`
+	ItemsSchema    string                     `json:"items_schema,omitempty"`
+	Match          map[string]json.RawMessage `json:"match,omitempty"`
+	Absent         []string                   `json:"absent,omitempty"`
+	SameAs         string                     `json:"same_as,omitempty"`
+	Headers        map[string]string          `json:"headers,omitempty"`
+	Count          map[string]int             `json:"count,omitempty"`
 }
 
-// wait repeats a GET until a pointer matches, for eventually consistent state such as a task finishing.
 type wait struct {
 	Pointer string          `json:"pointer"`
 	Value   json.RawMessage `json:"value"`
@@ -71,7 +63,6 @@ type wait struct {
 
 var (
 	varPattern = regexp.MustCompile(`\$\{([a-z]+):?([A-Za-z0-9_]*)\}`)
-	// intPattern is a quoted "${int:name}": it expands to the captured value without quotes, for numbers.
 	intPattern = regexp.MustCompile(`"\$\{int:([A-Za-z0-9_]+)\}"`)
 )
 
@@ -82,8 +73,6 @@ type run struct {
 
 func newRun() *run { return &run{vars: map[string]string{}, responses: map[string][]byte{}} }
 
-// expand substitutes ${uuid:name} (one fresh UUID per name per run, so a retry reuses it),
-// ${var:name} (a captured value) and ${user:name} (a scenario user id).
 func (r *run) expand(s string, users map[string]string) (string, error) {
 	var err error
 	s = intPattern.ReplaceAllStringFunc(s, func(m string) string {
@@ -150,8 +139,6 @@ func loadScenarios(dir string) ([]string, []scenario, error) {
 	return files, out, nil
 }
 
-// checkScenariosOffline validates request bodies (with placeholders expanded) against their schemas
-// and that every referenced schema compiles. It returns the number of failures.
 func checkScenariosOffline(files []string, scs []scenario, compile func(string) (*jsonschema.Schema, error)) int {
 	failures := 0
 	for i, sc := range scs {
@@ -211,9 +198,7 @@ func validateBytes(compile func(string) (*jsonschema.Schema, error), ref string,
 	return sch.Validate(v)
 }
 
-// runScenariosLive executes every scenario against base (e.g. http://127.0.0.1:8083).
 func runScenariosLive(base string, files []string, scs []scenario, compile func(string) (*jsonschema.Schema, error), only string) int {
-	// Redirects are responses to check (the OAuth callback answers 303), not to follow.
 	client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	features := liveFeatures(client, base, scs)
 	failures := 0
@@ -383,7 +368,6 @@ func (r *run) do(client *http.Client, base string, sc scenario, st step, compile
 		if err != nil {
 			return err
 		}
-		// "<pointer>|key=value" counts only elements whose key equals value.
 		p, filter, _ := strings.Cut(spec, "|")
 		key, value, _ := strings.Cut(filter, "=")
 		v, ok := pointer(got, p)
@@ -442,8 +426,6 @@ func (r *run) do(client *http.Client, base string, sc scenario, st step, compile
 	return nil
 }
 
-// pointer resolves an RFC 6901 JSON pointer, plus one extension: a segment
-// "[key=value]" selects the first array element whose key equals value.
 func pointer(doc []byte, p string) ([]byte, bool) {
 	var v any
 	if json.Unmarshal(doc, &v) != nil {

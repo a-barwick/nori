@@ -1,7 +1,6 @@
 import SwiftUI
 import NoriCore
 
-// MARK: - Semantic Tone
 
 public enum NoriTone: String, Sendable, Hashable {
     case neutral
@@ -48,7 +47,6 @@ public enum NoriTone: String, Sendable, Hashable {
     }
 }
 
-// MARK: - NoriPill
 
 public struct NoriPill: View {
     public let text: String
@@ -78,7 +76,6 @@ public struct NoriPill: View {
     }
 }
 
-// MARK: - NoriBadge
 
 public struct NoriBadge: View {
     public let count: Int
@@ -108,7 +105,6 @@ public struct NoriBadge: View {
     }
 }
 
-// MARK: - NoriCard
 
 public struct NoriCard<Content: View>: View {
     public let padding: CGFloat
@@ -140,7 +136,6 @@ public struct NoriCard<Content: View>: View {
     }
 }
 
-// MARK: - NoriRows & NoriRow
 
 public struct NoriRows<Content: View>: View {
     private let content: Content
@@ -267,7 +262,6 @@ public extension NoriRow where Trailing == EmptyView {
     }
 }
 
-// MARK: - NoriSectionHeader
 
 public struct NoriSectionHeader<Trailing: View>: View {
     public let title: String
@@ -297,7 +291,6 @@ public extension NoriSectionHeader where Trailing == EmptyView {
     }
 }
 
-// MARK: - NoriSegmentedTabs
 
 public struct NoriSegmentOption<Value: Hashable & Sendable>: Identifiable, Sendable {
     public var id: Value { value }
@@ -357,7 +350,6 @@ public struct NoriSegmentedTabs<Value: Hashable & Sendable>: View {
     }
 }
 
-// MARK: - NoriButtonStyle
 
 public enum NoriButtonKind: Sendable {
     case primary
@@ -464,9 +456,7 @@ public extension ButtonStyle where Self == NoriButtonStyle {
     static var noriDanger: NoriButtonStyle { NoriButtonStyle(.danger) }
 }
 
-// MARK: - NoriLine
 
-/// Calm Nori commentary line with small onigiri mark and secondary text.
 public struct NoriLine: View {
     public let text: String
     public let markState: MarkState
@@ -488,7 +478,6 @@ public struct NoriLine: View {
     }
 }
 
-// MARK: - NoriToast
 
 public struct NoriToast: View {
     public let message: String
@@ -512,7 +501,6 @@ public struct NoriToast: View {
     }
 }
 
-// MARK: - NoriEmptyState
 
 public struct NoriEmptyState<Action: View>: View {
     public let title: String
@@ -560,7 +548,6 @@ public extension NoriEmptyState where Action == EmptyView {
     }
 }
 
-// MARK: - NoriNotice
 
 public struct NoriNotice<Trailing: View>: View {
     public let title: String
@@ -619,7 +606,6 @@ public extension NoriNotice where Trailing == EmptyView {
     }
 }
 
-// MARK: - NoriUnderlineTabs
 
 public struct NoriUnderlineTabs<Value: Hashable & Sendable>: View {
     public let options: [NoriSegmentOption<Value>]
@@ -690,7 +676,6 @@ public struct NoriUnderlineTabs<Value: Hashable & Sendable>: View {
     }
 }
 
-// MARK: - NoriHeroCard
 
 public struct NoriHeroCard<Content: View>: View {
     public let padding: CGFloat
@@ -721,7 +706,6 @@ public struct NoriHeroCard<Content: View>: View {
     }
 }
 
-// MARK: - NoriTopWash
 
 public struct NoriTopWash: View {
     public init() {}

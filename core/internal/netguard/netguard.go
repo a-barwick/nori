@@ -142,7 +142,6 @@ func NewTransport(allowLoopback bool, roots *x509.CertPool) http.RoundTripper {
 	return WrapTransport(base, allowLoopback)
 }
 
-// WrapTransport enforces ValidateRemoteURL before delegating to base.
 func WrapTransport(base http.RoundTripper, allowLoopback bool) http.RoundTripper {
 	return guardedRoundTripper{base: base, allowLoopback: allowLoopback}
 }

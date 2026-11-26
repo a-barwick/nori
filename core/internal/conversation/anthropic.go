@@ -30,18 +30,14 @@ const (
 	anthropicProvider    = "anthropic"
 )
 
-// AnthropicModel implements ReplyModel using Anthropic's Messages API,
-// routed exclusively through llmguard.
 type AnthropicModel struct {
-	name       string
-	key        string
-	gatewayURL string
-	Client     *http.Client
-	Guard      *llmguard.Guard
-	UserID     string
-	// TestURL replaces the provider endpoint with a local stub (settings.Models.TestURL).
-	TestURL string
-	// ReasoningEffort optionally sets Anthropic output_config.effort ("low", "medium", "high", "max").
+	name            string
+	key             string
+	gatewayURL      string
+	Client          *http.Client
+	Guard           *llmguard.Guard
+	UserID          string
+	TestURL         string
 	ReasoningEffort string
 	Now             func() time.Time
 	NewID           func() string
@@ -57,8 +53,6 @@ func NewAnthropicModel(key, name string) *AnthropicModel {
 	}
 }
 
-// NewGatewayAnthropicModel creates an Anthropic Messages reply model routed through
-// a deployment-owned model gateway (e.g. Vercel AI Gateway /v1/messages) with Bearer auth.
 func NewGatewayAnthropicModel(baseURL, key, name string) *AnthropicModel {
 	m := NewAnthropicModel(key, name)
 	m.gatewayURL = strings.TrimRight(baseURL, "/") + "/messages"
@@ -261,7 +255,7 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 		}
 		if cost, costErr := usage.AnthropicCost(modelName, response.Usage.Input, response.Usage.Output, cached, written); costErr == nil {
 			reply.Usage.CostUSD, reply.Usage.CostStatus = &cost, "calculated"
-			m.guard().RecordActualCost(cost)
+			llmguard.RecordResponseCost(res, cost)
 		}
 	}
 
@@ -314,9 +308,6 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 	return reply, nil
 }
 
-// decodeAnthropicStream parses Anthropic Messages SSE streaming events, emitting safe
-// action-free partial text deltas via request.Stream while reconstructing the full Reply
-// and token/cache usage identically to the non-streaming path.
 func (m *AnthropicModel) decodeAnthropicStream(res *http.Response, reply Reply, request ReplyRequest, structured bool) (Reply, error) {
 	scanner := bufio.NewScanner(io.LimitReader(res.Body, 2<<20))
 	scanner.Buffer(make([]byte, 4096), 256<<10)
@@ -427,7 +418,7 @@ func (m *AnthropicModel) decodeAnthropicStream(res *http.Response, reply Reply, 
 	if modelName != "" {
 		reply.ServedModel = modelName
 	}
-	if hasUsage {
+	if hasUsage && done && scanner.Err() == nil {
 		totalIn := inTok + cacheRead + cacheWrite
 		total := totalIn + outTok
 		reply.Usage.InputTokens = &totalIn
@@ -440,7 +431,7 @@ func (m *AnthropicModel) decodeAnthropicStream(res *http.Response, reply Reply, 
 		}
 		if cost, costErr := usage.AnthropicCost(modelName, inTok, outTok, cacheRead, cacheWrite); costErr == nil {
 			reply.Usage.CostUSD, reply.Usage.CostStatus = &cost, "calculated"
-			m.guard().RecordActualCost(cost)
+			llmguard.RecordResponseCost(res, cost)
 		}
 	}
 
@@ -558,9 +549,6 @@ func (m *AnthropicModel) buildRequestBody(request ReplyRequest, outputLimit int)
 		messages = append(messages, map[string]any{"role": role, "content": []map[string]any{block}})
 	}
 
-	// Only leading system messages go into top-level `system`. Mid-conversation
-	// system notices (task notifications, receipts, advisory) stay in chronological
-	// order inside `messages` so turn chronology and leading cache prefixes hold.
 	inLeadingSystem := true
 	for i, raw := range rawMessages {
 		var message struct {
@@ -661,8 +649,6 @@ func (m *AnthropicModel) buildRequestBody(request ReplyRequest, outputLimit int)
 	return encoded, structured, nil
 }
 
-// sanitizeAnthropicSchema strips JSON Schema validation keywords that Anthropic's
-// output_config.format rejects (e.g. maxItems, maxLength, numeric bounds).
 func sanitizeAnthropicSchema(v any) any {
 	switch t := v.(type) {
 	case map[string]any:

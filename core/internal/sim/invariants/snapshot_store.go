@@ -51,10 +51,6 @@ type rawOperationRecord struct {
 	evidenceRecorded bool
 }
 
-// snapshotResourceStore is a read-only, fault-free state.ResourceStore backed
-// directly by an immutable memstore.BackendSnapshot. It allows CheckSafety to
-// invoke permissions.Service.Interaction without touching live fault injection
-// or advancing the simulation RNG.
 type snapshotResourceStore struct {
 	snap  memstore.BackendSnapshot
 	owner string

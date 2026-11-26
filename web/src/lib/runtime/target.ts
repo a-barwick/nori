@@ -2,8 +2,6 @@ export type Mode = "hosted" | "local";
 export type RuntimeTarget = { mode: Mode; base: URL };
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
-// Opt-in for testing on a phone: hosts named in NORI_DEV_ORIGINS (this Mac's LAN address) count as local
-// in development. Anyone on that network then acts as the local user, so set it only while testing.
 const DEV_ORIGINS = new Set((process.env.NORI_DEV_ORIGINS ?? "").split(",").map((origin) => origin.trim()).filter(Boolean));
 
 export function localDevelopment(headers: Headers) {
@@ -28,7 +26,6 @@ export function runtimeTarget(mode: Mode): RuntimeTarget | Response {
       : Response.json({ error: "Nori's runtime is not configured yet." }, { status: 503 });
   }
   try {
-    // Keep Agent Runtime's invoke prefix when resolving the scoped API path.
     const base = new URL(configured.endsWith("/") ? configured : `${configured}/`);
     const valid = mode === "local"
       ? base.protocol === "http:" && LOOPBACK.has(base.hostname) && base.pathname === "/"

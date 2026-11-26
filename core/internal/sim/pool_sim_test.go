@@ -119,7 +119,6 @@ func (m *simPoolInnerModel) Respond(ctx context.Context, req agent.Request) (age
 	}
 	n := m.seq.Add(1)
 
-	// Detect whether this task asks a question once before completing.
 	askMode := false
 	alreadyAnswered := false
 	for _, msg := range req.Messages {
@@ -168,11 +167,6 @@ func (m *simPoolInnerModel) Inspect(context.Context, agent.InspectRequest) (agen
 	return agent.Inspection{Observation: "ok", CostKnown: true}, nil
 }
 
-// TestMultiReplicaWorkerPoolSim drives 3 competing real worker.Pool replicas over a shared
-// memstore.Backend with live storage + lease fault injection, dropped pg_notify + resync,
-// global pause + StopPaused, missing/orphan lease repair via real app.App.RepairLeases,
-// real task.Runner, real conversation.Runner, real scheduler.Service, and mid-flight replica
-// graceful drain — verifying full Safety + Quiescence (with CheckLeases: true) at convergence.
 func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 	silenceStdLog(t)
 	ctx := context.Background()
@@ -188,7 +182,7 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 		LeaseErrProb:      0.08,
 	}
 	inj := memstore.NewFaultInjector(faultCfg, rng)
-	inj.SetEnabled(false) // Enable after initial user & service bootstrap.
+	inj.SetEnabled(false)
 
 	backend := memstore.New(
 		memstore.WithClock(clock.Now),
@@ -245,7 +239,6 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 	}
 	t.Cleanup(svc.Close)
 
-	// Exercise BOTH users.LegacyID ("owner", where ID != DataOwner()) AND a UUID user!
 	userList := []users.User{
 		{ID: users.LegacyID, Email: "legacy@example.com", DisplayName: "Legacy User", TimeZone: "UTC"},
 		{ID: uuid.NewString(), Email: "second@example.com", DisplayName: "Second User", TimeZone: "UTC"},
@@ -256,7 +249,6 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 		}
 	}
 
-	// Acquire Apps upfront for workload injection & verification (kept alive for test duration).
 	userApps := make([]*app.App, len(userList))
 	for i, u := range userList {
 		a, rel, err := svc.Acquire(ctx, u)
@@ -267,7 +259,6 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 		userApps[i] = a
 	}
 
-	// Spin up 3 competing real worker.Pool replicas (ZERO callback stubs!).
 	const numReplicas = 3
 	pools := make([]*worker.Pool, numReplicas)
 	cancels := make([]context.CancelFunc, numReplicas)
@@ -314,7 +305,6 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 		t.Fatalf("WaitForWakeSubscribers(%d): %v", numReplicas, err)
 	}
 
-	// Helper retrying client-side workload operations through transient injected faults.
 	retryOp := func(label string, fn func() error) {
 		t.Helper()
 		for range 40 {
@@ -331,10 +321,8 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 		}
 	}
 
-	// Enable full storage + lease fault injection across all 3 competing replicas!
 	inj.SetEnabled(true)
 
-	// 1. Submit natural chat inputs (some plain, some dispatching background tasks) for both users.
 	for idx, uApp := range userApps {
 		plainID := uuid.NewString()
 		retryOp("chat plain", func() error {
@@ -346,7 +334,6 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 		})
 	}
 
-	// 2. Start direct tasks: normal, ask-once question task, a task to stop mid-flight, and a task to stop while paused.
 	askTaskIDs := make([]string, len(userApps))
 	stopTaskIDs := make([]string, len(userApps))
 	missingLeaseTaskIDs := make([]string, len(userApps))
@@ -375,7 +362,6 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 			return err
 		})
 
-		// Create a task and deliberately delete its lease so real app.RepairLeases must restore it under faults!
 		missID, missCmdID := uuid.NewString(), uuid.NewString()
 		missingLeaseTaskIDs[idx] = missID
 		retryOp("start missing-lease task", func() error {
@@ -388,11 +374,9 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 			_, err := backend.DeleteTaskLease(ctx, userList[idx].ID, missID, 0)
 			return err
 		}()
-		// Inject an orphan lease for a non-existent run so RepairLeases must delete it under faults!
 		_ = backend.WakeTask(ctx, userList[idx].ID, "orphan-run-"+uuid.NewString()[:8], time.Time{})
 	}
 
-	// Start a task before pausing so we can test CommandStop + StopPaused while globally paused!
 	pausedStopID, pausedStartCmdID := uuid.NewString(), uuid.NewString()
 	retryOp("start paused-stop task", func() error {
 		_, err := userApps[0].Store.AcceptCommandBatch(ctx, []state.Command{{
@@ -401,7 +385,6 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 		return err
 	})
 
-	// 3. Create a "once" automation for each user and fire run_now (testing run_now + Publish -> LaneScheduler + Inbox delivery under faults!).
 	for idx, uApp := range userApps {
 		farFuture := clock.Now().Add(48 * time.Hour)
 		var auto scheduler.Automation
@@ -439,11 +422,9 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 		})
 	}
 
-	// 4. Chaos wave: drop pg_notify events temporarily, toggle global pause + StopPaused, resync, and gracefully drain replica-0!
 	backend.SetDropWakeEvents(true)
 	time.Sleep(60 * time.Millisecond)
 
-	// Toggle global pause, then issue CommandStop on pausedStopID -> exercise StopPaused under RepairLeases + faults!
 	retryOp("pause system", func() error {
 		return backend.Apply(ctx, docstore.Mutation{
 			Kind:   "set",
@@ -461,7 +442,6 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 	_ = pools[1].RepairOnce(ctx)
 	time.Sleep(60 * time.Millisecond)
 
-	// Gracefully drain replica-0 mid-flight while faults are active!
 	cancels[0]()
 	if err := <-dones[0]; err != nil {
 		t.Fatalf("replica-0 graceful drain error: %v", err)
@@ -469,7 +449,6 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 	cancels[0] = nil
 	dones[0] = nil
 
-	// Unpause and emit resync, restoring wake delivery on surviving replicas 1 and 2.
 	retryOp("unpause system", func() error {
 		return backend.Apply(ctx, docstore.Mutation{
 			Kind:   "set",
@@ -481,8 +460,6 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 	backend.EmitResync()
 	time.Sleep(80 * time.Millisecond)
 
-	// 5. Disable faults for convergence drain, advance virtual clock past any fault-leaked 30s
-	// TaskLease / ConversationLease / TaskControl leases, and let surviving replicas converge!
 	inj.SetEnabled(false)
 	if err := backend.Apply(ctx, docstore.Mutation{
 		Kind:   "set",
@@ -495,12 +472,9 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 	_ = pools[1].RepairOnce(ctx)
 	backend.EmitResync()
 
-	// Wait for all ask-once tasks to be answered, all tasks/conversations/occurrences/wakes to settle!
 	deadline := time.Now().Add(15 * time.Second)
 	for round := 0; time.Now().Before(deadline); round++ {
 		if round > 0 && round%5 == 0 {
-			// Advance virtual clock past any pending TaskLease backoff or RecoveryUntil (240s)
-			// or unexpired lease so the pool immediately completes D-053 recovery.
 			now := clock.Now()
 			target := now.Add(5 * time.Second)
 			if leases, lerr := backend.ListTaskLeases(ctx, ""); lerr == nil {
@@ -517,9 +491,6 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 			_ = pools[1].RepairOnce(ctx)
 			backend.EmitResync()
 		}
-		// Answer any open unanswered questions so ASK_ONCE tasks complete, and if a
-		// chaos-phase outer turn failed leaving RoutingPending=true (with no pending
-		// inputs), send one follow-up user turn so WaitRoutingPending tasks wake cleanly!
 		for _, uApp := range userApps {
 			if conv, _, cerr := uApp.Store.ConversationStatus(ctx); cerr == nil && conv.RoutingPending() && !conv.Pending() && conv.Active == "" {
 				_ = uApp.Store.AcceptConversationInput(ctx, uuid.NewString(), "Follow-up to complete routing after fault recovery", nil)
@@ -541,7 +512,6 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 			}
 		}
 
-		// Check full convergence across tasks, conversations, inbox delivery, leases, and user wakes.
 		allSettled := true
 		for i, uApp := range userApps {
 			open, err := uApp.Store.OpenTasks(ctx)
@@ -591,7 +561,6 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 		time.Sleep(25 * time.Millisecond)
 	}
 
-	// Gracefully shut down surviving replicas before running full Safety + Quiescence audit.
 	for i := 1; i < numReplicas; i++ {
 		cancels[i]()
 		if err := <-dones[i]; err != nil {
@@ -601,7 +570,6 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 		dones[i] = nil
 	}
 
-	// Build UserTargets and run full Safety + Quiescence (CheckLeases: true)!
 	targets := make([]invariants.UserTarget, len(userList))
 	for i, u := range userList {
 		targets[i] = invariants.UserTarget{
@@ -622,7 +590,6 @@ func TestMultiReplicaWorkerPoolSim(t *testing.T) {
 		t.Fatalf("multi-replica CheckQuiescence failed:\n%v", err)
 	}
 
-	// Verify meaningful fault injection + functional completion coverage.
 	stats := backend.FaultStats()
 	if stats.LeaseErrors == 0 || stats.Total() == 0 {
 		t.Fatalf("expected injected storage + lease faults to fire, got %+v", stats)

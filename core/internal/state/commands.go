@@ -17,39 +17,29 @@ type CommandReceipt struct {
 	Run     Run     `json:"run"`
 }
 
-// CommandPage scans the delivery outbox in stable ID order. Next survives
-// acknowledgements deleting records from the pending set during the scan.
 type CommandPage struct {
 	Commands []Command
 	Next     string
 }
 
-// Command and its delivery intent are committed in the acceptance transaction.
-// ID is supplied by the caller and is stable across HTTP and relay retries.
 type CommandKind string
 
 const (
-	CommandStart  CommandKind = "start"
-	CommandSteer  CommandKind = "steer"
-	CommandAnswer CommandKind = "answer"
-	CommandStop   CommandKind = "stop"
-	CommandHold   CommandKind = "hold"
-	// CommandSubtaskResult delivers finished subtasks to the parent that asked for them. Only the transaction that
-	// saves a subtask's outcome creates one; it never passes through Prepare, because a pause or the command limit must
-	// not lose a result.
+	CommandStart         CommandKind = "start"
+	CommandSteer         CommandKind = "steer"
+	CommandAnswer        CommandKind = "answer"
+	CommandStop          CommandKind = "stop"
+	CommandHold          CommandKind = "hold"
 	CommandSubtaskResult CommandKind = "subtask_result"
 )
 
 type Command struct {
-	Interrupt      bool         `json:"interrupt,omitempty" firestore:"interrupt,omitempty"`
-	QuestionID     string       `json:"question_id,omitempty" firestore:"question_id,omitempty"`
-	SourceInputIDs []string     `json:"source_input_ids,omitempty" firestore:"source_input_ids,omitempty"`
-	Attachments    []Attachment `json:"attachments,omitempty" firestore:"attachments,omitempty"`
-	Revises        string       `json:"revises,omitempty" firestore:"revises,omitempty"`
-	// Origin is recorded on the task a start command creates.
-	Origin *TaskOrigin `json:"origin,omitempty" firestore:"origin,omitempty"`
-	// BudgetUSD lowers a started task's spending ceiling, for example to an automation's budget. It never raises
-	// the deployment's ceiling.
+	Interrupt      bool            `json:"interrupt,omitempty" firestore:"interrupt,omitempty"`
+	QuestionID     string          `json:"question_id,omitempty" firestore:"question_id,omitempty"`
+	SourceInputIDs []string        `json:"source_input_ids,omitempty" firestore:"source_input_ids,omitempty"`
+	Attachments    []Attachment    `json:"attachments,omitempty" firestore:"attachments,omitempty"`
+	Revises        string          `json:"revises,omitempty" firestore:"revises,omitempty"`
+	Origin         *TaskOrigin     `json:"origin,omitempty" firestore:"origin,omitempty"`
 	BudgetUSD      float64         `json:"budget_usd,omitempty" firestore:"budget_usd,omitempty"`
 	ModelSelection *ModelSelection `json:"model_selection,omitempty" firestore:"model_selection,omitempty"`
 	ID             string          `json:"id" firestore:"id"`
@@ -68,12 +58,10 @@ type TaskSnapshot struct {
 	Commands []Command
 }
 
-// MaxContinuationBudgetUSD bounds the budget a user can give an explicit continuation.
 const MaxContinuationBudgetUSD = 50.0
 
 const (
-	MaxCommandBatch = 32
-	// MaxTaskCommands bounds the commands one task accepts, other than a stop.
+	MaxCommandBatch     = 32
 	MaxTaskCommands     = 32
 	MaxTaskHolds        = 32
 	MaxTaskHoldBytes    = 32 << 10
@@ -94,7 +82,6 @@ func sameOrigin(a, b *TaskOrigin) bool {
 	return *a == *b
 }
 
-// ValidateCommandBatch checks a batch before anything is read. A rejected batch never partly commits.
 func ValidateCommandBatch(commands []Command) error {
 	if len(commands) == 0 || len(commands) > MaxCommandBatch {
 		return fmt.Errorf("%w: a command batch needs 1–32 commands", ErrCommandInvalid)
@@ -109,11 +96,8 @@ func ValidateCommandBatch(commands []Command) error {
 	return nil
 }
 
-// CommandBatch holds what an acceptance transaction read for a batch. Backends read every document before they write,
-// including when several commands name the same task.
 type CommandBatch struct {
-	Prior map[string]*Command
-	// Runs holds each task named by the batch that exists. Prepare updates it with the batch's effects.
+	Prior  map[string]*Command
 	Runs   map[string]Run
 	Exists map[string]bool
 }
@@ -122,8 +106,6 @@ func NewCommandBatch() CommandBatch {
 	return CommandBatch{Prior: map[string]*Command{}, Runs: map[string]Run{}, Exists: map[string]bool{}}
 }
 
-// Related names the other tasks a batch's commands change, which the transaction also has to read: a subtask's parent,
-// and the running subtasks a Stop or correction ends.
 func (b CommandBatch) Related(commands []Command) []string {
 	related := []string{}
 	add := func(id string) {
@@ -146,7 +128,6 @@ func (b CommandBatch) Related(commands []Command) []string {
 	return related
 }
 
-// AllDuplicates reports whether every command was already accepted. A replay needs no admission checks.
 func (b CommandBatch) AllDuplicates(commands []Command) bool {
 	for _, cmd := range commands {
 		if b.Prior[cmd.ID] == nil {
@@ -157,17 +138,12 @@ func (b CommandBatch) AllDuplicates(commands []Command) bool {
 }
 
 type PreparedCommands struct {
-	Accepted []Command
-	// ReadyEvents are inbox events for holds registered on tasks that already ended.
+	Accepted    []Command
 	ReadyEvents []TaskEvent
-	// Changed names the tasks whose records changed; their new state is in CommandBatch.Runs.
-	Changed map[string]bool
-	// Receipts has one entry per command, in order, including replays.
-	Receipts []CommandReceipt
+	Changed     map[string]bool
+	Receipts    []CommandReceipt
 }
 
-// Prepare validates the whole batch in order against its evolving in-memory runs. It writes nothing, so a later
-// rejection cannot partly accept a batch.
 func (b CommandBatch) Prepare(commands []Command, control Control, now time.Time, traceContext map[string]string, taskBudgetUSD float64) (PreparedCommands, error) {
 	if taskBudgetUSD <= 0 {
 		taskBudgetUSD = TaskBudgetUSD
@@ -238,7 +214,6 @@ func (b CommandBatch) Prepare(commands []Command, control Control, now time.Time
 		cmd.Position, cmd.Revision, cmd.CreatedAt, cmd.Delivered = run.Position, run.Revision, now, false
 		p.accept(run, cmd)
 	}
-	// A cascaded Stop follows the receipts for the batch itself, which callers match by index.
 	p.prepared.Receipts = append(p.prepared.Receipts, p.cascaded...)
 	for i := range p.prepared.Receipts {
 		p.prepared.Receipts[i].Run = p.runs[p.prepared.Receipts[i].Command.RunID]
@@ -267,7 +242,6 @@ func (p *commandPrep) accept(run Run, cmd Command) {
 	p.prepared.Receipts = append(p.prepared.Receipts, CommandReceipt{Command: cmd, Run: run})
 }
 
-// hold registers a question to raise when the task ends. On a task that already ended it is ready at once.
 func (p *commandPrep) hold(cmd Command, run Run) error {
 	if !p.exists[cmd.RunID] {
 		return ErrNotFound
@@ -312,8 +286,6 @@ func (p *commandPrep) start(cmd Command) (Run, error) {
 	if cmd.BudgetUSD > 0 && cmd.BudgetUSD < run.Budget {
 		run.Budget = cmd.BudgetUSD
 	}
-	// An explicit continuation is the user's own decision to spend more on the job; it may raise the ceiling up to
-	// MaxContinuationBudgetUSD.
 	if cmd.Origin != nil && cmd.Origin.ContinuesTaskID != "" && cmd.BudgetUSD > run.Budget {
 		run.Budget = min(cmd.BudgetUSD, MaxContinuationBudgetUSD)
 	}
@@ -383,8 +355,6 @@ func (p *commandPrep) stopSubtasks(run Run, commandID string) {
 	}
 }
 
-// PreferTraceContext keeps the trace parent that later activity spans should hang from. It prefers the latest sampled
-// command; an unsampled correction must not discard a sampled parent. Only the W3C traceparent is read.
 func PreferTraceContext(current, incoming map[string]string) map[string]string {
 	if len(incoming) == 0 {
 		return current
@@ -401,8 +371,6 @@ func traceParent(headers map[string]string) trace.SpanContext {
 	return trace.SpanContextFromContext(ctx)
 }
 
-// ReconcileCommands selects the commands a task has accepted, in order. Holds are conversation questions, not
-// instructions, so they are not part of the task's input.
 func ReconcileCommands(run Run, commands []Command) []Command {
 	selected := []Command{}
 	for _, c := range commands {

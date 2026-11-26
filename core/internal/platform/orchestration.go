@@ -13,9 +13,6 @@ import (
 	"nori/internal/wake"
 )
 
-// Waker returns a Postgres-backed wake.Waker when leases is non-nil, writing durable
-// user wakes (with post-commit NOTIFY) to nori_user_wakes. When leases is nil, it
-// returns wake.Disabled{}.
 func Waker(leases docstore.LeaseStore) wake.Waker {
 	if leases == nil {
 		return wake.Disabled{}

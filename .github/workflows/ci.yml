@@ -53,8 +53,43 @@ jobs:
       - name: Run make check
         run: make check
 
-      - name: Test scripts/run-with-env.mjs
-        run: node --test scripts/run-with-env.test.mjs
+      - name: Test deployment and adapter scripts
+        run: node --test scripts/*.test.mjs integrations/embed/*.test.mjs
+
+      - name: Persona harness and bundle validation
+        run: |
+          python3 -m unittest discover -s scripts/persona-sim
+          make sim-personas-validate
+
+      - name: Audit web dependencies and build
+        working-directory: web
+        run: |
+          bun audit
+          bun run build
+
+      - name: Audit Go dependencies
+        working-directory: core
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+
+      - name: Install the browser test runner
+        working-directory: web
+        run: bunx playwright install --with-deps chromium
+
+      - name: Browser and proxy regression tests
+        working-directory: web
+        run: bun run test:browser
+
+  ios:
+    name: Swift package and iOS app
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift package tests
+        run: swift test --package-path ios/NoriKit
+      - name: iOS Simulator build
+        run: xcodebuild -project ios/Nori.xcodeproj -scheme Nori -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+
 
   go-race-and-sim:
     name: Go Race & Deep Simulation
@@ -140,3 +175,33 @@ jobs:
         env:
           NORI_POSTGRES_LOAD_TEST_URL: postgres://nori@127.0.0.1:5432/nori_load?sslmode=disable
         run: go test -v -count=1 ./internal/worker -run TestPostgresLoadConcurrencyAndWakeCancel
+
+
+      - name: Isolated parallel persona smoke
+        env:
+          NORI_ENV_FILE: /dev/null
+          NORI_ENV_PROFILE: test
+          NORI_POSTGRES_URL: postgres://nori@127.0.0.1:5432/nori?sslmode=disable
+        run: |
+          python3 - <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+
+          sys.path.insert(0, "scripts/persona-sim")
+          import runner
+
+          with TemporaryDirectory(prefix="nori-persona-ci-") as temporary:
+              runner.RUNS_DIR = Path(temporary)
+              sys.argv[1:] = ["--preset", "memory-pack", "--concurrency", "2", "--stub-models", "--max-events", "2", "--no-grade", "--keep-db"]
+              result = runner.main()
+              assert result == 0, result
+              reports = [json.loads(file.read_text()) for file in runner.RUNS_DIR.glob("*/*/summary.json")]
+              assert len(reports) == 3 and len({report["user_id"] for report in reports}) == 3, reports
+              for report in reports:
+                  assert report["events_executed"] == 2 and report["stub_models"], report
+                  assert not any(report[key] for key in ("http_5xx_count", "harness_timeouts", "ui_error_count")), report
+          PY
+          count="$(psql "$NORI_POSTGRES_URL" -Atc "SELECT count(*) FROM pg_database WHERE datname ~ '^nori_sim_[0-9a-f]{10}$'")"
+          test "$count" -eq 3

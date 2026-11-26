@@ -108,8 +108,6 @@ class ModelStub(BaseHTTPRequestHandler):
                 "unmet": ["User declined send_brief approval"],
             }
         elif REPORT_ID in history:
-            # First call triggers Nori's approval card; after approval, retrying with the
-            # exact same arguments matches the recorded approval digest and executes.
             name, arguments = SEND_MODEL_TOOL, {
                 "recipient": RECIPIENT,
                 "subject": SUBJECT,
@@ -118,7 +116,6 @@ class ModelStub(BaseHTTPRequestHandler):
         elif LIST_MODEL_TOOL in tools:
             name, arguments = LIST_MODEL_TOOL, {}
         else:
-            # A summary request has no task tools.
             name, arguments = None, {}
         if name is None:
             output = {"type": "message", "content": [{"type": "output_text", "text": "Fixture summary."}]}

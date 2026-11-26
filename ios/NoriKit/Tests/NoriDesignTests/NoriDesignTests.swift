@@ -50,24 +50,20 @@ struct NoriDesignTests {
 
     @Test("Dark mode foundation, typography, brand, and mascot tokens match calibrated design palette")
     func darkModeFoundationTokens() {
-        // Foundation surfaces
         #expect(hexString(for: NoriColors.Background.canvas, dark: true) == "#000000")
         #expect(hexString(for: NoriColors.Background.surface, dark: true) == "#0B0B0F")
         #expect(hexString(for: NoriColors.Background.elevated, dark: true) == "#14141A")
         #expect(hexString(for: NoriColors.Background.selected, dark: true) == "#261F38")
         #expect(hexString(for: NoriColors.sheetBackground, dark: true) == "#0E0E13")
 
-        // Typography
         #expect(hexString(for: NoriColors.Text.primary, dark: true) == "#F2EFF8")
         #expect(hexString(for: NoriColors.Text.secondary, dark: true) == "#A9A2B8")
         #expect(hexString(for: NoriColors.Text.muted, dark: true) == "#878196")
         #expect(hexString(for: NoriColors.Text.disabled, dark: true) == "#6B6578")
 
-        // Brand
         #expect(hexString(for: NoriColors.Brand.primary, dark: true) == "#7A3DF6")
         #expect(hexString(for: NoriColors.Brand.accent, dark: true) == "#A98AFF")
 
-        // Mascot
         #expect(hexString(for: NoriColors.Mascot.body, dark: true) == "#C6C4CE")
         #expect(hexString(for: NoriColors.Mascot.ink, dark: true) == "#171522")
         #expect(hexString(for: NoriColors.Mascot.seaweed, dark: true) == "#171522")

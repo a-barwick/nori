@@ -16,10 +16,8 @@ import (
 	"nori/internal/wake"
 )
 
-// ErrInjectedWakeFault is returned when a configured wake enqueue fault triggers.
 var ErrInjectedWakeFault = errors.New("sim/env: injected wake fault")
 
-// WakeKind identifies the kind of queued wake notification.
 type WakeKind string
 
 const (
@@ -28,7 +26,6 @@ const (
 	WakeDelayed      WakeKind = "delayed"
 )
 
-// WakeEvent is a queued wake delivery scheduled for DueAt.
 type WakeEvent struct {
 	Seq         int64
 	Kind        WakeKind
@@ -38,25 +35,16 @@ type WakeEvent struct {
 	DueAt       time.Time
 }
 
-// WakerFaults configures deterministic wake transport faults.
 type WakerFaults struct {
-	// EnqueueErrProb is the probability that a wake returns ErrInjectedWakeFault
-	// without recording any wake (caller must retry / retain intent).
 	EnqueueErrProb float64
 
-	// DropProb is the probability that a wake returns nil as if accepted by the
-	// transport, then silently drops the wake (testing WorkVersion / Repairer).
 	DropProb float64
 
-	// DuplicateProb is the probability that an accepted wake enqueues two copies.
 	DuplicateProb float64
 
-	// MaxDelay adds a uniform deterministic delivery delay in [0, MaxDelay] to
-	// each accepted wake when > 0.
 	MaxDelay time.Duration
 }
 
-// WakerStats counts wake calls, deliveries, and injected transport faults.
 type WakerStats struct {
 	ConversationCalls int64
 	WorkerCalls       int64
@@ -69,9 +57,6 @@ type WakerStats struct {
 	Delayed           int64
 }
 
-// Waker is a deterministic in-memory implementation of wake.Waker and
-// wake.DelayedWaker with fault injection (enqueue errors, silent drops,
-// duplicates, and delivery delays).
 type Waker struct {
 	mu              sync.Mutex
 	clock           *Clock
@@ -90,8 +75,6 @@ var (
 	_ wake.DelayedWaker = (*Waker)(nil)
 )
 
-// NewWaker creates a Waker. If clock is nil a default Clock is created; if rng
-// is nil a fixed deterministic PCG source is used.
 func NewWaker(clock *Clock, workersNeedWake bool, faults WakerFaults, rng *rand.Rand) *Waker {
 	if clock == nil {
 		clock = NewClock(time.Time{})
@@ -108,48 +91,40 @@ func NewWaker(clock *Clock, workersNeedWake bool, faults WakerFaults, rng *rand.
 	}
 }
 
-// ForUser returns a user-scoped wake.Waker (which also implements
-// wake.DelayedWaker via wake.ForUser).
 func (w *Waker) ForUser(userID string) wake.Waker {
 	return wake.ForUser(w, userID)
 }
 
-// WorkersNeedWake implements wake.Waker.
 func (w *Waker) WorkersNeedWake() bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.workersNeedWake
 }
 
-// SetWorkersNeedWake updates whether workers require explicit wake notifications.
 func (w *Waker) SetWorkersNeedWake(need bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.workersNeedWake = need
 }
 
-// SetFaultsEnabled toggles fault injection without clearing fault config or stats.
 func (w *Waker) SetFaultsEnabled(enabled bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.faultsEnabled = enabled
 }
 
-// FaultsEnabled reports whether fault injection is active.
 func (w *Waker) FaultsEnabled() bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.faultsEnabled
 }
 
-// SetFaults replaces the configured wake fault parameters.
 func (w *Waker) SetFaults(cfg WakerFaults) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.faults = cfg
 }
 
-// WakeConversation implements wake.Waker.
 func (w *Waker) WakeConversation(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -160,7 +135,6 @@ func (w *Waker) WakeConversation(ctx context.Context) error {
 	return w.enqueueLocked(WakeConversation, users.ID(ctx), "", nil, w.clock.Now())
 }
 
-// WakeWorker implements wake.Waker.
 func (w *Waker) WakeWorker(ctx context.Context, build string, workflowIDs ...string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -171,7 +145,6 @@ func (w *Waker) WakeWorker(ctx context.Context, build string, workflowIDs ...str
 	return w.enqueueLocked(WakeWorker, users.ID(ctx), build, workflowIDs, w.clock.Now())
 }
 
-// WakeConversationAt implements wake.DelayedWaker.
 func (w *Waker) WakeConversationAt(ctx context.Context, at time.Time) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -226,8 +199,6 @@ func (w *Waker) enqueueLocked(kind WakeKind, userID, build string, workflowIDs [
 	return nil
 }
 
-// PopDue drains and returns all queued wakes with DueAt <= now in deterministic
-// sorted order.
 func (w *Waker) PopDue(now time.Time) []WakeEvent {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -250,8 +221,6 @@ func (w *Waker) PopDue(now time.Time) []WakeEvent {
 	return due
 }
 
-// Peek returns a deep-copied snapshot of all currently queued wakes in
-// deterministic sorted order without modifying the queue.
 func (w *Waker) Peek() []WakeEvent {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -265,8 +234,6 @@ func (w *Waker) Peek() []WakeEvent {
 	return out
 }
 
-// NextDue returns the earliest DueAt among queued wakes, or (zero, false) if
-// the queue is empty.
 func (w *Waker) NextDue() (time.Time, bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -276,29 +243,24 @@ func (w *Waker) NextDue() (time.Time, bool) {
 	return w.queue[0].DueAt, true
 }
 
-// PendingCount returns the number of currently queued wakes.
 func (w *Waker) PendingCount() int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return len(w.queue)
 }
 
-// Stats returns a snapshot of wake counters.
 func (w *Waker) Stats() WakerStats {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.stats
 }
 
-// ResetStats zeroes all wake counters without modifying the pending queue.
 func (w *Waker) ResetStats() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.stats = WakerStats{}
 }
 
-// Digest returns a canonical hex-encoded SHA-256 hash of the waker's
-// configuration and pending wake queue.
 func (w *Waker) Digest() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()

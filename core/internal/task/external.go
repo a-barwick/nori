@@ -17,19 +17,15 @@ import (
 	"nori/internal/state"
 )
 
-// ApprovalExpiry is how long a pending approval card stays valid before expiring.
 const ApprovalExpiry = 30 * time.Minute
 
-// Executor holds what the Tool executor needs for registry tools beyond the engine's own: adapters, the user's
-// Connections and Permission checks. A nil Executor leaves registry tools unavailable, never silently substituted.
 type Executor struct {
 	Adapters     *invoke.Registry
 	Connections  *connections.Service
 	Permissions  *permissions.Service
 	AutoReviewer permissions.AutoReviewer
-	// Optional determinism hooks. Nil falls back to Activities hooks or time.Now / context-aware timer.
-	Now   func() time.Time
-	Sleep func(context.Context, time.Duration) error
+	Now          func() time.Time
+	Sleep        func(context.Context, time.Duration) error
 }
 
 func (a *Activities) externalNow() time.Time {
@@ -46,8 +42,6 @@ func (a *Activities) externalSleep(ctx context.Context, d time.Duration) error {
 	return a.sleep(ctx, d)
 }
 
-// externalPlan is what was resolved before admission: the adapter, the account access for this attempt, the
-// prepared action and the authority that admits it.
 type externalPlan struct {
 	adapter   invoke.Adapter
 	call      invoke.Call
@@ -64,7 +58,6 @@ func denial(in ToolInput, effect, outcome, message string, extra map[string]any)
 	return output
 }
 
-// taskOrigin says who the task acts for: a direct user request, an automation occurrence or a goal.
 func taskOrigin(run state.Run) (origin, automationID, goalID string) {
 	if run.Origin != nil {
 		switch {
@@ -82,13 +75,6 @@ func interactionID(prefix, operationID, digest string) string {
 	return prefix + hex.EncodeToString(sum[:16])
 }
 
-// planExternal resolves a registry tool call before admission. A non-nil output ends the call without admitting
-// an operation: the tool is unavailable, the account must be chosen or connected, arguments are invalid, the
-// action is denied, or it waits on the user's approval.
-// saved is the operation's record when an interrupted attempt is being recovered. An action saved whole before its
-// first attempt (Action.Intent) is used as it was approved instead of being prepared again: a fresh read of provider
-// state would already include the interrupted attempt's own effect (an event it moved has a new revision), and an
-// event it deleted can no longer be read.
 func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *state.OperationRecord) (*externalPlan, map[string]any, error) {
 	recovering := saved != nil
 	effect := string(in.Exec.Policy.Effect)
@@ -100,8 +86,6 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 	if err != nil {
 		return nil, nil, err
 	}
-	// An adapter that needs the user to sign in first (an OAuth MCP server) asks from the task, which resumes when the
-	// sign-in completes.
 	if checker, ok := adapter.(invoke.SignInChecker); ok && !recovering && a.Executor.Permissions != nil {
 		start, err := checker.SignInNeeded(ctx, invoke.Call{RunID: in.RunID, Revision: in.Revision, OperationID: in.OperationID, Exec: *in.Exec, Args: in.Call.Args}, "/work/"+in.RunID)
 		if err != nil {
@@ -141,21 +125,16 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 		case errors.Is(err, connections.ErrUnknownAccount):
 			return nil, denial(in, effect, "failed", fmt.Sprintf("No connected account matches %q. Use one of the connected accounts or ask the user; never switch accounts silently.", requested), map[string]any{"recovery": "choose_account"}), nil
 		case errors.Is(err, connections.ErrInsufficientScope):
-			// A connected account that lacks this access asks for it from the task, which resumes once it is granted.
 			if record, ok := a.Executor.Connections.LackingCapability(ctx, in.Exec.ConnectionType, in.Exec.RequiredCapability, requested); ok && !recovering {
 				out, err := a.signIn(ctx, in, run, record, in.Exec.RequiredCapability)
 				return nil, out, err
 			}
 			return nil, denial(in, effect, "failed", "The connected account has not granted the access this needs. The user can grant it in Apps.", map[string]any{"recovery": "request_access", "integration_id": in.Exec.ConnectionType}), nil
 		case errors.Is(err, connections.ErrNotConnected):
-			// An account that only needs to sign in again is repaired from the task itself, which then resumes.
 			if record, ok := a.Executor.Connections.NeedsSignIn(ctx, in.Exec.ConnectionType, requested); ok && !recovering {
 				out, err := a.signIn(ctx, in, run, record, "")
 				return nil, out, err
 			}
-			// No account yet, or only one whose first sign-in never finished: ask the user to connect from the task,
-			// for the access this call needs, and resume once they have. A named account that is not connected is
-			// not created here.
 			if requested == "" && !recovering {
 				record, err := a.Executor.Connections.ConnectTarget(ctx, in.Exec.ConnectionType, interactionID("con_", in.OperationID, in.Exec.ConnectionType))
 				if err == nil {
@@ -172,7 +151,6 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 		}
 		grant, err := a.Executor.Connections.Grant(ctx, record.ID)
 		if errors.Is(err, connections.ErrNotConnected) && !recovering {
-			// The refresh failed: the grant was revoked or expired. Ask the user to sign in and resume this task.
 			if again, ok := a.Executor.Connections.NeedsSignIn(ctx, in.Exec.ConnectionType, record.ID); ok {
 				record = again
 			}
@@ -185,9 +163,6 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 		call.Grant = &grant
 		connectionID, epoch = record.ID, record.AuthorizationEpoch
 	}
-	// Only writes: a read is simply run again, from a fresh prepare. A recovered write is never executed again unless
-	// its policy says a transport retry is safe, which only reads may declare, so the saved intent needs no more than
-	// what reconciliation reads.
 	if recovering && saved.Action != nil && saved.Action.Intent && saved.EffectClass != string(extensions.EffectRead) {
 		intent := saved.Action
 		prepared := invoke.Prepared{Summary: intent.Text, Effect: extensions.Effect(saved.EffectClass), Precondition: intent.Precondition,
@@ -239,7 +214,6 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 		out, err := a.requestApproval(ctx, in, run, plan, connectionID, decision.Reason)
 		return nil, out, err
 	}
-	// Explicit schedule/routine confirmation gate unless already human-approved or covered by a standing rule.
 	if prepared.RequireConfirmation && !decision.ApprovedByHuman && decision.Source != "approval" && decision.Source != "permission_rule" {
 		if a.Executor.Permissions == nil {
 			return nil, denial(in, string(prepared.Effect), "denied", "Permission checks are not configured; nothing may change without them.", nil), nil
@@ -247,9 +221,6 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 		out, err := a.requestApproval(ctx, in, run, plan, connectionID, "")
 		return nil, out, err
 	}
-	// Run independent action-boundary AutoReview on tentatively-allowed non-read external actions,
-	// unless already explicitly approved by the user via an approval card or explicitly exempted
-	// for simple first-party one-time reminders.
 	skipAutoReview := prepared.SkipAutoReview && origin == "user" && isInternalNoriTool(in.Exec)
 	if prepared.Effect != extensions.EffectRead && prepared.Effect != extensions.EffectControl &&
 		!decision.ApprovedByHuman && decision.Source != "approval" && !skipAutoReview {
@@ -303,7 +274,6 @@ func (a *Activities) verifiedUserSources(ctx context.Context, runID string, run 
 	if a.Store != nil {
 		if inputs, err := a.Store.ReadTaskSourceInputs(ctx, runID); err == nil {
 			for _, input := range inputs {
-				// Strictly exclude TaskEvent/untrusted inputs; keep only verified user messages.
 				if input.Event != nil {
 					continue
 				}
@@ -447,8 +417,6 @@ func (a *Activities) chooseAccount(ctx context.Context, in ToolInput, run state.
 	}), nil
 }
 
-// signIn opens a sign-in interaction bound to this task and revision. Completing the account's sign-in resolves it
-// (Connections.OnConnected), and the answer resumes the task, which retries the same call.
 func (a *Activities) signIn(ctx context.Context, in ToolInput, run state.Run, record connections.Record, capability string) (map[string]any, error) {
 	effect := string(in.Exec.Policy.Effect)
 	if a.Executor.Permissions == nil {
@@ -466,11 +434,9 @@ func (a *Activities) signIn(ctx context.Context, in ToolInput, run state.Run, re
 		prompt = fmt.Sprintf("Give Nori more access to %s so it can continue this task.", label)
 	}
 	if record.Account.ProviderID == "" {
-		// The account has never signed in: this is its first connection.
 		prompt = fmt.Sprintf("Connect your %s account so Nori can continue this task.", record.Title)
 	}
 	returnTo := "/work/" + in.RunID
-	// r2.11's SignInPayload allows no other fields; why the account needs sign-in is on the Connection's health.
 	payload := map[string]any{"integration_id": record.IntegrationID, "connection_id": record.ID, "return_to": returnTo}
 	attempt, err := a.Executor.Connections.StartRepair(ctx, record.ID, interactionID("rep_", in.OperationID, record.ID+capability), returnTo, capabilities)
 	switch {
@@ -480,7 +446,6 @@ func (a *Activities) signIn(ctx context.Context, in ToolInput, run state.Run, re
 			payload["requested_scopes"] = scopes
 		}
 	case errors.Is(err, connections.ErrInvalidAction):
-		// App-password accounts repair with a new app-specific password through the connection action.
 		payload["auth"] = "app_password"
 	default:
 		return denial(in, effect, "failed", "The account needs to sign in again: "+err.Error(), map[string]any{"recovery": "repair", "connection_id": record.ID}), nil
@@ -498,7 +463,6 @@ func (a *Activities) signIn(ctx context.Context, in ToolInput, run state.Run, re
 	}), nil
 }
 
-// signInStarted opens a sign_in interaction for a sign-in an adapter already started.
 func (a *Activities) signInStarted(ctx context.Context, in ToolInput, run state.Run, start invoke.SignInStart) (map[string]any, error) {
 	revision := in.Revision
 	prompt := fmt.Sprintf("Sign in to %s so Nori can continue this task.", start.Label)
@@ -516,8 +480,6 @@ func (a *Activities) signInStarted(ctx context.Context, in ToolInput, run state.
 	}), nil
 }
 
-// runExternal records the attempt, dispatches once and settles the outcome. An interrupted write is reconciled
-// from provider state or stays uncertain; it is never blindly sent again.
 func (a *Activities) runExternal(ctx context.Context, in ToolInput, op *state.OperationRecord, recovering bool, plan *externalPlan, persist persistFunc) (map[string]any, error) {
 	connectionID := op.ConnectionID
 	report := func(result invoke.Result) {
@@ -566,9 +528,6 @@ func (a *Activities) runExternal(ctx context.Context, in ToolInput, op *state.Op
 		if reconciler, ok := plan.adapter.(invoke.Reconciler); ok {
 			if result, ok := reconciler.Reconcile(ctx, plan.call, plan.prepared); ok {
 				if result.Outcome == "failed" && result.Cleared == "" {
-					// Recovery runs only after the interrupted attempt's receipt window, so provider state that shows
-					// no effect means the attempt changed nothing; it doesn't hold the task's later writes. (Right
-					// after a timeout, in the path below, the request may still land, so a "failed" there keeps holding.)
 					result.Cleared = state.ClearedDidNotRun
 				}
 				return settle(result)
@@ -593,8 +552,6 @@ func (a *Activities) runExternal(ctx context.Context, in ToolInput, op *state.Op
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	result := plan.adapter.Execute(callCtx, plan.call, plan.prepared)
 	cancel()
-	// A safe read refused with 429 or 503 is retried a bounded number of times, honouring Retry-After up to a cap.
-	// Writes are never retried here: a refusal that arrives after a partial effect is settled by reconciliation.
 	for retry := 1; retry <= 2 && in.Exec.Policy.Retry == "safe" && result.Err != nil && ctx.Err() == nil; retry++ {
 		var temporary *invoke.TemporaryError
 		if !errors.As(result.Err, &temporary) {
@@ -612,8 +569,6 @@ func (a *Activities) runExternal(ctx context.Context, in ToolInput, op *state.Op
 		cancel()
 	}
 	if errors.Is(ctx.Err(), context.Canceled) && in.Exec.Policy.Effect == extensions.EffectRead && in.Exec.Policy.Retry == "safe" {
-		// Context cancellation (lease loss, graceful drain, or wake-driven stop/pause/steer)
-		// must not permanently settle a rerunnable safe read as "failed: context canceled".
 		return nil, context.Cause(ctx)
 	}
 	if result.Outcome == "" {
@@ -623,11 +578,9 @@ func (a *Activities) runExternal(ctx context.Context, in ToolInput, op *state.Op
 		}
 	}
 	if ctx.Err() != nil && result.Outcome == "failed" && in.Exec.Policy.Effect != "read" {
-		// Cancellation or a timeout is not proof the provider did nothing.
 		result.Outcome = "uncertain"
 	}
 	if result.Outcome == "uncertain" {
-		// A lost response is resolved by reading provider state before anyone is asked; it is never resent.
 		if reconciler, ok := plan.adapter.(invoke.Reconciler); ok {
 			check, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 			reconciled, ok := reconciler.Reconcile(check, plan.call, plan.prepared)

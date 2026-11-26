@@ -17,18 +17,10 @@ import (
 	"nori/internal/state/docstore"
 )
 
-// CheckSafety verifies all continuous safety invariants across all provided
-// users using Checker.Config.Now (or time.Now().UTC() if unset).
-//
-// When Checker is configured with a *memstore.Backend, CheckSafety operates on
-// a single atomic, fault-free BackendSnapshot, consuming zero RNG draws and
-// never triggering injected faults.
 func (c *Checker) CheckSafety(ctx context.Context, users []UserTarget) error {
 	return c.CheckSafetyAt(ctx, users, c.now())
 }
 
-// CheckSafetyAt verifies all continuous safety invariants at the given
-// simulation timestamp.
 func (c *Checker) CheckSafetyAt(ctx context.Context, users []UserTarget, now time.Time) error {
 	now = now.UTC()
 	sorted := sortUsers(users)
@@ -39,7 +31,6 @@ func (c *Checker) CheckSafetyAt(ctx context.Context, users []UserTarget, now tim
 
 	var vs Violations
 
-	// 1. Report any synchronous hook violations (paused starts, receipt mismatches).
 	for _, ev := range c.pausedStarts {
 		vs = append(vs, Violation{
 			Invariant: "control.execution_started_while_paused",
@@ -83,8 +74,8 @@ func (c *Checker) checkSafetyFromSnapshotLocked(ctx context.Context, targets []U
 	_, ctrlVs := decodeControlFromSnapshot(snap)
 	vs = append(vs, ctrlVs...)
 
-	knownOwners := make(map[string]string, len(targets)) // dataOwner -> userID
-	knownUsers := make(map[string]bool, len(targets))    // userID -> true
+	knownOwners := make(map[string]string, len(targets))
+	knownUsers := make(map[string]bool, len(targets))
 	for _, t := range targets {
 		knownUsers[t.User.ID] = true
 		owner := t.User.DataOwner()
@@ -99,7 +90,6 @@ func (c *Checker) checkSafetyFromSnapshotLocked(ctx context.Context, targets []U
 		knownOwners[owner] = t.User.ID
 	}
 
-	// Cross-user isolation on lease and wake discovery tables.
 	for _, lease := range snap.TaskLeases {
 		if !knownUsers[lease.UserID] {
 			vs = append(vs, Violation{
@@ -121,7 +111,6 @@ func (c *Checker) checkSafetyFromSnapshotLocked(ctx context.Context, targets []U
 		}
 	}
 
-	// Owner-path isolation across every collection and sequence in the backend.
 	for _, col := range sortedKeys(snap.Collections) {
 		if col == "owners" {
 			for _, id := range sortedKeys(snap.Collections[col]) {
@@ -157,7 +146,6 @@ func (c *Checker) checkSafetyFromSnapshotLocked(ctx context.Context, targets []U
 		}
 	}
 
-	// Decode every user's slice from the snapshot and register authoritative ownership first.
 	dataList := make([]userSnapshotData, 0, len(targets))
 	for _, t := range targets {
 		owner := t.User.DataOwner()
@@ -176,7 +164,6 @@ func (c *Checker) checkSafetyFromSnapshotLocked(ctx context.Context, targets []U
 		vs = append(vs, tagUser(t.User.ID, tcVs)...)
 		uData.taskControls = taskControls
 
-		// Decode operations for every known run AND detect any orphaned operation subcollections.
 		opPrefix := "owners/" + owner + "/runs/"
 		opSuffix := "/operations"
 		opRunIDs := map[string]bool{}
@@ -219,7 +206,6 @@ func (c *Checker) checkSafetyFromSnapshotLocked(ctx context.Context, targets []U
 		vs = append(vs, tagUser(t.User.ID, occVs)...)
 		uData.occurrences = occs
 
-		// Pass 1: Register ownership for cross-user isolation checks.
 		for _, runID := range sortedKeys(uData.runs) {
 			vs = append(vs, c.registerOwnerLocked(c.runOwners, "run", runID, t.User.ID)...)
 		}
@@ -236,20 +222,16 @@ func (c *Checker) checkSafetyFromSnapshotLocked(ctx context.Context, targets []U
 		dataList = append(dataList, uData)
 	}
 
-	// Verify TaskLease run references do not cross user boundaries.
 	for _, lease := range snap.TaskLeases {
 		if knownUsers[lease.UserID] {
 			vs = append(vs, c.checkOwnedByLocked(c.runOwners, "run", lease.RunID, lease.UserID, "task_lease "+lease.RunID)...)
 		}
 	}
 
-	// Pass 2: Full per-user safety and cross-user reference checks.
 	for _, u := range dataList {
-		// Event log continuity & monotonic EventPosition.
 		eventPos, evVs := c.checkEventLogFromSnapshotLocked(u.userID, u.owner, snap)
 		vs = append(vs, evVs...)
 
-		// ReadMark monotonicity.
 		mark, hasMark, err := decodeReadMarkFromSnapshot(snap, u.owner)
 		if err != nil {
 			vs = append(vs, Violation{
@@ -261,7 +243,6 @@ func (c *Checker) checkSafetyFromSnapshotLocked(ctx context.Context, targets []U
 			vs = append(vs, c.checkReadMarkLocked(u.userID, mark, eventPos)...)
 		}
 
-		// Conversation control monotonicity & bounds.
 		conv, hasConv, err := decodeConversationFromSnapshot(snap, u.owner)
 		if err != nil {
 			vs = append(vs, Violation{
@@ -273,37 +254,29 @@ func (c *Checker) checkSafetyFromSnapshotLocked(ctx context.Context, targets []U
 			vs = append(vs, c.checkConversationLocked(u.userID, conv)...)
 		}
 
-		// Runs: disappearance, lifecycle, monotonicity, budget, subtasks, cross-user refs.
 		vs = append(vs, c.checkRunsLocked(u.userID, u.runs, true)...)
 
-		// TaskControls: monotonic Fence, Models, Tools, Checks & cross-user ownership.
 		vs = append(vs, c.checkTaskControlsLocked(u.userID, u.taskControls)...)
 
-		// Operations: single settlement & legal transitions.
 		vs = append(vs, c.checkOperationsLocked(u.userID, u.runs, u.opsByRun, true)...)
 
-		// Commands: idempotency, non-reverting delivered, valid RunID ownership.
 		vs = append(vs, c.checkCommandsLocked(u.userID, u.runs, u.cmds)...)
 
-		// Messages: cross-user RunID check.
 		for _, msg := range u.msgs {
 			if msg.RunID != "" {
 				vs = append(vs, c.checkOwnedByLocked(c.runOwners, "run", msg.RunID, u.userID, "message "+msg.ID)...)
 			}
 		}
 
-		// Interactions: revision safety, cancelled-run check, expiry via permissions.Service, index & isolation.
 		permSvc := &permissions.Service{
 			Store: &snapshotResourceStore{snap: snap, owner: u.owner},
 			Now:   func() time.Time { return now },
 		}
 		vs = append(vs, c.checkInteractionsLocked(ctx, u.userID, u.runs, u.interactions, permSvc, now)...)
 
-		// Automations & Occurrences: cursor/generation monotonicity, duplicate keys, isolation.
 		vs = append(vs, c.checkAutomationsAndOccurrencesLocked(u.userID, u.automations, u.occurrences)...)
 	}
 
-	// Coupled Memory & Compaction safety invariants (INV-MEM-01..07).
 	vs = append(vs, c.checkMemorySafetyFromSnapshotLocked(ctx, dataList, knownOwners, snap, now)...)
 
 	return vs
@@ -408,7 +381,6 @@ func (c *Checker) checkSafetyFromStoresLocked(ctx context.Context, targets []Use
 			}
 			u.conv = conv
 
-			// Interactions via ResourceStore.
 			resAfter := ""
 			for {
 				page, next, err := t.Store.Resources(ctx, permissions.CollectionInteractions, nil, resAfter, 200)
@@ -429,7 +401,6 @@ func (c *Checker) checkSafetyFromStoresLocked(ctx context.Context, targets []Use
 				resAfter = next
 			}
 
-			// Automations via ResourceStore.
 			resAfter = ""
 			for {
 				page, next, err := t.Store.Resources(ctx, scheduler.CollectionAutomations, nil, resAfter, 200)
@@ -450,7 +421,6 @@ func (c *Checker) checkSafetyFromStoresLocked(ctx context.Context, targets []Use
 				resAfter = next
 			}
 
-			// Occurrences via ResourceStore.
 			resAfter = ""
 			for {
 				page, next, err := t.Store.Resources(ctx, scheduler.CollectionOccurrences, nil, resAfter, 200)
@@ -775,7 +745,6 @@ func (c *Checker) checkRunsLocked(userID string, runs map[string]state.Run, comp
 	var vs []Violation
 
 	if completeView {
-		// Runs are durable and never deleted.
 		var missing []string
 		for k := range c.runs {
 			if k.userID == userID {
@@ -808,7 +777,6 @@ func (c *Checker) checkRunsLocked(userID string, runs map[string]state.Run, comp
 			})
 		}
 
-		// Monotonic counters & valid bounds.
 		if run.Revision < 0 || run.Position < 0 || run.Incorporated < 0 {
 			vs = append(vs, Violation{
 				Invariant: "run.counters_non_negative",
@@ -826,12 +794,10 @@ func (c *Checker) checkRunsLocked(userID string, runs map[string]state.Run, comp
 			})
 		}
 
-		// Budget / Spend safety: never NaN, Inf, or negative.
 		vs = append(vs, checkMoney(userID, runID, "run.budget_valid", "Budget", run.Budget)...)
 		vs = append(vs, checkMoney(userID, runID, "run.spent_valid", "Spent", run.Spent)...)
 		vs = append(vs, checkMoney(userID, runID, "run.subtask_spent_valid", "SubtaskSpent", run.SubtaskSpent)...)
 
-		// Terminal invariants.
 		isTerminal := run.Status != state.RunRunning && isValidRunStatus(run.Status)
 		if isTerminal {
 			if run.Finishing != nil {
@@ -860,7 +826,6 @@ func (c *Checker) checkRunsLocked(userID string, runs map[string]state.Run, comp
 			}
 		}
 
-		// Temporal comparisons against historical baseline.
 		if prev, seen := c.runs[key]; seen {
 			if run.Revision < prev.revision {
 				vs = append(vs, Violation{
@@ -912,7 +877,6 @@ func (c *Checker) checkRunsLocked(userID string, runs map[string]state.Run, comp
 			}
 		}
 
-		// Update baseline monotonically.
 		next := c.runs[key]
 		if run.Revision > next.revision {
 			next.revision = run.Revision
@@ -934,7 +898,6 @@ func (c *Checker) checkRunsLocked(userID string, runs map[string]state.Run, comp
 		}
 		c.runs[key] = next
 
-		// Subtask -> Parent consistency.
 		if run.ParentID != "" {
 			if run.ParentID == runID {
 				vs = append(vs, Violation{
@@ -982,7 +945,6 @@ func (c *Checker) checkRunsLocked(userID string, runs map[string]state.Run, comp
 			}
 		}
 
-		// Parent -> Subtasks consistency.
 		for _, link := range run.Subtasks {
 			vs = append(vs, c.checkOwnedByLocked(c.runOwners, "run", link.ID, userID, "run "+runID+" SubtaskLink")...)
 			child, exists := runs[link.ID]
@@ -1013,8 +975,6 @@ func (c *Checker) checkRunsLocked(userID string, runs map[string]state.Run, comp
 					Message:   fmt.Sprintf("parent %q records SubtaskLink status %q, but child status is %q", runID, link.Status, child.Status),
 				})
 			}
-			// A parent that has published a terminal outcome (Status != running and Finishing == nil)
-			// must NEVER have any still-open (running) or cleanup-pending owned subtasks.
 			if isTerminal && run.Finishing == nil {
 				if child.Status == state.RunRunning {
 					vs = append(vs, Violation{
@@ -1035,7 +995,6 @@ func (c *Checker) checkRunsLocked(userID string, runs map[string]state.Run, comp
 			}
 		}
 
-		// Parent SubtaskSpent rollup consistency in complete snapshot view.
 		if completeView && len(run.Subtasks) > 0 {
 			var childSpentSum float64
 			anyChildUnknown := false
@@ -1071,7 +1030,6 @@ func (c *Checker) checkRunsLocked(userID string, runs map[string]state.Run, comp
 			}
 		}
 
-		// Origin cross-user checks.
 		if run.Origin != nil {
 			if run.Origin.ContinuesTaskID != "" {
 				vs = append(vs, c.checkOwnedByLocked(c.runOwners, "run", run.Origin.ContinuesTaskID, userID, "run "+runID+" Origin.ContinuesTaskID")...)
@@ -1148,7 +1106,6 @@ func (c *Checker) checkOperationsLocked(userID string, runs map[string]state.Run
 			hadOpViolation := false
 			if prev, seen := c.operations[key]; seen && prev.evidenceRecorded {
 				beforeCount := len(vs)
-				// Identity fields are fixed once evidence is recorded.
 				if prev.id != op.ID || prev.callID != op.CallID || prev.name != op.Name ||
 					prev.effectClass != op.EffectClass || prev.revision != op.Revision {
 					vs = append(vs, Violation{
@@ -1187,7 +1144,6 @@ func (c *Checker) checkOperationsLocked(userID string, runs map[string]state.Run
 					})
 				}
 
-				// Single settlement & legal state machine transitions (matches state/evidence.go outcomeMayFollow).
 				if isTerminalOpOutcome(prev.outcome) {
 					if op.Outcome != prev.outcome || op.ResultRef != prev.resultRef {
 						vs = append(vs, Violation{
@@ -1220,7 +1176,6 @@ func (c *Checker) checkOperationsLocked(userID string, runs map[string]state.Run
 				hadOpViolation = len(vs) > beforeCount
 			}
 
-			// Do not overwrite an established baseline on violation so subsequent checks keep catching it.
 			if !hadOpViolation {
 				c.operations[key] = opBaseline{
 					evidenceRecorded: true,
@@ -1306,7 +1261,6 @@ func (c *Checker) checkInteractionsLocked(
 			vs = append(vs, c.checkOwnedByLocked(c.automationOwners, "automation", raw.AutomationID, userID, "interaction "+r.ID)...)
 		}
 
-		// Index consistency (records/interactions.go relies on index.status and index.task_id to supersede pending interactions).
 		if raw.Status == "pending" && r.Index["status"] != "pending" {
 			vs = append(vs, Violation{
 				Invariant: "interaction.index_status_consistent",
@@ -1324,7 +1278,6 @@ func (c *Checker) checkInteractionsLocked(
 			})
 		}
 
-		// Expired interactions must never have been resolved as approved after ExpiresAt.
 		if raw.ExpiresAt != nil && raw.Resolution != nil && raw.Resolution.Kind == "approve" &&
 			raw.ResolvedAt != nil && raw.ResolvedAt.After(*raw.ExpiresAt) {
 			vs = append(vs, Violation{
@@ -1335,7 +1288,6 @@ func (c *Checker) checkInteractionsLocked(
 			})
 		}
 
-		// Read effective interaction through permissions.Service (verifies runtime expiry projection).
 		effective := raw
 		if permSvc != nil {
 			got, err := permSvc.Interaction(ctx, r.ID)
@@ -1382,8 +1334,6 @@ func (c *Checker) checkInteractionsLocked(
 			continue
 		}
 
-		// A pending interaction with InstructionRevision must match the run's current Revision:
-		// steer/stop commands advance Revision and atomically supersede prior-revision interactions.
 		if effective.InstructionRevision != nil && *effective.InstructionRevision != run.Revision {
 			vs = append(vs, Violation{
 				Invariant: "interaction.stale_revision",
@@ -1393,8 +1343,6 @@ func (c *Checker) checkInteractionsLocked(
 			})
 		}
 
-		// A top-level run cancelled via CommandStop always goes through AcceptCommandBatch,
-		// which supersedes every pending interaction on that run in the same transaction.
 		if run.Status == state.RunCancelled && run.CancelRequested && run.ParentID == "" {
 			vs = append(vs, Violation{
 				Invariant: "interaction.pending_on_cancelled_run",
@@ -1468,8 +1416,8 @@ func (c *Checker) checkOccurrenceUniquenessAndOwnershipLocked(
 	occurrences []storedOccurrence,
 ) []Violation {
 	var vs []Violation
-	seenSlotKey := map[string]string{} // slotKey -> first occurrence ID
-	seenTaskID := map[string]string{}  // taskID -> first occurrence ID
+	seenSlotKey := map[string]string{}
+	seenTaskID := map[string]string{}
 
 	for _, occ := range occurrences {
 		vs = append(vs, c.checkOwnedByLocked(c.automationOwners, "automation", occ.AutomationID, userID, "occurrence "+occ.ID)...)
@@ -1482,7 +1430,6 @@ func (c *Checker) checkOccurrenceUniquenessAndOwnershipLocked(
 			})
 		}
 
-		// Distinguish scheduled occurrences from explicit run_now occurrences using scheduler's deterministic ID.
 		sourceKind := "scheduled"
 		if occ.ID == expectedOccurrenceID(occ.AutomationID, occ.Generation, occ.ScheduledAt, "run_now") {
 			sourceKind = "run_now"
@@ -1569,7 +1516,6 @@ func isValidRunStatus(s state.RunStatus) bool {
 	}
 }
 
-// isValidOpOutcome matches core/internal/state/evidence.go validOperation.
 func isValidOpOutcome(outcome string) bool {
 	switch outcome {
 	case "pending", "confirmed", "failed", "uncertain", "skipped", "ready", "attempted", "submitted", "voided":
@@ -1579,8 +1525,6 @@ func isValidOpOutcome(outcome string) bool {
 	}
 }
 
-// isTerminalOpOutcome reports whether nothing may follow outcome in
-// core/internal/state/evidence.go outcomeMayFollow.
 func isTerminalOpOutcome(outcome string) bool {
 	switch outcome {
 	case "confirmed", "failed", "skipped", "voided":
@@ -1590,7 +1534,6 @@ func isTerminalOpOutcome(outcome string) bool {
 	}
 }
 
-// opOutcomeMayFollow mirrors core/internal/state/evidence.go outcomeMayFollow.
 func opOutcomeMayFollow(old, next string) bool {
 	switch old {
 	case "pending":
@@ -1607,7 +1550,6 @@ func opOutcomeMayFollow(old, next string) bool {
 	return false
 }
 
-// expectedOccurrenceID mirrors scheduler/service.go occurrenceID.
 func expectedOccurrenceID(automation string, generation int64, slot time.Time, source string) string {
 	key := fmt.Sprintf("%s|%d|%s|%s", automation, generation, slot.UTC().Format(time.RFC3339), source)
 	return "occ_" + strings.ReplaceAll(uuid.NewSHA1(uuid.NameSpaceOID, []byte(key)).String(), "-", "")[:24]

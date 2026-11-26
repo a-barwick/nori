@@ -185,22 +185,18 @@ describe("oidcIdentity and resolveUser", () => {
       { email: "alice@example.com" },
     );
 
-    // Reject unverified email
     const unverified = await signIDToken({ sub: "user-2", email: "bob@example.com", email_verified: false });
     assert.equal(await oidcIdentity(new Headers({ authorization: `Bearer ${unverified}` })), null);
 
-    // Reject access token (token_use !== "id")
     const accessToken = await signIDToken({ sub: "user-3", email: "bob@example.com", email_verified: true, token_use: "access" });
     assert.equal(await oidcIdentity(new Headers({ authorization: `Bearer ${accessToken}` })), null);
 
-    // Reject multi-audience token when azp does not match audience
     const wrongAzp = await signIDToken(
       { sub: "user-4", email: "bob@example.com", email_verified: true, azp: "other-client" },
       { audience: [AUDIENCE, "second-client"] },
     );
     assert.equal(await oidcIdentity(new Headers({ authorization: `Bearer ${wrongAzp}` })), null);
 
-    // Reject symmetric HS256 token
     const symmetric = await new SignJWT({ sub: "user-5", email: "bob@example.com", email_verified: true })
       .setProtectedHeader({ alg: "HS256" })
       .setIssuer(ISSUER)
@@ -210,7 +206,6 @@ describe("oidcIdentity and resolveUser", () => {
       .sign(new TextEncoder().encode(SERVICE_KEY));
     assert.equal(await oidcIdentity(new Headers({ authorization: `Bearer ${symmetric}` })), null);
 
-    // Reject oversized token (>16 KB)
     assert.equal(await oidcIdentity(new Headers({ authorization: `Bearer ${"a".repeat(16_400)}` })), null);
   });
 
@@ -230,12 +225,10 @@ describe("oidcIdentity and resolveUser", () => {
       return Response.json({ error: "boom" }, { status: 500 });
     });
 
-    // Missing token -> 403 without hitting runtime
     const unauth = await resolveUser(new Headers());
     assert.equal("status" in unauth && unauth.status, 403);
     assert.equal(resolveCalls, 0);
 
-    // Valid user -> resolved once, then served from TTL cache
     const okToken = await signIDToken({ sub: "s1", email: "cached@example.test", email_verified: true });
     const first = await resolveUser(new Headers({ authorization: `Bearer ${okToken}` }));
     assert.equal("userID" in first && first.userID, validUUID);
@@ -243,12 +236,10 @@ describe("oidcIdentity and resolveUser", () => {
     assert.equal("userID" in second && second.userID, validUUID);
     assert.equal(resolveCalls, 1);
 
-    // 403 from runtime -> denied
     const deniedToken = await signIDToken({ sub: "s2", email: "denied@example.test", email_verified: true });
     const denied = await resolveUser(new Headers({ authorization: `Bearer ${deniedToken}` }));
     assert.equal("status" in denied && denied.status, 403);
 
-    // 429 with valid numeric Retry-After -> preserved
     const busyToken = await signIDToken({ sub: "s3", email: "busy@example.test", email_verified: true });
     const busy = await resolveUser(new Headers({ authorization: `Bearer ${busyToken}` }));
     assert.equal("status" in busy && busy.status, 429);
@@ -258,13 +249,11 @@ describe("oidcIdentity and resolveUser", () => {
     assert.equal(busyRes.headers.get("retry-after"), "15");
     assert.equal(busyRes.headers.get("cache-control"), "no-store");
 
-    // 429 with invalid Retry-After -> sanitized away
     const badRetryToken = await signIDToken({ sub: "s4", email: "busy-bad-retry@example.test", email_verified: true });
     const badRetry = await resolveUser(new Headers({ authorization: `Bearer ${badRetryToken}` }));
     assert.equal("status" in badRetry && badRetry.status, 429);
     assert.equal("retryAfter" in badRetry && badRetry.retryAfter, undefined);
 
-    // Invalid user ID format returned by runtime -> 503 unavailable
     const badIdToken = await signIDToken({ sub: "s5", email: "bad-id@example.test", email_verified: true });
     const badId = await resolveUser(new Headers({ authorization: `Bearer ${badIdToken}` }));
     assert.equal("status" in badId && badId.status, 503);

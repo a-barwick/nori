@@ -8,7 +8,6 @@ import Testing
 @Suite("iOS Feedback Fixes Unit Tests")
 struct FeedbackFixesTests {
 
-    // MARK: - Helpers to generate real synthetic images via ImageIO
 
     private func makeCGImage(width: Int, height: Int, withNoise: Bool = false) throws -> CGImage {
         let colorSpace = CGColorSpaceCreateDeviceRGB()
@@ -67,7 +66,6 @@ struct FeedbackFixesTests {
         return data as Data
     }
 
-    // MARK: - Fix 6: ImageUploadNormalizer Tests
 
     @Test("Detects PNG, JPEG, WebP, HEIC/HEIF magic bytes accurately")
     func detectImageFormats() throws {
@@ -107,7 +105,6 @@ struct FeedbackFixesTests {
     func transcodesHEICAndTIFFToJPEG() throws {
         let img = try makeCGImage(width: 80, height: 60)
 
-        // Test TIFF (always supported by ImageIO on macOS & iOS) -> must transcode to JPEG.
         let tiffData = try #require(encodeImage(img, type: .tiff))
         #expect(ImageUploadNormalizer.detectFormat(of: tiffData) == .other)
         let tiffNorm = try ImageUploadNormalizer.normalize(
@@ -119,7 +116,6 @@ struct FeedbackFixesTests {
         #expect(tiffNorm.filename == "scan.jpg")
         #expect(ImageUploadNormalizer.detectFormat(of: tiffNorm.data) == .jpeg)
 
-        // Test real HEIC encoding if available on the host runtime.
         if let heicData = encodeImage(img, type: .heic) {
             #expect(ImageUploadNormalizer.detectFormat(of: heicData) == .heic)
             let heicNorm = try ImageUploadNormalizer.normalize(
@@ -135,7 +131,6 @@ struct FeedbackFixesTests {
 
     @Test("Downscales and compresses oversized PNG to fit cleanly under maxBytes as JPEG")
     func compressesOversizedPNGToJPEG() throws {
-        // 600x600 random noise PNG is > 900 KB, well above a 40 KB ceiling.
         let noisy = try makeCGImage(width: 600, height: 600, withNoise: true)
         let largePNG = try #require(encodeImage(noisy, type: .png))
         let limit = 40_000
@@ -155,7 +150,6 @@ struct FeedbackFixesTests {
 
     @Test("Bakes EXIF orientation into transcoded JPEG dimensions")
     func preservesOrientationOnTranscode() throws {
-        // 100x40 landscape image tagged with EXIF orientation 6 (90° CW -> 40x100 portrait)
         let img = try makeCGImage(width: 100, height: 40)
         let tiffData = try #require(encodeImage(img, type: .tiff, orientation: 6))
 
@@ -181,7 +175,6 @@ struct FeedbackFixesTests {
         }
     }
 
-    // MARK: - Fix 2: Work Detail Actions Grouping, Authority & Badges
 
     @Test("OperationProjection decodes native web_search wire payload, hides nil authority, and omits Confirmed on read-only ops")
     func workOperationProjectionAndBadges() throws {
@@ -208,7 +201,6 @@ struct FeedbackFixesTests {
         #expect(op.displayAuthorityLabel == nil)
         #expect(op.statusBadge == nil)
 
-        // External write confirmed -> green "Confirmed" badge
         let writeOp = OperationProjection(
             id: "op-write",
             name: "calendar.create_event",
@@ -220,7 +212,6 @@ struct FeedbackFixesTests {
         #expect(writeOp.displayAuthorityLabel == "you asked")
         #expect(writeOp.statusBadge == OperationBadge(label: "Confirmed", tone: .ok))
 
-        // Failed read still surfaces danger badge
         let failedRead = OperationProjection(
             id: "op-fail",
             name: "web_search",
@@ -265,7 +256,6 @@ struct FeedbackFixesTests {
         }
     }
 
-    // MARK: - Fix 3: Plain-English Schedule Confirmation & Approval Card Helpers
 
     @Test("Plain-English Effect labels and internal Nori schedule warning/account filtering")
     func scheduleApprovalCardHelpers() {
@@ -297,7 +287,6 @@ struct FeedbackFixesTests {
         #expect(externalSend.displayWarning == "This sends an external email.")
     }
 
-    // MARK: - Fix 5: Typed Chat Error Message Decoding & Retry
 
     @Test("Decodes typed failed and superseded assistant messages from backend wire format")
     func decodeTypedErrorAndSupersededMessages() throws {
@@ -359,7 +348,6 @@ struct FeedbackFixesTests {
         #expect(superseded.isFailed == false)
     }
 
-    // MARK: - Fix 1 & 3: Inline Reminder Confirmation Part Decoding
 
     @Test("Decodes inline reminder confirmation part from backend wire shape")
     func decodeInlineReminderPart() throws {

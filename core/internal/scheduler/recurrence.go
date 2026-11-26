@@ -9,9 +9,6 @@ import (
 	"time"
 )
 
-// Rule is the supported subset of RFC 5545 RRULE: FREQ (DAILY, WEEKLY, MONTHLY, YEARLY), INTERVAL, BYDAY (with
-// ordinals for MONTHLY), BYMONTHDAY, BYMONTH, BYHOUR, BYMINUTE, COUNT and UNTIL. Unsupported parts are rejected so a
-// schedule never runs on a silently simplified rule.
 type Rule struct {
 	Freq          string
 	Interval      int
@@ -34,7 +31,6 @@ type weekdayRule struct {
 
 var weekdays = map[string]time.Weekday{"SU": time.Sunday, "MO": time.Monday, "TU": time.Tuesday, "WE": time.Wednesday, "TH": time.Thursday, "FR": time.Friday, "SA": time.Saturday}
 
-// ParseRule parses an RRULE value (without the "RRULE:" prefix, which is tolerated).
 func ParseRule(value string) (Rule, error) {
 	value = strings.TrimPrefix(strings.TrimSpace(value), "RRULE:")
 	rule := Rule{Interval: 1, WeekStart: time.Monday}
@@ -129,8 +125,6 @@ func ParseRule(value string) (Rule, error) {
 	return rule, nil
 }
 
-// LocalTime resolves a floating local date-time in a zone deterministically: a repeated local time runs once at the
-// earlier instant; a local time skipped by a daylight-saving gap moves to the first valid instant after the gap.
 func LocalTime(year int, month time.Month, day, hour, minute, second int, loc *time.Location) (time.Time, bool) {
 	guess := time.Date(year, month, day, hour, minute, second, 0, loc)
 	want := time.Date(year, month, day, hour, minute, second, 0, time.UTC)
@@ -147,7 +141,6 @@ func LocalTime(year int, month time.Month, day, hour, minute, second int, loc *t
 		sort.Slice(valid, func(i, j int) bool { return valid[i].Before(valid[j]) })
 		return valid[0], false
 	}
-	// In a gap: find the transition, which is the first valid instant after the skipped wall time.
 	_, before := guess.Add(-3 * time.Hour).Zone()
 	start := want.Add(-time.Duration(before) * time.Second).Add(-2 * time.Hour)
 	for t := start; t.Before(start.Add(6 * time.Hour)); t = t.Add(time.Minute) {
@@ -158,8 +151,6 @@ func LocalTime(year int, month time.Month, day, hour, minute, second int, loc *t
 	return guess, true
 }
 
-// Expand returns up to limit occurrence instants of a recurring trigger strictly after `after`, starting at the
-// floating local start in its zone.
 func Expand(localStart, zone, rrule string, after time.Time, limit int) ([]time.Time, error) {
 	loc, err := time.LoadLocation(zone)
 	if err != nil {
@@ -227,7 +218,6 @@ func parseLocal(value string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("local_start %q must be YYYY-MM-DDTHH:MM[:SS] without an offset", value)
 }
 
-// period lists the floating local candidates of one period (a day, week, month or year) in order.
 func (r Rule) period(start time.Time, n int) []time.Time {
 	var days []time.Time
 	switch r.Freq {
@@ -315,7 +305,6 @@ func (r Rule) weekdayMatch(day time.Time, _ int) bool {
 	return false
 }
 
-// monthDays lists a month's matching days: BYMONTHDAY, ordinal or plain BYDAY, or the start's day of month.
 func (r Rule) monthDays(first, start time.Time) []time.Time {
 	last := time.Date(first.Year(), first.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day()
 	var out []time.Time

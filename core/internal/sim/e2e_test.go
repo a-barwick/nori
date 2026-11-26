@@ -36,7 +36,6 @@ func TestFullStackSim(t *testing.T) {
 		if n <= 0 {
 			n = 1
 		}
-		// Keep default `go test ./...` fast while honoring explicit `-sim-seeds=N`.
 		if !flagExplicitlySet("sim-seeds") && n > 24 {
 			n = 24
 		}
@@ -120,7 +119,6 @@ func TestFullStackSim(t *testing.T) {
 		totalRepairs, totalUserWakes, totalStoreFaults,
 	)
 
-	// Guard against accidentally running a degenerate workload across batch runs.
 	if len(seeds) >= 8 {
 		if totalRuns == 0 || totalOuterCalls == 0 || totalInnerModels == 0 || totalAutos == 0 {
 			t.Fatalf("full-stack coverage too low: runs=%d outerCalls=%d innerModels=%d autos=%d",

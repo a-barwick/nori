@@ -8,7 +8,6 @@ import { Button, IconButton } from "@/components/ui/primitives";
 import { documentTitle } from "@/lib/utils";
 import { shortDate } from "@/lib/time";
 
-/** Slide-over Document Reader inspector sheet matching Concept C. */
 export function DocumentViewer({
   document,
   onClose,

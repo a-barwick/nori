@@ -15,11 +15,8 @@ import (
 	"nori/internal/transcript"
 )
 
-// The output cap includes reasoning, so it leaves room for both reasoning and a
-// detailed answer without changing the model's default thinking settings.
 const modelOutputTokenLimit = 8192
 
-// Decide performs exactly one model request. Its caller owns retries and budgets.
 func (s *Service) Decide(ctx context.Context, messages []transcript.Message, wait, work bool) (resp Response, err error) {
 	started := s.currentTime()
 	provider, model := s.Model.Provider(), s.Model.Name()
@@ -29,8 +26,6 @@ func (s *Service) Decide(ctx context.Context, messages []transcript.Message, wai
 		attribute.String("gen_ai.request.model", model), attribute.String("llm.model_name", model),
 	))
 	span.SetAttributes(attribute.Int("nori.prompt.message_count", len(messages)))
-	// Export only an unambiguous latest user text part. The historical context
-	// block also has role=user; never scan past a tool response or export it.
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role != transcript.RoleUser {
 			continue
@@ -96,8 +91,6 @@ func (s *Service) Decide(ctx context.Context, messages []transcript.Message, wai
 	if location == nil {
 		location = s.location()
 	}
-	// The current time goes last, after the saved history, so the cached prompt prefix still changes at most daily
-	// (the catalog line carries only the date). It is not saved in the task history.
 	now := s.currentTime().In(location)
 	clock := transcript.Message{Role: transcript.RoleUser, Parts: []transcript.Part{{Text: prompts.Runtime("task-clock", map[string]any{
 		"Now":   now.Format("Monday, 2 January 2006 15:04 MST") + " (" + location.String() + ")",
@@ -114,9 +107,6 @@ func (s *Service) Decide(ctx context.Context, messages []transcript.Message, wai
 	return resp, err
 }
 
-// Leaving a schema out shortens the request. Execution still checks every call.
-// Pre-Round-1 deterministic loading also keeps the top-level tools array immutable
-// across rounds (Anthropic invalidates cache whenever top-level tools change).
 func offeredTools(catalog []Capability, snapshot *extensions.Snapshot, messages []transcript.Message, wait, work, nativeSearch bool) []transcript.Tool {
 	results := []map[string]any{}
 	hasAttachments := false
@@ -140,11 +130,6 @@ func offeredTools(catalog []Capability, snapshot *extensions.Snapshot, messages 
 		loaded[attachmentCapability] = true
 		loaded["Attached text files"] = true
 	}
-	// Preload small trusted first-party native discoverable capabilities (<= 12 tools
-	// and <= 6 KiB total schema) at Round 1 so the model avoids an extra capability_load
-	// round-trip and Anthropic's top-level tools array stays cache-stable across steps.
-	// Third-party MCP capabilities stay on-demand to keep untrusted descriptions out of
-	// Round 1 and prevent connection changes from busting the prompt cache.
 	const (
 		preloadMaxTools = 12
 		preloadMaxBytes = 6 << 10

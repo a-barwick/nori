@@ -81,7 +81,6 @@ func TestCreateMemoryNormalizesDeduplicatesAndIdempotency(t *testing.T) {
 		t.Fatalf("source_text = %q", receipt1.Resource.SourceText)
 	}
 
-	// Idempotent retry with same request_id must NOT invoke normalizer again.
 	recRetry := doJSONReq(t, mux, http.MethodPost, "/v1/memory", body1)
 	if recRetry.Code != http.StatusCreated {
 		t.Fatalf("idempotent retry status=%d body=%s", recRetry.Code, recRetry.Body.String())
@@ -90,7 +89,6 @@ func TestCreateMemoryNormalizesDeduplicatesAndIdempotency(t *testing.T) {
 		t.Fatalf("expected normalizer called once across idempotent retry, got %d", calls.Load())
 	}
 
-	// Same request_id with different payload must return 409 idempotency_conflict.
 	recConflict := doJSONReq(t, mux, http.MethodPost, "/v1/memory", map[string]any{
 		"request_id":        req1ID,
 		"expected_revision": 0,
@@ -100,7 +98,6 @@ func TestCreateMemoryNormalizesDeduplicatesAndIdempotency(t *testing.T) {
 		t.Fatalf("conflict status=%d body=%s", recConflict.Code, recConflict.Body.String())
 	}
 
-	// Second manual addition updates the existing memory in place (no duplicate).
 	req2ID := uuid.NewString()
 	rec2 := doJSONReq(t, mux, http.MethodPost, "/v1/memory", map[string]any{
 		"request_id":        req2ID,
@@ -135,7 +132,6 @@ func TestCreateMemoryNormalizesDeduplicatesAndIdempotency(t *testing.T) {
 func TestCreateMemoryNormalizerFallbackAndExplicitOverride(t *testing.T) {
 	_, assistant, mux := newRealMemoryTestEnv(t)
 
-	// Normalizer error must still store memory cleanly.
 	assistant.NormalizeMemory = func(context.Context, conversation.ManualMemoryInput) (conversation.NormalizedMemory, error) {
 		return conversation.NormalizedMemory{}, errors.New("model unavailable")
 	}
@@ -157,7 +153,6 @@ func TestCreateMemoryNormalizerFallbackAndExplicitOverride(t *testing.T) {
 		t.Fatalf("unexpected fallback resource: %+v", r1.Resource)
 	}
 
-	// Explicit caller section and about must be preserved even if normalizer returns different ones.
 	assistant.NormalizeMemory = func(context.Context, conversation.ManualMemoryInput) (conversation.NormalizedMemory, error) {
 		return conversation.NormalizedMemory{
 			Text:    "Alex is the design lead.",

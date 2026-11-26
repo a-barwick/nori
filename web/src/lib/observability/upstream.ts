@@ -1,8 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { isRuntimeMethod } from "@/lib/runtime/methods";
 
-// Build a fresh trace context from the current server span. Do not forward
-// browser/gateway auth headers or arbitrary baggage to the runtime.
 export function upstreamTraceHeaders(request: Request): Record<string, string> {
   const span = Sentry.getClient() ? Sentry.getActiveSpan() : undefined;
   if (span) {
@@ -15,13 +13,9 @@ export function upstreamTraceHeaders(request: Request): Record<string, string> {
       };
     }
   }
-  // Sentry can be disabled on the web server while a same-origin browser is
-  // tracing. Preserve a valid W3C parent without copying any other headers.
   const parent = request.headers.get("traceparent") ?? "";
   const match = /^00-([0-9a-f]{32})-([0-9a-f]{16})-(0[01])$/.exec(parent);
   if (match && !/^0+$/.test(match[1]) && !/^0+$/.test(match[2])) return { traceparent: parent };
-  // Idle session polls have no sampled span. Still give the runtime a fresh,
-  // unsampled correlation ID so a rejection can be joined to its logs.
   return { traceparent: `00-${crypto.randomUUID().replaceAll("-", "")}-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}-00` };
 }
 
@@ -47,8 +41,6 @@ export function reportUpstreamRejection(operation: string, request: Request, sen
   const cloudTrace = cloudTraceID(request.headers);
   const upstreamTrace = cloudTraceID(received);
   const traceID = /^00-([0-9a-f]{32})-[0-9a-f]{16}-0[01]$/.exec(sent.traceparent ?? "")?.[1];
-  // Structured stderr remains useful when Sentry is disabled or drops a poll.
-  // No URL, body, identity, or arbitrary request/response header is exported.
   try {
     console.warn(JSON.stringify({ severity: "WARNING", message: "nori.runtime.rate_limited",
       operation: isRuntimeMethod(operation) ? operation : "unknown",
@@ -58,13 +50,12 @@ export function reportUpstreamRejection(operation: string, request: Request, sen
       ...(upstreamTrace ? { upstream_trace_id: upstreamTrace } : {}),
       ...(safe["Retry-After"] ? { retry_after_seconds: Number(safe["Retry-After"]) } : {}),
     }));
-  } catch { /* Diagnostics must not change the rejection response. */ }
+  } catch {  }
 }
 
 let lastPollFailure = 0;
 
 export function reportUpstreamFailure(operation: string, mode: "local" | "hosted", userID: string, status?: number) {
-  // A failed idle refresh may be the only evidence of a runtime outage. A stream retries by itself, so it can repeat.
   if (operation === "v1/snapshot" || operation === "v1/events") {
     if (Date.now() - lastPollFailure < 60_000) return;
     lastPollFailure = Date.now();
@@ -83,5 +74,5 @@ export function reportUpstreamFailure(operation: string, mode: "local" | "hosted
       scope.setTags(attributes);
       Sentry.captureException(new Error(status === undefined ? "Runtime connection failed" : "Runtime returned a server error"));
     });
-  } catch { /* Telemetry failure must not change the runtime response. */ }
+  } catch {  }
 }

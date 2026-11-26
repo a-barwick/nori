@@ -11,7 +11,7 @@ import { mutate, newRequestID } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { money, relative, when } from "@/lib/assistant/format";
 import { usePendingInteractions, useWork, useWorkDetail } from "@/lib/assistant/sources";
-import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
+import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant/useResource";
 import type { Interaction, LibraryItem, OperationProjection, WorkItem } from "@/lib/contracts/assistant";
 import { MAX_MESSAGE_BYTES, messageTooLong } from "@/lib/submission";
 import { cn } from "@/lib/utils";
@@ -157,7 +157,6 @@ function TasksHub({
     <div className="space-y-6">
       {error ? <Failure error={error} onRetry={onRetry} /> : null}
 
-      {/* 1. Action needed (or slim All clear strip when idle) */}
       {pendingTotal > 0 ? (
         <Section title={`Action needed · ${pendingTotal}`}>
           <div className="space-y-3">
@@ -185,7 +184,6 @@ function TasksHub({
         </div>
       )}
 
-      {/* 2. Running */}
       {runningTasks.length > 0 && (
         <Section title={runningTasks.length > 1 ? `Running · ${runningTasks.length}` : "Running"}>
           <div className="space-y-2.5">
@@ -218,7 +216,6 @@ function TasksHub({
         </Section>
       )}
 
-      {/* 3. Recent */}
       {finishedTasks.length > 0 ? (
         <Section title="Recent">
           <Rows label="Recent tasks">
@@ -320,7 +317,6 @@ export type OperationDisplayGroup =
   | { kind: "single"; operation: OperationRowItem }
   | { kind: "search_group"; id: string; operations: OperationRowItem[] };
 
-/** Reserve the green "Confirmed" badge for non-read external changes rather than routine reads. */
 export function operationOutcomePill(
   operation: Pick<OperationProjection, "effect_class" | "outcome" | "cleared">,
 ): { tone: Tone; label: string } | undefined {
@@ -329,7 +325,6 @@ export function operationOutcomePill(
   return OUTCOME[operation.outcome] ?? { tone: "neutral", label: operation.outcome };
 }
 
-/** Group consecutive web_search operations (2+) into a single expandable row while preserving chronological order. */
 export function groupOperations(operations: OperationRowItem[]): OperationDisplayGroup[] {
   const groups: OperationDisplayGroup[] = [];
   let searchRun: OperationRowItem[] = [];
@@ -470,6 +465,7 @@ export function OperationRows({ operations }: { operations: OperationRowItem[] }
 const SPENDING_LIMIT = /spending limit/i;
 
 function Continue({ item }: { item: WorkItem }) {
+  const invalidate = useResourceInvalidation();
   const router = useRouter();
   const action = useAction();
   const limited = SPENDING_LIMIT.test(item.error?.message ?? "");
@@ -768,7 +764,6 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
         </Section>
       )}
 
-      {/* Compact demoted footer strip matching iOS WorkDetailView */}
       <div className="mt-7 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-tile border border-hairline bg-fill-1 px-3.5 py-2.5 text-caption text-ink-2">
         <span>Started {when(item.started_at)}</span>
         {item.finished_at && (

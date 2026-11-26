@@ -14,7 +14,6 @@ import (
 	"nori/internal/state"
 )
 
-// Close the stream before the web service's 180-second request limit so the client can resume.
 const streamLifetime = 150 * time.Second
 
 type eventStream struct {
@@ -35,7 +34,6 @@ func (e eventStream) send(kind string, seq int64, value any) error {
 		return err
 	}
 	id, event := "", ""
-	// A named legacy heartbeat can carry a record update without advancing the cursor.
 	if seq > 0 || kind == "" {
 		id = fmt.Sprintf("id: %d\n", seq)
 	}
@@ -55,7 +53,6 @@ func (e eventStream) comment(text string) error {
 	return e.control.Flush()
 }
 
-// The native runtime gateway doesn't forward Last-Event-ID. Its clients send ?after instead.
 func resumePosition(r *http.Request) (after int64, supplied, valid bool) {
 	text := r.Header.Get("Last-Event-ID")
 	if text == "" {

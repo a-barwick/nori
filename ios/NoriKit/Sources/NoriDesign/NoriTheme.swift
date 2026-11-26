@@ -13,7 +13,6 @@ public extension Color {
         self.init(.sRGB, red: r, green: g, blue: b, opacity: alpha)
     }
 
-    /// Appearance-aware semantic color resolving dynamically for Light and Dark modes.
     static func adaptive(
         light: UInt32,
         lightAlpha: Double = 1.0,
@@ -50,45 +49,24 @@ public extension Color {
     }
 }
 
-/// Appearance-aware semantic design tokens for Nori iOS.
-///
-/// Light tokens preserve Nori's crisp white/lavender identity.
-/// Dark tokens follow the Nori Dark Mode Design System:
-/// - Near-black violet-tinted canvas (`#101014`) with soft layered luminance surfaces
-/// - Purple (`#7A3DF6` primary / `#A98AFF` accent) reserved for interaction, selection, and activity
-/// - Comfortable muted typography (`#F2EFF8` / `#B3ACBF` / `#9690A3` / `#777181`)
-/// - Appearance-aware Nori mascot (`#C6C4CE` body, `#171522` ink & seaweed, `#D1CFD8` outer edge)
 public enum NoriColors {
-    // MARK: - Foundation Surfaces
-    // Level 0: True OLED black canvas so negative space dominates
     public static let canvas = Color.adaptive(light: 0xFFFFFF, dark: 0x000000)
-    // Level 1: Flat obsidian content surface (barely lifted from true black, zero heaviness)
     public static let surface = Color.adaptive(light: 0xFFFFFF, dark: 0x0B0B0F)
-    // Modal sheet canvas (one subtle step above true black)
     public static let sheetBackground = Color.adaptive(light: 0xFFFFFF, dark: 0x0E0E13)
-    // Recessed surface (resolved cards)
     public static let sidebar = Color.adaptive(light: 0xF8F6FC, dark: 0x07070A)
-    // Subtle violet-tinted content surface (running cards, budget strip, session gist)
     public static let surfaceTinted = Color.adaptive(light: 0xFAF8FE, dark: 0x100E18)
     public static let backdrop = Color.adaptive(light: 0xEEE5FC, dark: 0x14141A)
-    // Level 2: Elevated interactive surface (composer, inputs, neutral chips)
     public static let elevated = Color.adaptive(light: 0xF7F5FB, dark: 0x14141A)
     public static let fill1 = elevated
-    // Level 3: Selected surface (selected tabs, categories, interactive tracks)
     public static let selected = Color.adaptive(light: 0xEEE8FA, dark: 0x261F38)
     public static let fill2 = selected
 
-    // MARK: - Borders & Overlays
-    /// Ultra-quiet hairline for light mode; nearly invisible in dark mode so cards stay flat and noise-free.
     public static let hairline = Color.adaptive(light: 0xE7E2EF, dark: 0xFFFFFF, darkAlpha: 0.06)
-    /// Card outline: visible in light mode (white-on-white), clear in dark mode (borderless fill).
     public static let cardBorder = Color.adaptive(light: 0xE7E2EF, dark: 0x000000, darkAlpha: 0.0)
-    /// Interactive outline for secondary buttons, checkboxes, and active controls.
     public static let hairlineStrong = Color.adaptive(light: 0xCFC3E9, dark: 0xFFFFFF, darkAlpha: 0.14)
     public static let accentBorder = Color.adaptive(light: 0xDFD4F6, dark: 0xA98AFF, darkAlpha: 0.20)
     public static let overlay = Color.adaptive(light: 0x160531, lightAlpha: 0.26, dark: 0x000000, darkAlpha: 0.68)
 
-    // MARK: - Typography
     public static let ink = Color.adaptive(light: 0x190936, dark: 0xF2EFF8)
     public static let ink2 = Color.adaptive(light: 0x726D82, dark: 0xA9A2B8)
     public static let ink3 = Color.adaptive(light: 0x6E6880, dark: 0x878196)
@@ -96,64 +74,42 @@ public enum NoriColors {
     public static let disabledBg = Color.adaptive(light: 0xECE9F4, dark: 0x14141A)
     public static let onAccent = Color(hex: 0xFFFFFF)
 
-    // MARK: - Brand & Accent Purple
-    /// Vibrant purple for primary actions, user message bubbles, and activity indicators.
     public static let brandPrimary = Color.adaptive(light: 0x5000FF, dark: 0x7A3DF6)
-    /// Pressed/hover state for primary brand buttons.
     public static let accentHover = Color.adaptive(light: 0x4200D6, dark: 0x692FE0)
     public static let accentPressed = Color.adaptive(light: 0x3500AE, dark: 0x5B25C9)
-    /// Lighter readable accent purple for links, selected icons, pills, and focus rings.
     public static let accent = Color.adaptive(light: 0x5000FF, dark: 0xA98AFF)
-    /// Focus ring and live status pulse accent.
     public static let accentSignal = Color.adaptive(light: 0x7943FF, dark: 0xA98AFF)
-    /// Soft violet surface tint (Working state background, tonal containers).
     public static let accentSubtle = Color.adaptive(light: 0xF1EBFF, dark: 0x1B162C)
-    /// Subtle purple border / chip accent.
     public static let accentMuted = Color.adaptive(light: 0xE9DFFF, dark: 0x261F38)
 
-    // MARK: - Semantic Status Tones
-    // Success (Completed / Confirmed)
     public static let ok = Color.adaptive(light: 0x1C7A43, dark: 0x85D4A4)
     public static let okBg = Color.adaptive(light: 0xE9F8EF, dark: 0x0F2019)
 
-    // Working (In progress / Working)
     public static let working = Color.adaptive(light: 0x5000FF, dark: 0xA98AFF)
     public static let workingBg = Color.adaptive(light: 0xF1EBFF, dark: 0x1B162C)
 
-    // Warning (Attention required / Needs approval)
     public static let warning = Color.adaptive(light: 0x946000, dark: 0xF2C276)
     public static let warningBg = Color.adaptive(light: 0xFFF4DC, dark: 0x21190F)
 
-    // Error (Failure / Failed)
     public static let danger = Color.adaptive(light: 0xCC1F33, dark: 0xFF9BA7)
     public static let dangerBg = Color.adaptive(light: 0xFFF0F2, dark: 0x25131B)
 
-    // Scheduled
     public static let scheduled = Color.adaptive(light: 0x1D5BB8, dark: 0x99B9EF)
     public static let scheduledBg = Color.adaptive(light: 0xEAF2FE, dark: 0x111A28)
 
-    // Inactive (Cancelled)
     public static let inactive = Color.adaptive(light: 0x6E6880, dark: 0x878196)
     public static let inactiveBg = Color.adaptive(light: 0xF7F5FB, dark: 0x14141A)
 
-    // MARK: - NoriMark Onigiri Palette
-    /// Mascot rice body: soft white in light mode, soft light-gray (`#C6C4CE`) in dark mode.
     public static let markFillSoft = Color.adaptive(light: 0xFDFCFF, dark: 0xC6C4CE)
-    /// Mascot seaweed wrap: deep navy in light mode, dark ink (`#171522`) in dark mode.
     public static let markFill = Color.adaptive(light: 0x101A30, dark: 0x171522)
-    /// Mascot eyes and smile: deep violet-ink in light mode, `#171522` in dark mode.
     public static let markInk = Color.adaptive(light: 0x190936, dark: 0x171522)
-    /// Mascot outer silhouette stroke: dark outline in light mode, subtle light edge (`#D1CFD8`) in dark mode.
     public static let markEdge = Color.adaptive(light: 0x190936, dark: 0xD1CFD8)
-    /// Mascot activity indicator dot.
     public static let markActivity = brandPrimary
 
-    // MARK: - Interactive Chip & Pill Selection
     public static let chipSelectedBg = Color.adaptive(light: 0xEEE8FA, dark: 0x261F38)
     public static let chipSelectedFg = Color.adaptive(light: 0x5000FF, dark: 0xF2EFF8)
     public static let chipSelectedBorder = Color.adaptive(light: 0xCFC3E9, dark: 0x000000, darkAlpha: 0.0)
 
-    // MARK: - Chrome, Glass & Decorative Surfaces
     public static let glass = Color.adaptive(light: 0xFFFFFF, lightAlpha: 0.92, dark: 0x14141A, darkAlpha: 0.88)
     public static let shadowColor = Color.adaptive(light: 0x302818, lightAlpha: 0.08, dark: 0x000000, darkAlpha: 0.0)
     public static let cardShadow = Color.adaptive(light: 0x190936, lightAlpha: 0.04, dark: 0x000000, darkAlpha: 0.0)
@@ -165,7 +121,6 @@ public enum NoriColors {
     public static let topWashStart = Color.adaptive(light: 0xFAF8FE, dark: 0x050508)
     public static let topWashEnd = Color.adaptive(light: 0xFFFFFF, dark: 0x000000)
 
-    // MARK: - Structured Token Namespaces (Design System Reference)
     public enum Background {
         public static let canvas = NoriColors.canvas
         public static let surface = NoriColors.surface

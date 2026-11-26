@@ -1,4 +1,3 @@
-// Package usage defines the accounting boundary shared by model callers.
 package usage
 
 import (
@@ -13,10 +12,6 @@ import (
 	"nori/internal/state"
 )
 
-// Meter upserts one provider attempt by ID. A pending record precedes provider
-// I/O; a terminal record replaces it even after cancellation. Nil cost means
-// unknown. Implementations must tolerate duplicate records and concurrent calls.
-// Task spending ceilings remain enforced by the task workflow, independently.
 type Meter interface {
 	RecordUsage(context.Context, state.Usage) error
 }
@@ -28,7 +23,6 @@ func (f Func) RecordUsage(ctx context.Context, u state.Usage) error { return f(c
 type scope struct{ input, provider string }
 type scopeKey struct{}
 
-// Session configures optional clock and ID hooks for usage attempts.
 type Session struct {
 	Now   func() time.Time
 	NewID func() string
@@ -50,17 +44,14 @@ func (s Session) newID() string {
 	return s.NewID()
 }
 
-// WithSession attaches optional clock and ID hooks to ctx for usage.Attempt.
 func WithSession(ctx context.Context, s Session) context.Context {
 	return context.WithValue(ctx, sessionKey{}, s)
 }
 
-// WithScope associates a model call with its task, input or compaction operation.
 func WithScope(ctx context.Context, input, provider string) context.Context {
 	return context.WithValue(ctx, scopeKey{}, scope{input, provider})
 }
 
-// Attempt builds a pending usage record using s's hooks and any scope on ctx.
 func (s Session) Attempt(ctx context.Context, provider, model string) state.Usage {
 	sc, _ := ctx.Value(scopeKey{}).(scope)
 	if sc.provider != "" {
@@ -77,7 +68,6 @@ func Attempt(ctx context.Context, provider, model string) state.Usage {
 	return s.Attempt(ctx, provider, model)
 }
 
-// RecordReportedCost retains a valid provider-reported USD charge, including zero.
 func RecordReportedCost(record *state.Usage, cost *float64) bool {
 	if cost == nil || *cost < 0 || math.IsNaN(*cost) || math.IsInf(*cost, 0) {
 		return false
@@ -86,7 +76,6 @@ func RecordReportedCost(record *state.Usage, cost *float64) bool {
 	return true
 }
 
-// Finish persists the final observation independently of caller cancellation.
 func Finish(ctx context.Context, meter Meter, u state.Usage) error {
 	if u.CostUSD == nil && u.EstimatedExposureUSD <= 0 && u.RequestStatus != "not_sent" {
 		u.EstimatedExposureUSD = EstimateExposureUSD(u.Model)
@@ -96,14 +85,10 @@ func Finish(ctx context.Context, meter Meter, u state.Usage) error {
 	return meter.RecordUsage(save, u)
 }
 
-// ErrUserQuotaExceeded is returned before provider I/O when a user's durable
-// Postgres usage history exceeds the configured per-hour call or per-day spend cap.
 var ErrUserQuotaExceeded = errors.New("usage: per-user rate or spend limit exceeded")
 
 const defaultUnknownCallEstimateUSD = 0.02
 
-// EstimateExposureUSD returns a conservative pre-I/O USD reservation for a model call,
-// kept separate from recorded actual spend (CostUSD).
 func EstimateExposureUSD(model string) float64 {
 	m := strings.ToLower(strings.TrimSpace(model))
 	switch {
@@ -116,22 +101,14 @@ func EstimateExposureUSD(model string) float64 {
 	}
 }
 
-// WindowReader summarizes a user's durable usage records (backed by Postgres)
-// across hourly and daily cutoffs in a single scan so multi-replica Cloud Run
-// instances enforce shared per-user rate and spend admission limits.
 type WindowReader interface {
 	UsageWindowSummary(ctx context.Context, hourCutoff, dayCutoff time.Time) (hourCalls int, daySpendUSD float64, dayUnknownCalls int, err error)
 }
 
-// AtomicReserver checks per-user quotas and writes the pending usage reservation
-// inside a single storage transaction so concurrent requests cannot race past a cap.
 type AtomicReserver interface {
 	ReserveUsage(ctx context.Context, u state.Usage, hourCutoff, dayCutoff time.Time, maxCallsPerHour int, maxUSDPerDay float64, unknownEstimateUSD float64) (bool, error)
 }
 
-// WithAdmission enforces Postgres-backed pre-I/O per-user rate and spend caps
-// before persisting a "pending" usage attempt. Non-pending terminal updates
-// always pass through so completed calls are never dropped.
 func WithAdmission(local Meter, reader WindowReader, maxCallsPerHour int, maxUSDPerDay float64, now func() time.Time) Meter {
 	reserver, hasReserver := local.(AtomicReserver)
 	if !hasReserver {
@@ -194,16 +171,12 @@ func WithAdmission(local Meter, reader WindowReader, maxCallsPerHour int, maxUSD
 				}
 			}
 		} else if u.CostUSD != nil || u.RequestStatus == "not_sent" {
-			// Terminal record with known actual spend or not_sent clears estimated exposure.
 			u.EstimatedExposureUSD = 0
 		}
 		return local.RecordUsage(ctx, u)
 	})
 }
 
-// WithHost keeps Nori's durable record as the source of truth and adds a host
-// accounting sink. A host failure before I/O refuses admission. After I/O, a
-// delivery failure is logged without discarding the saved model result.
 func WithHost(local, host Meter) Meter {
 	return Func(func(ctx context.Context, u state.Usage) error {
 		if err := local.RecordUsage(ctx, u); err != nil {
@@ -220,7 +193,6 @@ func WithHost(local, host Meter) Meter {
 	})
 }
 
-// Wrap routes usage through meter while preserving the store's other methods.
 func Wrap(store state.ConversationStore, meter Meter) state.ConversationStore {
 	return &meteredStore{ConversationStore: store, meter: meter}
 }

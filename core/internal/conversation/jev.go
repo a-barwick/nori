@@ -30,9 +30,8 @@ type JevClassifier struct {
 	Client *http.Client
 	Guard  *llmguard.Guard
 	UserID string
-	// Optional determinism hooks. Nil defaults to time.Now and uuid.NewString.
-	Now   func() time.Time
-	NewID func() string
+	Now    func() time.Time
+	NewID  func() string
 }
 
 func (c *JevClassifier) guard() *llmguard.Guard {
@@ -120,13 +119,9 @@ func (c *JevClassifier) Classify(ctx context.Context, request ClassifyRequest) (
 		}
 		span.End()
 	}()
-	// Jev does not supply a verified USD price in this integration. Record the
-	// request explicitly as unknown rather than estimate an undocumented cost.
 	classification.Usage = state.Usage{
 		ID: c.newID(), Provider: "jev", Model: jevModel, CostStatus: "unknown", RequestStatus: "not_sent", CreatedAt: c.now().UTC(),
 	}
-	// Classify against a bounded recent suffix of the visible conversation so
-	// advisory intent classification stays fast and token-lean as history grows.
 	const maxJevHistoryMessages = 8
 	history := request.History
 	if len(history) > maxJevHistoryMessages {
@@ -167,8 +162,6 @@ func (c *JevClassifier) Classify(ctx context.Context, request ClassifyRequest) (
 	}
 	req.Header.Set("Authorization", "Bearer "+c.key)
 	req.Header.Set("Content-Type", "application/json")
-	// Persist an unknown-cost attempt before provider I/O. A crash or failed
-	// response projection can leave its cost unknown, but cannot erase the call.
 	classification.Usage.RequestStatus = "pending"
 	if request.RecordUsage != nil {
 		if err := request.RecordUsage(ctx, classification.Usage); err != nil {
@@ -212,8 +205,6 @@ func (c *JevClassifier) Classify(ctx context.Context, request ClassifyRequest) (
 	}
 	classification.Available = true
 	if len(classification.Intents) == 0 {
-		// No selected flag is unclassifiable input, so retain the conversational
-		// fallback without inventing a provider confidence for that fallback.
 		classification.Intents = []Intent{Converse}
 	}
 	if len(classification.Intents) == 1 {

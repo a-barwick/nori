@@ -1,12 +1,10 @@
-// Package docstore is the small transactional document surface used by Nori's
-// persistence rules. Firestore and Postgres implement the transport; rules live
-// once in state/records. It is not a general-purpose database API.
 package docstore
 
 import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 )
 
 var ErrNotFound = errors.New("document not found")
@@ -78,13 +76,45 @@ type TransactionBackend interface {
 	Writer
 }
 
-// Sequencer allocates monotonically increasing per-head sequence numbers inside
-// a transaction without serializing all transactions on a single document read.
+type UsageWindow struct {
+	Calls       int
+	ActualUSD   float64
+	ExposureUSD float64
+	Unknown     int
+}
+
+type UsageWindowReader interface {
+	ReadUsageWindow(context.Context, string, time.Time, time.Time, float64) (UsageWindow, error)
+}
+
+func (c *Client) UsageWindow(ctx context.Context, collection string, hour, day time.Time, unknown float64) (UsageWindow, bool, error) {
+	for backend := c.Backend; backend != nil; {
+		if reader, ok := backend.(UsageWindowReader); ok {
+			window, err := reader.ReadUsageWindow(ctx, collection, hour, day, unknown)
+			return window, true, err
+		}
+		wrapper, ok := backend.(BackendUnwrapper)
+		if !ok {
+			break
+		}
+		backend = wrapper.Unwrap()
+	}
+	return UsageWindow{}, false, nil
+}
+
+func (t *Transaction) UsageWindow(collection string, hour, day time.Time, unknown float64) (UsageWindow, bool, error) {
+	reader, ok := t.backend.(UsageWindowReader)
+	if !ok {
+		return UsageWindow{}, false, nil
+	}
+	window, err := reader.ReadUsageWindow(t.ctx, collection, hour, day, unknown)
+	return window, true, err
+}
+
 type Sequencer interface {
 	NextSequence(ctx context.Context, path string, count int) (start int64, err error)
 }
 
-// SequenceReader reads the current sequence head without requiring a document row.
 type SequenceReader interface {
 	CurrentSequence(ctx context.Context, path string) (int64, error)
 }
@@ -127,8 +157,6 @@ var ReadOnly = TransactionOption{ReadOnly: true}
 
 func MaxAttempts(n int) TransactionOption { return TransactionOption{Attempts: n} }
 func (c *Client) RunTransaction(ctx context.Context, f func(context.Context, *Transaction) error, opts ...TransactionOption) error {
-	// Leave Attempts=0 when unspecified so each backend chooses its own default
-	// (5 on memstore for deterministic fault injection, 15 with jitter on Postgres).
 	o := TransactionOption{}
 	for _, v := range opts {
 		if v.ReadOnly {
@@ -320,8 +348,6 @@ func (t *Transaction) Delete(d *DocumentRef) error {
 	return t.backend.Apply(t.ctx, Mutation{Kind: "delete", Path: d.Path})
 }
 
-// NextSequence returns the first of count consecutive 1-based sequence numbers
-// when the transaction backend implements Sequencer.
 func (t *Transaction) NextSequence(d *DocumentRef, count int) (int64, bool, error) {
 	seq, ok := t.backend.(Sequencer)
 	if !ok {
@@ -331,8 +357,6 @@ func (t *Transaction) NextSequence(d *DocumentRef, count int) (int64, bool, erro
 	return start, true, err
 }
 
-// CurrentSequence returns the latest allocated sequence number when the backend
-// implements SequenceReader.
 func (c *Client) CurrentSequence(ctx context.Context, d *DocumentRef) (int64, bool, error) {
 	seq, ok := c.Backend.(SequenceReader)
 	if !ok {

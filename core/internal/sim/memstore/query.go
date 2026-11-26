@@ -43,9 +43,6 @@ func normalizeValue(v any) (any, error) {
 	return docstore.NormalizeNumbers(out), nil
 }
 
-// lookupField resolves a top-level or dot-separated nested field path in a
-// document. It returns (val, true) when the key path exists (even if val is
-// JSON null), and (nil, false) when any segment is absent (equivalent to SQL NULL).
 func lookupField(fields map[string]any, id, field string) (any, bool) {
 	if field == docstore.DocumentID {
 		return id, true
@@ -76,8 +73,6 @@ func lookupField(fields map[string]any, id, field string) (any, bool) {
 	return nil, false
 }
 
-// jsonbTypeRank matches PostgreSQL JSONB total ordering:
-// Object > Array > Boolean > Number > String > Null.
 func jsonbTypeRank(v any) int {
 	switch v.(type) {
 	case nil:
@@ -122,7 +117,6 @@ func compareNumbers(a, b any) int {
 			return 0
 		}
 	}
-	// Mixed int64/float64 comparison without losing int64 precision.
 	ba := toBigFloat(a)
 	bb := toBigFloat(b)
 	return ba.Cmp(bb)
@@ -146,8 +140,6 @@ func toBigFloat(v any) *big.Float {
 	return new(big.Float).SetPrec(128)
 }
 
-// compareJSONBKey matches PostgreSQL JSONB object key ordering: shorter keys
-// sort before longer keys, then lexicographically by byte value.
 func compareJSONBKey(a, b string) int {
 	if len(a) != len(b) {
 		if len(a) < len(b) {
@@ -158,7 +150,6 @@ func compareJSONBKey(a, b string) int {
 	return strings.Compare(a, b)
 }
 
-// compareJSONB implements PostgreSQL's JSONB comparison semantics.
 func compareJSONB(a, b any) int {
 	ra, rb := jsonbTypeRank(a), jsonbTypeRank(b)
 	if ra != rb {
@@ -168,13 +159,13 @@ func compareJSONB(a, b any) int {
 		return 1
 	}
 	switch ra {
-	case 0: // nil (JSON null)
+	case 0:
 		return 0
-	case 1: // string
+	case 1:
 		return strings.Compare(a.(string), b.(string))
-	case 2: // number
+	case 2:
 		return compareNumbers(a, b)
-	case 3: // bool
+	case 3:
 		ab, bb := a.(bool), b.(bool)
 		if ab == bb {
 			return 0
@@ -183,7 +174,7 @@ func compareJSONB(a, b any) int {
 			return -1
 		}
 		return 1
-	case 4: // array
+	case 4:
 		aa, ba := a.([]any), b.([]any)
 		if len(aa) != len(ba) {
 			if len(aa) < len(ba) {
@@ -197,7 +188,7 @@ func compareJSONB(a, b any) int {
 			}
 		}
 		return 0
-	case 5: // object
+	case 5:
 		am, bm := a.(map[string]any), b.(map[string]any)
 		if len(am) != len(bm) {
 			if len(am) < len(bm) {
@@ -242,7 +233,6 @@ type queryRow struct {
 }
 
 func executeQuery(docs map[string][]byte, s docstore.QuerySpec) ([]docstore.Record, error) {
-	// 1. Validate and compile filters.
 	filters := make([]compiledFilter, 0, len(s.Filters))
 	for _, f := range s.Filters {
 		if err := validateField(f.Field); err != nil {
@@ -267,7 +257,6 @@ func executeQuery(docs map[string][]byte, s docstore.QuerySpec) ([]docstore.Reco
 		filters = append(filters, cf)
 	}
 
-	// 2. Build orders with automatic trailing DocumentID tiebreaker (matching postgres/query.go).
 	orders := append([]docstore.Order{}, s.Orders...)
 	if len(orders) == 0 {
 		orders = append(orders, docstore.Order{Field: docstore.DocumentID, Direction: docstore.Asc})
@@ -284,7 +273,6 @@ func executeQuery(docs map[string][]byte, s docstore.QuerySpec) ([]docstore.Reco
 		}
 	}
 
-	// 3. Compile After cursor values (matching postgres/query.go).
 	var afterVals []any
 	if s.After != nil {
 		afterVals = make([]any, len(orders))
@@ -311,8 +299,6 @@ func executeQuery(docs map[string][]byte, s docstore.QuerySpec) ([]docstore.Reco
 		}
 	}
 
-	// 4. Filter and collect matching documents.
-	// Iterate IDs in sorted order for determinism even before final sort.
 	ids := make([]string, 0, len(docs))
 	for id := range docs {
 		ids = append(ids, id)
@@ -337,7 +323,6 @@ func executeQuery(docs map[string][]byte, s docstore.QuerySpec) ([]docstore.Reco
 		rows = append(rows, queryRow{id: id, fields: fields})
 	}
 
-	// 5. Sort rows by orders (last order is guaranteed to be DocumentID, so total order).
 	slices.SortFunc(rows, func(a, b queryRow) int {
 		for _, o := range orders {
 			va, _ := lookupField(a.fields, a.id, o.Field)
@@ -353,12 +338,10 @@ func executeQuery(docs map[string][]byte, s docstore.QuerySpec) ([]docstore.Reco
 		return 0
 	})
 
-	// 6. Apply Count limit.
 	if s.Count > 0 && len(rows) > s.Count {
 		rows = rows[:s.Count]
 	}
 
-	// 7. Apply Select field projection and build Records.
 	result := make([]docstore.Record, 0, len(rows))
 	for _, row := range rows {
 		fields := row.fields
@@ -422,8 +405,6 @@ func matchesFilters(fields map[string]any, id string, filters []compiledFilter) 
 	return true
 }
 
-// hasOrderFields implements Firestore/Postgres behavior where ordering by a
-// non-DocumentID field excludes documents where that field is absent.
 func hasOrderFields(fields map[string]any, id string, orders []docstore.Order) bool {
 	for _, o := range orders {
 		if o.Field == docstore.DocumentID {

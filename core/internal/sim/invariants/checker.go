@@ -1,10 +1,3 @@
-// Package invariants provides a reusable safety and quiescence liveness oracle
-// for Nori's deterministic simulation tests.
-//
-// A Checker tracks monotonic historical baselines across simulation steps per
-// user and verifies Nori's storage, lifecycle, permission, scheduler, and
-// multi-user isolation invariants continuously (CheckSafety) and after
-// fault-free quiescence drain (CheckQuiescence).
 package invariants
 
 import (
@@ -21,7 +14,6 @@ import (
 	"nori/internal/users"
 )
 
-// Violation describes a single invariant failure with structured context.
 type Violation struct {
 	Invariant string
 	UserID    string
@@ -47,7 +39,6 @@ func (v Violation) Error() string {
 	return b.String()
 }
 
-// Violations is a deterministic, non-empty list of invariant violations.
 type Violations []Violation
 
 func (vs Violations) Error() string {
@@ -66,7 +57,6 @@ func (vs Violations) Error() string {
 	return b.String()
 }
 
-// UserTarget bundles a user's identity and handles for invariant checks.
 type UserTarget struct {
 	User        users.User
 	Store       state.ConversationStore
@@ -74,29 +64,16 @@ type UserTarget struct {
 	Scheduler   *scheduler.Service
 }
 
-// Config configures a Checker.
 type Config struct {
-	// Backend is the shared in-memory docstore backend. When set, CheckSafety
-	// inspects an atomic, fault-free BackendSnapshot (consuming zero RNG draws)
-	// for full-store verification including event log continuity, raw operation
-	// evidence records, and owner-path isolation.
 	Backend *memstore.Backend
 
-	// Faults, when set, is temporarily disabled during read-only Store/Service
-	// checks in CheckSafety and restored immediately afterward.
 	Faults *memstore.FaultInjector
 
-	// Now returns the current simulation time for interaction expiry checks.
-	// Defaults to time.Now().UTC() when nil.
 	Now func() time.Time
 
-	// CheckLeases enables automatic lease-to-run and user-wake quiescence checks
-	// inside CheckQuiescence when Backend is non-nil. Defaults to false so
-	// legacy/partial-runtime sims stay unaffected while full-runtime sims opt in.
 	CheckLeases bool
 }
 
-// Stats summarizes the historical baselines currently tracked by a Checker.
 type Stats struct {
 	SafetyChecks          int
 	QuiescenceChecks      int
@@ -179,8 +156,6 @@ type pausedStartEvent struct {
 	at     time.Time
 }
 
-// Checker maintains monotonic temporal baselines across simulation steps and
-// verifies Nori's safety and quiescence liveness invariants.
 type Checker struct {
 	mu          sync.Mutex
 	backend     *memstore.Backend
@@ -200,22 +175,18 @@ type Checker struct {
 	commands       map[userEntityKey]cmdBaseline
 	automations    map[userEntityKey]automationBaseline
 
-	// Cross-user authoritative ownership maps (entityID -> userID).
 	runOwners         map[string]string
 	interactionOwners map[string]string
 	automationOwners  map[string]string
 	occurrenceOwners  map[string]string
 	inputOwners       map[string]string
 
-	// Per-user memory & compaction baselines (INV-MEM-01..03).
 	memoryBaselines map[string]memoryBaseline
 
-	// Violations recorded synchronously by hooks (pause violations, receipt mismatches).
 	pausedStarts     []pausedStartEvent
 	stickyViolations []Violation
 }
 
-// New constructs a new Checker with empty historical baselines.
 func New(cfg Config) *Checker {
 	return &Checker{
 		backend:           cfg.Backend,
@@ -258,10 +229,6 @@ func (c *Checker) withoutFaults(fn func() error) error {
 	return fn()
 }
 
-// RecordCommandReceipt records an idempotent command receipt for (userID, cmdID)
-// and verifies consistency against any prior receipt for the same command ID.
-// Any inconsistency is both returned immediately and retained so CheckSafety
-// also reports it.
 func (c *Checker) RecordCommandReceipt(userID string, receipt state.CommandReceipt) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -272,7 +239,6 @@ func (c *Checker) RecordCommandReceipt(userID string, receipt state.CommandRecei
 	return nil
 }
 
-// RecordCommandReceipts records a slice of command receipts for userID.
 func (c *Checker) RecordCommandReceipts(userID string, receipts []state.CommandReceipt) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -356,9 +322,6 @@ func (c *Checker) recordCommandReceiptLocked(userID string, receipt state.Comman
 	return Violation{}, true
 }
 
-// RecordExecutionStart records that a new workflow execution was started for
-// (userID, runID). If paused is true, it increments the Control.Paused violation
-// counter and records a violation reported by CheckSafety.
 func (c *Checker) RecordExecutionStart(userID, runID string, paused bool) {
 	if !paused {
 		return
@@ -372,9 +335,6 @@ func (c *Checker) RecordExecutionStart(userID, runID string, paused bool) {
 	})
 }
 
-// OnExecutionStart inspects system/control from the configured memstore.Backend
-// (fault-free) and records a Control.Paused violation if Control.Paused is true.
-// It can be assigned directly to a simulation orchestrator's OnStart callback.
 func (c *Checker) OnExecutionStart(userID, runID string) {
 	if c.backend == nil {
 		return
@@ -390,15 +350,12 @@ func (c *Checker) OnExecutionStart(userID, runID string) {
 	c.RecordExecutionStart(userID, runID, ctrl.Paused)
 }
 
-// PausedStartViolations returns the number of new workflow executions recorded
-// while Control.Paused was true.
 func (c *Checker) PausedStartViolations() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.pausedStarts)
 }
 
-// Stats returns a point-in-time summary of the checker's tracked baselines.
 func (c *Checker) Stats() Stats {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -20,7 +20,6 @@ import (
 	"nori/internal/users"
 )
 
-// fakeClock is a simple deterministic clock for unit tests.
 type fakeClock struct {
 	mu sync.Mutex
 	t  time.Time
@@ -174,8 +173,6 @@ func TestPositive_CleanMultiUserWorldAndQuiescence(t *testing.T) {
 	ctx := context.Background()
 	w := newTestWorld()
 
-	// Step 1: Alice starts a top-level task, retries same command ID (idempotent receipt),
-	// opens an approval interaction at rev 1, then steers to rev 2 (superseding the interaction).
 	aliceRun1 := "aaaaaaaa-1111-4111-8111-111111111111"
 	cmdStart1 := state.Command{ID: "cmd-a-1", RunID: aliceRun1, Kind: state.CommandStart, Text: "Do task 1"}
 	receipts, err := w.alice.store.AcceptCommandBatch(ctx, []state.Command{cmdStart1}, nil)
@@ -185,7 +182,6 @@ func TestPositive_CleanMultiUserWorldAndQuiescence(t *testing.T) {
 	if err := w.checker.RecordCommandReceipts(w.alice.user.ID, receipts); err != nil {
 		t.Fatalf("RecordCommandReceipts: %v", err)
 	}
-	// Idempotent retry must match.
 	retryReceipts, err := w.alice.store.AcceptCommandBatch(ctx, []state.Command{cmdStart1}, nil)
 	if err != nil {
 		t.Fatalf("AcceptCommandBatch retry: %v", err)
@@ -197,7 +193,6 @@ func TestPositive_CleanMultiUserWorldAndQuiescence(t *testing.T) {
 		t.Fatalf("CheckSafety after start: %v", err)
 	}
 
-	// Open interaction at rev 1, then steer to rev 2 (records supersedes it atomically).
 	expAt := w.clock.Now().Add(10 * time.Minute)
 	if _, err := w.alice.perms.Open(ctx, permissions.Interaction{
 		ID:                  "int_alice_1",
@@ -226,7 +221,6 @@ func TestPositive_CleanMultiUserWorldAndQuiescence(t *testing.T) {
 		t.Fatalf("CheckSafety after steer superseded rev-1 interaction: %v", err)
 	}
 
-	// Incorporate commands on aliceRun1, then open a work question and spawn a subtask.
 	if err := w.alice.store.Incorporate(ctx, state.IncorporateRequest{RunID: aliceRun1, Revision: 2, Position: 2}); err != nil {
 		t.Fatalf("Incorporate: %v", err)
 	}
@@ -248,9 +242,6 @@ func TestPositive_CleanMultiUserWorldAndQuiescence(t *testing.T) {
 		t.Fatalf("Incorporate child: %v", err)
 	}
 
-	// Admit and legally settle operations on the child:
-	// op1: admitted -> attempted -> submitted -> confirmed
-	// op2: admitted -> uncertain -> failed -> Cleared="answered"
 	if err := w.alice.store.Admit(ctx, aliceChild, 1, "op-1", w.clock.Now().Add(time.Minute)); err != nil {
 		t.Fatalf("Admit op-1: %v", err)
 	}
@@ -277,7 +268,6 @@ func TestPositive_CleanMultiUserWorldAndQuiescence(t *testing.T) {
 		}
 	}
 
-	// op2: uncertain -> failed -> cleared
 	if err := w.alice.store.PutOperation(ctx, aliceChild, state.OperationRecord{
 		ID: "op-2", CallID: "call-2", Name: "tool_x", EffectClass: "reversible_write",
 		Outcome: "uncertain", Revision: 1, Attempt: 1,
@@ -306,8 +296,6 @@ func TestPositive_CleanMultiUserWorldAndQuiescence(t *testing.T) {
 		t.Fatalf("CheckSafety after op-2 cleared: %v", err)
 	}
 
-	// Mark pending commands delivered, finish child (enters Finishing because Admit set CleanupPending),
-	// run FinishCleanup, and then finish parent.
 	deliverPending(t, ctx, w.alice.store)
 	if _, err := w.alice.store.Publish(ctx, state.PublishRequest{
 		RunID: aliceChild, Revision: 1, Status: state.RunCompleted, Text: "child done", BypassRouting: true,
@@ -321,7 +309,6 @@ func TestPositive_CleanMultiUserWorldAndQuiescence(t *testing.T) {
 		t.Fatalf("FinishCleanup child: %v", err)
 	}
 
-	// Mark subtask_result command delivered to parent and incorporate it, then publish parent.
 	deliverPending(t, ctx, w.alice.store)
 	if err := w.alice.store.Incorporate(ctx, state.IncorporateRequest{RunID: aliceRun1, Revision: 2, Position: 3}); err != nil {
 		t.Fatalf("Incorporate parent subtask_result: %v", err)
@@ -332,8 +319,6 @@ func TestPositive_CleanMultiUserWorldAndQuiescence(t *testing.T) {
 		t.Fatalf("Publish parent: %v", err)
 	}
 
-	// Step 2: Bob opens an interaction that later expires, plus creates and ticks a due one-time automation,
-	// plus publishes a conversation turn and advances ReadMark.
 	bobRun := "bbbbbbbb-1111-4111-8111-111111111111"
 	if _, err := w.bob.store.AcceptCommandBatch(ctx, []state.Command{
 		{ID: "cmd-b-1", RunID: bobRun, Kind: state.CommandStart, Text: "Bob job"},
@@ -367,21 +352,17 @@ func TestPositive_CleanMultiUserWorldAndQuiescence(t *testing.T) {
 		t.Fatalf("Bob sched.Save: %v", err)
 	}
 
-	// Advance clock past both shortExp and dueAt!
 	w.clock.Advance(2 * time.Minute)
 
-	// Expired interaction is checked via permissions.Service in CheckSafety and must pass!
 	if err := w.checker.CheckSafety(ctx, w.targets); err != nil {
 		t.Fatalf("CheckSafety after interaction expiry: %v", err)
 	}
 
-	// Tick Bob's scheduler so due automation advances cursor and submits its task.
 	if _, err := w.bob.sched.Tick(ctx); err != nil {
 		t.Fatalf("Bob sched.Tick: %v", err)
 	}
 	deliverPending(t, ctx, w.bob.store)
 
-	// Finish all of Bob's open runs (bobRun + automation task) and tick scheduler to settle occurrence.
 	bobOpen, err := w.bob.store.OpenTasks(ctx)
 	if err != nil {
 		t.Fatalf("Bob OpenTasks: %v", err)
@@ -400,7 +381,6 @@ func TestPositive_CleanMultiUserWorldAndQuiescence(t *testing.T) {
 		t.Fatalf("Bob sched.Tick settle: %v", err)
 	}
 
-	// Drain conversation turns for Alice and Bob so WorkVersion is "" and test ReadMark.
 	for _, u := range []*testUserEnv{w.alice, w.bob} {
 		for {
 			ctrl, turn, err := u.store.AcquireConversation(ctx, "sim-worker", "turn-"+u.user.ID[:4]+"-"+w.clock.Now().Format("150405"))
@@ -433,7 +413,6 @@ func TestPositive_CleanMultiUserWorldAndQuiescence(t *testing.T) {
 		t.Fatalf("CheckQuiescence failed: %v", err)
 	}
 
-	// Also verify Store-only mode (Backend == nil) passes cleanly on the same state.
 	storeOnlyChecker := invariants.New(invariants.Config{Now: w.clock.Now})
 	if err := storeOnlyChecker.CheckSafety(ctx, w.targets); err != nil {
 		t.Fatalf("store-only CheckSafety failed: %v", err)
@@ -460,7 +439,6 @@ func TestPositive_CheckSafetyFaultFreeUnderHeavyFaultInjection(t *testing.T) {
 		t.Fatalf("AcceptCommandBatch: %v", err)
 	}
 
-	// Turn faults up to 100%! CheckSafety must still succeed via Snapshot and trigger ZERO faults.
 	inj.SetEnabled(true)
 	if err := w.checker.CheckSafety(ctx, w.targets); err != nil {
 		t.Fatalf("CheckSafety failed with 100%% faults enabled: %v", err)
@@ -485,7 +463,6 @@ func TestNegative_RunRevisionDecrease(t *testing.T) {
 		t.Fatalf("baseline CheckSafety: %v", err)
 	}
 
-	// Corrupt revision downward from 2 to 1 directly in memstore.
 	path := "owners/" + w.alice.user.DataOwner() + "/runs/" + runID
 	if err := w.backend.Apply(ctx, docstore.Mutation{
 		Kind:    "update",
@@ -519,7 +496,6 @@ func TestNegative_TerminalRunStatusMutation(t *testing.T) {
 	}
 
 	path := "owners/" + w.alice.user.DataOwner() + "/runs/" + runID
-	// 1. Revert terminal -> running.
 	if err := w.backend.Apply(ctx, docstore.Mutation{
 		Kind:    "update",
 		Path:    path,
@@ -529,7 +505,6 @@ func TestNegative_TerminalRunStatusMutation(t *testing.T) {
 	}
 	requireViolation(t, w.checker.CheckSafety(ctx, w.targets), "run.terminal_status_immutable")
 
-	// 2. Change terminal completed -> failed.
 	if err := w.backend.Apply(ctx, docstore.Mutation{
 		Kind:    "update",
 		Path:    path,
@@ -557,7 +532,6 @@ func TestNegative_EventLogGap(t *testing.T) {
 		t.Fatalf("baseline CheckSafety: %v", err)
 	}
 
-	// Delete event seq 1 to create a gap in 1..EventPosition.
 	evPath := "owners/" + w.alice.user.DataOwner() + "/events/00000000000000000001"
 	if err := w.backend.DeleteBatch(ctx, []string{evPath}); err != nil {
 		t.Fatalf("delete event: %v", err)
@@ -569,7 +543,6 @@ func TestNegative_ReadMarkRegression(t *testing.T) {
 	ctx := context.Background()
 	w := newTestWorld()
 
-	// Create two assistant messages and advance ReadMark to the second.
 	if err := w.alice.store.AcceptConversationInput(ctx, "in-1", "hi", nil); err != nil {
 		t.Fatalf("AcceptConversationInput: %v", err)
 	}
@@ -590,7 +563,6 @@ func TestNegative_ReadMarkRegression(t *testing.T) {
 		t.Fatalf("baseline CheckSafety: %v", err)
 	}
 
-	// Move ReadMark.Through backwards directly in memstore.
 	seenPath := "owners/" + w.alice.user.DataOwner() + "/conversation/seen"
 	if err := w.backend.Apply(ctx, docstore.Mutation{
 		Kind: "update",
@@ -627,7 +599,6 @@ func TestNegative_SettledOperationMutation(t *testing.T) {
 		t.Fatalf("baseline CheckSafety: %v", err)
 	}
 
-	// Mutate settled outcome confirmed -> failed directly in memstore.
 	opPath := "owners/" + w.alice.user.DataOwner() + "/runs/" + runID + "/operations/op-settled"
 	if err := w.backend.Apply(ctx, docstore.Mutation{
 		Kind:    "update",
@@ -662,7 +633,6 @@ func TestNegative_ExecutionStartedWhilePaused(t *testing.T) {
 	ctx := context.Background()
 	w := newTestWorld()
 
-	// Pause system/control.
 	if err := w.backend.Apply(ctx, docstore.Mutation{
 		Kind:    "update",
 		Path:    "system/control",
@@ -671,7 +641,6 @@ func TestNegative_ExecutionStartedWhilePaused(t *testing.T) {
 		t.Fatalf("pause control: %v", err)
 	}
 
-	// Simulate worker starting a new execution while paused.
 	w.checker.OnExecutionStart(w.alice.user.ID, "run-paused-start")
 	if got := w.checker.PausedStartViolations(); got != 1 {
 		t.Fatalf("PausedStartViolations = %d, want 1", got)
@@ -683,7 +652,6 @@ func TestNegative_UnknownOwnerPathAndCrossUserLeak(t *testing.T) {
 	ctx := context.Background()
 	w := newTestWorld()
 
-	// Create a valid run for Bob.
 	bobRun := "bbbbbbbb-1111-4111-8111-111111111111"
 	if _, err := w.bob.store.AcceptCommandBatch(ctx, []state.Command{
 		{ID: "cmd-b-1", RunID: bobRun, Kind: state.CommandStart, Text: "Bob private"},
@@ -694,7 +662,6 @@ func TestNegative_UnknownOwnerPathAndCrossUserLeak(t *testing.T) {
 		t.Fatalf("baseline CheckSafety: %v", err)
 	}
 
-	// 1. Inject a document under an unknown owner path.
 	if err := w.backend.Apply(ctx, docstore.Mutation{
 		Kind:   "set",
 		Path:   "owners/rogue-owner/runs/rogue-run",
@@ -704,13 +671,12 @@ func TestNegative_UnknownOwnerPathAndCrossUserLeak(t *testing.T) {
 	}
 	requireViolation(t, w.checker.CheckSafety(ctx, w.targets), "isolation.unknown_owner_path")
 
-	// Clean up rogue owner doc, then leak Bob's run ID into an Alice interaction.
 	if err := w.backend.DeleteBatch(ctx, []string{"owners/rogue-owner/runs/rogue-run"}); err != nil {
 		t.Fatalf("delete rogue: %v", err)
 	}
 	if _, err := w.alice.perms.Open(ctx, permissions.Interaction{
 		ID:     "int_leak",
-		TaskID: bobRun, // belongs to Bob!
+		TaskID: bobRun,
 		Kind:   "question",
 		Prompt: "Leaked ref",
 	}, "leak"); err != nil {
@@ -730,7 +696,6 @@ func TestNegative_StalePendingInteractionAndExpiredApproved(t *testing.T) {
 		t.Fatalf("accept: %v", err)
 	}
 
-	// Open a pending interaction pinned to stale revision 1 while run is already at revision 2.
 	if _, err := w.alice.perms.Open(ctx, permissions.Interaction{
 		ID:                  "int_stale",
 		TaskID:              runID,
@@ -743,7 +708,6 @@ func TestNegative_StalePendingInteractionAndExpiredApproved(t *testing.T) {
 	}
 	requireViolation(t, w.checker.CheckSafety(ctx, w.targets), "interaction.stale_revision")
 
-	// Now test an expired interaction falsely recorded as approved after ExpiresAt.
 	w2 := newTestWorld()
 	exp := w2.clock.Now().Add(-5 * time.Minute)
 	resolved := w2.clock.Now()
@@ -802,7 +766,6 @@ func TestNegative_SubtaskParentViolations(t *testing.T) {
 		t.Fatalf("baseline CheckSafety: %v", err)
 	}
 
-	// Corrupt parent directly to completed while child is still running!
 	now := w.clock.Now()
 	if err := w.backend.Apply(ctx, docstore.Mutation{
 		Kind: "update",
@@ -817,7 +780,6 @@ func TestNegative_SubtaskParentViolations(t *testing.T) {
 	}
 	requireViolation(t, w.checker.CheckSafety(ctx, w.targets), "subtask.terminal_parent_has_running_child")
 
-	// Also test 2-level nested subtask violation.
 	w2 := newTestWorld()
 	owner := w2.alice.user.DataOwner()
 	now2 := w2.clock.Now()
@@ -891,7 +853,6 @@ func TestNegative_QuiescenceViolations(t *testing.T) {
 		if err := w.alice.store.Admit(ctx, runID, 1, "op-1", w.clock.Now().Add(time.Minute)); err != nil {
 			t.Fatalf("admit: %v", err)
 		}
-		// Publish enters Finishing because CleanupPending=true; fail to run FinishCleanup!
 		if _, err := w.alice.store.Publish(ctx, state.PublishRequest{
 			RunID: runID, Revision: 1, Status: state.RunCompleted, Text: "done", BypassRouting: true,
 		}); err != nil {
@@ -914,7 +875,6 @@ func TestNegative_QuiescenceViolations(t *testing.T) {
 		if err := w.alice.store.Incorporate(ctx, state.IncorporateRequest{RunID: runID, Revision: 1, Position: 1}); err != nil {
 			t.Fatalf("inc: %v", err)
 		}
-		// Add a user conversation input so Publish defers publication, then route conversation without waking publication!
 		if err := w.alice.store.AcceptConversationInput(ctx, "u-msg-1", "wait", nil); err != nil {
 			t.Fatalf("AcceptConversationInput: %v", err)
 		}
@@ -924,7 +884,6 @@ func TestNegative_QuiescenceViolations(t *testing.T) {
 		if !errors.Is(pubErr, state.ErrRoutingPending) {
 			t.Fatalf("expected ErrRoutingPending, got %v", pubErr)
 		}
-		// Complete the conversation turn so UserRoutingPending becomes false, leaving publication_pending=true stuck!
 		ctrl, turn, err := w.alice.store.AcquireConversation(ctx, "w1", "turn-1")
 		if err != nil || turn == nil {
 			t.Fatalf("AcquireConversation: %v", err)
@@ -960,12 +919,10 @@ func TestNegative_QuiescenceViolations(t *testing.T) {
 		if err := json.Unmarshal(receipt.Resource, &auto); err != nil {
 			t.Fatalf("unmarshal auto: %v", err)
 		}
-		// Advance clock past dueAt without calling Tick!
 		w.clock.Advance(5 * time.Minute)
 		err = w.checker.CheckQuiescence(ctx, w.targets, w.clock.Now())
 		requireViolation(t, err, "quiescence.due_automation_not_advanced")
 
-		// Now inject two duplicate occurrences with the exact same (automation, generation, scheduled_at).
 		slot := dueAt.UTC()
 		for _, occID := range []string{"occ_dup_1", "occ_dup_2"} {
 			body, _ := json.Marshal(scheduler.Occurrence{
@@ -1033,7 +990,6 @@ func TestTaskControlSafetyMonotonicityAndLeaseIsolation(t *testing.T) {
 		}
 	}
 
-	// Monotonic progression passes cleanly.
 	writeTC(state.TaskControl{RunID: aliceRun, Phase: state.TaskPhaseModel, Fence: 2, Models: 3, Tools: 4, Checks: 1})
 	if err := w.checker.CheckSafety(ctx, w.targets); err != nil {
 		t.Fatalf("CheckSafety baseline TaskControl: %v", err)
@@ -1043,7 +999,6 @@ func TestTaskControlSafetyMonotonicityAndLeaseIsolation(t *testing.T) {
 		t.Fatalf("CheckSafety advanced TaskControl: %v", err)
 	}
 
-	// Regression of each counter is caught individually.
 	writeTC(state.TaskControl{RunID: aliceRun, Phase: state.TaskPhaseCalls, Fence: 2, Models: 4, Tools: 5, Checks: 2})
 	requireViolation(t, w.checker.CheckSafety(ctx, w.targets), "task_control.fence_monotonic")
 
@@ -1056,33 +1011,28 @@ func TestTaskControlSafetyMonotonicityAndLeaseIsolation(t *testing.T) {
 	writeTC(state.TaskControl{RunID: aliceRun, Phase: state.TaskPhaseCalls, Fence: 3, Models: 4, Tools: 5, Checks: 1})
 	requireViolation(t, w.checker.CheckSafety(ctx, w.targets), "task_control.checks_monotonic")
 
-	// Negative counter is caught.
 	writeTC(state.TaskControl{RunID: aliceRun, Phase: state.TaskPhaseCalls, Fence: -1, Models: 4, Tools: 5, Checks: 2})
 	err := w.checker.CheckSafety(ctx, w.targets)
 	requireViolation(t, err, "task_control.counters_non_negative")
 	requireViolation(t, err, "task_control.fence_monotonic")
 
-	// Restore valid TaskControl.
 	writeTC(state.TaskControl{RunID: aliceRun, Phase: state.TaskPhaseCalls, Fence: 3, Models: 4, Tools: 5, Checks: 2})
 	if err := w.checker.CheckSafety(ctx, w.targets); err != nil {
 		t.Fatalf("CheckSafety restored TaskControl: %v", err)
 	}
 
-	// Unknown user in nori_task_leases is caught.
 	if err := w.backend.WakeTask(ctx, "rogue-user", "rogue-run", w.clock.Now()); err != nil {
 		t.Fatalf("WakeTask rogue: %v", err)
 	}
 	requireViolation(t, w.checker.CheckSafety(ctx, w.targets), "isolation.unknown_lease_user")
 	_, _ = w.backend.DeleteTaskLease(ctx, "rogue-user", "rogue-run", 0)
 
-	// Cross-user RunID in nori_task_leases (Alice lease pointing to Bob's run) is caught.
 	if err := w.backend.WakeTask(ctx, w.alice.user.ID, bobRun, w.clock.Now()); err != nil {
 		t.Fatalf("WakeTask cross-user: %v", err)
 	}
 	requireViolation(t, w.checker.CheckSafety(ctx, w.targets), "isolation.cross_user_reference")
 	_, _ = w.backend.DeleteTaskLease(ctx, w.alice.user.ID, bobRun, 0)
 
-	// Unknown user in nori_user_wakes is caught.
 	if err := w.backend.WakeUser(ctx, "rogue-user", docstore.LaneConversation, w.clock.Now()); err != nil {
 		t.Fatalf("WakeUser rogue: %v", err)
 	}
@@ -1120,7 +1070,6 @@ func TestLeaseQuiescence_ValidStatesAndFaultFree(t *testing.T) {
 		}
 	}
 
-	// 1. Alice has a completed clean run (no lease row).
 	doneRun := "aaaaaaaa-0000-4000-8000-000000000001"
 	if _, err := w.alice.store.AcceptCommandBatch(ctx, []state.Command{
 		{ID: "c-done", RunID: doneRun, Kind: state.CommandStart, Text: "Quick"},
@@ -1139,7 +1088,6 @@ func TestLeaseQuiescence_ValidStatesAndFaultFree(t *testing.T) {
 		t.Fatalf("delete doneRun lease: %v", err)
 	}
 
-	// 2. Alice has a validly parked question task (unresolved question, not cancelled).
 	qRun := "aaaaaaaa-0000-4000-8000-000000000002"
 	if _, err := w.alice.store.AcceptCommandBatch(ctx, []state.Command{
 		{ID: "c-q", RunID: qRun, Kind: state.CommandStart, Text: "Ask user"},
@@ -1156,7 +1104,6 @@ func TestLeaseQuiescence_ValidStatesAndFaultFree(t *testing.T) {
 	}
 	parkLease(w.alice.user.ID, qRun, docstore.WaitQuestion)
 
-	// Drain Alice's conversation inbox so conv.Pending() == false, and park conversation wake.
 	for {
 		ctrl, turn, err := w.alice.store.AcquireConversation(ctx, "w1", "turn-"+w.clock.Now().Format("150405"))
 		if err != nil {
@@ -1183,7 +1130,6 @@ func TestLeaseQuiescence_ValidStatesAndFaultFree(t *testing.T) {
 		t.Fatalf("ParkUserWake conv: parked=%v err=%v", parked, err)
 	}
 
-	// 3. Bob has a future-scheduled automation and matching future scheduler wake (WakeAt > now).
 	futureAt := w.clock.Now().Add(15 * time.Minute)
 	if _, err := w.bob.sched.Save(ctx, "", "req-future-1", 0, scheduler.Editable{
 		Title:                  "Future Job",
@@ -1201,7 +1147,6 @@ func TestLeaseQuiescence_ValidStatesAndFaultFree(t *testing.T) {
 		t.Fatalf("WakeUser scheduler future: %v", err)
 	}
 
-	// Enable 100% faults: CheckLeaseQuiescence reads fault-free from Snapshot and triggers ZERO faults.
 	inj.SetEnabled(true)
 	if err := w.checker.CheckLeaseQuiescence(ctx, w.targets, w.clock.Now()); err != nil {
 		t.Fatalf("CheckLeaseQuiescence on valid quiescent state failed: %v", err)
@@ -1248,7 +1193,6 @@ func TestLeaseQuiescence_Violations(t *testing.T) {
 		}
 		requireViolation(t, w.checker.CheckLeaseQuiescence(ctx, w.targets, w.clock.Now()), "quiescence.lease_missing_for_run")
 
-		// Terminal run with CleanupPending=true also requires a lease.
 		w2 := newLeaseWorld()
 		r2 := "aaaaaaaa-2222-4222-8222-222222222222"
 		now := w2.clock.Now()
@@ -1274,12 +1218,10 @@ func TestLeaseQuiescence_Violations(t *testing.T) {
 
 	t.Run("orphan_and_stale_task_leases", func(t *testing.T) {
 		w := newLeaseWorld()
-		// Orphan lease pointing to non-existent run.
 		parkLease(t, w, w.alice.user.ID, "nonexistent-run", docstore.WaitQuestion)
 		requireViolation(t, w.checker.CheckLeaseQuiescence(ctx, w.targets, w.clock.Now()), "quiescence.lease_orphan_run")
 		_, _ = w.backend.DeleteTaskLease(ctx, w.alice.user.ID, "nonexistent-run", 0)
 
-		// Stale lease for terminal clean run.
 		rDone := "aaaaaaaa-3333-4333-8333-333333333333"
 		now := w.clock.Now()
 		fields, _ := docstore.Encode(state.Run{
@@ -1308,10 +1250,8 @@ func TestLeaseQuiescence_Violations(t *testing.T) {
 		if err := w.backend.WakeTask(ctx, w.alice.user.ID, r1, w.clock.Now()); err != nil {
 			t.Fatalf("WakeTask: %v", err)
 		}
-		// Unclaimed but runnable with WakeAt <= now -> undrained.
 		requireViolation(t, w.checker.CheckLeaseQuiescence(ctx, w.targets, w.clock.Now()), "quiescence.task_lease_undrained_runnable")
 
-		// Claimed -> leaked owner + still runnable.
 		if _, ok, err := w.backend.ClaimTaskByID(ctx, w.alice.user.ID, r1, "leaked-worker", 30*time.Second); err != nil || !ok {
 			t.Fatalf("ClaimTaskByID: ok=%v err=%v", ok, err)
 		}
@@ -1321,7 +1261,6 @@ func TestLeaseQuiescence_Violations(t *testing.T) {
 	})
 
 	t.Run("stuck_parked_waiting_reasons", func(t *testing.T) {
-		// 1. waiting_reason = paused while Control.Paused = false
 		w := newLeaseWorld()
 		r1 := "aaaaaaaa-5555-4555-8555-555555555551"
 		_, _ = w.alice.store.AcceptCommandBatch(ctx, []state.Command{
@@ -1330,7 +1269,6 @@ func TestLeaseQuiescence_Violations(t *testing.T) {
 		parkLease(t, w, w.alice.user.ID, r1, docstore.WaitPaused)
 		requireViolation(t, w.checker.CheckLeaseQuiescence(ctx, w.targets, w.clock.Now()), "quiescence.task_lease_stuck_paused")
 
-		// 2. waiting_reason = routing_pending while UserRoutingPending = false
 		w2 := newLeaseWorld()
 		r2 := "aaaaaaaa-5555-4555-8555-555555555552"
 		_, _ = w2.alice.store.AcceptCommandBatch(ctx, []state.Command{
@@ -1339,7 +1277,6 @@ func TestLeaseQuiescence_Violations(t *testing.T) {
 		parkLease(t, w2, w2.alice.user.ID, r2, docstore.WaitRoutingPending)
 		requireViolation(t, w2.checker.CheckLeaseQuiescence(ctx, w2.targets, w2.clock.Now()), "quiescence.task_lease_stuck_routing_pending")
 
-		// 3a. waiting_reason = question when Run.Question == nil
 		w3 := newLeaseWorld()
 		r3 := "aaaaaaaa-5555-4555-8555-555555555553"
 		_, _ = w3.alice.store.AcceptCommandBatch(ctx, []state.Command{
@@ -1348,7 +1285,6 @@ func TestLeaseQuiescence_Violations(t *testing.T) {
 		parkLease(t, w3, w3.alice.user.ID, r3, docstore.WaitQuestion)
 		requireViolation(t, w3.checker.CheckLeaseQuiescence(ctx, w3.targets, w3.clock.Now()), "quiescence.task_lease_stuck_question")
 
-		// 3b. waiting_reason = question when Run.Question.ResolvedBy != ""
 		w4 := newLeaseWorld()
 		r4 := "aaaaaaaa-5555-4555-8555-555555555554"
 		now := w4.clock.Now()
@@ -1366,7 +1302,6 @@ func TestLeaseQuiescence_Violations(t *testing.T) {
 		parkLease(t, w4, w4.alice.user.ID, r4, docstore.WaitQuestion)
 		requireViolation(t, w4.checker.CheckLeaseQuiescence(ctx, w4.targets, w4.clock.Now()), "quiescence.task_lease_stuck_question")
 
-		// 3c. waiting_reason = question when Run.CancelRequested == true
 		w5 := newLeaseWorld()
 		r5 := "aaaaaaaa-5555-4555-8555-555555555555"
 		fields5, _ := docstore.Encode(state.Run{
@@ -1384,7 +1319,6 @@ func TestLeaseQuiescence_Violations(t *testing.T) {
 		parkLease(t, w5, w5.alice.user.ID, r5, docstore.WaitQuestion)
 		requireViolation(t, w5.checker.CheckLeaseQuiescence(ctx, w5.targets, w5.clock.Now()), "quiescence.task_lease_stuck_question")
 
-		// 4. waiting_reason = finishing when all children are terminal & clean
 		w6 := newLeaseWorld()
 		parentID := "aaaaaaaa-5555-4555-8555-555555555556"
 		childID := "aaaaaaaa-5555-4555-8555-555555555557"
@@ -1417,7 +1351,6 @@ func TestLeaseQuiescence_Violations(t *testing.T) {
 	})
 
 	t.Run("user_wake_leaked_undrained_and_missing_due_wakes", func(t *testing.T) {
-		// 1. Undrained runnable user wake + leaked owner.
 		w := newLeaseWorld()
 		_ = w.backend.WakeUser(ctx, w.alice.user.ID, docstore.LaneConversation, w.clock.Now())
 		requireViolation(t, w.checker.CheckLeaseQuiescence(ctx, w.targets, w.clock.Now()), "quiescence.user_wake_undrained_runnable")
@@ -1429,7 +1362,6 @@ func TestLeaseQuiescence_Violations(t *testing.T) {
 		requireViolation(t, err, "quiescence.user_wake_leaked_owner")
 		requireViolation(t, err, "quiescence.user_wake_undrained_runnable")
 
-		// 2. Missing (parked) conversation wake when conv.Pending() == true.
 		w2 := newLeaseWorld()
 		if err := w2.alice.store.AcceptConversationInput(ctx, "msg-pending", "hello", nil); err != nil {
 			t.Fatalf("AcceptConversationInput: %v", err)
@@ -1441,7 +1373,6 @@ func TestLeaseQuiescence_Violations(t *testing.T) {
 		}
 		requireViolation(t, w2.checker.CheckLeaseQuiescence(ctx, w2.targets, w2.clock.Now()), "quiescence.user_wake_missing_conversation")
 
-		// 3. Missing scheduler wake when enabled automation is due (NextAt <= now).
 		w3 := newLeaseWorld()
 		dueAt := w3.clock.Now().Add(time.Minute)
 		if _, err := w3.alice.sched.Save(ctx, "", "req-due-1", 0, scheduler.Editable{
@@ -1459,7 +1390,6 @@ func TestLeaseQuiescence_Violations(t *testing.T) {
 		w3.clock.Advance(2 * time.Minute)
 		requireViolation(t, w3.checker.CheckLeaseQuiescence(ctx, w3.targets, w3.clock.Now()), "quiescence.user_wake_missing_scheduler")
 
-		// 4. Unknown user IDs in leases and wakes.
 		w4 := newLeaseWorld()
 		_ = w4.backend.WakeTask(ctx, "ghost-user", "ghost-run", w4.clock.Now().Add(time.Hour))
 		_ = w4.backend.WakeUser(ctx, "ghost-user", docstore.LaneScheduler, w4.clock.Now().Add(time.Hour))
@@ -1472,12 +1402,10 @@ func TestLeaseQuiescence_Violations(t *testing.T) {
 		w := newLeaseWorld()
 		_ = w.backend.WakeTask(ctx, w.alice.user.ID, "orphan-run", w.clock.Now().Add(time.Hour))
 
-		// Default Config{CheckLeases: false} skips lease quiescence inside CheckQuiescence.
 		if err := w.checker.CheckQuiescence(ctx, w.targets, w.clock.Now()); err != nil {
 			t.Fatalf("expected default CheckLeases=false to skip lease quiescence, got: %v", err)
 		}
 
-		// Config{CheckLeases: true} runs CheckLeaseQuiescence automatically inside CheckQuiescence.
 		leaseChecker := invariants.New(invariants.Config{
 			Backend:     w.backend,
 			Now:         w.clock.Now,
@@ -1487,7 +1415,6 @@ func TestLeaseQuiescence_Violations(t *testing.T) {
 	})
 
 	t.Run("invalid_empty_waiting_reason_and_parent_waiting_on_subtasks", func(t *testing.T) {
-		// Parked with empty or unknown waiting_reason must be flagged.
 		w := newLeaseWorld()
 		rBad := "aaaaaaaa-6666-4666-8666-666666666661"
 		_, err := w.alice.store.AcceptCommandBatch(ctx, []state.Command{
@@ -1499,7 +1426,6 @@ func TestLeaseQuiescence_Violations(t *testing.T) {
 		parkLease(t, w, w.alice.user.ID, rBad, "")
 		requireViolation(t, w.checker.CheckLeaseQuiescence(ctx, w.targets, w.clock.Now()), "quiescence.task_lease_invalid_waiting_reason")
 
-		// Parent parked with WaitQuestion on a resolved QuestionWork while child subtask is still running is valid.
 		w2 := newLeaseWorld()
 		now := w2.clock.Now()
 		parentID := "aaaaaaaa-6666-4666-8666-666666666662"
@@ -1539,7 +1465,7 @@ func TestLeaseQuiescence_Violations(t *testing.T) {
 			Status:       state.RunRunning,
 			StartedAt:    now,
 			Subtasks:     []state.SubtaskLink{{ID: childID, Status: state.RunRunning}},
-			SubtaskSpent: 0.50, // drifted / double-counted vs child.Spent=0.25
+			SubtaskSpent: 0.50,
 		})
 		childFields, _ := docstore.Encode(state.Run{
 			ID:          childID,
@@ -1555,7 +1481,6 @@ func TestLeaseQuiescence_Violations(t *testing.T) {
 		requireViolation(t, err, "subtask.spent_rollup_consistent")
 		requireViolation(t, err, "subtask.cost_unknown_rollup_consistent")
 
-		// TaskControl: same fence with conflicting owner, plus Position/Revision regression.
 		w2 := newLeaseWorld()
 		rID := "aaaaaaaa-7777-4777-8777-777777777773"
 		tcPath := "owners/" + w2.alice.user.DataOwner() + "/task_controls/" + rID
@@ -1608,7 +1533,6 @@ func TestLeaseQuiescence_Violations(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("ProjectQuestion: %v", err)
 		}
-		// Claim and park the lease keyed by legacyUser.ID ("owner"), NOT DataOwner ("legacy-owner@example.com").
 		claim, ok, err := backend.ClaimTaskByID(ctx, legacyUser.ID, runID, "worker-legacy", state.TaskLease)
 		if err != nil || !ok {
 			t.Fatalf("ClaimTaskByID(%q): ok=%v err=%v", legacyUser.ID, ok, err)
@@ -1616,7 +1540,6 @@ func TestLeaseQuiescence_Violations(t *testing.T) {
 		if parked, err := backend.ParkTask(ctx, legacyUser.ID, runID, "worker-legacy", claim.WakeSeq, docstore.WaitQuestion); err != nil || !parked {
 			t.Fatalf("ParkTask: parked=%v err=%v", parked, err)
 		}
-		// Drain conversation wake emitted by ProjectQuestion.
 		for {
 			ctrl, turn, err := store.AcquireConversation(ctx, "worker-legacy", "turn-"+clock.Now().Format("150405"))
 			if err != nil {
@@ -1668,7 +1591,6 @@ func TestControlDecodeViolationAndStoreGetTaskControlError(t *testing.T) {
 		sched := &scheduler.Service{Store: store, Tasks: store, Permissions: perms, Now: clock.Now}
 		targets := []invariants.UserTarget{{User: u, Store: store, Permissions: perms, Scheduler: sched}}
 
-		// Corrupt system/control with a wrong field type so docstore.Decode fails.
 		if err := backend.Apply(ctx, docstore.Mutation{
 			Kind:   "set",
 			Path:   "system/control",
@@ -1684,7 +1606,6 @@ func TestControlDecodeViolationAndStoreGetTaskControlError(t *testing.T) {
 		qErr := checker.CheckLeaseQuiescence(ctx, targets, clock.Now())
 		requireViolation(t, qErr, "control.decode")
 
-		// OnExecutionStart must also record a sticky control.decode violation even if control is later repaired.
 		hookChecker := invariants.New(invariants.Config{Backend: backend, Now: clock.Now})
 		hookChecker.OnExecutionStart(u.ID, "run-1")
 		if err := backend.Apply(ctx, docstore.Mutation{
@@ -1716,7 +1637,6 @@ func TestControlDecodeViolationAndStoreGetTaskControlError(t *testing.T) {
 			t.Fatalf("AcceptCommandBatch: %v", err)
 		}
 
-		// Missing TaskControl (state.ErrNotFound) is expected for newly accepted runs and must not fail CheckSafety.
 		okChecker := invariants.New(invariants.Config{Now: clock.Now})
 		if err := okChecker.CheckSafetyAt(ctx, []invariants.UserTarget{{
 			User: u, Store: baseStore, Permissions: perms, Scheduler: sched,
@@ -1724,7 +1644,6 @@ func TestControlDecodeViolationAndStoreGetTaskControlError(t *testing.T) {
 			t.Fatalf("CheckSafetyAt with missing TaskControl failed: %v", err)
 		}
 
-		// Unexpected error from GetTaskControl must surface as a store.read violation rather than being swallowed.
 		boom := errors.New("corrupt task control")
 		errChecker := invariants.New(invariants.Config{Now: clock.Now})
 		err := errChecker.CheckSafetyAt(ctx, []invariants.UserTarget{{
@@ -1767,7 +1686,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		w := newTestWorld()
 		owner := w.alice.user.DataOwner()
 
-		// 1. User message + explicit UI create & pin + manual demote of pinned.
 		in1 := "11111111-1111-4111-8111-000000000001"
 		ts1 := seedUserInput(t, w, w.alice, in1, "Remember I prefer dark roast coffee and live in Seattle.")
 		pinned := true
@@ -1791,7 +1709,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 			t.Fatalf("CheckSafetyAt after create_core: %v", err)
 		}
 
-		// Manual UI demotion of a pinned memory is permitted because a manual receipt exists.
 		w.clock.Advance(time.Second)
 		if _, err := w.alice.store.MutateMemory(ctx, state.MemoryMutationRequest{
 			RequestID:        "req-demote-pin-1",
@@ -1805,7 +1722,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 			t.Fatalf("CheckSafetyAt after manual demote of pinned memory: %v", err)
 		}
 
-		// 2. Coupled flush+compact with verified Core upsert, Daily Log entry, and SummaryItem.
 		item1 := state.SummaryItem{
 			ID:      "si_clean_1",
 			Kind:    "preference",
@@ -1854,7 +1770,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 			t.Fatalf("CheckSafetyAt after CommitFlushAndCompact: %v", err)
 		}
 
-		// 3. Dismiss summary item via MutateMemory -> INV-MEM-02 permits removal.
 		w.clock.Advance(time.Second)
 		if _, err := w.alice.store.MutateMemory(ctx, state.MemoryMutationRequest{
 			RequestID:        "req-dismiss-1",
@@ -1868,7 +1783,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 			t.Fatalf("CheckSafetyAt after dismiss_working: %v", err)
 		}
 
-		// 4. Verify active future wake with FlushedThrough < Through does NOT false-positive CheckQuiescence.
 		_ = owner
 		if err := w.checker.CheckQuiescence(ctx, w.targets, w.clock.Now()); err != nil {
 			t.Fatalf("CheckQuiescence clean: %v", err)
@@ -1876,7 +1790,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 	})
 
 	t.Run("INV_MEM_01_atomic_watermark_violations", func(t *testing.T) {
-		// 1a. FlushedThrough > Through.
 		w1 := newTestWorld()
 		owner := w1.alice.user.DataOwner()
 		t1 := w1.clock.Now().UTC()
@@ -1890,7 +1803,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		})
 		requireViolation(t, w1.checker.CheckSafetyAt(ctx, w1.targets, w1.clock.Now()), "INV-MEM-01.watermark_bounds")
 
-		// 1b. Monotonicity regression of FlushedThrough in same epoch.
 		w2 := newTestWorld()
 		owner2 := w2.alice.user.DataOwner()
 		b1 := w2.clock.Now().UTC()
@@ -1917,7 +1829,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		})
 		requireViolation(t, w2.checker.CheckSafetyAt(ctx, w2.targets, w2.clock.Now()), "INV-MEM-01.watermark_monotonic")
 
-		// 1c. Completed turn in (FlushedThrough, Through] missing from Excerpts.
 		w3 := newTestWorld()
 		owner3 := w3.alice.user.DataOwner()
 		inID := "11111111-1111-4111-8111-000000000010"
@@ -1940,7 +1851,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		})
 		requireViolation(t, w3.checker.CheckSafetyAt(ctx, w3.targets, w3.clock.Now()), "INV-MEM-01.excerpt_coverage")
 
-		// 1d. FlushedThrough advanced on failure (FlushFailures > 0 with FlushedThrough >= LastFailureThrough).
 		w4 := newTestWorld()
 		owner4 := w4.alice.user.DataOwner()
 		f0 := w4.clock.Now().UTC()
@@ -1981,7 +1891,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 			t.Fatalf("baseline CheckSafetyAt: %v", err)
 		}
 
-		// Silently drop item without advancing FlushedThrough, dismissing, or archiving summary_evicted.
 		writeDoc(t, w, "owners/"+owner+"/conversation/summary", state.ConversationSummary{
 			From:           ts.Add(-time.Second),
 			FlushedThrough: ts,
@@ -1992,7 +1901,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		})
 		requireViolation(t, w.checker.CheckSafetyAt(ctx, w.targets, w.clock.Now()), "INV-MEM-02.silent_eviction")
 
-		// Dismissed item reappearing in Items must also trigger INV-MEM-02.
 		w2 := newTestWorld()
 		owner2 := w2.alice.user.DataOwner()
 		inID2 := "11111111-1111-4111-8111-000000000021"
@@ -2011,7 +1919,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 	})
 
 	t.Run("INV_MEM_03_core_budget_bounds_and_pinning", func(t *testing.T) {
-		// 3a. Core total > 24 KiB.
 		w1 := newTestWorld()
 		owner1 := w1.alice.user.DataOwner()
 		now := w1.clock.Now().UTC()
@@ -2031,7 +1938,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		}
 		requireViolation(t, w1.checker.CheckSafetyAt(ctx, w1.targets, w1.clock.Now()), "INV-MEM-03.core_budget")
 
-		// 3b. Item > MaxMemoryText (2000B) & CreatedAt > UpdatedAt.
 		w2 := newTestWorld()
 		owner2 := w2.alice.user.DataOwner()
 		now2 := w2.clock.Now().UTC()
@@ -2050,7 +1956,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		requireViolation(t, err, "INV-MEM-03.item_bounds")
 		requireViolation(t, err, "INV-MEM-03.timestamps")
 
-		// 3c. Pinned Core item auto-demoted without manual receipt.
 		w3 := newTestWorld()
 		owner3 := w3.alice.user.DataOwner()
 		pinned := true
@@ -2067,7 +1972,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		if err := w3.checker.CheckSafetyAt(ctx, w3.targets, w3.clock.Now()); err != nil {
 			t.Fatalf("baseline CheckSafetyAt: %v", err)
 		}
-		// Simulate buggy background pass deleting pinned Core doc and writing demote_<id> log.
 		_ = w3.backend.Apply(ctx, docstore.Mutation{Kind: "delete", Path: "owners/" + owner3 + "/memories/mem-pinned-guard"})
 		_ = w3.backend.DeleteMemoryChunk(ctx, owner3, docstore.MemoryCoreChunkID("mem-pinned-guard"))
 		now3 := w3.clock.Now().UTC()
@@ -2089,7 +1993,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 	})
 
 	t.Run("INV_MEM_04_provenance_and_injection_isolation", func(t *testing.T) {
-		// 4a. task_outcome in Core memories.
 		w1 := newTestWorld()
 		owner1 := w1.alice.user.DataOwner()
 		now := w1.clock.Now().UTC()
@@ -2104,7 +2007,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		})
 		requireViolation(t, w1.checker.CheckSafetyAt(ctx, w1.targets, w1.clock.Now()), "INV-MEM-04.task_outcome_in_core")
 
-		// 4b. pre_compact_flush Core memory citing fabricated / non-existent input_id.
 		w2 := newTestWorld()
 		owner2 := w2.alice.user.DataOwner()
 		now2 := w2.clock.Now().UTC()
@@ -2121,7 +2023,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		})
 		requireViolation(t, w2.checker.CheckSafetyAt(ctx, w2.targets, w2.clock.Now()), "INV-MEM-04.unverified_source_input")
 
-		// 4c. user_explicit Core memory citing a task-event (non-user) conversation_input.
 		w3 := newTestWorld()
 		owner3 := w3.alice.user.DataOwner()
 		now3 := w3.clock.Now().UTC()
@@ -2144,7 +2045,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 	})
 
 	t.Run("INV_MEM_05_turn_non_application_and_duplicates", func(t *testing.T) {
-		// 5a. Superseded attempt left its new MemoryRemember in store.
 		w1 := newTestWorld()
 		owner1 := w1.alice.user.DataOwner()
 		inID := "11111111-1111-4111-8111-000000000050"
@@ -2166,7 +2066,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		})
 		requireViolation(t, w1.checker.CheckSafetyAt(ctx, w1.targets, w1.clock.Now()), "INV-MEM-05.uncompleted_attempt_applied")
 
-		// 5b. Duplicate Core memory for same (Provenance, SourceInputID, Text) (checkpoint replay duplicate).
 		w2 := newTestWorld()
 		owner2 := w2.alice.user.DataOwner()
 		inID2 := "11111111-1111-4111-8111-000000000051"
@@ -2185,7 +2084,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		}
 		requireViolation(t, w2.checker.CheckSafetyAt(ctx, w2.targets, w2.clock.Now()), "INV-MEM-05.duplicate_memory")
 
-		// 5c. Duplicate Daily Log entry ID across shards of the same date.
 		w3 := newTestWorld()
 		owner3 := w3.alice.user.DataOwner()
 		now3 := w3.clock.Now().UTC()
@@ -2224,13 +2122,11 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 			t.Fatalf("baseline CheckSafetyAt: %v", err)
 		}
 
-		// 6a. Missing chunk in MemoryIndex.
 		if err := w.backend.DeleteMemoryChunk(ctx, owner, docstore.MemoryCoreChunkID("mem-biject-1")); err != nil {
 			t.Fatalf("DeleteMemoryChunk: %v", err)
 		}
 		requireViolation(t, w.checker.CheckSafetyAt(ctx, w.targets, w.clock.Now()), "INV-MEM-06.fts_missing_chunk")
 
-		// 6b. Mismatched chunk body in MemoryIndex.
 		now := w.clock.Now().UTC()
 		if err := w.backend.UpsertMemoryChunk(ctx, docstore.MemoryChunk{
 			Owner: owner, ChunkID: docstore.MemoryCoreChunkID("mem-biject-1"), Layer: docstore.MemoryLayerCore,
@@ -2241,7 +2137,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		}
 		requireViolation(t, w.checker.CheckSafetyAt(ctx, w.targets, w.clock.Now()), "INV-MEM-06.fts_chunk_mismatch")
 
-		// 6c. Orphan chunk in MemoryIndex.
 		if err := w.backend.UpsertMemoryChunk(ctx, docstore.MemoryChunk{
 			Owner: owner, ChunkID: docstore.MemoryCoreChunkID("ghost-id"), Layer: docstore.MemoryLayerCore,
 			About: "the user", Body: "Ghost chunk", Provenance: string(state.ProvenanceUserExplicit),
@@ -2253,7 +2148,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 	})
 
 	t.Run("INV_MEM_07_tenant_and_context_from_isolation", func(t *testing.T) {
-		// 7a. Unknown chunk owner + cross-user input reference.
 		w1 := newTestWorld()
 		aliceInputID := "11111111-1111-4111-8111-000000000070"
 		ts := seedUserInput(t, w1, w1.alice, aliceInputID, "Alice private secret.")
@@ -2277,7 +2171,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		requireViolation(t, err, "INV-MEM-07.unknown_chunk_owner")
 		requireViolation(t, err, "INV-MEM-07.cross_user_reference")
 
-		// 7b. Pre-ContextFrom summary item leaked into post-cutoff summary.
 		w2 := newTestWorld()
 		owner2 := w2.alice.user.DataOwner()
 		oldInputID := "11111111-1111-4111-8111-000000000071"
@@ -2301,7 +2194,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 	})
 
 	t.Run("INV_MEM_08_post_drain_quiescence", func(t *testing.T) {
-		// 8a. FlushedThrough < Through with no future wake and no active backoff -> violation.
 		w1 := newTestWorld()
 		owner1 := w1.alice.user.DataOwner()
 		t0 := w1.clock.Now().UTC()
@@ -2317,7 +2209,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		w1.clock.Advance(3 * time.Minute)
 		requireViolation(t, w1.checker.CheckQuiescence(ctx, w1.targets, w1.clock.Now()), "INV-MEM-08.unflushed_watermark")
 
-		// 8b. Active future LaneConversation wake (WakeAt > now) suppresses false positive until due.
 		if err := w1.backend.WakeUser(ctx, w1.alice.user.ID, docstore.LaneConversation, w1.clock.Now().Add(time.Minute)); err != nil {
 			t.Fatalf("WakeUser future: %v", err)
 		}
@@ -2325,14 +2216,12 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 			t.Fatalf("expected future scheduled wake to satisfy active-wake quiescence, got: %v", err)
 		}
 
-		// 8c. Once clock advances past WakeAt without draining, CheckLeases=true flags wake_lease_hygiene.
 		w1.clock.Advance(2 * time.Minute)
 		leaseChecker := invariants.New(invariants.Config{Backend: w1.backend, Now: w1.clock.Now, CheckLeases: true})
 		err := leaseChecker.CheckQuiescence(ctx, w1.targets, w1.clock.Now())
 		requireViolation(t, err, "INV-MEM-08.wake_lease_hygiene")
 		requireViolation(t, err, "INV-MEM-08.unflushed_watermark")
 
-		// 8d. FlushedThrough == Through with leftover retired Excerpts -> INV-MEM-08.stale_excerpts.
 		w2 := newTestWorld()
 		owner2 := w2.alice.user.DataOwner()
 		s0 := w2.clock.Now().UTC()
@@ -2346,8 +2235,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		})
 		requireViolation(t, w2.checker.CheckQuiescence(ctx, w2.targets, w2.clock.Now()), "INV-MEM-08.stale_excerpts")
 
-		// 8e. Unextracted completed turn past IdleExtractDelay (+2m) triggers INV-MEM-08.unextracted_after_idle,
-		// while before +2m, with future LaneConversation wake, or during active extract failure backoff it passes.
 		w3 := newTestWorld()
 		owner3 := w3.alice.user.DataOwner()
 		e0 := w3.clock.Now().UTC()
@@ -2372,19 +2259,15 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 			Items:            []state.SummaryItem{},
 			UpdatedAt:        e1,
 		})
-		// Before IdleExtractDelay (halfway past e2): passes cleanly without needing a wake.
 		w3.clock.Advance(2*time.Minute + state.IdleExtractDelay/2)
 		if err := w3.checker.CheckQuiescence(ctx, w3.targets, w3.clock.Now()); err != nil {
 			t.Fatalf("expected unextracted turn before IdleExtractDelay to pass quiescence, got: %v", err)
 		}
-		// Past IdleExtractDelay after e2 with no future wake and no active backoff: violation!
 		w3.clock.Advance(state.IdleExtractDelay)
 		requireViolation(t, w3.checker.CheckQuiescence(ctx, w3.targets, w3.clock.Now()), "INV-MEM-08.unextracted_after_idle")
-		// Store-only mode (Backend == nil) also catches INV-MEM-08.unextracted_after_idle.
 		storeOnlyChecker := invariants.New(invariants.Config{Now: w3.clock.Now})
 		requireViolation(t, storeOnlyChecker.CheckQuiescence(ctx, w3.targets, w3.clock.Now()), "INV-MEM-08.unextracted_after_idle")
 
-		// Scheduled future LaneConversation wake suppresses false positive until due.
 		if err := w3.backend.WakeUser(ctx, w3.alice.user.ID, docstore.LaneConversation, w3.clock.Now().Add(2*time.Minute)); err != nil {
 			t.Fatalf("WakeUser future extract: %v", err)
 		}
@@ -2392,7 +2275,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 			t.Fatalf("expected future scheduled wake to satisfy quiescence after IdleExtractDelay, got: %v", err)
 		}
 
-		// Clear future wake and enter active extract retry backoff (< 10m since UpdatedAt): passes cleanly.
 		if cw, ok, err := w3.backend.ClaimUserWake(ctx, docstore.LaneConversation, "w-clear", 30*time.Second); err == nil && ok {
 			_, _ = w3.backend.ParkUserWake(ctx, w3.alice.user.ID, docstore.LaneConversation, "w-clear", cw.WakeSeq)
 		}
@@ -2412,14 +2294,11 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		if err := w3.checker.CheckQuiescence(ctx, w3.targets, w3.clock.Now()); err != nil {
 			t.Fatalf("expected active extract failure backoff to suppress unextracted_after_idle, got: %v", err)
 		}
-		// Once backoff window expires (>= 10m after UpdatedAt), unextracted_after_idle fires again.
 		w3.clock.Advance(9 * time.Minute)
 		requireViolation(t, w3.checker.CheckQuiescence(ctx, w3.targets, w3.clock.Now()), "INV-MEM-08.unextracted_after_idle")
 	})
 
 	t.Run("positive_decoupled_extracted_through_states", func(t *testing.T) {
-		// 1. Valid uncompacted session-idle summary:
-		// Through == 0, FlushedThrough == 0, ExtractedThrough == T3 > From, Items/Gist/Excerpts/Turns empty.
 		w1 := newTestWorld()
 		owner1 := w1.alice.user.DataOwner()
 		from := w1.clock.Now().UTC()
@@ -2433,7 +2312,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		t1 := seedUserInput(t, w1, w1.alice, in1, "Remember I fly out of SEA.")
 		t2 := seedUserInput(t, w1, w1.alice, in2, "I prefer window seats.")
 		t3 := seedUserInput(t, w1, w1.alice, in3, "My dog is named Mochi.")
-		// Mark inputs consumed so conv.Pending() == false for CheckQuiescence.
 		ctrl1, _, _ = w1.alice.store.ConversationStatus(ctx)
 		ctrl1.ContextFrom = from
 		ctrl1.Consumed = ctrl1.Received
@@ -2459,7 +2337,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 			})
 		}
 
-		// Commit uncompacted session-idle summary + extracted Core memory & Daily Log atomically.
 		w1.clock.Advance(state.IdleExtractDelay + time.Second)
 		now1 := w1.clock.Now().UTC()
 		sumIdle, err := w1.alice.store.CommitFlushAndCompact(ctx, state.FlushAndCompactRequest{
@@ -2505,7 +2382,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 			t.Fatalf("CheckQuiescence uncompacted session-idle summary failed: %v", err)
 		}
 
-		// Uncompacted summary with ExtractFailures > 0 (on a newer turn t4 > t3) and LastDreamAt > 0 also passes.
 		t4 := w1.clock.Now().UTC().Add(time.Second)
 		writeDoc(t, w1, "owners/"+owner1+"/conversation/summary", state.ConversationSummary{
 			From:                      from,
@@ -2520,8 +2396,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 			t.Fatalf("CheckSafetyAt uncompacted summary with ExtractFailures & LastDreamAt failed: %v", err)
 		}
 
-		// 2. Valid compacted + ahead-extracted summary:
-		// From < FlushedThrough == Through < ExtractedThrough.
 		w2 := newTestWorld()
 		owner2 := w2.alice.user.DataOwner()
 		c0 := w2.clock.Now().UTC()
@@ -2545,7 +2419,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 
 		w2.clock.Advance(state.IdleExtractDelay + time.Second)
 		now2 := w2.clock.Now().UTC()
-		// Step 1: Compact turn c1 only (FlushedThrough == Through == c1, ExtractedThrough == c1).
 		itemA := state.SummaryItem{ID: "si_ahead_1", Kind: "constraint", Quote: "Use Go 1.24 for services.", InputID: inA}
 		writeDoc(t, w2, "owners/"+owner2+"/conversation/summary", state.ConversationSummary{
 			From:             c0,
@@ -2561,7 +2434,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		if err := w2.checker.CheckSafetyAt(ctx, w2.targets, w2.clock.Now()); err != nil {
 			t.Fatalf("CheckSafetyAt baseline compacted summary failed: %v", err)
 		}
-		// Step 2: Session-idle extraction advances ExtractedThrough to c2 > Through (c1) without compacting c2!
 		writeDoc(t, w2, "owners/"+owner2+"/conversation/summary", state.ConversationSummary{
 			From:             c0,
 			FlushedThrough:   c1,
@@ -2582,7 +2454,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 	})
 
 	t.Run("INV_MEM_01_extracted_through_negative_mutations", func(t *testing.T) {
-		// 1. ExtractedThrough < EffectiveFlushedThrough -> INV-MEM-01.watermark_bounds.
 		w1 := newTestWorld()
 		owner1 := w1.alice.user.DataOwner()
 		t0 := w1.clock.Now().UTC()
@@ -2599,7 +2470,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		})
 		requireViolation(t, w1.checker.CheckSafetyAt(ctx, w1.targets, w1.clock.Now()), "INV-MEM-01.watermark_bounds")
 
-		// 2. ExtractedThrough < ContextFrom in current epoch -> INV-MEM-01.watermark_bounds.
 		w2 := newTestWorld()
 		owner2 := w2.alice.user.DataOwner()
 		cutoff := w2.clock.Now().UTC().Add(10 * time.Minute)
@@ -2614,7 +2484,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		})
 		requireViolation(t, w2.checker.CheckSafetyAt(ctx, w2.targets, w2.clock.Now()), "INV-MEM-01.watermark_bounds")
 
-		// 3. EffectiveExtractedThrough regressing backwards across steps in the same epoch -> INV-MEM-01.watermark_monotonic.
 		w3 := newTestWorld()
 		owner3 := w3.alice.user.DataOwner()
 		b0 := w3.clock.Now().UTC()
@@ -2644,7 +2513,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		})
 		requireViolation(t, w3.checker.CheckSafetyAt(ctx, w3.targets, w3.clock.Now()), "INV-MEM-01.watermark_monotonic")
 
-		// 4. Uncompacted EffectiveExtractedThrough regressing backwards across steps -> INV-MEM-01.watermark_monotonic.
 		w4 := newTestWorld()
 		owner4 := w4.alice.user.DataOwner()
 		u0 := w4.clock.Now().UTC()
@@ -2667,14 +2535,12 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		})
 		requireViolation(t, w4.checker.CheckSafetyAt(ctx, w4.targets, w4.clock.Now()), "INV-MEM-01.watermark_monotonic")
 
-		// 5. ExtractedThrough advancing on extraction failure -> INV-MEM-01.failure_watermark_advance.
 		w5 := newTestWorld()
 		owner5 := w5.alice.user.DataOwner()
 		f0 := w5.clock.Now().UTC()
 		f1 := f0.Add(time.Minute)
 		f2 := f0.Add(2 * time.Minute)
 		f3 := f0.Add(3 * time.Minute)
-		// 5a: Single-snapshot jump to LastExtractFailureThrough.
 		writeDoc(t, w5, "owners/"+owner5+"/conversation/summary", state.ConversationSummary{
 			From:                      f0,
 			ExtractedThrough:          f2,
@@ -2685,7 +2551,6 @@ func TestMemoryInvariants_INV_MEM_01_to_08(t *testing.T) {
 		})
 		requireViolation(t, w5.checker.CheckSafetyAt(ctx, w5.targets, w5.clock.Now()), "INV-MEM-01.failure_watermark_advance")
 
-		// 5b: Cross-step advance while ExtractFailures increments on the same LastExtractFailureThrough.
 		w6 := newTestWorld()
 		owner6 := w6.alice.user.DataOwner()
 		writeDoc(t, w6, "owners/"+owner6+"/conversation/summary", state.ConversationSummary{

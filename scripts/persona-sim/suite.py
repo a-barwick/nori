@@ -2,10 +2,8 @@
 """Run a persona VST suite with one isolated runner process (and one ephemeral DB) per persona,
 then grade all bundles together and optionally diff against a baseline scorecard.
 
-Why not `runner.py --concurrency N`? That shares one ephemeral DB across personas, and every
-`nori-sim` worker pool then claims every user's work with its own virtual clock and artifact dir
-(see docs/vst-findings.md, H-1). Running each persona in its own `runner.py --persona` process keeps
-them fully isolated.
+Standalone runner processes also allocate individual databases for isolated personas.
+The suite owns retries, aggregate grading, resource limits and baseline comparison.
 
 Starts are staggered so concurrent schema migrations don't exhaust Postgres's shared lock table
 (`out of shared memory`, SQLSTATE 53200, with the default max_locks_per_transaction=64).
@@ -60,7 +58,6 @@ _cost_lock = threading.Lock()
 _active_procs_lock = threading.Lock()
 _active_procs: set[subprocess.Popen[Any]] = set()
 
-# Provider failures that invalidate a persona run (every task/flush/dream call fails).
 FATAL_PROVIDER_MARKERS = (
     "HTTP 402",
     "HTTP 401",
@@ -182,7 +179,6 @@ def preflight_credits(
     inner_model = (env.get("MODEL_NAME") or "openai/gpt-6.1-terra").strip()
     uses_openai_inner = inner_model == "gpt-6.1-terra"
 
-    # 1. OpenAI direct preflight (always required for outer model when not in gateway mode)
     openai_key = (env.get("OPENAI_API_KEY") or "").strip()
     if not openai_key:
         raise SystemExit(
@@ -208,7 +204,6 @@ def preflight_credits(
     except Exception as exc:
         print(f"[suite] WARN OpenAI preflight call skipped: {exc}", flush=True)
 
-    # 2. OpenRouter preflight (only when inner model is routed through OpenRouter)
     if uses_openai_inner:
         return
 
@@ -235,7 +230,7 @@ def preflight_credits(
                 )
         except SystemExit:
             raise
-        except Exception as exc:  # network hiccup: warn, don't block
+        except Exception as exc:
             print(f"[suite] WARN OpenRouter credit preflight skipped: {exc}", flush=True)
 
     try:
@@ -522,7 +517,6 @@ def resolve_suite_env(
     if extra and "--stub-models" in extra:
         return {**dev_dotenv, **proc_env}
 
-    # Check if an external gateway is already explicitly configured.
     if (proc_env.get("NORI_MODEL_PROVIDER") or "").strip().lower() == "gateway":
         return {**strip_raw_provider_keys(dev_dotenv), **proc_env}
 
@@ -530,11 +524,9 @@ def resolve_suite_env(
     using_vst_file = vst_path.is_file() and vst_path.resolve() != default_dev_env_path.resolve()
     vst_dotenv = load_dotenv(vst_path) if using_vst_file else {}
 
-    # Never inherit raw dev provider keys from root .env unless allow_dev_key=True.
     base_dev = dev_dotenv if allow_dev_key else strip_raw_provider_keys(dev_dotenv)
     merged = {**base_dev, **vst_dotenv, **proc_env}
 
-    # Collect isolated test keys from .env.vst or *_TEST_API_KEY vars.
     test_keys: dict[str, str] = {}
     for prefix in ("OPENAI", "OPENROUTER", "ANTHROPIC"):
         test_val = (merged.get(f"{prefix}_TEST_API_KEY") or "").strip()
@@ -543,7 +535,6 @@ def resolve_suite_env(
         if chosen:
             test_keys[f"{prefix}_API_KEY"] = chosen
 
-    # Verify isolated test keys don't silently reuse dev or prod keys from .env.
     if test_keys and not allow_dev_key:
         for base_var, val in test_keys.items():
             dev_val = (dev_dotenv.get(base_var) or "").strip()
@@ -847,7 +838,6 @@ def rejudge_errors(run_dir: Path) -> list[tuple[str, str, str]]:
     if redone:
         sc["regraded_judge_errors"] = sc.get("regraded_judge_errors", []) + [{"slug": s, "id": i, "verdict": v} for s, i, v in redone]
         if sc.get("baseline_diff"):
-            # keep the diff consistent with the re-judged scores
             by = {p["slug"]: p for p in sc["personas"]}
             for d in sc["baseline_diff"]["personas"]:
                 if d["slug"] not in by:
@@ -960,10 +950,8 @@ def main() -> int:
                     )
                 )
                 child_env = gw.child_env(os.environ, outer_model, inner_model)
-                # Route in-process judge/rejudge calls through the same loopback gateway.
                 os.environ["SIM_GATEWAY_URL"] = gw.url
                 os.environ["SIM_GATEWAY_TOKEN"] = gw.token
-                # Preflight outer model through the local gateway so preflight is also metered/verified.
                 status, msg = _probe_chat_endpoint(
                     f"{gw.url}/chat/completions",
                     gw.token,

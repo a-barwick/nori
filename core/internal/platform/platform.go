@@ -1,9 +1,3 @@
-// Package platform wires processes to their configured infrastructure. Nothing
-// here has a default target: a process with missing configuration fails at
-// startup instead of reaching a deployed project.
-//
-// This is the only production code that names a storage backend. Everything
-// else depends on the contracts in internal/state.
 package platform
 
 import (
@@ -26,15 +20,12 @@ import (
 	"nori/internal/users"
 )
 
-// Storage holds one process-wide document backend and S3 object client so
-// per-user scopes share connection pools instead of opening one per user.
 type Storage struct {
 	docs      docstore.Backend
 	artifacts func(users.User) state.ArtifactStore
-	// Now, when set, overrides the clock used by opened records.Database stores (used in simulation tests).
-	Now func() time.Time
-	mu  sync.Mutex
-	s3  *s3.Client
+	Now       func() time.Time
+	mu        sync.Mutex
+	s3        *s3.Client
 }
 
 func OpenStorage(ctx context.Context, s settings.Settings) (*Storage, error) {
@@ -45,7 +36,6 @@ func OpenStorage(ctx context.Context, s settings.Settings) (*Storage, error) {
 	return &Storage{docs: docs}, nil
 }
 
-// NewStorage wraps an already-open document backend and optional per-user artifact factory.
 func NewStorage(docs docstore.Backend, artifacts func(users.User) state.ArtifactStore) *Storage {
 	return &Storage{docs: docs, artifacts: artifacts}
 }
@@ -175,8 +165,6 @@ func OpenStore(ctx context.Context, s settings.Settings, user users.User) (state
 	return meteredStore(s, user, state.Compose(documents, objects))
 }
 
-// openLocalArtifacts opens the development artifact directory when NORI_LOCAL_ARTIFACT_DIR is set. It returns nil
-// when it is not set. The directory is allowed only with a loopback database.
 func openLocalArtifacts(s settings.Settings, user users.User) (state.ArtifactStore, error) {
 	directory := s.Store.LocalArtifactDir
 	if directory == "" {

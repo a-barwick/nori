@@ -114,7 +114,6 @@ func (a *Assistant) mcpTools(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, list[mcp.Tool]{Items: items})
 }
 
-// mcpCredential stores a configured server credential. It is write-only: no route ever returns it.
 func (a *Assistant) mcpCredential(w http.ResponseWriter, r *http.Request) {
 	var value mcp.CredentialInput
 	if !decode(w, r, &value) {

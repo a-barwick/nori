@@ -1,0 +1,16 @@
+{
+  "catalog": {
+    "default_chat_profile_id": "chat-default",
+    "default_task_profile_id": "task-default",
+    "profiles": [
+      {"id":"chat-default","version":"v1","label":"Default chat","backend":"gateway","model":"chat","lanes":["chat"],"supported_reasoning":["low","high"],"paid":true},
+      {"id":"task-default","version":"v1","label":"Default task","backend":"gateway","model":"task","lanes":["task"],"supported_reasoning":["medium"],"paid":true}
+    ]
+  },
+  "cases": [
+    {"name":"missing catalog","catalogAvailable":false,"selection":{"chat_profile_id":"chat-default","task_reasoning":"medium"},"expected":{}},
+    {"name":"reasoning on default lanes","catalogAvailable":true,"selection":{"chat_reasoning":"high","task_reasoning":"medium"},"expected":{"chat_reasoning":"high","task_reasoning":"medium"}},
+    {"name":"expired or unsupported selection","catalogAvailable":true,"selection":{"chat_profile_id":"removed","chat_reasoning":"low","task_profile_id":"task-default","task_reasoning":"high"},"expected":{"task_profile_id":"task-default"}},
+    {"name":"profile must support its lane","catalogAvailable":true,"selection":{"chat_profile_id":"task-default","task_profile_id":"chat-default"},"expected":{}}
+  ]
+}

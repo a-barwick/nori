@@ -1,13 +1,8 @@
-// Package env provides deterministic simulation environment primitives for
-// Nori's deterministic simulation tests: a virtual clock, deterministic UUID
-// generator, step trace logger, in-memory dispatch.Orchestrator with fault
-// injection, and in-memory wake.Waker / wake.DelayedWaker with fault injection.
 package env
 
 import (
 	"encoding/binary"
 	"hash"
-	"math"
 	"time"
 )
 
@@ -31,13 +26,6 @@ func writeBool(h hash.Hash, b bool) {
 	} else {
 		_, _ = h.Write([]byte{0})
 	}
-}
-
-func writeFloat64(h hash.Hash, f float64) {
-	if f == 0 {
-		f = 0
-	}
-	writeUint64(h, math.Float64bits(f))
 }
 
 func writeString(h hash.Hash, s string) {

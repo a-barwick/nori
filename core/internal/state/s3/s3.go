@@ -1,4 +1,3 @@
-// Package s3 stores private artifact bytes in Amazon S3.
 package s3
 
 import (
@@ -21,7 +20,6 @@ type Store struct {
 
 var _ state.ArtifactStore = (*Store)(nil)
 
-// Client holds one S3 SDK client shared across user-scoped stores.
 type Client struct{ raw *sdk.Client }
 
 func OpenClient(ctx context.Context, region string) (*Client, error) {

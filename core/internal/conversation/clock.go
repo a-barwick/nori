@@ -2,11 +2,9 @@ package conversation
 
 import "time"
 
-// Clock is the user's time zone, which the outer model needs to read "tomorrow" or "at ten".
 type Clock struct {
 	Location *time.Location
-	// Now returns the current time for prompt context. Nil uses time.Now.
-	Now func() time.Time
+	Now      func() time.Time
 }
 
 func (c Clock) location() *time.Location {

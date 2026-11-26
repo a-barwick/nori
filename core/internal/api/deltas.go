@@ -2,14 +2,11 @@ package api
 
 import "sync"
 
-// AssistantDelta carries an ephemeral, non-sequenced streaming text snapshot for an
-// in-flight action-free outer reply. It never advances the durable event log cursor.
 type AssistantDelta struct {
 	TurnID string `json:"turn_id"`
 	Text   string `json:"text"`
 }
 
-// DeltaBroker fans out ephemeral streaming deltas to active SSE connections for one user.
 type DeltaBroker struct {
 	mu   sync.RWMutex
 	subs map[chan AssistantDelta]struct{}
@@ -39,8 +36,6 @@ func (b *DeltaBroker) Publish(turnID, text string) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	for ch := range b.subs {
-		// Non-blocking send: drop stale intermediate snapshot if a client lags so
-		// the latest text always gets through without slowing the model stream.
 		select {
 		case ch <- delta:
 		default:

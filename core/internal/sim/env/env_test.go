@@ -38,7 +38,6 @@ func TestClock(t *testing.T) {
 		t.Fatalf("after Set: got %v (%v), want %v (UTC)", c.Now(), c.Now().Location(), custom.UTC())
 	}
 
-	// Verify concurrent mutex safety under -race.
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Add(1)
@@ -115,7 +114,6 @@ func TestTraceRingBufferFormatAndDigest(t *testing.T) {
 	if full.Len() != 5 || full.Total() != 5 {
 		t.Fatalf("full Len/Total = %d/%d, want 5/5", full.Len(), full.Total())
 	}
-	// Digest covers all recorded events regardless of ring-buffer retention.
 	if ring.Digest() != full.Digest() {
 		t.Fatalf("ring digest %s != full digest %s", ring.Digest(), full.Digest())
 	}
@@ -139,7 +137,6 @@ func TestWakerFaultsDelaysAndDelayedWaker(t *testing.T) {
 	ctx := context.Background()
 	clk := NewClock(time.Time{})
 
-	// 1. EnqueueErrProb = 1.0 returns ErrInjectedWakeFault and enqueues nothing.
 	wErr := NewWaker(clk, true, WakerFaults{EnqueueErrProb: 1.0}, rand.New(rand.NewPCG(10, 20)))
 	if !wErr.WorkersNeedWake() {
 		t.Fatalf("WorkersNeedWake() = false, want true")
@@ -151,7 +148,6 @@ func TestWakerFaultsDelaysAndDelayedWaker(t *testing.T) {
 		t.Fatalf("pending=%d stats=%+v", wErr.PendingCount(), wErr.Stats())
 	}
 
-	// 2. DropProb = 1.0 returns nil but silently drops the wake.
 	wDrop := NewWaker(clk, false, WakerFaults{DropProb: 1.0}, rand.New(rand.NewPCG(10, 20)))
 	if wDrop.WorkersNeedWake() {
 		t.Fatalf("WorkersNeedWake() = true, want false")
@@ -163,7 +159,6 @@ func TestWakerFaultsDelaysAndDelayedWaker(t *testing.T) {
 		t.Fatalf("pending=%d stats=%+v", wDrop.PendingCount(), wDrop.Stats())
 	}
 
-	// 3. DuplicateProb = 1.0 + MaxDelay schedules 2 copies within [0, MaxDelay].
 	wDup := NewWaker(clk, true, WakerFaults{
 		DuplicateProb: 1.0,
 		MaxDelay:      10 * time.Second,
@@ -186,7 +181,6 @@ func TestWakerFaultsDelaysAndDelayedWaker(t *testing.T) {
 		}
 	}
 
-	// 4. DelayedWaker via wake.At (both direct and wrapped with wake.ForUser).
 	wDup.SetFaultsEnabled(false)
 	future := t0.Add(5 * time.Minute)
 	if err := wake.At(ctx, uWaker, future); err != nil {
@@ -199,7 +193,6 @@ func TestWakerFaultsDelaysAndDelayedWaker(t *testing.T) {
 		t.Fatalf("PendingCount = %d, want 4", wDup.PendingCount())
 	}
 
-	// PopDue at t0+10s drains only the 2 worker wakes, leaving the 2 delayed wakes.
 	due1 := wDup.PopDue(t0.Add(10 * time.Second))
 	if len(due1) != 2 {
 		t.Fatalf("PopDue(t0+10s) = %d events, want 2", len(due1))
@@ -209,7 +202,6 @@ func TestWakerFaultsDelaysAndDelayedWaker(t *testing.T) {
 		t.Fatalf("NextDue = (%v, %v), want (%v, true)", nextDue, ok, future)
 	}
 
-	// PopDue at future drains u1's delayed wake; PopDue at future+1m drains u2's.
 	due2 := wDup.PopDue(future)
 	if len(due2) != 1 || due2[0].Kind != WakeDelayed || due2[0].UserID != "u1" {
 		t.Fatalf("PopDue(future) = %+v", due2)
@@ -237,12 +229,10 @@ func TestWakerWithRepairerSmoke(t *testing.T) {
 		Now:     clk.Now,
 	}
 
-	// Enqueue error must not throttle the next retry.
 	if err := repairer.Repair(ctx); !errors.Is(err, ErrInjectedWakeFault) {
 		t.Fatalf("Repair with EnqueueErrProb=1 = %v, want ErrInjectedWakeFault", err)
 	}
 
-	// Disable faults -> immediate retry succeeds and enqueues conversation wake.
 	w.SetFaultsEnabled(false)
 	if err := repairer.Repair(ctx); err != nil {
 		t.Fatalf("Repair after clearing fault = %v", err)
@@ -251,7 +241,6 @@ func TestWakerWithRepairerSmoke(t *testing.T) {
 		t.Fatalf("PendingCount = %d, want 1", w.PendingCount())
 	}
 
-	// Same version within 1 minute is throttled.
 	clk.Advance(30 * time.Second)
 	if err := repairer.Repair(ctx); err != nil {
 		t.Fatalf("Repair within throttle window = %v", err)
@@ -260,7 +249,6 @@ func TestWakerWithRepairerSmoke(t *testing.T) {
 		t.Fatalf("PendingCount should stay 1 while throttled, got %d", w.PendingCount())
 	}
 
-	// After 1 minute virtual time, Repair re-emits the wake (repairing a dropped wake).
 	clk.Advance(31 * time.Second)
 	if err := repairer.Repair(ctx); err != nil {
 		t.Fatalf("Repair after 1 minute = %v", err)
@@ -330,7 +318,6 @@ func TestDigestOrderIndependence(t *testing.T) {
 	clkA := NewClock(time.Time{})
 	clkB := NewClock(time.Time{})
 
-	// Waker Digest should be independent of enqueue order for equal logical queues.
 	wA := NewWaker(clkA, true, WakerFaults{}, nil)
 	wB := NewWaker(clkB, true, WakerFaults{}, nil)
 

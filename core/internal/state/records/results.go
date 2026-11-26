@@ -35,7 +35,6 @@ func (d *Database) readResult(tx *docstore.Transaction, id string) (*state.Resul
 	return &result, nil
 }
 
-// SaveResult creates a task's result once. A retry finds the saved record.
 func (d *Database) SaveResult(ctx context.Context, result state.Result) (state.Result, error) {
 	saved := result
 	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
@@ -79,12 +78,10 @@ func (d *Database) RecentResults(ctx context.Context, limit int) ([]state.Result
 	return documents[state.Result](d.results().OrderBy("created_at", docstore.Desc).Limit(limit).Documents(ctx))
 }
 
-// RecentRuns lists the newest tasks first. Tasks from before results existed are only found this way.
 func (d *Database) RecentRuns(ctx context.Context, limit int) ([]state.Run, error) {
 	return documents[state.Run](d.runs().OrderBy("started_at", docstore.Desc).Limit(limit).Documents(ctx))
 }
 
-// MarkDelivered records that a browser showed these results. The first report stands.
 func (d *Database) MarkDelivered(ctx context.Context, ids []string) error {
 	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		results := []*state.Result{}
@@ -93,7 +90,6 @@ func (d *Database) MarkDelivered(ctx context.Context, ids []string) error {
 			if err != nil {
 				return err
 			}
-			// A result no reply has named can't have been shown.
 			if result != nil && result.ReportedAt != nil && result.DeliveredAt == nil {
 				results = append(results, result)
 			}
@@ -118,8 +114,6 @@ func (d *Database) MarkDelivered(ctx context.Context, ids []string) error {
 	})
 }
 
-// replyResults reads the results a turn's reply reports: those of the tasks whose end it announces, and those the
-// outer model chose to show.
 func (d *Database) replyResults(tx *docstore.Transaction, t state.ConversationTurn) ([]state.Result, error) {
 	seen := map[string]bool{}
 	found := []state.Result{}

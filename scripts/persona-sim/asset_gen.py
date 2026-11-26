@@ -20,7 +20,6 @@ def _pdf_escape(text: str) -> str:
 def write_text_pdf(path: Path, title: str, lines: list[str]) -> None:
     """Write a valid single- or multi-page PDF 1.4 containing extractable text lines."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    # Chunk lines into pages of ~44 lines each
     max_lines_per_page = 44
     all_lines = [title, "=" * min(len(title), 72), ""] + lines
     pages: list[list[str]] = [
@@ -28,13 +27,6 @@ def write_text_pdf(path: Path, title: str, lines: list[str]) -> None:
         for i in range(0, max(1, len(all_lines)), max_lines_per_page)
     ]
 
-    # Object layout:
-    # 1: Catalog
-    # 2: Pages
-    # 3: Font (Helvetica)
-    # For each page p (0..N-1):
-    #   4 + 2*p: Page object
-    #   5 + 2*p: Content stream
     objects: list[bytes] = []
 
     page_ids = [4 + 2 * i for i in range(len(pages))]
@@ -51,7 +43,6 @@ def write_text_pdf(path: Path, title: str, lines: list[str]) -> None:
         )
         stream_parts = ["BT", "/F1 10 Tf", "50 750 Td", "14 TL"]
         for line_idx, raw_line in enumerate(page_lines):
-            # Keep ASCII-safe for Type1 Helvetica while preserving readability
             safe_line = raw_line.encode("latin-1", errors="replace").decode("latin-1")
             escaped = _pdf_escape(safe_line)
             if line_idx == 0:
@@ -93,8 +84,6 @@ def _png_chunk(chunk_type: bytes, data: bytes) -> bytes:
     return struct.pack(">I", len(data)) + chunk_type + data + struct.pack(">I", crc)
 
 
-# Original 5x7 ASCII bitmap font covering all 95 printable ASCII characters (0x20..0x7E).
-# Each tuple has 7 rows; bit 4 (0b10000) is the leftmost pixel, bit 0 (0b00001) is the rightmost.
 _FONT_5X7: dict[str, tuple[int, int, int, int, int, int, int]] = {
     " ": (0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000),
     "!": (0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00000, 0b00100),
@@ -194,18 +183,18 @@ _FONT_5X7: dict[str, tuple[int, int, int, int, int, int, int]] = {
 }
 
 _UNICODE_PUNCT_MAP = str.maketrans({
-    "\u2014": "-",   # em dash —
-    "\u2013": "-",   # en dash –
-    "\u2212": "-",   # minus −
-    "\u2018": "'",   # ‘
-    "\u2019": "'",   # ’
-    "\u201c": '"',   # “
-    "\u201d": '"',   # ”
-    "\u2026": "...", # …
-    "\u00b0": "deg", # °
-    "\u2192": "->",  # →
-    "\u2022": "*",   # •
-    "\u00a0": " ",   # nbsp
+    "\u2014": "-",
+    "\u2013": "-",
+    "\u2212": "-",
+    "\u2018": "'",
+    "\u2019": "'",
+    "\u201c": '"',
+    "\u201d": '"',
+    "\u2026": "...",
+    "\u00b0": "deg",
+    "\u2192": "->",
+    "\u2022": "*",
+    "\u00a0": " ",
 })
 
 
@@ -345,7 +334,6 @@ def write_color_grid_png(
         for x in range(width):
             idx = ((x * bands) // width + band_y) % bands
             r, g, b = palette[idx]
-            # Subtle border frame
             if x < 6 or x >= width - 6 or y < 6 or y >= height - 6:
                 r, g, b = 36, 40, 46
             p = row_off + x * 3
@@ -399,7 +387,6 @@ def write_color_grid_png(
         y1 = height - margin_y
 
         if x1 > x0 + 2 and y1 > y0 + 2:
-            # Crisp high-contrast card panel and 1px dark border
             _fill_rect(rgb, width, height, x0, y0, x1, y1, (36, 40, 46))
             _fill_rect(rgb, width, height, x0 + 1, y0 + 1, x1 - 1, y1 - 1, (248, 248, 246))
 
@@ -435,7 +422,7 @@ def write_color_grid_png(
     rows = bytearray()
     row_bytes = width * 3
     for y in range(height):
-        rows.append(0)  # Filter type 0 (None)
+        rows.append(0)
         rows.extend(rgb[y * row_bytes : (y + 1) * row_bytes])
 
     ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)

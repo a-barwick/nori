@@ -6,7 +6,6 @@ private struct DocumentPresentation: Identifiable, Hashable {
     let id: String
 }
 
-/// Root 3-tab navigation shell for Nori iOS.
 public struct NoriRootView: View {
     @AppStorage(NoriAppearance.storageKey) private var appearanceRawValue: String = NoriAppearance.system.rawValue
     @Environment(\.scenePhase) private var scenePhase
@@ -183,7 +182,6 @@ public struct NoriRootView: View {
             .tint(NoriColors.accent)
             .background(NoriColors.canvas)
 
-            // Floating NoriToast banner
             if let toast = store.toastMessage {
                 NoriToast(toast)
                     .padding(.top, 10)
@@ -220,7 +218,6 @@ public struct NoriRootView: View {
         }
     }
 
-    // MARK: - Cross-Tab Navigation Helpers
 
     private func openDocument(_ item: NoriCore.LibraryItem) {
         presentedDocument = DocumentPresentation(id: item.id)

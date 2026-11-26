@@ -10,7 +10,6 @@ import (
 	"time"
 )
 
-// TraceEntry is a single recorded simulation event.
 type TraceEntry struct {
 	Seq    int64
 	Step   int
@@ -21,10 +20,6 @@ type TraceEntry struct {
 	Detail string
 }
 
-// Trace is a lightweight deterministic event logger for simulation steps.
-// When created with a positive capacity it retains the most recent capacity
-// entries in a ring buffer while still hashing every recorded entry into
-// Digest(). When capacity <= 0 it retains all entries.
 type Trace struct {
 	mu       sync.Mutex
 	capacity int
@@ -35,8 +30,6 @@ type Trace struct {
 	digest   hash.Hash
 }
 
-// NewTrace creates a Trace. A positive capacity bounds retained entries to a
-// ring buffer of that size; capacity <= 0 retains all entries.
 func NewTrace(capacity int) *Trace {
 	h := sha256.New()
 	writeTag(h, "sim.env.trace.v1")
@@ -50,7 +43,6 @@ func NewTrace(capacity int) *Trace {
 	return t
 }
 
-// Record appends one deterministic event to the trace.
 func (t *Trace) Record(step int, at time.Time, userID, actor, action, detail string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -88,30 +80,24 @@ func (t *Trace) Record(step int, at time.Time, userID, actor, action, detail str
 	t.count = len(t.entries)
 }
 
-// Len returns the number of currently retained trace entries.
 func (t *Trace) Len() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.count
 }
 
-// Total returns the total number of entries recorded over the trace's lifetime,
-// including any evicted from a bounded ring buffer.
 func (t *Trace) Total() int64 {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.total
 }
 
-// Entries returns a chronological copy of all retained entries.
 func (t *Trace) Entries() []TraceEntry {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.lastLocked(t.count)
 }
 
-// FormatLast formats the last n retained entries as newline-separated diagnostic
-// lines. If n <= 0 or n > retained count, all retained entries are formatted.
 func (t *Trace) FormatLast(n int) string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -138,8 +124,6 @@ func (t *Trace) FormatLast(n int) string {
 	return b.String()
 }
 
-// Digest returns a canonical hex-encoded SHA-256 hash over every trace entry
-// recorded since the Trace was created.
 func (t *Trace) Digest() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()

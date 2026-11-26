@@ -22,22 +22,13 @@ import (
 	"nori/internal/state"
 )
 
-// OAuth sign-in for remote MCP servers, per the MCP authorization specification: the server's protected-resource
-// metadata names its authorization server; that server's metadata gives the endpoints; Nori registers itself
-// dynamically when the server offers registration, then runs the authorization code flow with PKCE and the resource
-// parameter. The token, its refresh token and the client registration are the server's credential in the credential
-// store; refreshed tokens are written back, and sign-out revokes when the server offers revocation.
-
 const (
 	CollectionAuthAttempts = "mcp_auth_attempts"
 	authAttemptLifetime    = 15 * time.Minute
 )
 
-// ErrNoRegistration is a server whose authorization server neither offers dynamic registration nor has a client
-// configured for Nori.
 var ErrNoRegistration = errors.New("this MCP server's sign-in needs an app registered with the provider; it does not offer dynamic client registration")
 
-// oauthCredential is what Nori stores for an OAuth-signed-in server.
 type oauthCredential struct {
 	Token        *oauth2.Token `json:"token"`
 	ClientID     string        `json:"client_id"`
@@ -63,7 +54,6 @@ type authAttempt struct {
 	ExpiresAt  time.Time       `json:"expires_at"`
 }
 
-// AuthAttempt is the sign-in step the client opens, as in the contract AuthAttempt.
 type AuthAttempt struct {
 	ID           string    `json:"id"`
 	AuthorizeURL string    `json:"authorize_url"`
@@ -79,8 +69,6 @@ func (s *Service) httpClient() *http.Client {
 	return s.newHTTPClient(30 * time.Second)
 }
 
-// discoverAuth finds the authorization server for an MCP endpoint: first from the WWW-Authenticate challenge of an
-// unauthenticated request, then from the well-known protected-resource locations.
 func (s *Service) discoverAuth(ctx context.Context, endpoint string) (*oauthex.ProtectedResourceMetadata, *oauthex.AuthServerMeta, error) {
 	if err := s.validEndpoint(endpoint); err != nil {
 		return nil, nil, err

@@ -6,17 +6,15 @@ import (
 )
 
 func TestAnthropicCostOpus55AndHaiku55Tiers(t *testing.T) {
-	// Opus 5.5: $4/M input, $20/M output, 0.05x cache read ($0.20/M), 1.25x cache write ($5/M).
 	cost, err := AnthropicCost("anthropic/claude-opus-5.5", 1_000_000, 500_000, 1_000_000, 1_000_000)
 	if err != nil {
 		t.Fatalf("AnthropicCost opus-5.5: %v", err)
 	}
-	want := 4.0 + 10.0 + 0.20 + 5.0 // 19.20
+	want := 4.0 + 10.0 + 0.20 + 5.0
 	if math.Abs(cost-want) > 1e-9 {
 		t.Fatalf("opus-5.5 cost=%v want=%v", cost, want)
 	}
 
-	// Haiku 5.5 <= 100k prompt tokens: $0.10/M input, $0.50/M output.
 	lowTier, err := AnthropicCost("anthropic/claude-haiku-5.5", 60_000, 10_000, 40_000, 0)
 	if err != nil {
 		t.Fatalf("AnthropicCost haiku-5.5 low tier: %v", err)
@@ -26,7 +24,6 @@ func TestAnthropicCostOpus55AndHaiku55Tiers(t *testing.T) {
 		t.Fatalf("haiku-5.5 low tier=%v want=%v", lowTier, wantLow)
 	}
 
-	// Haiku 5.5 > 100k prompt tokens: $0.50/M input, $2.50/M output.
 	highTier, err := AnthropicCost("anthropic/claude-haiku-5.5", 60_001, 10_000, 40_000, 0)
 	if err != nil {
 		t.Fatalf("AnthropicCost haiku-5.5 high tier: %v", err)

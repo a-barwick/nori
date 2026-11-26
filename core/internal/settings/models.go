@@ -13,8 +13,6 @@ import (
 	"unicode"
 )
 
-// Canonical default model IDs for non-gateway deployments.
-// Direct OpenAI uses the bare model ID; OpenRouter uses the provider-prefixed ID.
 const (
 	DefaultOuterModel           = "gpt-6.1-sol"
 	DefaultInnerModel           = "gpt-6.1-terra"
@@ -24,7 +22,6 @@ const (
 	DefaultAnthropicInnerModel  = "claude-sonnet-4-5"
 )
 
-// ValidModelProvider reports whether p is an accepted model provider selector.
 func ValidModelProvider(p string) bool {
 	switch p {
 	case "", "openai", "anthropic", "openrouter", "gateway":
@@ -34,7 +31,6 @@ func ValidModelProvider(p string) bool {
 	}
 }
 
-// ValidEnvProfile reports whether p is an accepted environment profile.
 func ValidEnvProfile(p string) bool {
 	switch p {
 	case "", "prod", "dev", "test":
@@ -73,9 +69,6 @@ func profileKeyVarName(prefix, profile string) string {
 	}
 }
 
-// resolveProfileKey isolates provider keys across prod, dev, and test profiles.
-// In "test" profile it reads ONLY <PREFIX>_TEST_API_KEY and never falls back to
-// dev/prod or unprefixed <PREFIX>_API_KEY.
 func resolveProfileKey(prefix, profile string) string {
 	switch profile {
 	case "test":
@@ -187,12 +180,10 @@ func modelsFromEnvironment(profile string) Models {
 	return models
 }
 
-// EffectiveOuterProvider returns the resolved provider for the outer conversation model.
 func (m Models) EffectiveOuterProvider() string {
 	return cmp.Or(m.OuterProvider, m.Provider, "openai")
 }
 
-// EffectiveInnerProvider returns the resolved provider for the inner task/compaction/dream model.
 func (m Models) EffectiveInnerProvider() string {
 	if m.InnerProvider != "" {
 		return m.InnerProvider
@@ -249,7 +240,6 @@ func isLoopbackHostname(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// ValidReasoningEffort reports whether e is an accepted reasoning/thinking effort level.
 func ValidReasoningEffort(e string) bool {
 	switch e {
 	case "", "none", "low", "medium", "high", "xhigh", "max":

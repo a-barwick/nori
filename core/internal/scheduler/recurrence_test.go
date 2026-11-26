@@ -52,7 +52,7 @@ func TestExpandRecurrenceRules(t *testing.T) {
 		},
 		{
 			name:       "weekly_byday_multiple_days",
-			localStart: "2026-01-05T08:30", // Monday
+			localStart: "2026-01-05T08:30",
 			zone:       "UTC",
 			rrule:      "FREQ=WEEKLY;BYDAY=MO,WE,FR",
 			after:      afterOrigin,
@@ -65,9 +65,6 @@ func TestExpandRecurrenceRules(t *testing.T) {
 			},
 		},
 		{
-			// 2026-01-05 is Monday.
-			// With WKST=MO, week 0 is Mon Jan 5..Sun Jan 11 (hits Jan 5 and Jan 11),
-			// then week 2 (INTERVAL=2) is Mon Jan 19..Sun Jan 25 (hits Jan 19 and Jan 25).
 			name:       "weekly_interval_2_wkst_monday",
 			localStart: "2026-01-05T09:00",
 			zone:       "UTC",
@@ -82,9 +79,6 @@ func TestExpandRecurrenceRules(t *testing.T) {
 			},
 		},
 		{
-			// With WKST=SU, week 0 is Sun Jan 4..Sat Jan 10 (Sun Jan 4 < start, hits Mon Jan 5),
-			// then week 2 (INTERVAL=2) is Sun Jan 18..Sat Jan 24 (hits Sun Jan 18 and Mon Jan 19),
-			// then week 4 is Sun Feb 1..Sat Feb 7 (hits Sun Feb 1).
 			name:       "weekly_interval_2_wkst_sunday",
 			localStart: "2026-01-05T09:00",
 			zone:       "UTC",
@@ -115,10 +109,9 @@ func TestExpandRecurrenceRules(t *testing.T) {
 			name:       "monthly_negative_bymonthday_and_ordinal_byday_intersection",
 			localStart: "2026-01-01T12:00",
 			zone:       "UTC",
-			// Last day of month (-1) that is also a Saturday (-1SA): Jan 31, Feb 28, Oct 31 in 2026.
-			rrule: "FREQ=MONTHLY;BYMONTHDAY=-1;BYDAY=-1SA",
-			after: afterOrigin,
-			limit: 3,
+			rrule:      "FREQ=MONTHLY;BYMONTHDAY=-1;BYDAY=-1SA",
+			after:      afterOrigin,
+			limit:      3,
 			wantUTC: []string{
 				"2026-01-31T12:00:00Z",
 				"2026-02-28T12:00:00Z",
@@ -129,11 +122,9 @@ func TestExpandRecurrenceRules(t *testing.T) {
 			name:       "daily_byday_combined_with_bymonthday",
 			localStart: "2026-01-01T09:00",
 			zone:       "UTC",
-			// Day 1 or last day of month that falls on Thursday or Sunday:
-			// Jan 1 (Thu), Feb 1 (Sun), Mar 1 (Sun).
-			rrule: "FREQ=DAILY;BYDAY=TH,SU;BYMONTHDAY=1,-1",
-			after: afterOrigin,
-			limit: 3,
+			rrule:      "FREQ=DAILY;BYDAY=TH,SU;BYMONTHDAY=1,-1",
+			after:      afterOrigin,
+			limit:      3,
 			wantUTC: []string{
 				"2026-01-01T09:00:00Z",
 				"2026-02-01T09:00:00Z",
@@ -154,8 +145,6 @@ func TestExpandRecurrenceRules(t *testing.T) {
 			},
 		},
 		{
-			// America/New_York is UTC-5 in January.
-			// Floating UNTIL=20260112T090000 means 09:00 EST (= 14:00Z), inclusive of Jan 12.
 			name:       "floating_until_interpreted_in_local_timezone",
 			localStart: "2026-01-10T09:00",
 			zone:       "America/New_York",
@@ -169,7 +158,6 @@ func TestExpandRecurrenceRules(t *testing.T) {
 			},
 		},
 		{
-			// UTC UNTIL=20260112T090000Z means 04:00 EST, so Jan 12 09:00 EST (14:00Z) is excluded.
 			name:       "utc_until_excludes_later_same_local_day",
 			localStart: "2026-01-10T09:00",
 			zone:       "America/New_York",
@@ -194,8 +182,6 @@ func TestExpandRecurrenceRules(t *testing.T) {
 			},
 		},
 		{
-			// US DST spring-forward 2026: Sun Mar 8 at 02:00 EST -> 03:00 EDT.
-			// 02:30 does not exist on Mar 8 -> moves to first valid instant after gap: 03:00 EDT (07:00Z).
 			name:       "dst_spring_forward_skipped_wall_time",
 			localStart: "2026-03-07T02:30",
 			zone:       "America/New_York",
@@ -203,13 +189,12 @@ func TestExpandRecurrenceRules(t *testing.T) {
 			after:      afterOrigin,
 			limit:      3,
 			wantUTC: []string{
-				"2026-03-07T07:30:00Z", // 02:30 EST (-05:00)
-				"2026-03-08T07:00:00Z", // 03:00 EDT (-04:00), first valid instant after gap
-				"2026-03-09T06:30:00Z", // 02:30 EDT (-04:00)
+				"2026-03-07T07:30:00Z",
+				"2026-03-08T07:00:00Z",
+				"2026-03-09T06:30:00Z",
 			},
 		},
 		{
-			// Normal wall time across spring-forward stays 09:00 local time (14:00Z -> 13:00Z).
 			name:       "dst_spring_forward_normal_wall_time",
 			localStart: "2026-03-07T09:00",
 			zone:       "America/New_York",
@@ -222,8 +207,6 @@ func TestExpandRecurrenceRules(t *testing.T) {
 			},
 		},
 		{
-			// US DST fall-back 2026: Sun Nov 1 at 02:00 EDT -> 01:00 EST.
-			// 01:30 occurs twice (05:30Z EDT and 06:30Z EST); rule runs ONCE at the earlier instant (05:30Z).
 			name:       "dst_fall_back_ambiguous_wall_time_runs_once_earlier",
 			localStart: "2026-10-31T01:30",
 			zone:       "America/New_York",
@@ -231,9 +214,9 @@ func TestExpandRecurrenceRules(t *testing.T) {
 			after:      afterOrigin,
 			limit:      3,
 			wantUTC: []string{
-				"2026-10-31T05:30:00Z", // 01:30 EDT (-04:00)
-				"2026-11-01T05:30:00Z", // 01:30 EDT (-04:00), earlier instant only
-				"2026-11-02T06:30:00Z", // 01:30 EST (-05:00)
+				"2026-10-31T05:30:00Z",
+				"2026-11-01T05:30:00Z",
+				"2026-11-02T06:30:00Z",
 			},
 		},
 		{
@@ -270,7 +253,6 @@ func TestLocalTimeDSTTransitions(t *testing.T) {
 		t.Fatalf("LoadLocation: %v", err)
 	}
 
-	// Spring-forward gap: 2026-03-08 02:30 does not exist -> adjusted=true, 03:00 EDT (07:00Z).
 	spring, adjusted := scheduler.LocalTime(2026, time.March, 8, 2, 30, 0, ny)
 	if !adjusted {
 		t.Fatalf("spring-forward gap expected adjusted=true, got false (instant=%s)", spring.UTC())
@@ -280,7 +262,6 @@ func TestLocalTimeDSTTransitions(t *testing.T) {
 		t.Fatalf("spring-forward instant = %s, want %s", spring.UTC(), wantSpring)
 	}
 
-	// Fall-back ambiguity: 2026-11-01 01:30 occurs twice -> adjusted=false, earlier instant 01:30 EDT (05:30Z).
 	fall, adjusted := scheduler.LocalTime(2026, time.November, 1, 1, 30, 0, ny)
 	if adjusted {
 		t.Fatalf("fall-back repeat expected adjusted=false, got true")

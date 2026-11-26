@@ -8,8 +8,6 @@ import (
 	"nori/internal/state"
 )
 
-// unavailableReplyModel fails loudly when a pinned chat profile cannot be resolved,
-// ensuring we never silently fall back to a different (potentially paid) model.
 type unavailableReplyModel struct {
 	name string
 	err  error
@@ -22,7 +20,6 @@ func (m *unavailableReplyModel) Respond(_ context.Context, _ conversation.ReplyR
 	}, m.err
 }
 
-// unavailableTaskModel fails loudly when a pinned task profile cannot be resolved.
 type unavailableTaskModel struct {
 	name string
 	err  error

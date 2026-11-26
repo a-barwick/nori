@@ -9,9 +9,6 @@ import (
 	"nori/internal/state"
 )
 
-// WorkVersion derives API work from its existing durable owners. This is a
-// recovery query, not a second journal or a UI snapshot. A live conversation
-// lease already owns its wake; a saved command or held result does not.
 func (d *Database) WorkVersion(ctx context.Context, tasks bool) (string, error) {
 	now := d.now()
 	if !tasks {
@@ -36,8 +33,6 @@ func (d *Database) WorkVersion(ctx context.Context, tasks bool) (string, error) 
 	slices.SortFunc(runs, func(a, b state.Run) int { return cmp.Compare(a.ID, b.ID) })
 	for _, run := range runs {
 		if run.Finishing != nil {
-			// Cleanup may already be confirmed when a crash interrupts final
-			// publication, so finishing itself is durable recovery demand.
 			return fmt.Sprintf("finishing:%s:%d", run.ID, run.Revision), nil
 		}
 		if control.Paused && run.CancelRequested {
@@ -45,8 +40,6 @@ func (d *Database) WorkVersion(ctx context.Context, tasks bool) (string, error) 
 		}
 	}
 	if control.Paused {
-		// Other paused commands stay saved for resume. Accepted Stops and
-		// finishing outcomes can drain while task workers are unavailable.
 		return "", nil
 	}
 	commands, err := documents[state.Command](d.commands().Where("delivered", "==", false).Select("id").Limit(1).Documents(ctx))

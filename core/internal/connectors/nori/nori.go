@@ -1,6 +1,3 @@
-// Package nori holds first-party tools over Nori's own application services: reminders, routines and monitors,
-// goals, and the inbox. They are registry definitions executed through the same Tool executor, authority checks and
-// operation records as provider tools, so a conversation creates an automation exactly as the UI does.
 package nori
 
 import (
@@ -65,7 +62,6 @@ var specs = []spec{
 		}, "required": ["goal_id"], "additionalProperties": false}`},
 }
 
-// Definitions are the first-party tools.
 var Definitions = func() []extensions.Definition {
 	out := []extensions.Definition{}
 	for _, s := range specs {
@@ -94,7 +90,6 @@ var Definitions = func() []extensions.Definition {
 	return out
 }()
 
-// Adapter executes the first-party tools against one user's Scheduler.
 type Adapter struct {
 	Scheduler  *scheduler.Service
 	Unattended string
@@ -145,7 +140,6 @@ func (a Adapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Prepared
 		if value.RequestedAuthority != nil {
 			for _, class := range value.RequestedAuthority.ActionClasses {
 				if class != "read" {
-					// Granting standing authority to act while the user is away is itself consequential.
 					effect = extensions.EffectSensitiveSend
 				}
 			}
@@ -195,8 +189,6 @@ func (a Adapter) resolveZone(ctx context.Context, call invoke.Call) string {
 	return ""
 }
 
-// Reconcile settles an interrupted reminder or routine create from Nori's own store: the saved automation under the
-// call's request ID, or proof that nothing was saved. Other first-party writes stay uncertain until the user answers.
 func (a Adapter) Reconcile(ctx context.Context, call invoke.Call, _ invoke.Prepared) (invoke.Result, bool) {
 	if call.Exec.Binding.Target != "nori.automations/create" {
 		return invoke.Result{}, false
@@ -370,14 +362,12 @@ func (a Adapter) Execute(ctx context.Context, call invoke.Call, _ invoke.Prepare
 	return failed(errors.New("unknown Nori tool"))
 }
 
-// Register adds the first-party tools' adapter to a user's registry.
 func Register(registry *invoke.Registry, adapter Adapter) {
 	registry.Register(extensions.AdapterNative, "nori.automations", adapter)
 	registry.Register(extensions.AdapterNative, "nori.goals", adapter)
 	registry.Register(extensions.AdapterNative, "nori.uploads", adapter)
 }
 
-// Source offers the first-party tools as a registry inventory.
 type Source struct{}
 
 func (Source) Inventory(context.Context) (extensions.Inventory, error) {

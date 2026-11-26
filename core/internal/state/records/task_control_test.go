@@ -18,10 +18,8 @@ import (
 	"nori/internal/users"
 )
 
-// Self-contained transactional fake docstore backend (no import of sim/memstore).
-
 type wakeCall struct {
-	kind   string // "task" | "waiting" | "user" | "pause"
+	kind   string
 	userID string
 	runID  string
 	lane   string
@@ -432,8 +430,6 @@ func fakeQuery(docs map[string][]byte, s docstore.QuerySpec) ([]docstore.Record,
 }
 
 func testUser() users.User {
-	// LegacyID ("owner") with a non-empty Email gives ID="owner" vs DataOwner()="alpha@example.com",
-	// verifying every wake hook passes d.user.ID rather than d.user.DataOwner().
 	return users.User{
 		ID:       users.LegacyID,
 		Email:    "alpha@example.com",
@@ -464,14 +460,11 @@ func putRun(t *testing.T, fb *fakeBackend, user users.User, run state.Run) {
 	fb.mu.Unlock()
 }
 
-// --- TaskControl & AdvanceTaskStep tests ---
-
 func TestTaskControlFencingAndRenewal(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
 	_, db := newTestDB(t, &now)
 
-	// Missing TaskControl returns ErrNotFound on Get and ErrTaskBusy on fenced ops.
 	if _, err := db.GetTaskControl(ctx, "run-1"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("GetTaskControl missing = %v, want ErrNotFound", err)
 	}
@@ -485,7 +478,6 @@ func TestTaskControlFencingAndRenewal(t *testing.T) {
 		t.Fatalf("ReleaseTaskControl missing = %v, want ErrTaskBusy", err)
 	}
 
-	// Acquire by worker-a.
 	ctrl, f1, err := db.AcquireTaskControl(ctx, "run-1", "worker-a")
 	if err != nil {
 		t.Fatalf("AcquireTaskControl: %v", err)
@@ -497,20 +489,17 @@ func TestTaskControlFencingAndRenewal(t *testing.T) {
 		t.Fatalf("LeaseUntil = %v, want %v", ctrl.LeaseUntil, now.Add(state.TaskLease))
 	}
 
-	// Competing worker-b cannot acquire while live.
 	now = now.Add(5 * time.Second)
 	if _, _, err := db.AcquireTaskControl(ctx, "run-1", "worker-b"); !errors.Is(err, state.ErrTaskBusy) {
 		t.Fatalf("competing acquire = %v, want ErrTaskBusy", err)
 	}
 
-	// Concurrent renewal extends LeaseUntil.
-	now = now.Add(10 * time.Second) // t0 + 15s
+	now = now.Add(10 * time.Second)
 	if err := db.RenewTaskControl(ctx, "run-1", f1); err != nil {
 		t.Fatalf("RenewTaskControl: %v", err)
 	}
 	renewedUntil := now.Add(state.TaskLease)
 
-	// SaveTaskControl with stale ctrl (older LeaseUntil, spoofed owner/fence) preserves authoritative lease.
 	stale := ctrl
 	stale.Phase = state.TaskPhaseModel
 	stale.Models = 3
@@ -528,7 +517,6 @@ func TestTaskControlFencingAndRenewal(t *testing.T) {
 		t.Fatalf("SaveTaskControl lost cursor fields: %+v", saved)
 	}
 
-	// Expire lease: worker-a is fenced out, worker-b takes over with Fence=2.
 	now = renewedUntil
 	if err := db.RenewTaskControl(ctx, "run-1", f1); !errors.Is(err, state.ErrTaskBusy) {
 		t.Fatalf("expired renew = %v, want ErrTaskBusy", err)
@@ -541,12 +529,10 @@ func TestTaskControlFencingAndRenewal(t *testing.T) {
 		t.Fatalf("unexpected takeover: ctrl=%+v fence=%+v", taken, f2)
 	}
 
-	// Stale worker-a save is rejected.
 	if _, err := db.SaveTaskControl(ctx, f1, stale); !errors.Is(err, state.ErrTaskBusy) {
 		t.Fatalf("stale save = %v, want ErrTaskBusy", err)
 	}
 
-	// Release clears Owner & LeaseUntil while preserving Fence and cursor.
 	now = now.Add(2 * time.Second)
 	if err := db.ReleaseTaskControl(ctx, "run-1", f2); err != nil {
 		t.Fatalf("ReleaseTaskControl: %v", err)
@@ -559,7 +545,6 @@ func TestTaskControlFencingAndRenewal(t *testing.T) {
 		t.Fatalf("unexpected control after release: %+v", got)
 	}
 
-	// Immediate re-acquire increments Fence to 3.
 	_, f3, err := db.AcquireTaskControl(ctx, "run-1", "worker-c")
 	if err != nil {
 		t.Fatalf("re-acquire after release: %v", err)
@@ -596,14 +581,12 @@ func TestAdvanceTaskStepAtomicSpendSubtaskRollupAndRetry(t *testing.T) {
 		t.Fatalf("AcquireTaskControl: %v", err)
 	}
 
-	// Advance lease via renewal to verify AdvanceTaskStep preserves LeaseUntil too.
 	now = now.Add(10 * time.Second)
 	if err := db.RenewTaskControl(ctx, "child-1", f1); err != nil {
 		t.Fatalf("RenewTaskControl: %v", err)
 	}
 	renewedUntil := now.Add(state.TaskLease)
 
-	// Inject a retryable commit failure on attempt 1 so AdvanceTaskStep runs twice before committing.
 	fb.failFirstTxCommits = 1
 
 	next := ctrl
@@ -632,7 +615,6 @@ func TestAdvanceTaskStepAtomicSpendSubtaskRollupAndRetry(t *testing.T) {
 		t.Fatalf("parent SubtaskSpent = %v, CostUnknown = %v; want 0.25, false", parent.SubtaskSpent, parent.CostUnknown)
 	}
 
-	// Second step with cumulative spend and CostUnknown=true rolls up only the delta.
 	next2 := savedCtrl
 	next2.Tools = 1
 	next2.CallIndex = 1
@@ -656,7 +638,6 @@ func TestAdvanceTaskStepAtomicSpendSubtaskRollupAndRetry(t *testing.T) {
 		t.Fatalf("parent after step 2: SubtaskSpent=%v CostUnknown=%v, want 0.60/true", parent.SubtaskSpent, parent.CostUnknown)
 	}
 
-	// Rollback on write failure: if TaskControl write fails, Run and parent MUST NOT update.
 	fb.failWritePath = "owners/" + u.DataOwner() + "/task_controls/child-1"
 	nextFail := savedCtrl
 	nextFail.Tools = 99
@@ -673,7 +654,6 @@ func TestAdvanceTaskStepAtomicSpendSubtaskRollupAndRetry(t *testing.T) {
 			childAfterFail.Spent, parentAfterFail.SubtaskSpent, ctrlAfterFail.Tools)
 	}
 
-	// Rollback on stale fence: expire lease and verify stale worker cannot touch Run or TaskControl.
 	now = renewedUntil.Add(time.Second)
 	nextStale := savedCtrl
 	nextStale.Models = 50
@@ -686,15 +666,12 @@ func TestAdvanceTaskStepAtomicSpendSubtaskRollupAndRetry(t *testing.T) {
 	}
 }
 
-// --- Same-tx wake hook tests ---
-
 func TestSameTxWakeHooks_CommandsAndTaskEvents(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
 	fb, db := newTestDB(t, &now)
 	u := testUser()
 
-	// 1. AcceptCommandBatch: start + steer on same run -> deduplicated single WakeTask with u.ID (NOT DataOwner!).
 	_, err := db.AcceptCommandBatch(ctx, []state.Command{
 		{ID: "cmd-1", RunID: "run-1", Kind: state.CommandStart, Text: "do work"},
 		{ID: "cmd-2", RunID: "run-1", Kind: state.CommandSteer, Text: "extra detail"},
@@ -707,7 +684,6 @@ func TestSameTxWakeHooks_CommandsAndTaskEvents(t *testing.T) {
 		t.Fatalf("start+steer wakes = %+v, want 1 task wake for user %q run-1", wakes, u.ID)
 	}
 
-	// 2. CommandHold on running task -> no WakeTask, no WakeUser.
 	fb.resetWakes()
 	_, err = db.AcceptCommandBatch(ctx, []state.Command{
 		{ID: "cmd-hold-1", RunID: "run-1", Kind: state.CommandHold, Text: "wait for result"},
@@ -719,7 +695,6 @@ func TestSameTxWakeHooks_CommandsAndTaskEvents(t *testing.T) {
 		t.Fatalf("CommandHold on running task emitted wakes: %+v, want none", got)
 	}
 
-	// 3. Incorporate commands, then ProjectQuestion -> appendTaskEvent wakes conversation lane.
 	run, _ := db.GetRun(ctx, "run-1")
 	if err := db.Incorporate(ctx, state.IncorporateRequest{
 		RunID: "run-1", Revision: run.Revision, Position: state.TaskPosition(run),
@@ -738,18 +713,15 @@ func TestSameTxWakeHooks_CommandsAndTaskEvents(t *testing.T) {
 		t.Fatalf("ProjectQuestion wakes = %+v, want conversation wake for %q", wakes, u.ID)
 	}
 
-	// Admit an operation before publishing so a late write settlement after Publish triggers LateWriteEvent.
 	if err := db.Admit(ctx, "run-1", run.Revision, "op-late-1", now.Add(time.Minute)); err != nil {
 		t.Fatalf("Admit: %v", err)
 	}
-	// Mark cleanup_pending=false so Publish completes immediately (we test cleanup separately).
 	putRun(t, fb, u, func() state.Run {
 		r, _ := db.GetRun(ctx, "run-1")
 		r.CleanupPending = false
 		return r
 	}())
 
-	// 4. Publish top-level run -> appendTaskEvent wakes conversation lane.
 	fb.resetWakes()
 	_, err = db.Publish(ctx, state.PublishRequest{
 		RunID:    "run-1",
@@ -765,7 +737,6 @@ func TestSameTxWakeHooks_CommandsAndTaskEvents(t *testing.T) {
 		t.Fatalf("Publish wakes = %+v, want conversation wake for %q", wakes, u.ID)
 	}
 
-	// 5. CommandHold on already-finished run -> ReadyEvents > 0 wakes conversation lane, NO WakeTask.
 	fb.resetWakes()
 	_, err = db.AcceptCommandBatch(ctx, []state.Command{
 		{ID: "cmd-hold-late", RunID: "run-1", Kind: state.CommandHold, Text: "late hold"},
@@ -778,7 +749,6 @@ func TestSameTxWakeHooks_CommandsAndTaskEvents(t *testing.T) {
 		t.Fatalf("late CommandHold wakes = %+v, want conversation wake for %q", wakes, u.ID)
 	}
 
-	// 6. LateWriteEvent via PutOperation on terminal run -> appendTaskEvent wakes conversation lane.
 	fb.resetWakes()
 	ref, err := db.AppendHistory(ctx, "run-1", "", []byte(`{"ok":true}`))
 	if err != nil {
@@ -810,7 +780,6 @@ func TestSameTxWakeHooks_SubtasksAndCleanup(t *testing.T) {
 	fb, db := newTestDB(t, &now)
 	u := testUser()
 
-	// Seed parent with running child so Publish(parent) enters Finishing and calls stopSubtasks.
 	putRun(t, fb, u, state.Run{
 		ID:        "parent-1",
 		Status:    state.RunRunning,
@@ -827,7 +796,6 @@ func TestSameTxWakeHooks_SubtasksAndCleanup(t *testing.T) {
 		StartedAt:      now,
 	})
 
-	// Parent tries to publish while child is still running -> stopSubtasks wakes child-1.
 	fb.resetWakes()
 	_, err := db.Publish(ctx, state.PublishRequest{
 		RunID:    "parent-1",
@@ -849,7 +817,6 @@ func TestSameTxWakeHooks_SubtasksAndCleanup(t *testing.T) {
 		t.Fatalf("stopSubtasks did not wake child-1; wakes = %+v", wakes)
 	}
 
-	// Child calls Publish -> enters Finishing (CleanupPending=true). Then FinishCleanup(detail != "") -> no wake.
 	child, _ := db.GetRun(ctx, "child-1")
 	_, err = db.Publish(ctx, state.PublishRequest{
 		RunID:    "child-1",
@@ -869,8 +836,6 @@ func TestSameTxWakeHooks_SubtasksAndCleanup(t *testing.T) {
 		t.Fatalf("FinishCleanup with error detail should not wake; got %+v", got)
 	}
 
-	// FinishCleanup(detail == "") wakes child-1 (Finishing != nil) and parent-1 (ParentID != ""),
-	// and finishPending then finishes child-1 (waking parent-1) and finishes parent-1 (waking conversation).
 	fb.resetWakes()
 	if err := db.FinishCleanup(ctx, "child-1", ""); err != nil {
 		t.Fatalf("FinishCleanup confirmed: %v", err)
@@ -944,9 +909,6 @@ func TestSameTxWakeHooks_SubtaskSiblingsSkipRedundantParentWake(t *testing.T) {
 	fb, db := newTestDB(t, &now)
 	u := testUser()
 
-	// 1. Parent parked on QuestionWork with 2 running siblings:
-	// child-a (with cleanup pending) finishes first -> MUST NOT wake parent while child-b is still running!
-	// child-b finishes second -> SettleSubtask creates CommandSubtaskResult -> MUST wake parent!
 	putRun(t, fb, u, state.Run{
 		ID:        "parent-qw",
 		Status:    state.RunRunning,
@@ -984,7 +946,6 @@ func TestSameTxWakeHooks_SubtaskSiblingsSkipRedundantParentWake(t *testing.T) {
 		StartedAt:    now,
 	})
 
-	// child-a enters Finishing (CleanupPending=true), then FinishCleanup completes child-a via finishPending.
 	fb.resetWakes()
 	if _, err := db.Publish(ctx, state.PublishRequest{
 		RunID:    "child-a",
@@ -1003,7 +964,6 @@ func TestSameTxWakeHooks_SubtaskSiblingsSkipRedundantParentWake(t *testing.T) {
 		}
 	}
 
-	// child-b finishes -> final sibling creates CommandSubtaskResult and wakes parent-qw!
 	fb.resetWakes()
 	if _, err := db.Publish(ctx, state.PublishRequest{
 		RunID:    "child-b",
@@ -1023,9 +983,6 @@ func TestSameTxWakeHooks_SubtaskSiblingsSkipRedundantParentWake(t *testing.T) {
 		t.Fatalf("final sibling child-b Publish did not wake parent-qw: wakes=%+v", fb.committedWakes())
 	}
 
-	// 2. Parent in Finishing with 2 running siblings:
-	// First sibling finishes -> MUST NOT wake parent while second sibling still running.
-	// Second sibling finishes -> MUST wake parent (and finishPending completes parent).
 	finReq := state.PublishRequest{
 		RunID:    "parent-fin2",
 		Revision: 1,
@@ -1082,8 +1039,6 @@ func TestSameTxWakeHooks_SubtaskSiblingsSkipRedundantParentWake(t *testing.T) {
 		t.Fatalf("expected parent-fin2 to finalize as cancelled, got %+v err=%v", gotFinParent, err)
 	}
 
-	// 3. Terminal child FinishCleanup (older worker path):
-	// Wakes Finishing parent with no running siblings, but does NOT wake an already-terminal clean parent.
 	finTermReq := state.PublishRequest{
 		RunID: "parent-term-fin", Revision: 1, Status: state.RunCancelled, Text: "done",
 	}
@@ -1143,7 +1098,6 @@ func TestSameTxWakeHooks_ConversationAndUsers(t *testing.T) {
 	fb, db := newTestDB(t, &now)
 	u := testUser()
 
-	// 1. EnsureConversationIntroduction wakes conversation lane.
 	if err := db.EnsureConversationIntroduction(ctx, "hello"); err != nil {
 		t.Fatalf("EnsureConversationIntroduction: %v", err)
 	}
@@ -1152,7 +1106,6 @@ func TestSameTxWakeHooks_ConversationAndUsers(t *testing.T) {
 		t.Fatalf("EnsureConversationIntroduction wakes = %+v", wakes)
 	}
 
-	// Consume intro turn so we start clean.
 	c, turn, err := db.AcquireConversation(ctx, "owner-1", "turn-intro")
 	if err != nil || turn == nil {
 		t.Fatalf("AcquireConversation intro: turn=%v err=%v", turn, err)
@@ -1161,7 +1114,6 @@ func TestSameTxWakeHooks_ConversationAndUsers(t *testing.T) {
 		t.Fatalf("PublishConversation intro: %v", err)
 	}
 
-	// 2. AcceptConversationInput wakes conversation lane; replay does not.
 	fb.resetWakes()
 	if err := db.AcceptConversationInput(ctx, "in-1", "hello nori", nil); err != nil {
 		t.Fatalf("AcceptConversationInput: %v", err)
@@ -1178,7 +1130,6 @@ func TestSameTxWakeHooks_ConversationAndUsers(t *testing.T) {
 		t.Fatalf("AcceptConversationInput replay emitted wakes: %+v", got)
 	}
 
-	// 3. AcquireConversation + ReleaseConversation while Active != "" -> wakes conversation lane.
 	c, turn, err = db.AcquireConversation(ctx, "owner-1", "turn-1")
 	if err != nil || turn == nil {
 		t.Fatalf("AcquireConversation turn-1: turn=%v err=%v", turn, err)
@@ -1192,7 +1143,6 @@ func TestSameTxWakeHooks_ConversationAndUsers(t *testing.T) {
 		t.Fatalf("ReleaseConversation wakes = %+v", wakes)
 	}
 
-	// 4. Re-acquire and publish -> RoutingPending clears -> WakeWaitingTasks(u.ID, WaitRoutingPending).
 	c, turn, err = db.AcquireConversation(ctx, "owner-2", "turn-1")
 	if err != nil || turn == nil {
 		t.Fatalf("re-acquire turn-1: turn=%v err=%v", turn, err)
@@ -1206,17 +1156,13 @@ func TestSameTxWakeHooks_ConversationAndUsers(t *testing.T) {
 		t.Fatalf("PublishConversation wakes = %+v, want WakeWaitingTasks(routing_pending)", wakes)
 	}
 
-	// 5. CancelConversation when another input is queued: clears routing if last user input, and wakes conversation if Pending.
 	if err := db.AcceptConversationInput(ctx, "in-2", "first", nil); err != nil {
 		t.Fatalf("AcceptConversationInput in-2: %v", err)
 	}
-	c, turn, err = db.AcquireConversation(ctx, "owner-2", "turn-2")
+	_, turn, err = db.AcquireConversation(ctx, "owner-2", "turn-2")
 	if err != nil || turn == nil {
 		t.Fatalf("AcquireConversation turn-2: turn=%v err=%v", turn, err)
 	}
-	// Enqueue a non-user task event so c.Pending() is true while RoutingPending clears when in-2 cancels!
-	// Or enqueue a second user input so c.Pending() is true (and RoutingPending stays true).
-	// Test both: first cancel with NO second input -> routing clears; then test pending wake with second input.
 	fb.resetWakes()
 	if err := db.CancelConversation(ctx, turn.ID); err != nil {
 		t.Fatalf("CancelConversation: %v", err)
@@ -1226,21 +1172,17 @@ func TestSameTxWakeHooks_ConversationAndUsers(t *testing.T) {
 		t.Fatalf("CancelConversation wakes = %+v, want WakeWaitingTasks(routing_pending)", wakes)
 	}
 
-	// Test PublishConversation when a second input arrived mid-turn -> c.Pending() wakes conversation lane.
 	if err := db.AcceptConversationInput(ctx, "in-3", "msg 3", nil); err != nil {
 		t.Fatalf("AcceptConversationInput in-3: %v", err)
 	}
-	c, turn, err = db.AcquireConversation(ctx, "owner-3", "turn-3")
+	_, turn, err = db.AcquireConversation(ctx, "owner-3", "turn-3")
 	if err != nil || turn == nil {
 		t.Fatalf("AcquireConversation turn-3: turn=%v err=%v", turn, err)
 	}
-	// Another input arrives after turn-3 started.
-	// Use a task event input (not user input) by injecting via Publish on a run or another user input.
 	if err := db.AcceptConversationInput(ctx, "in-4", "msg 4", nil); err != nil {
 		t.Fatalf("AcceptConversationInput in-4: %v", err)
 	}
 	fb.resetWakes()
-	// Cancel turn-3 while in-4 is still queued -> c.Pending() is true, so WakeUser(LaneConversation) fires!
 	if err := db.CancelConversation(ctx, turn.ID); err != nil {
 		t.Fatalf("CancelConversation turn-3: %v", err)
 	}
@@ -1255,7 +1197,6 @@ func TestSameTxWakeHooks_ConversationAndUsers(t *testing.T) {
 		t.Fatalf("CancelConversation with queued input did not wake conversation lane; wakes = %+v", wakes)
 	}
 
-	// 6. Users.SetPaused(true) -> NotifyPause; SetPaused(false) -> WakeWaitingTasks("", WaitPaused).
 	usersStore := records.NewSharedUsers(fb)
 	fb.resetWakes()
 	if err := usersStore.SetPaused(ctx, true); err != nil {

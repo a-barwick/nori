@@ -16,7 +16,6 @@ func OpenUsers(ctx context.Context, s settings.Settings) (users.Directory, error
 	return records.NewUsers(docs), nil
 }
 
-// ForUser combines process credentials with one row. It never modifies shared settings.
 func ForUser(s settings.Settings, user users.User) settings.Settings {
 	s.TimeZone = user.TimeZone
 	return s

@@ -22,7 +22,6 @@ const (
 	maxMemorySearchQuery   = 400
 )
 
-// memoryFactEditable is the contract MemoryFactEditable.
 type memoryFactEditable struct {
 	Text    string `json:"text"`
 	About   string `json:"about,omitempty"`
@@ -43,7 +42,6 @@ func (v memoryFactEditable) valid() bool {
 	return true
 }
 
-// memoryActionValue is the contract MemoryAction value.
 type memoryActionValue struct {
 	Action string `json:"action"`
 }
@@ -211,7 +209,6 @@ func effectiveMemoryProvenance(p state.MemoryProvenance) state.MemoryProvenance 
 	return p
 }
 
-// memoryView shows a saved memory; its revision is the last update in milliseconds, which guards edits.
 func memoryView(m state.Memory) memoryFact {
 	origin := map[string]string{}
 	if m.SourceInputID != "" && m.SourceInputID != "ui" {

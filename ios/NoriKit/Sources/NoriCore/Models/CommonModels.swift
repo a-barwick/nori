@@ -1,6 +1,5 @@
 import Foundation
 
-// MARK: - Generic JSON Value
 
 public enum AnyJSON: Sendable, Hashable, Codable {
     case null
@@ -63,7 +62,6 @@ public enum AnyJSON: Sendable, Hashable, Codable {
     }
 }
 
-// MARK: - Contract Enums & Shared Value Types
 
 public enum Effect: String, Sendable, Codable, Hashable, CaseIterable {
     case read
@@ -331,7 +329,6 @@ public struct ListResponse<Item: Sendable & Codable & Hashable>: Sendable, Codab
     }
 }
 
-// MARK: - Capabilities & Summary
 
 public struct UploadAccept: Sendable, Codable, Hashable {
     public var mediaTypes: [String]
@@ -438,6 +435,33 @@ public struct ModelSelection: Sendable, Codable, Hashable {
         case chatReasoning = "chat_reasoning"
         case taskProfileID = "task_profile_id"
         case taskReasoning = "task_reasoning"
+    }
+
+    func normalized(using catalog: ModelProfileCatalog?) -> ModelSelection {
+        guard let catalog else { return ModelSelection() }
+        guard !catalog.profiles.isEmpty else { return ModelSelection() }
+        var out = ModelSelection()
+        let chatTargetID = chatProfileID ?? catalog.defaultChatProfileID
+        let chatProfile = catalog.profiles.first { $0.lanes.contains("chat") && $0.id == chatTargetID }
+        if let cid = chatProfileID,
+           catalog.profiles.contains(where: { $0.lanes.contains("chat") && $0.id == cid }) {
+            out.chatProfileID = cid
+        }
+        if let cr = chatReasoning,
+           chatProfile?.supportedReasoning?.contains(cr) == true {
+            out.chatReasoning = cr
+        }
+        let taskTargetID = taskProfileID ?? catalog.defaultTaskProfileID
+        let taskProfile = catalog.profiles.first { $0.lanes.contains("task") && $0.id == taskTargetID }
+        if let tid = taskProfileID,
+           catalog.profiles.contains(where: { $0.lanes.contains("task") && $0.id == tid }) {
+            out.taskProfileID = tid
+        }
+        if let tr = taskReasoning,
+           taskProfile?.supportedReasoning?.contains(tr) == true {
+            out.taskReasoning = tr
+        }
+        return out
     }
 
     public var isEmpty: Bool {
@@ -562,7 +586,6 @@ public struct AssistantSummary: Sendable, Codable, Hashable {
     }
 }
 
-// MARK: - Preferences & Permissions
 
 public struct WorkingHoursSlot: Sendable, Codable, Hashable {
     public var day: Int

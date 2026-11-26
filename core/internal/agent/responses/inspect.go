@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"nori/internal/agent"
+	"nori/internal/llmguard"
 	"nori/internal/modelgateway"
 	"nori/internal/usage"
 )
@@ -105,7 +106,7 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 	}
 	out.Cost, out.CostKnown = c.recordCost(&record, response.Model, response.Tier, response.Usage)
 	if out.CostKnown && out.Cost > 0 {
-		c.guard().RecordActualCost(out.Cost)
+		llmguard.RecordResponseCost(res, out.Cost)
 	}
 	text := []string{}
 	for _, item := range response.Output {

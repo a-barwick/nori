@@ -35,7 +35,6 @@ var (
 	ErrInvalidAction      = errors.New("this action does not apply to the connection's state")
 )
 
-// ChooseAccount reports that more than one account could serve a call and none was chosen or set as default.
 type ChooseAccount struct {
 	Purpose  string
 	Eligible []Record
@@ -45,26 +44,17 @@ func (e *ChooseAccount) Error() string {
 	return fmt.Sprintf("%d connected accounts can do %s; choose one", len(e.Eligible), e.Purpose)
 }
 
-// Service is opened per user.
 type Service struct {
 	Store        state.ResourceStore
 	Credentials  secret.CredentialStore
 	Integrations map[string]Integration
 	order        []string
-	// RedirectURL is the externally reachable OAuth callback, through the web proxy.
-	RedirectURL string
-	// UserTimezone seeds the time zone of preferences the user has not saved yet; empty means DefaultTimezone.
+	RedirectURL  string
 	UserTimezone string
 	Now          func() time.Time
-	// Transport, when set, carries every provider request this service makes or hands out (token exchange, refresh,
-	// identity, revocation and the clients adapters receive). Only local development sets it, to replay recorded
-	// provider exchanges.
-	Transport http.RoundTripper
-	// Cleanup runs connector-specific cleanup after disconnect, such as dropping sync caches (D4 flags).
-	Cleanup []func(ctx context.Context, connectionID string, purgeCache, deleteImported bool) error
-	// OnConnected runs after a sign-in completes (OAuth callback or app password), so tasks waiting for that account
-	// to be signed in again can resume.
-	OnConnected func(ctx context.Context, connectionID string)
+	Transport    http.RoundTripper
+	Cleanup      []func(ctx context.Context, connectionID string, purgeCache, deleteImported bool) error
+	OnConnected  func(ctx context.Context, connectionID string)
 }
 
 func New(store state.ResourceStore, credentials secret.CredentialStore, redirectURL string, integrations ...Integration) *Service {
@@ -79,7 +69,6 @@ func New(store state.ResourceStore, credentials secret.CredentialStore, redirect
 
 const attemptLifetime = 15 * time.Minute
 
-// providerContext routes oauth2's requests through the configured transport.
 func (s *Service) providerContext(ctx context.Context) context.Context {
 	if s.Transport == nil {
 		return ctx
@@ -89,7 +78,6 @@ func (s *Service) providerContext(ctx context.Context) context.Context {
 
 func (s *Service) now() time.Time { return s.Now().UTC() }
 
-// baseClient is the plain HTTP client for provider calls, honouring a replay transport.
 func (s *Service) baseClient() *http.Client {
 	if s.Transport != nil {
 		return &http.Client{Transport: s.Transport, Timeout: 30 * time.Second}
@@ -102,9 +90,6 @@ type passwordCredential struct {
 	Password string `json:"password"`
 }
 
-// connectPassword verifies a username and app-specific password with the provider, stores them as the credential and
-// connects with every supported capability (an app password grants the whole service). A rejected pair changes
-// nothing. Repair is the same call with a new password, after a revoked app password or an account password change.
 func (s *Service) connectPassword(ctx context.Context, id, requestID string, expected int64, action Action, integration PasswordIntegration) (state.MutationReceipt, error) {
 	username, password := strings.TrimSpace(action.Username), strings.TrimSpace(action.Password)
 	if username == "" || password == "" {
@@ -136,7 +121,6 @@ func (s *Service) connectPassword(ctx context.Context, id, requestID string, exp
 	if err != nil {
 		return state.MutationReceipt{}, err
 	}
-	// The receipt binding must not carry the password.
 	action.Password = ""
 	receipt, err := s.Store.Mutate(ctx, state.Mutation{
 		RequestID: requestID, Method: "POST", Target: "/v1/connections/" + id + "/actions", ExpectedRevision: expected, Payload: action,
@@ -168,7 +152,6 @@ func (s *Service) connectPassword(ctx context.Context, id, requestID string, exp
 	return receipt, err
 }
 
-// Records lists the user's connections in ID order.
 func (s *Service) Records(ctx context.Context) ([]Record, []state.Resource, error) {
 	var records []Record
 	var resources []state.Resource
@@ -202,10 +185,6 @@ func (s *Service) record(ctx context.Context, id string) (Record, state.Resource
 	return s.lapsed(record, r), r, err
 }
 
-// lapsed reads a connection left connecting after its sign-in attempt expired (the browser was closed, or a probe
-// never finished) as what it is: not connected, or needing sign-in for an account that had signed in before. It is
-// not written back; the next connect or callback writes the record. Without this, a stale attempt kept the account
-// "connecting" for good, the assistant told the user to wait, and no tool could ask for the sign-in.
 func (s *Service) lapsed(record Record, r state.Resource) Record {
 	if record.Status != StatusConnecting || r.UpdatedAt.IsZero() || s.now().Sub(r.UpdatedAt) <= attemptLifetime {
 		return record
@@ -218,9 +197,6 @@ func (s *Service) lapsed(record Record, r state.Resource) Record {
 	return record
 }
 
-// ConnectTarget returns the connection a task should ask the user to sign in to when no account of the integration
-// is usable: an existing one that never finished its first sign-in, or a new one. requestID names the new one, so a
-// retried call reuses it. Only OAuth integrations configured in this deployment qualify.
 func (s *Service) ConnectTarget(ctx context.Context, integrationID, requestID string) (Record, error) {
 	integration := s.Integrations[integrationID]
 	if integration == nil || integration.Info().Auth != "oauth" || integration.OAuth(s.RedirectURL) == nil {
@@ -250,7 +226,6 @@ func (s *Service) ConnectTarget(ctx context.Context, integrationID, requestID st
 	return record, err
 }
 
-// Project builds the public connection view.
 func (s *Service) Project(record Record, r state.Resource, prefs Preferences) Projection {
 	p := Projection{
 		ID: record.ID, Revision: r.Revision, IntegrationID: record.IntegrationID, Title: record.Title,
@@ -286,7 +261,6 @@ func nonNil(values []string) []string {
 	return values
 }
 
-// Get returns one connection's projection.
 func (s *Service) Get(ctx context.Context, id string) (Projection, error) {
 	record, r, err := s.record(ctx, id)
 	if err != nil {
@@ -315,7 +289,6 @@ func (s *Service) List(ctx context.Context) ([]Projection, error) {
 	return out, nil
 }
 
-// Catalog lists integrations with the user's connection IDs.
 func (s *Service) Catalog(ctx context.Context, query, category string) ([]IntegrationEntry, error) {
 	records, _, err := s.Records(ctx)
 	if err != nil {
@@ -393,7 +366,6 @@ func (s *Service) validEditable(value Editable) (Integration, error) {
 	return integration, nil
 }
 
-// Create adds a connection that is not yet signed in.
 func (s *Service) Create(ctx context.Context, requestID string, value Editable) (state.MutationReceipt, error) {
 	integration, err := s.validEditable(value)
 	if err != nil {
@@ -403,7 +375,6 @@ func (s *Service) Create(ctx context.Context, requestID string, value Editable) 
 	if err != nil {
 		return state.MutationReceipt{}, err
 	}
-	// The connection ID derives from the request ID, so a retried create names the same resource.
 	id := "conn_" + strings.ReplaceAll(uuid.NewSHA1(uuid.NameSpaceOID, []byte("connection:"+requestID)).String(), "-", "")[:20]
 	title := value.Title
 	if title == "" {
@@ -433,7 +404,6 @@ func recordIndex(record Record) map[string]string {
 	return map[string]string{"integration_id": record.IntegrationID, "status": record.Status}
 }
 
-// Update changes the title, selected resources or configuration.
 func (s *Service) Update(ctx context.Context, id, requestID string, expected int64, value Editable) (state.MutationReceipt, error) {
 	if _, err := s.validEditable(value); err != nil {
 		return state.MutationReceipt{}, err
@@ -474,7 +444,6 @@ func (s *Service) write(record Record, revision int64, status string, prefs Pref
 	return state.MutationResult{Writes: append([]state.Resource{r}, extra...), Receipt: rc}, err
 }
 
-// Act applies a connection command: connect, repair, disconnect, enable or disable.
 func (s *Service) Act(ctx context.Context, id, requestID string, expected int64, action Action) (state.MutationReceipt, error) {
 	switch action.Action {
 	case "connect", "repair":
@@ -559,7 +528,7 @@ func (s *Service) scopesFor(integration Integration, capabilities []string, reco
 func (s *Service) connect(ctx context.Context, id, requestID string, expected int64, action Action) (state.MutationReceipt, error) {
 	if saved, err := s.Store.Receipt(ctx, requestID); err == nil {
 		bound := action
-		bound.Password = "" // receipts never hold the password
+		bound.Password = ""
 		return s.replay(ctx, saved, state.Mutation{RequestID: requestID, Method: "POST", Target: "/v1/connections/" + id + "/actions", ExpectedRevision: expected, Payload: bound})
 	}
 	record, current, err := s.record(ctx, id)
@@ -623,9 +592,6 @@ func (s *Service) connect(ctx context.Context, id, requestID string, expected in
 			if record.Status == StatusDisconnecting {
 				return state.MutationResult{}, ErrInvalidAction
 			}
-			// Only a first sign-in shows as connecting. An account that already signed in keeps its state while it asks
-			// for more access or signs in again, so declining leaves it as it was (needs_more_access stays a working,
-			// partially granted account) instead of looking broken.
 			if record.Status != StatusConnected && record.Account.ProviderID == "" {
 				record.Status = StatusConnecting
 			}
@@ -641,7 +607,6 @@ func (s *Service) connect(ctx context.Context, id, requestID string, expected in
 	})
 }
 
-// replay returns a saved receipt after checking that the request ID was used for this same change.
 func (s *Service) replay(_ context.Context, saved state.MutationReceipt, m state.Mutation) (state.MutationReceipt, error) {
 	binding, err := state.MutationBinding(m)
 	if err != nil {
@@ -653,7 +618,6 @@ func (s *Service) replay(_ context.Context, saved state.MutationReceipt, m state
 	return saved, nil
 }
 
-// Callback completes a sign-in. It returns the redirect target to send the browser or iOS session to.
 func (s *Service) Callback(ctx context.Context, oauthState, code, providerError string) (string, error) {
 	key := stateKey(oauthState)
 	r, err := s.Store.Resource(ctx, CollectionAttempts, key)
@@ -671,7 +635,6 @@ func (s *Service) Callback(ctx context.Context, oauthState, code, providerError 
 		return BuildReturnRedirect(a.ReturnTo, url.Values{"connection": {a.ConnectionID}, "result": {result}})
 	}
 	if a.Status != "pending" {
-		// A repeated callback returns what the first one recorded.
 		return redirect(a.Status), nil
 	}
 	finish := func(status, reason string) (string, error) {
@@ -732,8 +695,6 @@ func (s *Service) Callback(ctx context.Context, oauthState, code, providerError 
 		return finish("failed", ErrWrongAccount.Error())
 	}
 	if record.Account.ProviderID == "" {
-		// "Add another account" signed in to an account the user already has: update that connection instead of
-		// keeping a second one for the same account.
 		if existing, ok := s.sameAccount(ctx, a.IntegrationID, account.ProviderID, a.ConnectionID); ok {
 			return s.mergeSignIn(ctx, a, r, existing, account, integration, token, granted, finish)
 		}
@@ -797,7 +758,6 @@ func (s *Service) Callback(ctx context.Context, oauthState, code, providerError 
 	return redirect("connected"), nil
 }
 
-// sameAccount returns another live connection of the integration signed in to this provider account.
 func (s *Service) sameAccount(ctx context.Context, integrationID, providerID, except string) (Record, bool) {
 	if providerID == "" {
 		return Record{}, false
@@ -815,12 +775,6 @@ func (s *Service) sameAccount(ctx context.Context, integrationID, providerID, ex
 	return Record{}, false
 }
 
-// CollapseDuplicates repairs connections left by sign-ins made before they were merged: several live connections
-// of one integration signed in to the same provider account. Each group becomes the connection with the widest
-// grant (most capabilities, then the most recently written), holding the union of the group's granted scopes.
-// The others are deleted with their stored credentials and cached data, without a provider
-// revoke, which would also cut off the kept connection. Account defaults that named a removed connection name the
-// kept one. It is idempotent and returns the removed IDs by kept ID.
 func (s *Service) CollapseDuplicates(ctx context.Context) (map[string][]string, error) {
 	if len(s.Integrations) == 0 {
 		return nil, nil
@@ -931,9 +885,6 @@ func (s *Service) CollapseDuplicates(ctx context.Context) (map[string][]string, 
 	return removed, nil
 }
 
-// mergeSignIn completes a sign-in that reached an account the user already has connected. The existing connection
-// gets the newest token (keeping its refresh token if the provider sent none) and the union of both grants; the new,
-// never-signed-in connection is deleted. The callback returns to the existing connection as connected.
 func (s *Service) mergeSignIn(ctx context.Context, a attempt, attemptResource state.Resource, existing Record, account Account,
 	integration Integration, token *oauth2.Token, granted []string, finish func(status, reason string) (string, error)) (string, error) {
 	if token.RefreshToken == "" {
@@ -1016,7 +967,6 @@ func (s *Service) mergeSignIn(ctx context.Context, a attempt, attemptResource st
 		return "", err
 	}
 	if s.OnConnected != nil {
-		// Tasks waiting on either connection resume; they then select the existing one.
 		s.OnConnected(context.WithoutCancel(ctx), a.ConnectionID)
 		s.OnConnected(context.WithoutCancel(ctx), existing.ID)
 	}
@@ -1110,7 +1060,6 @@ func (s *Service) disconnect(ctx context.Context, id, requestID string, expected
 	if err != nil {
 		return state.MutationReceipt{}, err
 	}
-	// Close admission first: the epoch advances and the status leaves connected in one transaction.
 	receipt, err := s.Store.Mutate(ctx, state.Mutation{
 		RequestID: requestID, Method: "POST", Target: "/v1/connections/" + id + "/actions", ExpectedRevision: expected, Payload: action,
 		Collection: CollectionConnections, ID: id,
@@ -1137,16 +1086,12 @@ func (s *Service) disconnect(ctx context.Context, id, requestID string, expected
 	return receipt, nil
 }
 
-// finishDisconnect revokes remotely where supported, removes local credential access and runs cleanup. Incomplete
-// cleanup stays visible on the connection instead of being reported as done.
 func (s *Service) finishDisconnect(ctx context.Context, id string, action Action) {
 	record, r, err := s.record(ctx, id)
 	if err != nil || record.Status != StatusDisconnecting {
 		return
 	}
 	var problems []string
-	// Revoking is per account and client at the provider, so it would also cut off another connection signed in to
-	// the same account (a duplicate from before sign-ins were merged). Then only Nori's copy is removed here.
 	_, shared := s.sameAccount(ctx, record.IntegrationID, record.Account.ProviderID, id)
 	if integration := s.Integrations[record.IntegrationID]; integration != nil && !shared {
 		if credential, err := s.Credentials.Get(ctx, id); err == nil {
@@ -1177,7 +1122,6 @@ func (s *Service) finishDisconnect(ctx context.Context, id string, action Action
 	}
 }
 
-// Resources lists selectable provider resources for a connected account. It reads only resource metadata.
 func (s *Service) Resources(ctx context.Context, id string) ([]Resource, error) {
 	grant, err := s.Grant(ctx, id)
 	if err != nil {
@@ -1196,7 +1140,6 @@ func (s *Service) Resources(ctx context.Context, id string) ([]Resource, error) 
 	return list, nil
 }
 
-// Grant is the access a single attempt receives: the connection as admitted and an authorized client.
 type Grant struct {
 	Connection Record
 	Revision   int64
@@ -1206,8 +1149,6 @@ type Grant struct {
 
 var refreshLocks sync.Map
 
-// Grant resolves a usable credential, refreshing it at most once across concurrent callers. A refresh is written
-// only if the stored credential version is unchanged, so a concurrent refresh or disconnect cannot be overwritten.
 func (s *Service) Grant(ctx context.Context, id string) (Grant, error) {
 	record, r, err := s.record(ctx, id)
 	if err != nil {
@@ -1248,7 +1189,6 @@ func (s *Service) Grant(ctx context.Context, id string) (Grant, error) {
 		mu := lock.(*sync.Mutex)
 		mu.Lock()
 		defer mu.Unlock()
-		// Another caller may have refreshed while this one waited.
 		if latest, err := s.Credentials.Get(ctx, id); err == nil && latest.Version != credential.Version {
 			credential = latest
 			_ = json.Unmarshal(credential.Data, &token)
@@ -1282,7 +1222,6 @@ func (s *Service) Grant(ctx context.Context, id string) (Grant, error) {
 	return Grant{Connection: record, Revision: r.Revision, Client: client, Token: &token}, nil
 }
 
-// ReportFailure records a provider failure as connection health so Apps can show the repair step.
 func (s *Service) ReportFailure(ctx context.Context, id string, failure error) {
 	code, recovery, message := HealthTemporary, "wait", "The provider is temporarily failing."
 	var retrieve *oauth2.RetrieveError
@@ -1313,7 +1252,6 @@ func (s *Service) ReportFailure(ctx context.Context, id string, failure error) {
 	}
 }
 
-// ReportSuccess records a successful provider call.
 func (s *Service) ReportSuccess(ctx context.Context, id string) {
 	record, r, err := s.record(ctx, id)
 	if err != nil {
@@ -1324,7 +1262,6 @@ func (s *Service) ReportSuccess(ctx context.Context, id string) {
 	}
 	now := s.now()
 	if missing := missingScopes(record.DesiredScopes, record.GrantedScopes); record.Status == StatusAttention && len(missing) > 0 {
-		// A working call doesn't grant the access that is still missing.
 		if record.Health.Code == HealthNeedsMoreAccess && record.Health.LastSuccessAt != nil && now.Sub(*record.Health.LastSuccessAt) < 10*time.Minute {
 			return
 		}
@@ -1332,7 +1269,6 @@ func (s *Service) ReportSuccess(ctx context.Context, id string) {
 	} else {
 		record.Health = Health{CheckedAt: &now, Code: HealthReady, Recovery: "none", LastSuccessAt: &now}
 		if record.Status == StatusAttention {
-			// The account works again with everything it asked for.
 			record.Status = StatusConnected
 		}
 	}
@@ -1342,16 +1278,12 @@ func (s *Service) ReportSuccess(ctx context.Context, id string) {
 	}
 }
 
-// Provider error classes adapters wrap so health and operation errors stay distinct.
 var (
 	ErrInsufficientScope = errors.New("insufficient scope")
 	ErrRateLimited       = errors.New("rate limited")
 	ErrUnauthorized      = errors.New("unauthorized")
 )
 
-// Select chooses the account for a call. An explicit request must name a connected account; it never falls back.
-// Without one, the saved default for the purpose wins, then a single eligible account. Otherwise the caller must
-// ask the user.
 func (s *Service) Select(ctx context.Context, integrationID, purpose, requested string) (Record, int64, error) {
 	records, resources, err := s.Records(ctx)
 	if err != nil {
@@ -1360,7 +1292,6 @@ func (s *Service) Select(ctx context.Context, integrationID, purpose, requested 
 	var eligible []int
 	connected := false
 	for i, record := range records {
-		// An account missing some requested access still works for the capabilities it did grant.
 		usable, _ := usableRecord(record)
 		if record.IntegrationID != integrationID || !usable {
 			continue
@@ -1395,8 +1326,6 @@ func (s *Service) Select(ctx context.Context, integrationID, purpose, requested 
 			}
 		}
 	}
-	// "Use this account next time" was answered for one purpose; an account the user chose for this app serves its
-	// other purposes too, as long as it is eligible here.
 	purposes := make([]string, 0, len(prefs.AccountDefaults))
 	for p := range prefs.AccountDefaults {
 		purposes = append(purposes, p)
@@ -1413,8 +1342,6 @@ func (s *Service) Select(ctx context.Context, integrationID, purpose, requested 
 	if len(eligible) == 1 {
 		return records[eligible[0]], resources[eligible[0]].Revision, nil
 	}
-	// Several connections to the same provider account (duplicates from before sign-ins were merged) are not a
-	// choice to put to the user: use the one with the most access, then the most recently written.
 	same := records[eligible[0]].Account.ProviderID != ""
 	for _, i := range eligible[1:] {
 		same = same && records[i].Account.ProviderID == records[eligible[0]].Account.ProviderID
@@ -1436,9 +1363,6 @@ func (s *Service) Select(ctx context.Context, integrationID, purpose, requested 
 	return Record{}, 0, choice
 }
 
-// usableRecord says whether an account can serve calls for the capabilities it granted, and whether some requested
-// access is missing. Besides connected accounts this covers needs_attention accounts whose credential works: those
-// missing access, and those saved with a ready health code before success kept the missing-access state.
 func usableRecord(record Record) (usable, partial bool) {
 	if record.Status == StatusConnected {
 		return true, false
@@ -1449,8 +1373,6 @@ func usableRecord(record Record) (usable, partial bool) {
 	return false, false
 }
 
-// Inventory implements extensions.Source: the tools of connected integrations, plus a capability entry for every
-// catalog integration so the assistant can explain what is and is not connected without reading account content.
 func (s *Service) Inventory(ctx context.Context) (extensions.Inventory, error) {
 	records, _, err := s.Records(ctx)
 	if err != nil {
@@ -1468,7 +1390,6 @@ func (s *Service) Inventory(ctx context.Context) (extensions.Inventory, error) {
 			usable, partial := usableRecord(record)
 			switch {
 			case usable:
-				// An account missing some access still serves what it granted; the missing part is listed below.
 				labels = append(labels, record.Account.Label)
 				if partial {
 					attention = append(attention, record.Account.Label+" (some access not granted)")
@@ -1493,10 +1414,6 @@ func (s *Service) Inventory(ctx context.Context) (extensions.Inventory, error) {
 				inventory.Definitions = append(inventory.Definitions, d)
 				usable[d.Capability] = true
 			} else if askable {
-				// Not granted yet. Calling it asks the user to grant this access, or to connect, from the task. With a
-				// usable account it is offered like the account's other tools; with none, once the task loads the
-				// capability, so tasks that never need the app don't carry its tools (the exposure is not part of the
-				// definition's digest).
 				if len(labels) == 0 {
 					d.Exposure = extensions.ExposureDiscoverable
 				}
@@ -1508,7 +1425,6 @@ func (s *Service) Inventory(ctx context.Context) (extensions.Inventory, error) {
 			if askable {
 				stateText = "Not connected. Load it and call the tool the request needs: that asks the user to connect the account from this task, and the task resumes once they have"
 			}
-			// A group is ready when the connected accounts granted at least one of its tools.
 			ready := len(labels) > 0 && usable[capability]
 			if ready {
 				stateText = "Connected"
@@ -1531,8 +1447,6 @@ func (s *Service) Inventory(ctx context.Context) (extensions.Inventory, error) {
 	return inventory, nil
 }
 
-// NeedsSignIn returns an account of the integration that was connected but must sign in again (revoked, expired or
-// rejected credential), preferring the requested one. A task that needs it can ask the user to sign in and resume.
 func (s *Service) NeedsSignIn(ctx context.Context, integrationID, requested string) (Record, bool) {
 	records, _, err := s.Records(ctx)
 	if err != nil {
@@ -1556,8 +1470,6 @@ func (s *Service) NeedsSignIn(ctx context.Context, integrationID, requested stri
 	return *found, true
 }
 
-// StartRepair starts an OAuth sign-in attempt to repair a connection from a task and returns it. requestID makes a
-// repeated start return the same attempt.
 func (s *Service) StartRepair(ctx context.Context, id, requestID, returnTo string, capabilities []string) (AuthAttempt, error) {
 	record, r, err := s.record(ctx, id)
 	if err != nil {
@@ -1569,7 +1481,6 @@ func (s *Service) StartRepair(ctx context.Context, id, requestID, returnTo strin
 	}
 	action := Action{Action: "repair", ReturnTo: returnTo}
 	if len(capabilities) > 0 {
-		// Ask for what the account already granted plus what the task needs.
 		action.Capabilities = append(append([]string{}, record.Capabilities...), capabilities...)
 	}
 	receipt, err := s.connect(ctx, id, requestID, r.Revision, action)
@@ -1583,8 +1494,6 @@ func (s *Service) StartRepair(ctx context.Context, id, requestID, returnTo strin
 	return attempt, nil
 }
 
-// LackingCapability returns a usable account of the integration that has not granted the capability, preferring the
-// requested one, so a task can ask for the missing access on that account.
 func (s *Service) LackingCapability(ctx context.Context, integrationID, capability, requested string) (Record, bool) {
 	records, _, err := s.Records(ctx)
 	if err != nil {
@@ -1602,7 +1511,6 @@ func (s *Service) LackingCapability(ctx context.Context, integrationID, capabili
 	return Record{}, false
 }
 
-// ScopesFor lists the provider scopes a capability needs, for showing what a request for more access asks.
 func (s *Service) ScopesFor(integrationID, capability string) []string {
 	integration := s.Integrations[integrationID]
 	if integration == nil {

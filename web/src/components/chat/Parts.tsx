@@ -27,7 +27,7 @@ function FilePart({ part, url }: { part: Part; url: string }) {
   const label = `${part.name ?? "File"}${part.size ? ` · ${formatSize(part.size)}` : ""}`;
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      {/* eslint-disable-next-line @next/next/no-img-element -- A blob URL has nothing for the image optimizer to fetch. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
       {file?.url && image && <img src={file.url} alt={part.name ?? "Attached image"} className="max-h-72 max-w-full rounded-tile object-contain" />}
       {file?.url && pdf && <iframe src={file.url} title={part.name ?? "Attached PDF"} className="h-72 w-full min-w-[260px] rounded-tile border border-hairline bg-surface" />}
       <div className="flex min-w-0 items-center gap-2 text-meta">

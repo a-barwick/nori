@@ -22,38 +22,29 @@ import (
 )
 
 const (
-	// Authorized models for inner tasks (OpenRouter vs direct OpenAI).
 	routerModel = settings.DefaultOpenRouterInnerModel
 	directModel = settings.DefaultInnerModel
-	// stateFormat marks transcript.ProviderState written by this adapter. Its data is the
-	// JSON array of output items from a response, which keeps encrypted reasoning and call
-	// IDs exactly as the provider returned them.
 	stateFormat = "nori.responses"
 )
 
 type Client struct {
-	Key          string
-	ModelName    string
-	ProviderName string
-	HTTP         *http.Client
-	Guard        *llmguard.Guard
-	UserID       string
-	Meter        usage.Meter
-	gatewayURL   string
-	// TestURL replaces the provider endpoint with a local stub (settings.Models.TestURL).
-	TestURL string
-	// DefaultReasoning sets the reasoning effort for requests that do not specify one.
-	DefaultReasoning string
-	// AllowGatewayReasoning enables sending reasoning.effort when routing through gatewayURL.
+	Key                   string
+	ModelName             string
+	ProviderName          string
+	HTTP                  *http.Client
+	Guard                 *llmguard.Guard
+	UserID                string
+	Meter                 usage.Meter
+	gatewayURL            string
+	TestURL               string
+	DefaultReasoning      string
 	AllowGatewayReasoning bool
-	// LocalOnly marks requests routed to a local-only inference server (e.g. Ollama).
-	LocalOnly bool
-	// Optional retry configuration hooks for transient provider errors (429, 5xx, network).
-	MaxRetries     int
-	RetryBaseDelay time.Duration
-	MaxRetryAfter  time.Duration
-	Now            func() time.Time
-	Sleep          func(context.Context, time.Duration) error
+	LocalOnly             bool
+	MaxRetries            int
+	RetryBaseDelay        time.Duration
+	MaxRetryAfter         time.Duration
+	Now                   func() time.Time
+	Sleep                 func(context.Context, time.Duration) error
 }
 
 func (c *Client) guard() *llmguard.Guard {
@@ -99,8 +90,6 @@ func (c *Client) direct() bool {
 	return c.ModelName == directModel
 }
 
-// SupportsNativeWebSearch reports whether this client executes web search natively
-// through OpenAI's built-in Responses API web_search tool.
 func (c *Client) SupportsNativeWebSearch() bool { return c.direct() }
 
 func (c *Client) Provider() string {
@@ -144,9 +133,6 @@ func (c *Client) requestOptions(fields map[string]any) {
 	}
 	if c.direct() {
 		fields["service_tier"] = "default"
-		// Do NOT send prompt_cache_options:{"mode":"explicit"} without explicit cache
-		// breakpoints; omitting it enables OpenAI's automatic prefix prompt caching
-		// across instructions, tools, and conversation prefix.
 		return
 	}
 	fields["provider"] = map[string]any{"max_price": map[string]float64{"prompt": 1, "completion": 5}, "require_parameters": true}
@@ -242,7 +228,6 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	}
 	record.RequestStatus = "unknown"
 	defer func() { err = errors.Join(err, usage.Finish(ctx, c.Meter, record)) }()
-	// Once handed to HTTP, a transport failure cannot prove it was not billed.
 	out.NotSent = false
 	onRetry := func(statusCode int) error {
 		prev := record
@@ -417,7 +402,6 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 				}
 			}
 		case "reasoning":
-			// Kept in provider state for stateless continuation.
 		default:
 			if c.gatewayURL != "" {
 				return out, errors.New("model gateway returned an unsupported Responses output item. Check function calling compatibility")
@@ -429,7 +413,7 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		out.WebSearches = webSearches
 	}
 	if out.CostKnown && out.Cost > 0 {
-		c.guard().RecordActualCost(out.Cost)
+		llmguard.RecordResponseCost(res, out.Cost)
 	}
 	if len(citations) > 0 {
 		out.Citations = citations
@@ -442,9 +426,6 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		return out, errors.New("task model returned no answer")
 	}
 	out.Calls = calls
-	// Preserve user-facing text that accompanies a control call. The exact
-	// provider items remain authoritative for replay; this projection lets an
-	// input question retain its explanation without exposing reasoning.
 	if visibleText != "" {
 		message.Parts = append(message.Parts, transcript.Part{Text: visibleText})
 	}
@@ -452,9 +433,6 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	return out, nil
 }
 
-// responseInput builds the Responses input items from a transcript. A model turn that
-// carries this adapter's provider state is replayed from it exactly. Everything else,
-// including turns saved by an earlier provider, is rebuilt from its portable parts.
 func responseInput(messages []transcript.Message, format string) ([]any, error) {
 	input := []any{}
 	pending := map[string][]string{}

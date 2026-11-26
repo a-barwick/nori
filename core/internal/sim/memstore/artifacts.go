@@ -10,35 +10,29 @@ import (
 	"nori/internal/users"
 )
 
-// StoredFile represents a stored uploaded file and its media type.
 type StoredFile struct {
 	MediaType string
 	Data      []byte
 }
 
-// ArtifactOption configures a new Artifacts store.
 type ArtifactOption func(*Artifacts)
 
-// WithArtifactsFaultInjector attaches an existing FaultInjector to Artifacts.
 func WithArtifactsFaultInjector(inj *FaultInjector) ArtifactOption {
 	return func(a *Artifacts) {
 		a.faults = inj
 	}
 }
 
-// WithArtifactsFaults configures fault injection on Artifacts using cfg and rng.
 func WithArtifactsFaults(cfg FaultConfig, rng Float64Source) ArtifactOption {
 	return func(a *Artifacts) {
 		a.faults = NewFaultInjector(cfg, rng)
 	}
 }
 
-// Artifacts is a deterministic, in-memory implementation of state.ArtifactStore
-// (embedding state.Artifacts) using deep copies of all byte slices.
 type Artifacts struct {
 	mu     sync.Mutex
-	pngs   map[string][]byte     // key: "<run>/<id>.png"
-	files  map[string]StoredFile // key: file key
+	pngs   map[string][]byte
+	files  map[string]StoredFile
 	faults *FaultInjector
 }
 
@@ -47,7 +41,6 @@ var (
 	_ state.ArtifactStore = (*Artifacts)(nil)
 )
 
-// NewArtifacts creates an empty in-memory artifact store.
 func NewArtifacts(opts ...ArtifactOption) *Artifacts {
 	a := &Artifacts{
 		pngs:  map[string][]byte{},
@@ -61,7 +54,6 @@ func NewArtifacts(opts ...ArtifactOption) *Artifacts {
 	return a
 }
 
-// SetFaults configures or replaces fault injection on this Artifacts store.
 func (a *Artifacts) SetFaults(cfg FaultConfig, rng Float64Source) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -72,7 +64,6 @@ func (a *Artifacts) SetFaults(cfg FaultConfig, rng Float64Source) {
 	a.faults.Configure(cfg, rng)
 }
 
-// SetFaultsEnabled toggles fault injection on or off without losing config or stats.
 func (a *Artifacts) SetFaultsEnabled(enabled bool) {
 	a.mu.Lock()
 	inj := a.faults
@@ -82,7 +73,6 @@ func (a *Artifacts) SetFaultsEnabled(enabled bool) {
 	}
 }
 
-// FaultStats returns injected fault counters for this Artifacts store.
 func (a *Artifacts) FaultStats() FaultStats {
 	a.mu.Lock()
 	inj := a.faults
@@ -111,7 +101,6 @@ func cloneBytes(b []byte) []byte {
 	return bytes.Clone(b)
 }
 
-// PutPNG stores a PNG artifact once under run/id and refuses to replace an existing one.
 func (a *Artifacts) PutPNG(ctx context.Context, run, id string, data []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -134,7 +123,6 @@ func (a *Artifacts) PutPNG(ctx context.Context, run, id string, data []byte) err
 	return nil
 }
 
-// GetPNG retrieves a copy of a stored PNG artifact, returning state.ErrNotFound if absent.
 func (a *Artifacts) GetPNG(ctx context.Context, run, id string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -151,7 +139,6 @@ func (a *Artifacts) GetPNG(ctx context.Context, run, id string) ([]byte, error) 
 	return state.ReadArtifact(bytes.NewReader(cloneBytes(data)))
 }
 
-// PutFile stores a file once under key and returns state.ErrFileExists when the key is taken.
 func (a *Artifacts) PutFile(ctx context.Context, key, mediaType string, data []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -176,7 +163,6 @@ func (a *Artifacts) PutFile(ctx context.Context, key, mediaType string, data []b
 	return nil
 }
 
-// GetFile retrieves a copy of a stored file, returning state.ErrNotFound if absent.
 func (a *Artifacts) GetFile(ctx context.Context, key string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -193,7 +179,6 @@ func (a *Artifacts) GetFile(ctx context.Context, key string) ([]byte, error) {
 	return state.ReadFile(bytes.NewReader(cloneBytes(file.Data)))
 }
 
-// DeleteFile removes a stored file. Missing keys return nil.
 func (a *Artifacts) DeleteFile(ctx context.Context, key string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -216,12 +201,8 @@ func (a *Artifacts) DeleteFile(ctx context.Context, key string) error {
 	return nil
 }
 
-// Close is a no-op for the in-memory artifact store.
 func (a *Artifacts) Close() error { return nil }
 
-// ComposeStore composes a user-scoped state.ConversationStore over a shared
-// Backend and Artifacts store using records.New (preserving SequenceReader and
-// Sequencer while keeping b's lifecycle owned by the caller) and state.Compose.
 func ComposeStore(b *Backend, a *Artifacts, user users.User, taskBudgetUSD float64) state.ConversationStore {
 	if a == nil {
 		a = NewArtifacts()

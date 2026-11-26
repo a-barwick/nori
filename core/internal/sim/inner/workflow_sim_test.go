@@ -583,7 +583,6 @@ func TestWorkflowSimNormalReadApprovalWriteComplete(t *testing.T) {
 
 	run := h.startTaskRecord(ctx, "Read key-1 then write approved-v1")
 
-	// Leg 1: executes read, requests write approval, parks on WaitQuestion.
 	outcome, err := h.runTask(ctx, run.ID, "", nil)
 	if err != nil || outcome != task.OutcomeParked {
 		t.Fatalf("expected OutcomeParked waiting for approval, got outcome=%s err=%v", outcome, err)
@@ -613,7 +612,6 @@ func TestWorkflowSimNormalReadApprovalWriteComplete(t *testing.T) {
 	})
 	h.perms.MarkDelivered(ctx, card.ID)
 
-	// Leg 2: woken by CommandAnswer, runs approved write and completes.
 	outcome, err = h.runTask(ctx, run.ID, "", nil)
 	if err != nil || outcome != task.OutcomeDone {
 		t.Fatalf("expected OutcomeDone after approval, got outcome=%s err=%v", outcome, err)
@@ -678,7 +676,6 @@ func TestWorkflowSimMidBatchSteerAndSupersededCards(t *testing.T) {
 		}
 		projCount++
 		if projCount == 3 {
-			// Project 1 = thinking (ModelRef), Project 2 = mb-1, Project 3 = mb-2 right before ToolRef!
 			steeredMidBatch = true
 			h.acceptCommands(ctx, state.Command{
 				ID:    h.ids.Next(),
@@ -694,7 +691,6 @@ func TestWorkflowSimMidBatchSteerAndSupersededCards(t *testing.T) {
 		}
 	}
 
-	// Leg 1: executes mb-1, hits ErrSuperseded on mb-2, skips mb-2 & mb-3, runs rev-2 write -> parks on approval card.
 	outcome, err := h.runTask(ctx, run.ID, "", nil)
 	if err != nil || outcome != task.OutcomeParked {
 		t.Fatalf("leg 1: expected OutcomeParked on rev-2 approval card, got outcome=%s err=%v", outcome, err)
@@ -706,7 +702,6 @@ func TestWorkflowSimMidBatchSteerAndSupersededCards(t *testing.T) {
 	}
 	staleCard := list[0]
 
-	// Steer rev 3 -> supersedes rev-2 approval card and wakes task!
 	h.acceptCommands(ctx, state.Command{
 		ID:    h.ids.Next(),
 		RunID: run.ID,
@@ -714,7 +709,6 @@ func TestWorkflowSimMidBatchSteerAndSupersededCards(t *testing.T) {
 		Text:  "Never mind the write, just finish now",
 	})
 
-	// Leg 2: completes at rev 3.
 	outcome, err = h.runTask(ctx, run.ID, "", nil)
 	if err != nil || outcome != task.OutcomeDone {
 		t.Fatalf("leg 2: expected OutcomeDone, got outcome=%s err=%v", outcome, err)
@@ -803,7 +797,6 @@ func TestWorkflowSimPausedToolRefBoundaryNoUncertain(t *testing.T) {
 		}
 		projCount++
 		if projCount == 2 {
-			// Project 1 = thinking, Project 2 = pt-1 right before ToolRef!
 			pausedOnTool = true
 			if pErr := h.setPaused(ctx, true); pErr != nil {
 				t.Errorf("setPaused(true): %v", pErr)
@@ -816,7 +809,6 @@ func TestWorkflowSimPausedToolRefBoundaryNoUncertain(t *testing.T) {
 		}
 	}
 
-	// Leg 1: ToolRef hits ErrPaused, records pt-1/pt-2 as skipped (NO uncertain), parks on WaitPaused.
 	outcome, err := h.runTask(ctx, run.ID, "", nil)
 	if err != nil || outcome != task.OutcomeParked {
 		t.Fatalf("leg 1: expected OutcomeParked on WaitPaused, got outcome=%s err=%v", outcome, err)
@@ -828,12 +820,10 @@ func TestWorkflowSimPausedToolRefBoundaryNoUncertain(t *testing.T) {
 		t.Fatalf("expected paused ToolRef calls never to execute, got %+v", h.adapter.Executed())
 	}
 
-	// Unpause -> atomically wakes WaitPaused lease!
 	if err := h.setPaused(ctx, false); err != nil {
 		t.Fatalf("setPaused(false): %v", err)
 	}
 
-	// Leg 2: completes cleanly.
 	outcome, err = h.runTask(ctx, run.ID, "", nil)
 	if err != nil || outcome != task.OutcomeDone {
 		t.Fatalf("leg 2: expected OutcomeDone after unpause, got outcome=%s err=%v", outcome, err)
@@ -910,13 +900,11 @@ func TestWorkflowSimStopSignals(t *testing.T) {
 
 		run := h.startTaskRecord(ctx, "Ask a question then get stopped")
 
-		// Parks on WaitQuestion.
 		outcome, err := h.runTask(ctx, run.ID, "", nil)
 		if err != nil || outcome != task.OutcomeParked {
 			t.Fatalf("expected OutcomeParked on question, got outcome=%s err=%v", outcome, err)
 		}
 
-		// CommandStop wakes the parked task lease in the same transaction.
 		h.acceptCommands(ctx, state.Command{
 			ID:    h.ids.Next(),
 			RunID: run.ID,
@@ -955,7 +943,6 @@ func TestWorkflowSimStopSignals(t *testing.T) {
 		parent := h.startTaskRecord(ctx, "Parent task delegating to subtask")
 		parentID = parent.ID
 
-		// Parent runs until parked on QuestionWork.
 		outcome, err := h.runTask(ctx, parentID, "", nil)
 		if err != nil || outcome != task.OutcomeParked {
 			t.Fatalf("parent leg 1: expected OutcomeParked on work request, got outcome=%s err=%v", outcome, err)
@@ -965,7 +952,6 @@ func TestWorkflowSimStopSignals(t *testing.T) {
 			t.Fatalf("expected parent parked on work question, got %+v err=%v", cur.Question, err)
 		}
 
-		// Spawn child and immediately stop parent!
 		childID = h.ids.Next()
 		h.acceptCommands(ctx, state.Command{
 			ID:         h.ids.Next(),
@@ -981,7 +967,6 @@ func TestWorkflowSimStopSignals(t *testing.T) {
 			Kind:  state.CommandStop,
 		})
 
-		// Parent cascades stop to child, enters Finishing barrier, and parks on WaitFinishing.
 		outcome, err = h.runTask(ctx, parentID, "", nil)
 		if err != nil || outcome != task.OutcomeParked {
 			t.Fatalf("parent leg 2: expected OutcomeParked on WaitFinishing, got outcome=%s err=%v", outcome, err)
@@ -1002,13 +987,11 @@ func TestWorkflowSimStopSignals(t *testing.T) {
 			t.Fatalf("expected parent stop to cascade CancelRequested to child, got %+v", midChild)
 		}
 
-		// Child runs -> cancels, cleans up, finalizes parent and wakes parent lease.
 		outcome, err = h.runTask(ctx, childID, "", nil)
 		if err != nil || outcome != task.OutcomeDone {
 			t.Fatalf("child: expected OutcomeDone, got outcome=%s err=%v", outcome, err)
 		}
 
-		// Parent late-wake cleanup deletes parent's now-terminal lease.
 		outcome, err = h.runTask(ctx, parentID, "", nil)
 		if err != nil || outcome != task.OutcomeDone {
 			t.Fatalf("parent finalization wake: expected OutcomeDone, got outcome=%s err=%v", outcome, err)
@@ -1077,7 +1060,6 @@ func TestWorkflowSimOperatorPauseResumeAndHeldPublication(t *testing.T) {
 		}
 	}
 
-	// Leg 1: tool runs -> pauses -> parks on WaitPaused.
 	outcome, err := h.runTask(ctx, run.ID, "", nil)
 	if err != nil || outcome != task.OutcomeParked {
 		t.Fatalf("leg 1: expected OutcomeParked on WaitPaused, got outcome=%s err=%v", outcome, err)
@@ -1086,12 +1068,10 @@ func TestWorkflowSimOperatorPauseResumeAndHeldPublication(t *testing.T) {
 		t.Fatal("expected pause trigger after first tool")
 	}
 
-	// Unpause wakes WaitPaused.
 	if err := h.setPaused(ctx, false); err != nil {
 		t.Fatalf("setPaused(false): %v", err)
 	}
 
-	// Leg 2: calls complete -> PublishRef hits ErrRoutingPending -> parks on WaitRoutingPending.
 	outcome, err = h.runTask(ctx, run.ID, "", nil)
 	if err != nil || outcome != task.OutcomeParked {
 		t.Fatalf("leg 2: expected OutcomeParked on WaitRoutingPending, got outcome=%s err=%v", outcome, err)
@@ -1105,12 +1085,10 @@ func TestWorkflowSimOperatorPauseResumeAndHeldPublication(t *testing.T) {
 		t.Fatalf("expected held publication (status=%s pending=%v err=%v)", heldRun.Status, heldRun.PublicationPending, err)
 	}
 
-	// Route conversation turn -> clears UserRoutingPending and atomically wakes WaitRoutingPending!
 	if !h.routeOneConversationTurn(ctx, "Routing resolved.") {
 		t.Fatal("expected conversation turn to publish and clear UserRoutingPending")
 	}
 
-	// Leg 3: completes publication and cleanup.
 	outcome, err = h.runTask(ctx, run.ID, "", nil)
 	if err != nil || outcome != task.OutcomeDone {
 		t.Fatalf("leg 3: expected OutcomeDone after routing cleared, got outcome=%s err=%v", outcome, err)
@@ -1158,7 +1136,6 @@ func TestWorkflowSimLongRunningMultiTurnHandoff(t *testing.T) {
 		}
 	}
 
-	// Worker 1 executes 20 turns, then drains cleanly at step boundary, persisting TaskControl cursor.
 	outcome, err := h.runTask(ctx, run.ID, "worker-1", drainCh)
 	if err != nil || outcome != task.OutcomeReleased {
 		t.Fatalf("worker-1: expected OutcomeReleased on Drain, got outcome=%s err=%v", outcome, err)
@@ -1179,7 +1156,6 @@ func TestWorkflowSimLongRunningMultiTurnHandoff(t *testing.T) {
 		t.Fatalf("expected run still running across worker handoff, got %s", midRun.Status)
 	}
 
-	// Worker 2 claims the released lease and completes all remaining turns seamlessly.
 	outcome, err = h.runTask(ctx, run.ID, "worker-2", nil)
 	if err != nil || outcome != task.OutcomeDone {
 		t.Fatalf("worker-2: expected OutcomeDone, got outcome=%s err=%v", outcome, err)
@@ -1281,7 +1257,6 @@ func TestWorkflowSimMultiToolBatchBudgetCeiling(t *testing.T) {
 		parent := h.startTaskRecord(ctx, "Parent sharing budget with subtask")
 		parentID = parent.ID
 
-		// Parent parks on QuestionWork.
 		outcome, err := h.runTask(ctx, parentID, "", nil)
 		if err != nil || outcome != task.OutcomeParked {
 			t.Fatalf("parent leg 1: expected OutcomeParked on work request, got outcome=%s err=%v", outcome, err)
@@ -1291,7 +1266,6 @@ func TestWorkflowSimMultiToolBatchBudgetCeiling(t *testing.T) {
 			t.Fatalf("expected parent work question, got err=%v", err)
 		}
 
-		// Spawn and run child to completion (rolls up $0.30 spend to parent and wakes parent).
 		childID = h.ids.Next()
 		h.acceptCommands(ctx, state.Command{
 			ID:         h.ids.Next(),
@@ -1306,7 +1280,6 @@ func TestWorkflowSimMultiToolBatchBudgetCeiling(t *testing.T) {
 			t.Fatalf("child: expected OutcomeDone, got outcome=%s err=%v", outcome, err)
 		}
 
-		// Parent resumes: model call 2 pushes family spend to $0.60 >= $0.50 -> halts BEFORE executing batch tools!
 		outcome, err = h.runTask(ctx, parentID, "", nil)
 		if err != nil || outcome != task.OutcomeDone {
 			t.Fatalf("parent leg 2: expected clean budget-exhausted OutcomeDone, got outcome=%s err=%v", outcome, err)
@@ -1582,13 +1555,11 @@ func runDeterministicWorkflowScenario(t *testing.T, seed int64) (string, string,
 		}
 	}
 
-	// Leg 1: reads keyA, steers mid-batch, opens approval card for keyB, parks on WaitQuestion.
 	outcome, err := h.runTask(ctx, run.ID, "", nil)
 	if err != nil || outcome != task.OutcomeParked {
 		t.Fatalf("seed %d leg 1: expected OutcomeParked on approval, got outcome=%s err=%v", seed, outcome, err)
 	}
 
-	// Approve card AND immediately pause system before next leg!
 	list, _, err := h.perms.Interactions(ctx, "pending", run.ID, "", 20)
 	if err != nil || len(list) != 1 {
 		t.Fatalf("seed %d: expected 1 approval card, got %d (err=%v)", seed, len(list), err)
@@ -1613,18 +1584,15 @@ func runDeterministicWorkflowScenario(t *testing.T, seed int64) (string, string,
 		t.Fatalf("seed %d setPaused(true): %v", seed, err)
 	}
 
-	// Leg 2: woken by answer while paused -> parks on WaitPaused.
 	outcome, err = h.runTask(ctx, run.ID, "", nil)
 	if err != nil || outcome != task.OutcomeParked {
 		t.Fatalf("seed %d leg 2: expected OutcomeParked on WaitPaused, got outcome=%s err=%v", seed, outcome, err)
 	}
 
-	// Unpause -> wakes WaitPaused.
 	if err := h.setPaused(ctx, false); err != nil {
 		t.Fatalf("seed %d setPaused(false): %v", seed, err)
 	}
 
-	// Leg 3: executes approved write and completes.
 	outcome, err = h.runTask(ctx, run.ID, "", nil)
 	if err != nil || outcome != task.OutcomeDone {
 		t.Fatalf("seed %d leg 3: expected OutcomeDone, got outcome=%s err=%v", seed, outcome, err)

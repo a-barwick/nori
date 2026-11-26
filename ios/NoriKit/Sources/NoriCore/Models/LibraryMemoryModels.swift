@@ -1,6 +1,5 @@
 import Foundation
 
-// MARK: - Library & Search
 
 public struct Provenance: Sendable, Codable, Hashable {
     public enum ContentKind: String, Sendable, Codable, Hashable {
@@ -94,7 +93,6 @@ public struct LibraryItem: Sendable, Codable, Hashable, Identifiable {
     public var previewText: String?
     public var deleteEffect: String?
     public var revision: Int
-    /// Optional full markdown/text body (loaded for reader sheet or demo items).
     public var bodyText: String?
 
     enum CodingKeys: String, CodingKey {
@@ -347,7 +345,6 @@ public struct LibraryRevisionResult: Sendable, Hashable {
     }
 }
 
-// MARK: - Memory Models (3-Layer Architecture)
 
 public enum MemoryProvenance: String, Sendable, Codable, Hashable {
     case userExplicit = "user_explicit"
@@ -475,7 +472,6 @@ public struct MemoryLogEntry: Sendable, Codable, Hashable, Identifiable {
     public var runID: String?
     public var createdAt: String
     public var updatedAt: String?
-    /// Client/demo convenience marker showing this log entry was promoted to Core Memory.
     public var promoted: Bool
 
     enum CodingKeys: String, CodingKey {
@@ -688,7 +684,6 @@ public struct WorkingMemory: Sendable, Codable, Hashable {
     }
 }
 
-// MARK: - Memory Mutation Receipt Payloads
 
 public struct MemoryForgetResult: Sendable, Codable, Hashable {
     public var note: String?
@@ -718,10 +713,6 @@ public struct MemoryDemoteResult: Sendable, Codable, Hashable {
     }
 }
 
-/// Decodes `POST /v1/memory/{id}/actions` receipt `resource`:
-/// - `pin` / `unpin` -> `MemoryFact`
-/// - `forget` -> `{"note", "forgotten"}`
-/// - `demote` -> `{"demoted", "log_entry", "note"}`
 public enum MemoryActionResource: Sendable, Codable, Hashable {
     case fact(MemoryFact)
     case forgotten(MemoryForgetResult)
@@ -784,9 +775,6 @@ public struct MemoryLogEntryForgetResult: Sendable, Codable, Hashable {
     }
 }
 
-/// Decodes `POST /v1/memory/logs/{date}/{entry_id}/actions` receipt `resource`:
-/// - `promote` -> `MemoryFact`
-/// - `forget` -> `{"note", "forgotten"}`
 public enum MemoryLogEntryActionResource: Sendable, Codable, Hashable {
     case promoted(MemoryFact)
     case forgotten(MemoryLogEntryForgetResult)
@@ -846,9 +834,6 @@ public struct WorkingMemoryDismissResult: Sendable, Codable, Hashable {
     }
 }
 
-/// Decodes `POST /v1/memory/working/{item_id}/actions` receipt `resource`:
-/// - `promote` -> `MemoryFact`
-/// - `dismiss` -> `WorkingMemory` (when summary exists) or `{"dismissed_item_id"}`
 public enum WorkingMemoryActionResource: Sendable, Codable, Hashable {
     case promoted(MemoryFact)
     case workingMemory(WorkingMemory)

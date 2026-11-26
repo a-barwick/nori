@@ -1,26 +1,4 @@
--- Historical migration ordering note (#60):
--- 002_indexes.sql and 002_sequences.sql both carry the 002_ prefix and execute in
--- lexicographical order (002_indexes.sql before 002_sequences.sql) via embed.FS.ReadDir.
--- Do NOT rename either file because existing databases record applied filenames in nori_migrations.
 
--- 1. Migrate nori_records to a tenant-sharded partitioned table with STORED generated columns
--- for all 12 indexed JSONB fields (#46, #60):
---   - Drops unused/redundant indexes (#60 + #46): nori_users_email (data->>'email', unused),
---     nori_records_attention and nori_records_message_sequence (never queried; previously
---     caused 100k+ fallback scans inside SERIALIZABLE txs), and nori_records_index_gin.
---   - Dedicated nori_records_system partition isolates ('system','control') — read inside
---     nearly every SERIALIZABLE tx — onto its own 1-row heap/B-tree so it NEVER shares a
---     leaf page with any user write, even on a brand-new cold DB.
---   - Dedicated nori_records_users partition scopes the unique email index strictly to users.
---   - 32-way HASH(shard) subpartitioning of nori_records_owners co-locates all collections
---     for one user (shard = owner ID) inside a single partition, eliminating cross-user
---     multi-partition SIREAD rw-conflict cycles from row #1 on cold and warm DBs alike.
---   - Moving all 12 indexed JSONB fields to STORED generated columns removes raw `data` from
---     Postgres's HOT-blocking column bitmap; combined with fillfactor=70, non-indexed JSONB
---     updates execute as pure HOT updates with zero index writes and zero leaf-page SIREAD
---     conflicts even between concurrent transactions for the same user.
---   - Splits run_id partial index for results vs task_commands so Publish (reading results)
---     never conflicts on run_id index pages with AcceptCommandBatch (inserting task_commands).
 DO $$
 DECLARE
     relkind "char";
@@ -104,12 +82,10 @@ BEGIN
 
         DROP TABLE nori_records_legacy;
 
-        -- Unique email index lives strictly on nori_records_users (0 overhead on owners/system).
         CREATE UNIQUE INDEX nori_users_email_jsonb
             ON nori_records_users (idx_email)
             WHERE idx_email IS NOT NULL;
 
-        -- Owner-scoped secondary indexes live strictly on nori_records_owners (0 overhead on system/users).
         CREATE INDEX nori_records_sequence
             ON nori_records_owners (shard, collection, idx_seq, id)
             WHERE idx_seq IS NOT NULL;
@@ -160,9 +136,6 @@ BEGIN
     END IF;
 END $$;
 
--- 2. Hash-partition nori_sequences into 32 physical partitions (#46).
--- Moves per-user event sequence rows off a single shared heap/index page to eliminate
--- cross-user SSI false conflicts. fillfactor=50 keeps seq increments as HOT updates.
 DO $$
 DECLARE
     relkind "char";
@@ -196,7 +169,6 @@ BEGIN
     END IF;
 END $$;
 
--- 3. HOT headroom + aggressive autovacuum/ANALYZE thresholds on high-churn queue tables (#46).
 ALTER TABLE nori_task_leases SET (
     fillfactor = 70,
     autovacuum_analyze_scale_factor = 0.01,

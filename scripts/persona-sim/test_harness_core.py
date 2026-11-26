@@ -73,18 +73,15 @@ class TestMCPSandbox(unittest.TestCase):
             assert world is not None
             self.assertEqual(world.sim_time, "2027-01-05T14:30:00Z")
 
-            # email_send stamps virtual sim_time (2027-01-05)
             send_res = world.call_tool("email_send", {"to": ["bob@example.com"], "subject": "Hello", "body": "Body"})
             self.assertEqual(send_res["status"], "sent")
             sent_email = world.emails[-1]
             self.assertEqual(sent_email["date"], "2027-01-05T14:30:00Z")
 
-            # Update clock via HTTP POST /_world/<slug>/clock with timezone offset
             st, clk_res = _http_call(base_url, "POST", "/_world/01-maya/clock", {"time": "2027-01-08T09:15:00-08:00"})
             self.assertEqual(st, 200)
             self.assertEqual(clk_res["sim_time"], "2027-01-08T17:15:00Z")
 
-            # doc_write (create & update) and issue_update stamp updated_at
             doc_res = world.call_tool("doc_write", {"title": "Kitchen Notes", "content": "Putty paint"})
             self.assertEqual(doc_res["doc"]["updated_at"], "2027-01-08T17:15:00Z")
             doc_id = doc_res["doc"]["id"]
@@ -96,20 +93,17 @@ class TestMCPSandbox(unittest.TestCase):
             iss_res = world.call_tool("issue_update", {"issue_id": "ISS-1", "status": "resolved"})
             self.assertEqual(iss_res["issue"]["updated_at"], "2027-01-09T12:00:00Z")
 
-            # Audit log includes sim_time on top-level, call_log, and write_log
             st_a, audit = _http_call(base_url, "GET", "/_world/01-maya/audit")
             self.assertEqual(st_a, 200)
             self.assertEqual(audit["sim_time"], "2027-01-09T12:00:00Z")
             self.assertTrue(all("sim_time" in c and "ts" in c for c in audit["calls"]))
             self.assertTrue(all("sim_time" in w and "ts" in w for w in audit["writes"]))
 
-            # Clock error handling (400 / 404)
             st_bad, _ = _http_call(base_url, "POST", "/_world/01-maya/clock", {"time": "not-a-date"})
             self.assertEqual(st_bad, 400)
             st_404, _ = _http_call(base_url, "POST", "/_world/missing/clock", {"time": "2027-01-09T12:00:00Z"})
             self.assertEqual(st_404, 404)
 
-            # register_persona with explicit sim_time overrides seed
             srv.register_persona("02-devon", {}, sim_time=datetime(2027, 1, 12, 8, 30, 0))
             w2 = srv.get_world("02-devon")
             assert w2 is not None
@@ -164,21 +158,17 @@ class TestMCPSandbox(unittest.TestCase):
         }
         world = mcp_sandbox.PersonaWorld("test", seed)
 
-        # Words reversed, spanning subject + body + cc, with punctuation
         r_email = world.call_tool("email_search", {"query": "Tuesday, kitchen! studio.example"})
         self.assertEqual(r_email["total"], 1)
         self.assertEqual(world.call_tool("email_search", {"query": "kitchen plumbing"})["total"], 0)
         self.assertEqual(world.call_tool("email_search", {"query": "   "})["total"], 1)
 
-        # Doc search spanning title + tags + content
         r_doc = world.call_tool("doc_list", {"query": "soapstone bernal Finish"})
         self.assertEqual(r_doc["total"], 1)
 
-        # Issue search spanning id + priority + status
         r_iss = world.call_tool("issue_list", {"query": "DBSI-48, p0 investigating"})
         self.assertEqual(r_iss["total"], 1)
 
-        # Calendar search spanning attendees + location + notes
         r_cal = world.call_tool("calendar_list", {"query": "flashing elena@hoa.example Mission"})
         self.assertEqual(r_cal["total"], 1)
 
@@ -201,7 +191,6 @@ class TestMCPSandbox(unittest.TestCase):
             mcp_url = srv.register_persona("05-hannah", seed)
             base_url = mcp_url.rsplit("/mcp/", 1)[0]
 
-            # Seed more results via world event
             st_ev, ev_res = _http_call(base_url, "POST", "/_world/05-hannah/event", {
                 "action": "add_web_results",
                 "params": {
@@ -214,7 +203,6 @@ class TestMCPSandbox(unittest.TestCase):
             self.assertEqual(st_ev, 200)
             self.assertEqual(ev_res["count"], 1)
 
-            # JSON-RPC initialize -> tools/list -> tools/call web_search
             st_i, init_r = _http_call(base_url, "POST", "/mcp/05-hannah", {"jsonrpc": "2.0", "id": 1, "method": "initialize"})
             self.assertEqual(st_i, 200)
             self.assertIn("result", init_r)
@@ -237,7 +225,6 @@ class TestMCPSandbox(unittest.TestCase):
             self.assertEqual(sc["retrieved_at"], "2027-01-10T08:00:00Z")
             self.assertIn("untrusted data", sc["note"])
 
-            # Blank query returns isError=True; read-only tool never writes to write_log
             st_err, err_r = _http_call(base_url, "POST", "/mcp/05-hannah", {
                 "jsonrpc": "2.0",
                 "id": 4,
@@ -302,7 +289,6 @@ class TestAssetGen(unittest.TestCase):
             self.assertEqual(texts_m["Description"], maya_label)
             self.assertIn("Description", texts_l)
 
-            # Pixels differ when label is rendered, and card bg + glyph fg pixels appear
             self.assertNotEqual(rgb_e, rgb_m)
 
             def _has_rgb(buf: bytes, target: tuple[int, int, int]) -> bool:
@@ -314,7 +300,6 @@ class TestAssetGen(unittest.TestCase):
             self.assertTrue(_has_rgb(rgb_l, (248, 248, 246)))
             self.assertTrue(_has_rgb(rgb_l, (18, 22, 26)))
 
-            # Top color swatch strip (y=10..34) remains unobstructed (no card panel bg at top)
             top_strip_m = rgb_m[10 * w_m * 3 : 35 * w_m * 3]
             top_strip_l = rgb_l[10 * w_l * 3 : 35 * w_l * 3]
             self.assertFalse(_has_rgb(top_strip_m, (248, 248, 246)))
@@ -415,7 +400,6 @@ class TestRunnerUnitHelpers(unittest.TestCase):
         self.assertEqual(agg["total_output_tokens"], 150_050)
         self.assertEqual(agg["total_cached_tokens"], 500_000)
         self.assertEqual(agg["unknown_cost_calls"], 1)
-        # sol: 500k*2/1M + 500k*0.1/1M + 100k*10/1M = 1.0 + 0.05 + 1.0 = 2.05; terra = 0.45
         self.assertAlmostEqual(agg["total_cost_usd"], 2.5, places=5)
         self.assertIn("gpt-6.1-sol", agg["by_model"])
         self.assertIn("openai", agg["by_provider"])
@@ -425,7 +409,6 @@ class TestRunnerUnitHelpers(unittest.TestCase):
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         base = f"http://127.0.0.1:{srv.server_port}"
         try:
-            # 1. Chat breakpoint list content + commandPlan JSON-wrapped parity
             schema_rf = {"type": "json_schema", "json_schema": {"name": "nori_response"}}
             st1, r1 = _http_call(base, "POST", "/v1/chat/completions", {
                 "model": "stub",
@@ -449,7 +432,6 @@ class TestRunnerUnitHelpers(unittest.TestCase):
             names = [a["name"] for a in p1["actions"]]
             self.assertEqual(names, ["remember", "dispatch"])
 
-            # 2. ModelAutoReviewer prompt
             st_ar, r_ar = _http_call(base, "POST", "/v1/chat/completions", {
                 "model": "stub",
                 "messages": [{
@@ -461,7 +443,6 @@ class TestRunnerUnitHelpers(unittest.TestCase):
             ar_json = json.loads(r_ar["choices"][0]["message"]["content"])
             self.assertEqual(ar_json["verdict"], "deny")
 
-            # 3. extract_only vs full flush_and_compact
             turns_payload = {
                 "turns": [
                     {"already_extracted": False, "messages": [{"from": "user", "input_id": "in_1", "text": "Remember my dentist is Dr. Patel."}]}
@@ -487,7 +468,6 @@ class TestRunnerUnitHelpers(unittest.TestCase):
             self.assertTrue(len(fc_args["summary_items"]) >= 1)
             self.assertTrue(bool(fc_args["gist"]))
 
-            # 4. Task round 1 MCP email_send -> round 2 complete (with evidence & unmet, no title)
             st_t1, r_t1 = _http_call(base, "POST", "/v1/responses", {
                 "tools": [{"name": "complete"}, {"name": "mcp_ws__email_send"}, {"name": "request_input"}],
                 "input": [{"role": "user", "content": "Send an email to wlin@apex.example about the order."}],
@@ -746,7 +726,6 @@ def _start_mock_nori_server(state: _MockNoriState) -> ThreadingHTTPServer:
                         state.fail_next_drain_504 = False
                         self._send_json({"error": "drain timeout", "state": {"quiescent": False}}, 504)
                         return
-                    # Simulate idle extraction when clock was advanced >= 120s
                     if state.clock_advances and state.clock_advances[-1] >= 120:
                         state.extracted_through = state.sim_now
                     self._send_json({"quiescent": True, "sim_now": state.sim_now})
@@ -869,7 +848,6 @@ def _start_mock_nori_server(state: _MockNoriState) -> ThreadingHTTPServer:
                     msg_txt = str(body.get("message", ""))
                     state.turns.append(body)
                     if "Save to Library:" in msg_txt:
-                        # Create a Library item (simulating clipped title to exercise PUT alignment)
                         lid = state.next_id("lib")
                         state.library.append({
                             "id": lid,
@@ -975,7 +953,6 @@ class TestRunnerMockStack(unittest.TestCase):
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         base = f"http://127.0.0.1:{srv.server_port}"
         try:
-            # 1. library_ui create -> turns -> Library item created & PUT title aligned (no tags)
             res_lib = runner._exec_library_ui(
                 base,
                 "u1",
@@ -987,14 +964,12 @@ class TestRunnerMockStack(unittest.TestCase):
             self.assertEqual(res_lib["item"]["title"], "Roof Variance Notes")
             self.assertEqual(len(state.library), 1)
 
-            # revise matches preview_text and returns 202; delete_matching removes it
             res_rev = runner._exec_library_ui(base, "u1", "revise", {"query": "Details here", "instruction": "Add budget"})
             self.assertEqual(res_rev["http_status"], 202)
             res_del = runner._exec_library_ui(base, "u1", "delete_matching", {"query": "Roof Variance"})
             self.assertEqual(res_del["http_status"], 200)
             self.assertEqual(len(state.library), 0)
 
-            # 2. goal_ui create (string criteria) + update (strips met/progress, folds into outcome)
             res_gc = runner._exec_goal_ui(base, "u1", "create", {
                 "title": "Launch Beta",
                 "outcome": "Ship v1",
@@ -1010,7 +985,6 @@ class TestRunnerMockStack(unittest.TestCase):
             self.assertIn("Progress: Load test done", state.goals[0]["outcome"])
             self.assertIn("Next actions: Run security review", state.goals[0]["outcome"])
 
-            # 3. interaction_reply filtering, decline text, question->answer, stale 409, unmatched error
             res_ir1 = runner._exec_interaction_reply(base, "u1", "decline", {
                 "match_tool": "email_send",
                 "match_recipient": "wlin@apex.example",
@@ -1037,7 +1011,6 @@ class TestRunnerMockStack(unittest.TestCase):
             res_miss = runner._exec_interaction_reply(base, "u1", "approve", {"match_tool": "nonexistent"})
             self.assertFalse(res_miss["matched"])
 
-            # 4. memory_ui Daily Log fallback + append_note + unique match enforcement
             res_pin = runner._exec_memory_ui(base, "u1", "pin_matching", {"query": "Tuesday morning"})
             self.assertEqual(res_pin["source"], "daily_log")
             self.assertEqual(res_pin["http_status"], 200)
@@ -1056,7 +1029,6 @@ class TestRunnerMockStack(unittest.TestCase):
             self.assertEqual(res_forget_log["http_status"], 200)
             self.assertEqual(len(state.daily_logs[0]["entries"]), 1)
 
-            # Ambiguous Core Memory match fails loudly
             state.core_memories.append({"id": "m_dup", "revision": 1, "text": "Duplicate Tuesday item", "about": "the user"})
             res_ambig = runner._exec_memory_ui(base, "u1", "forget_matching", {"query": "Tuesday"})
             self.assertFalse(res_ambig["matched"])
@@ -1145,10 +1117,6 @@ class TestRunnerMockStack(unittest.TestCase):
                     "end_of_month_audit": {"rubric": "Mock audit"},
                 }), encoding="utf-8")
 
-                # Trigger 504 on the probe drain for e05:
-                # Setup drain (1) + e01 drain (1) + e02 drain (2) + e03 context drain (1) +
-                # e04 pre-memory drain (1) + e04 post-memory drain (1) + e05 H-9 pre-jump drain (1) = 8 drains before e05 turn drain.
-                # Instead of fragile counting, wrap _start_mock state on e02->e05? Even simpler: check summary/probes behavior cleanly!
                 run_root = tmp_path / "runs"
                 run_root.mkdir()
                 summary = runner.run_single_persona(
@@ -1159,7 +1127,7 @@ class TestRunnerMockStack(unittest.TestCase):
                     pg_url=None,
                     mcp_server=mcp_srv,
                     dotenv={},
-                    stub_model_url="http://127.0.0.1:9",  # disables external responder LLM
+                    stub_model_url="http://127.0.0.1:9",
                     max_events=None,
                     workbench_url=None,
                     sim_url=base,
@@ -1170,30 +1138,23 @@ class TestRunnerMockStack(unittest.TestCase):
                 probes = json.loads((out_dir / "probes.json").read_text(encoding="utf-8"))
                 self.assertEqual(len(probes), 3)
 
-                # H-5: full untruncated show_results captured
                 self.assertEqual(len(probes[0]["show_results"]), 1)
                 self.assertIn("END_OF_FULL_RESULT", probes[0]["show_results"][0]["text"])
 
-                # H-4: adaptive loop resolved question without overwriting nori_reply
                 self.assertEqual(probes[1]["nori_reply"], "Initial answer before adaptive question.")
                 self.assertTrue(len(probes[1]["adaptive_followups"]) >= 1)
 
-                # sim_control.reset_context set context_from and advanced clock
                 self.assertTrue(bool(state.context_from))
 
-                # H-13: failed memory_ui surfaced in ui_errors
                 self.assertEqual(summary["ui_error_count"], 1)
                 self.assertEqual(summary["ui_errors"][0]["event_id"], "e04_mem_ui_error")
 
-                # H-9: clock jump >= 125s (10:06 -> Day 2 09:00) triggered +125s advance before _set_clock
                 self.assertIn(125.0, state.clock_advances)
 
-                # MCP world clock synced to 2027-01-XX
                 world = mcp_srv.get_world("99-mock-persona")
                 assert world is not None
                 self.assertTrue(str(world.sim_time).startswith("2027-01-02"))
 
-                # model_usage & interactions.json persisted
                 self.assertAlmostEqual(summary["model_usage"]["total_cost_usd"], 0.0262, places=6)
                 self.assertTrue((out_dir / "interactions.json").is_file())
                 self.assertEqual(summary["http_5xx_count"], 0)
@@ -1242,7 +1203,6 @@ class TestRunnerMockStack(unittest.TestCase):
                     ]
                 }), encoding="utf-8")
 
-                # 1) 504 on settle (before probe event), followed by clean probe drain -> clears unrecovered_drain_timeout
                 orig_http = runner.http_json
                 drain_seen = {"count": 0}
 
@@ -1276,7 +1236,6 @@ class TestRunnerMockStack(unittest.TestCase):
                 probes = json.loads((run_root / "98-timeout" / "probes.json").read_text(encoding="utf-8"))
                 self.assertFalse(probes[0]["inconclusive"])
 
-                # 2) 504 on the probe's own turn drain -> marks probe inconclusive=True without incrementing http_5xx_count
                 def _wrapped_http_on_probe(b: str, m: str, p: str, *a: Any, **kw: Any) -> tuple[int, Any]:
                     res = orig_http(b, m, p, *a, **kw)
                     if m == "POST" and p.endswith("/api/turn"):
@@ -1313,7 +1272,6 @@ class TestRunnerMockStack(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 runner.main()
 
-        # Verify ensure_ephemeral_postgres creates distinct DBs under concurrency
         created_dbs: list[str] = []
         lock = threading.Lock()
 

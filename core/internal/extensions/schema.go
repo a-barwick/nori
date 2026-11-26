@@ -10,10 +10,8 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-// MaxSchemaBytes bounds a tool's canonical schema. Larger provider schemas are rejected visibly.
 const MaxSchemaBytes = 64 << 10
 
-// OpenAITransform is the model-schema projection for OpenAI function tools in non-strict mode.
 const OpenAITransform = "openai-functions-1"
 
 type noLoader struct{}
@@ -22,11 +20,8 @@ func (noLoader) Load(url string) (any, error) {
 	return nil, fmt.Errorf("schema reference %s is not bundled; external references are not fetched", url)
 }
 
-// Schema is a compiled canonical schema.
 type Schema struct{ compiled *jsonschema.Schema }
 
-// CompileSchema compiles a canonical JSON Schema 2020-12 document. External references are refused; only references
-// inside the document resolve.
 func CompileSchema(raw json.RawMessage) (*Schema, error) {
 	if len(raw) == 0 {
 		return nil, errors.New("input schema is required")
@@ -59,12 +54,10 @@ func CompileSchema(raw json.RawMessage) (*Schema, error) {
 	return &Schema{compiled: compiled}, nil
 }
 
-// Validate checks decoded arguments. Numbers decoded by encoding/json as float64 are accepted.
 func (s *Schema) Validate(args map[string]any) error {
 	if args == nil {
 		args = map[string]any{}
 	}
-	// Round-trip so integers are json.Number, which the validator treats exactly.
 	data, err := json.Marshal(args)
 	if err != nil {
 		return errors.New("arguments are not valid JSON")
@@ -91,8 +84,6 @@ func firstLine(text string) string {
 	return text
 }
 
-// ModelSchema projects a canonical schema for the model provider. It removes document identity keywords the
-// provider does not need and refuses constructs it cannot carry. Validation always uses the canonical schema.
 func ModelSchema(raw json.RawMessage) (map[string]any, string, error) {
 	var schema map[string]any
 	if err := json.Unmarshal(raw, &schema); err != nil {

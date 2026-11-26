@@ -9,7 +9,7 @@
 </head>
 <body>
 <h1>Deployment</h1>
-<p class="lede">Production targets AWS + Postgres + S3 using one distroless static Go binary (<code>cmd/nori --role=all|api|worker</code>); local development runs Postgres via Docker Compose.</p>
+<p class="lede">The hosted runtime supports Cloud Run with AWS-backed storage and Postgres, using one distroless static Go binary (<code>cmd/nori --role=all|api|worker</code>); local development runs Postgres via Docker Compose.</p>
 <div class="card"><table class="tall"><tr><th>Piece</th><th>Production (<code>NORI_CLOUD=aws</code>)</th><th>Local (<code>NORI_CLOUD=local</code>)</th></tr>
 <tr><td>Go binary (<code>nori</code> / <code>nori-local</code>)</td><td>Single distroless static Go image (<code>core/infrastructure/Dockerfile</code>) run with <code>--role=all</code>, <code>--role=api</code> or <code>--role=worker</code></td><td>Loopback <code>nori-local</code> on <code>127.0.0.1:8080</code> running both HTTP API and unified Postgres-native worker pool</td></tr>
 <tr><td>Task &amp; wake orchestration</td><td>Postgres-native <code>nori_task_leases</code>, <code>nori_user_wakes</code> and <code>LISTEN nori_wake</code> (2s poll + 60s repair sweep)</td><td>Identical Postgres-native worker pool in <code>nori-local</code></td></tr>
@@ -29,6 +29,7 @@
 </ul></section>
 <section><h2>Container images and rolling deploys</h2>
 <ul class="pts">
+<li><code>make deploy-gcp</code> can run a configured Cloud Run migration job, checks the core readiness endpoint before rolling out web, and checks web health and configured authenticated smoke access. See the infrastructure runbook for traffic rollback.</li>
 <li><code>core/infrastructure/Dockerfile</code> builds the static <code>CGO_ENABLED=0</code> <code>nori</code> binary onto <code>gcr.io/distroless/static-debian12:nonroot</code>.</li>
 <li>Because inner tasks checkpoint explicit state and receipts in Postgres rather than replaying workflow code, rolling deploys do not require pinned workflow build IDs; parked tasks resume cleanly on the new binary.</li>
 <li><code>docs/Dockerfile</code> and <code>docs/deploy.sh</code> package the static Dokyu output into an unprivileged nginx container serving <code>X-Robots-Tag: noindex</code> and <code>Disallow: /</code>.</li>

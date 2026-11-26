@@ -41,8 +41,6 @@ func (c *Client) recordCost(record *state.Usage, model, tier string, u *response
 	return *u.Cost, true
 }
 
-// addWebSearchCost adds OpenAI's per-call native web_search fee on direct OpenAI responses.
-// Gateway and OpenRouter responses report total provider cost directly in usage.cost.
 func (c *Client) addWebSearchCost(record *state.Usage, baseCost float64, costKnown bool, calls []agent.WebSearchCall) float64 {
 	if !c.direct() || !costKnown {
 		return baseCost

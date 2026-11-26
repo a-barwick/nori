@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"nori/internal/app"
 	"nori/internal/conversation"
+	"nori/internal/llmguard"
 	"nori/internal/platform"
 	"nori/internal/settings"
 	"nori/internal/state"
@@ -45,9 +46,6 @@ func percentile(sorted []time.Duration, p float64) time.Duration {
 	return sorted[idx]
 }
 
-// TestPostgresLoadConcurrencyAndWakeCancel benchmarks concurrent multi-user outer turns,
-// multi-step inner tasks, and wake-driven cancellations against a real isolated Postgres DB.
-// Gated behind NORI_POSTGRES_LOAD_TEST_URL so normal `go test ./...` runs skip it.
 func TestPostgresLoadConcurrencyAndWakeCancel(t *testing.T) {
 	pgURL := strings.TrimSpace(os.Getenv("NORI_POSTGRES_LOAD_TEST_URL"))
 	if pgURL == "" {
@@ -64,7 +62,6 @@ func TestPostgresLoadConcurrencyAndWakeCancel(t *testing.T) {
 		totalTasks    = completeTasks + cancelTasks
 	)
 
-	// Track per-step timings and cancel signals in the deterministic loopback model stub.
 	var (
 		stepMu          sync.Mutex
 		stepLatencies   []time.Duration
@@ -76,7 +73,6 @@ func TestPostgresLoadConcurrencyAndWakeCancel(t *testing.T) {
 		cancelBlocks    = map[string]chan struct{}{}
 	)
 
-	// Loopback NORI_MODEL_TEST_URL stub speaking /v1/chat/completions and /v1/responses.
 	modelSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -87,7 +83,6 @@ func TestPostgresLoadConcurrencyAndWakeCancel(t *testing.T) {
 
 		switch r.URL.Path {
 		case "/v1/chat/completions":
-			// Fast outer-loop response: dispatches tasks for user prompts, acknowledges completion events.
 			msgs, _ := body["messages"].([]any)
 			rawMsgs, _ := json.Marshal(msgs)
 			rawStr := string(rawMsgs)
@@ -97,7 +92,6 @@ func TestPostgresLoadConcurrencyAndWakeCancel(t *testing.T) {
 
 			content := "Done."
 			if schemaName == "nori_response" {
-				// Find user messages asking for load tasks if not a terminal notification.
 				actions := []map[string]any{}
 				if !strings.Contains(rawStr, "Task result:") && !strings.Contains(rawStr, "Stopped by") {
 					for _, m := range msgs {
@@ -120,11 +114,9 @@ func TestPostgresLoadConcurrencyAndWakeCancel(t *testing.T) {
 				payload, _ := json.Marshal(map[string]any{"actions": actions, "text": "On it."})
 				content = string(payload)
 			} else if schemaName == "nori_dispatch_verify" || strings.Contains(schemaName, "verify") || strings.Contains(schemaName, "guard") {
-				// Provenance guard call if schema matches.
 				payload, _ := json.Marshal(map[string]any{"actions": []any{}, "text": "ok"})
 				content = string(payload)
 			}
-			// Simulate realistic light model latency (5ms).
 			time.Sleep(5 * time.Millisecond)
 			if stream, _ := body["stream"].(bool); stream {
 				w.Header().Set("Content-Type", "text/event-stream")
@@ -156,8 +148,6 @@ func TestPostgresLoadConcurrencyAndWakeCancel(t *testing.T) {
 			rawInput, _ := json.Marshal(items)
 			inputStr := string(rawInput)
 
-			// Check if this is a cancellable task: signal the harness when step 1 enters model
-			// and wait until request context is cancelled (by wake-driven Stop!).
 			if strings.Contains(inputStr, "CANCEL_TASK_TAG:") {
 				idx := strings.Index(inputStr, "CANCEL_TASK_TAG:")
 				tag := inputStr[idx : idx+len("CANCEL_TASK_TAG:")+36]
@@ -177,7 +167,6 @@ func TestPostgresLoadConcurrencyAndWakeCancel(t *testing.T) {
 				case <-time.After(15 * time.Second):
 				}
 			} else {
-				// Normal task: 2-step inner loop (step 1 calls built-in memory_read, step 2 completes).
 				time.Sleep(5 * time.Millisecond)
 			}
 
@@ -218,7 +207,6 @@ func TestPostgresLoadConcurrencyAndWakeCancel(t *testing.T) {
 	}))
 	defer modelSrv.Close()
 
-	// Open 3 independent Postgres backends (1 API + 2 Worker pools) to match real split-role deployment.
 	artifactDir := t.TempDir()
 	localArtifacts, err := localfs.Open(artifactDir)
 	if err != nil {
@@ -241,6 +229,7 @@ func TestPostgresLoadConcurrencyAndWakeCancel(t *testing.T) {
 			Features:      settings.Features{DisableJev: true},
 			Store:         settings.Store{Backend: "postgres", PostgresURL: pgURL, LocalArtifactDir: artifactDir},
 			Models: settings.Models{
+				Guard:     llmguard.New(llmguard.Config{GlobalMaxPerMinute: 10_000}),
 				OpenAIKey: "load-placeholder",
 				Outer:     "gpt-6.1-sol",
 				Inner:     "gpt-6.1-terra",
@@ -256,7 +245,6 @@ func TestPostgresLoadConcurrencyAndWakeCancel(t *testing.T) {
 	w1Svc, w1Backend := openSvc("worker")
 	w2Svc, w2Backend := openSvc("worker")
 
-	// Start 2 real worker pools with LISTEN nori_wake.
 	poolCtx, stopPools := context.WithCancel(ctx)
 	var poolWG sync.WaitGroup
 	startPool := func(name string, svc *app.Service) {
@@ -280,7 +268,6 @@ func TestPostgresLoadConcurrencyAndWakeCancel(t *testing.T) {
 	startPool("load-worker-1", w1Svc)
 	startPool("load-worker-2", w2Svc)
 
-	// Separate pgxpool strictly for sampling pg_stat_activity & verifying final quiescence.
 	obsCfg, err := pgxpool.ParseConfig(pgURL)
 	if err != nil {
 		t.Fatalf("obs ParseConfig: %v", err)
@@ -292,7 +279,6 @@ func TestPostgresLoadConcurrencyAndWakeCancel(t *testing.T) {
 	}
 	defer obsPool.Close()
 
-	// Provision 25 isolated test users.
 	testUsers := make([]users.User, numUsers)
 	for i := 0; i < numUsers; i++ {
 		u := users.User{
@@ -307,7 +293,6 @@ func TestPostgresLoadConcurrencyAndWakeCancel(t *testing.T) {
 		testUsers[i] = u
 	}
 
-	// Sample Postgres active & total connections + container CPU% in background during load.
 	var (
 		maxTotalConns  atomic.Int64
 		maxActiveConns atomic.Int64
@@ -359,7 +344,6 @@ func TestPostgresLoadConcurrencyAndWakeCancel(t *testing.T) {
 		}
 	}()
 
-	// Snapshot baseline TxStats and scan counters before load starts.
 	var baseSeqScans, baseIdxScans int64
 	_ = obsPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(seq_scan), 0), COALESCE(SUM(idx_scan), 0)
@@ -393,9 +377,6 @@ func TestPostgresLoadConcurrencyAndWakeCancel(t *testing.T) {
 
 	benchStart := time.Now()
 
-	// Enqueue 80 completing tasks + 20 cancellable tasks concurrently across 25 users.
-	// Also enqueue 25 concurrent outer-loop conversation turns simultaneously so both
-	// outer conversation lanes and inner task pools stress Postgres at once!
 	var enqueueWG sync.WaitGroup
 	var tasksMu sync.Mutex
 	var failedStarts atomic.Int64
@@ -458,8 +439,6 @@ func TestPostgresLoadConcurrencyAndWakeCancel(t *testing.T) {
 		}(meta, reqText)
 	}
 
-	// Also submit 25 concurrent outer-loop conversation messages (1 per user) to exercise
-	// ConversationControl + nori_user_wakes + outer turns under the same Postgres load.
 	for i := 0; i < numUsers; i++ {
 		u := testUsers[i]
 		enqueueWG.Add(1)
@@ -482,7 +461,6 @@ func TestPostgresLoadConcurrencyAndWakeCancel(t *testing.T) {
 	}
 	enqueueWG.Wait()
 
-	// Issue wake-driven Stop commands as soon as each cancellable task enters its model call.
 	cancelStopCh := make(chan struct{})
 	expectedCancels := cancelTasks - int(failedCancelStarts.Load())
 	var cancelDoneWG sync.WaitGroup
@@ -524,7 +502,6 @@ func TestPostgresLoadConcurrencyAndWakeCancel(t *testing.T) {
 		}
 	}()
 
-	// Wait for all admitted tasks to reach terminal status and measure latencies.
 	expectedTasks := totalTasks - int(failedStarts.Load())
 	var (
 		taskLatencies   []time.Duration
@@ -565,7 +542,6 @@ func TestPostgresLoadConcurrencyAndWakeCancel(t *testing.T) {
 					failedCount++
 					t.Errorf("task %s ended with unexpected status=%s err=%q", m.runID, run.Status, run.Error)
 				}
-				// Collect recorded step durations from TaskSteps.
 				if steps, sErr := userApp.Store.TaskSteps(ctx, m.runID); sErr == nil {
 					stepMu.Lock()
 					for _, st := range steps {
@@ -586,12 +562,11 @@ func TestPostgresLoadConcurrencyAndWakeCancel(t *testing.T) {
 	close(cancelStopCh)
 	cancelDoneWG.Wait()
 
-	// Wait briefly for all outer notification turns and wakes to drain to full quiescence.
 	var leaseRows, activeWakeRows int64
 	qDeadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(qDeadline) {
 		_ = obsPool.QueryRow(ctx, "SELECT count(*) FROM nori_task_leases").Scan(&leaseRows)
-		_ = obsPool.QueryRow(ctx, "SELECT count(*) FROM nori_user_wakes WHERE runnable = true OR owner <> '' OR lease_until IS NOT NULL").Scan(&activeWakeRows)
+		_ = obsPool.QueryRow(ctx, "SELECT count(*) FROM nori_user_wakes WHERE (runnable AND wake_at <= now()) OR owner <> '' OR lease_until IS NOT NULL").Scan(&activeWakeRows)
 		if leaseRows == 0 && activeWakeRows == 0 {
 			break
 		}

@@ -67,6 +67,12 @@ public struct MemoryView: View {
                 )
 
                 VStack(alignment: .leading, spacing: 14) {
+                    if let error = store.memoryRefreshError {
+                        Text("Couldn’t refresh all memory. \(error)")
+                            .font(.footnote)
+                            .foregroundStyle(NoriColors.warning)
+                            .accessibilityAddTraits(.updatesFrequently)
+                    }
                     switch selectedTab {
                     case .core:
                         coreMemorySection
@@ -143,11 +149,9 @@ public struct MemoryView: View {
         store.memoryLogs.reduce(0) { $0 + $1.entries.count }
     }
 
-    // MARK: - Core Tab
 
     @ViewBuilder
     private var coreMemorySection: some View {
-        // Slim compact 24 KB Core Budget Strip
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 8) {
                 Text("Core memory budget")
@@ -184,7 +188,6 @@ public struct MemoryView: View {
                 .strokeBorder(NoriColors.hairline, lineWidth: 1)
         )
 
-        // Filter bar
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 14, weight: .medium))
@@ -280,7 +283,6 @@ public struct MemoryView: View {
         }
     }
 
-    // MARK: - Daily Logs Tab
 
     @ViewBuilder
     private var dailyLogsSection: some View {
@@ -336,7 +338,6 @@ public struct MemoryView: View {
         }
     }
 
-    // MARK: - Working Tab
 
     @ViewBuilder
     private var workingMemorySection: some View {
@@ -399,7 +400,6 @@ public struct MemoryView: View {
         }
     }
 
-    // MARK: - Quiet Metadata & Row Action Menus
 
     private func coreMetadata(for fact: MemoryFact) -> AttributedString {
         var result = AttributedString()
@@ -565,7 +565,6 @@ public struct MemoryView: View {
     }
 }
 
-// MARK: - Supporting Sheets
 
 private struct PromoteCandidate: Identifiable, Hashable {
     var id: String { "\(date):\(entry.id)" }

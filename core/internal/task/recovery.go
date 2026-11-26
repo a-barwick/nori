@@ -41,8 +41,6 @@ func markRunCommandsDelivered(ctx context.Context, store state.TaskStore, runID 
 	return nil
 }
 
-// StopPaused completes an accepted Stop without waking paid workers.
-// CancelRequested fences new work even if pause changes.
 func StopPaused(ctx context.Context, store state.TaskStore, id string) (state.Run, error) {
 	control, err := store.Control(ctx)
 	if err != nil {
@@ -67,7 +65,6 @@ func StopPaused(ctx context.Context, store state.TaskStore, id string) (state.Ru
 	if !run.CancelRequested && run.Finishing == nil {
 		return run, nil
 	}
-	// Persist the finishing intent first. No paid execution is needed.
 	run, err = store.Publish(ctx, state.PublishRequest{
 		RunID: id, Revision: run.Revision, Status: state.RunCancelled, Detail: prompts.Runtime("stopped", nil) + attemptedWrites(ctx, store, id), CostUnknown: run.CostUnknown, BypassRouting: true,
 	})
@@ -90,7 +87,6 @@ func StopPaused(ctx context.Context, store state.TaskStore, id string) (state.Ru
 	return run, errors.Join(append(failures, err)...)
 }
 
-// Cleanup completes the same durable cleanup plan used after a crash and during a paused Stop.
 func (a *Activities) Cleanup(ctx context.Context, id string) error {
 	run, err := a.Store.GetRun(ctx, id)
 	if err == nil {

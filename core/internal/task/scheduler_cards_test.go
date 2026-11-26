@@ -54,7 +54,6 @@ func TestStructuredRequestInputOpensCardWithoutWakingOuterLoop(t *testing.T) {
 		t.Fatalf("claimAndRun = (%s, %v), want (parked, nil)", outcome, err)
 	}
 
-	// Verify structured QuestionPayload on the pending Interaction card.
 	pending, _, err := f.perms.Interactions(ctx, "pending", run.ID, "", 10)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("pending interactions = (%+v, %v), want 1", pending, err)
@@ -73,7 +72,6 @@ func TestStructuredRequestInputOpensCardWithoutWakingOuterLoop(t *testing.T) {
 		t.Fatalf("unexpected QuestionPayload: %+v", qPayload)
 	}
 
-	// Verify the outer conversation loop was NOT woken to emit a duplicate assistant chat bubble!
 	_, turn, err := f.store.AcquireConversation(ctx, "outer-worker", "turn-check")
 	if err != nil {
 		t.Fatalf("AcquireConversation: %v", err)
@@ -82,7 +80,6 @@ func TestStructuredRequestInputOpensCardWithoutWakingOuterLoop(t *testing.T) {
 		t.Fatalf("expected NO outer conversation wake for interactive question card, got turn with inputs %+v", turn.Inputs)
 	}
 
-	// Confirm the task itself still holds the question for SSE / panel / chat context.
 	gotRun, err := f.store.GetRun(ctx, run.ID)
 	if err != nil || gotRun.Question == nil || !gotRun.Question.Interactive {
 		t.Fatalf("expected run.Question.Interactive=true, got %+v (err=%v)", gotRun.Question, err)
@@ -91,7 +88,7 @@ func TestStructuredRequestInputOpensCardWithoutWakingOuterLoop(t *testing.T) {
 
 func TestOneTimeNoriReminderExecutesImmediatelyAndEmitsReminderPart(t *testing.T) {
 	ctx := context.Background()
-	now := time.Date(2026, 11, 25, 6, 55, 0, 0, time.UTC) // Nov 24 10:55 PM PST
+	now := time.Date(2026, 11, 25, 6, 55, 0, 0, time.UTC)
 
 	f := newRunnerFixture(t, func(_ context.Context, callNum int, _ agent.Request) (agent.Response, error) {
 		if callNum == 1 {
@@ -100,7 +97,7 @@ func TestOneTimeNoriReminderExecutesImmediatelyAndEmitsReminderPart(t *testing.T
 				"instruction": "Remind me to check out updates to supernino",
 				"trigger": map[string]any{
 					"kind": "once",
-					"at":   "2026-11-25T20:00:00Z", // Nov 25 12:00 PM PST
+					"at":   "2026-11-25T20:00:00Z",
 				},
 			}, 0.02), nil
 		}
@@ -111,7 +108,6 @@ func TestOneTimeNoriReminderExecutesImmediatelyAndEmitsReminderPart(t *testing.T
 	f.clock.Advance(now.Sub(f.clock.Now()))
 	sched := attachNoriScheduler(t, f, "America/Los_Angeles")
 
-	// Even if AutoReviewer would conservatively return "ask", a simple one-time Nori-only reminder must bypass it!
 	reviewer := &recordingAutoReviewer{verdict: permissions.AutoReviewDecision{Verdict: "ask", Reason: "should not be called"}}
 	f.act.Executor.AutoReviewer = reviewer
 
@@ -136,7 +132,6 @@ func TestOneTimeNoriReminderExecutesImmediatelyAndEmitsReminderPart(t *testing.T
 		t.Fatalf("unexpected automation defaults: missed_run=%q window=%d", autos[0].MissedRun, autos[0].ExecutionWindowSeconds)
 	}
 
-	// Publish the outer conversation turn for the terminal task event and verify PartReminder lands on the assistant message!
 	ctrl, turn, err := f.store.AcquireConversation(ctx, "outer-worker", "turn-rem-confirm")
 	if err != nil || turn == nil {
 		t.Fatalf("AcquireConversation = (%+v, %v), want terminal task event turn", turn, err)
@@ -200,7 +195,6 @@ func TestRecurringRoutineOpensPlainEnglishCardWithoutDuplicateBubbleAndRespectsA
 		t.Fatalf("claimAndRun #1 = (%s, %v), want (parked, nil)", outcome, err)
 	}
 
-	// No outer loop wake (no duplicate chat bubble)!
 	_, turn, err := f.store.AcquireConversation(ctx, "outer-worker", "turn-rec-check")
 	if err != nil {
 		t.Fatalf("AcquireConversation: %v", err)
@@ -241,7 +235,6 @@ func TestRecurringRoutineOpensPlainEnglishCardWithoutDuplicateBubbleAndRespectsA
 		t.Fatalf("payload.Summary = %q, leaked internal phrasing or raw UTC", payload.Summary)
 	}
 
-	// Approve with RememberRule=true ("Always allow") -> completes and saves standing allow rule.
 	_, ans, err := f.perms.Respond(ctx, card.ID, "req-approve-routine", card.Revision, permissions.Response{
 		Kind:         "approve",
 		ActionDigest: card.ActionDigest,
@@ -265,7 +258,6 @@ func TestRecurringRoutineOpensPlainEnglishCardWithoutDuplicateBubbleAndRespectsA
 		t.Fatalf("expected 1 saved recurring automation, got %+v (err=%v)", autos, err)
 	}
 
-	// Second recurring routine in a new task MUST honor the saved "Always allow" rule without re-prompting!
 	run2 := f.startTask(ctx, "run-rec-routine-2", "Every Friday at 4pm remind me to send weekly notes")
 	f.model.fn = func(_ context.Context, callNum int, _ agent.Request) (agent.Response, error) {
 		if callNum == 1 {

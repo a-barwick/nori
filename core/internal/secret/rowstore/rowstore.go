@@ -1,8 +1,3 @@
-// Package rowstore keeps connected-account credentials as envelope-encrypted rows in the user's own database scope
-// (decision D1). Each write encrypts the material with a fresh 256-bit data key (AES-GCM, bound to owner:connectionID);
-// the data key is wrapped by a 256-bit master key from a local key file in development or an environment/AWS Secrets
-// Manager value in production. Rows carry the wrapped key, the master key's identity, the nonce and the ciphertext;
-// plaintext material and data keys are never stored.
 package rowstore
 
 import (
@@ -19,10 +14,8 @@ import (
 	"nori/internal/state"
 )
 
-// Collection holds one row per connection credential.
 const Collection = "credential_rows"
 
-// KeyWrapper wraps and unwraps data keys with a master key it holds.
 type KeyWrapper interface {
 	Wrap(ctx context.Context, dataKey []byte) (wrapped []byte, keyID string, err error)
 	Unwrap(ctx context.Context, wrapped []byte, keyID string) ([]byte, error)
@@ -37,13 +30,11 @@ type row struct {
 	AADVersion int    `json:"aad_version,omitempty"`
 }
 
-// Store is a secret.CredentialStore over one user's resource store.
 type Store struct {
 	Resources state.ResourceStore
 	Keys      KeyWrapper
-	// Owner is the user whose store this is; new rows are bound to it.
-	Owner string
-	Now   func() time.Time
+	Owner     string
+	Now       func() time.Time
 }
 
 var _ secret.CredentialStore = (*Store)(nil)
@@ -146,7 +137,6 @@ func (s *Store) Replace(ctx context.Context, connectionID string, expected int64
 	return saved.Revision, nil
 }
 
-// Delete removes the row. A missing credential is not an error.
 func (s *Store) Delete(ctx context.Context, connectionID string) error {
 	if !state.ValidResourceID(connectionID) {
 		return errors.New("invalid connection id")

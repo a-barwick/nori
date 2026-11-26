@@ -15,9 +15,6 @@ func (r *Runner) SnapshotPage(ctx context.Context, before string) (Session, erro
 	var native state.Session
 	var messages []Message
 	var next string
-	// Read completion before its projections: an idle snapshot must include the
-	// reply committed with that status. Reading these concurrently can stop UI
-	// polling on an older message list just as a turn completes.
 	position, err := r.tasks.Store.EventPosition(ctx)
 	if err != nil {
 		return Session{}, err

@@ -14,9 +14,6 @@ import (
 	"nori/internal/state/docstore"
 )
 
-// The Library projects existing saved results. A small overlay resource per result holds what the user changed
-// (title, collection, deletion); its revision is the LibraryItem revision, distinct from the result's content
-// version and from state.Result.revision, which is an instruction revision.
 const collectionLibrary = "library_overlay"
 
 type libraryOverlay struct {
@@ -25,14 +22,11 @@ type libraryOverlay struct {
 	DeletedAt  *time.Time `json:"deleted_at,omitempty"`
 }
 
-// libraryItemEditable is the contract LibraryItemEditable.
 type libraryItemEditable struct {
 	Title      string `json:"title"`
 	Collection string `json:"collection,omitempty"`
 }
 
-// libraryActionValue is the contract LibraryAction value. Delete names a scope; revise names an instruction;
-// export names a format.
 type libraryActionValue struct {
 	Action      string `json:"action"`
 	Instruction string `json:"instruction,omitempty"`
@@ -55,7 +49,6 @@ func (v libraryActionValue) valid() bool {
 	return false
 }
 
-// inboxAction is the contract InboxAction value.
 type inboxAction struct {
 	Action string `json:"action"`
 }
@@ -71,19 +64,18 @@ type provenance struct {
 }
 
 type libraryItem struct {
-	ID           string `json:"id"`
-	RootID       string `json:"root_id"`
-	Version      int    `json:"version"`
-	Revises      string `json:"revises,omitempty"`
-	SupersededBy string `json:"superseded_by,omitempty"`
-	Kind         string `json:"kind"`
-	Title        string `json:"title"`
-	Name         string `json:"name,omitempty"`
-	MediaType    string `json:"media_type,omitempty"`
-	Size         int64  `json:"size,omitempty"`
-	URL          string `json:"url,omitempty"`
-	TaskID       string `json:"task_id,omitempty"`
-	// Contract fields the server does not populate yet; declared so round-trips keep them.
+	ID             string          `json:"id"`
+	RootID         string          `json:"root_id"`
+	Version        int             `json:"version"`
+	Revises        string          `json:"revises,omitempty"`
+	SupersededBy   string          `json:"superseded_by,omitempty"`
+	Kind           string          `json:"kind"`
+	Title          string          `json:"title"`
+	Name           string          `json:"name,omitempty"`
+	MediaType      string          `json:"media_type,omitempty"`
+	Size           int64           `json:"size,omitempty"`
+	URL            string          `json:"url,omitempty"`
+	TaskID         string          `json:"task_id,omitempty"`
 	AutomationID   string          `json:"automation_id,omitempty"`
 	ConversationID string          `json:"conversation_id,omitempty"`
 	GoalID         string          `json:"goal_id,omitempty"`
@@ -145,7 +137,6 @@ func (a *Assistant) libraryItem(result state.Result, overlay *state.Resource) li
 	if result.Text != "" {
 		item.PreviewText = clipRunes(result.Text, 2048)
 	}
-	// What deleting does, stated by the server: Nori's copy goes; anything the item points to stays where it is.
 	item.DeleteEffect = "Removes it from your Library and search. The task that made it keeps its record."
 	if result.URL != "" {
 		item.DeleteEffect = "Removes it from your Library and search. The linked page or file stays where it is."
@@ -165,7 +156,6 @@ func (a *Assistant) libraryItem(result state.Result, overlay *state.Resource) li
 	return item
 }
 
-// libraryItems lists visible items. Deletion is enforced here and at retrieval, not only in the list.
 func (a *Assistant) libraryItems(ctx context.Context) ([]libraryItem, map[string]state.Result, error) {
 	results, err := a.Store.RecentResults(ctx, 500)
 	if err != nil {
@@ -192,7 +182,6 @@ func (a *Assistant) libraryItems(ctx context.Context) ([]libraryItem, map[string
 	return items, byID, nil
 }
 
-// Deleted reports whether the user deleted a result from the Library; result routes refuse to serve it.
 func (a *Assistant) Deleted(ctx context.Context, id string) bool {
 	r, err := a.Store.Resource(ctx, collectionLibrary, id)
 	if err != nil {
@@ -330,7 +319,6 @@ func (a *Assistant) overlayMutation(ctx context.Context, id, requestID, method s
 	})
 }
 
-// libraryAction revises (a new task revising the result, preserving prior versions), exports or deletes.
 func (a *Assistant) libraryAction(w http.ResponseWriter, r *http.Request) {
 	var value libraryActionValue
 	requestID, expected, ok := decodeChange(w, r, &value)
@@ -545,18 +533,16 @@ func safeName(name string) string {
 }
 
 type searchHit struct {
-	Kind       string          `json:"kind"`
-	ID         string          `json:"id"`
-	Title      string          `json:"title"`
-	Snippet    string          `json:"snippet"`
-	Jump       *searchJump     `json:"jump,omitempty"`
-	Provenance *provenance     `json:"provenance,omitempty"`
-	Freshness  *time.Time      `json:"freshness,omitempty"`
-	Score      float64         `json:"score"`
-	extra      json.RawMessage `json:"-"`
+	Kind       string      `json:"kind"`
+	ID         string      `json:"id"`
+	Title      string      `json:"title"`
+	Snippet    string      `json:"snippet"`
+	Jump       *searchJump `json:"jump,omitempty"`
+	Provenance *provenance `json:"provenance,omitempty"`
+	Freshness  *time.Time  `json:"freshness,omitempty"`
+	Score      float64     `json:"score"`
 }
 
-// searchJump is the contract SearchHit jump. Exactly one target is set, matching the kind.
 type searchJump struct {
 	Kind           string `json:"kind"`
 	ConversationID string `json:"conversation_id,omitempty"`
@@ -571,15 +557,12 @@ type searchJump struct {
 	EntryID        string `json:"entry_id,omitempty"`
 }
 
-// searchResponse is the contract SearchResponse.
 type searchResponse struct {
 	Items      []searchHit `json:"items"`
 	NextCursor string      `json:"next_cursor,omitempty"`
 	Query      string      `json:"query,omitempty"`
 }
 
-// score requires most query words to appear (all of them for short queries), so unrelated items do not match on
-// one common word.
 func score(query []string, texts ...string) (float64, string) {
 	joined := strings.ToLower(strings.Join(texts, " \n "))
 	total := 0.0
@@ -635,8 +618,6 @@ func extractSnippet(source, needle string) string {
 	return strings.TrimSpace(string(runes[start:end]))
 }
 
-// search finds existing work across results, conversation messages, tasks, goals and automations. Every hit comes
-// from this user's scoped store and deleted items are excluded at query time.
 func (a *Assistant) search(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	hits, err := a.searchHits(r.Context(), q)
@@ -785,7 +766,6 @@ func clipRunes(text string, limit int) string {
 	return text[:cut]
 }
 
-// withOrigins fills each item's chat, routine and goal from the task that made it, reading each task once.
 func (a *Assistant) withOrigins(ctx context.Context, items []libraryItem) {
 	runs := map[string]*state.Run{}
 	for i := range items {

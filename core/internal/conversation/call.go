@@ -46,8 +46,6 @@ func inputMessage(in state.ConversationInput) json.RawMessage {
 	return modelMessage(map[string]string{"role": inputRole(in), "content": inputText(in)})
 }
 
-// inputText adds what the outer model may know about attached files. It never sees their contents. File names came from
-// the user's device, so they're quoted as data.
 func inputText(in state.ConversationInput) string {
 	if len(in.Attachments) == 0 {
 		return in.Text
@@ -104,8 +102,6 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	watchErr := make(chan error, 1)
 	go r.watchLease(callCtx, done, watchErr, f, cancel)
 	defer close(done)
-	// The lease watcher also covers setup reads, not just provider latency.
-	// History and task state can load while Jev classifies the visible context.
 	historyReady := make(chan historyResult, 1)
 	tasksReady := make(chan taskResult, 1)
 	var work sync.WaitGroup
@@ -122,8 +118,6 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 		case err := <-watchErr:
 			callErr = err
 		default:
-			// Newer input cancelled setup or provider I/O. Let the turn owner
-			// incorporate the queued batch before retrying.
 			callErr = nil
 		}
 	}()
@@ -133,7 +127,6 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	fromUser := slices.ContainsFunc(t.Inputs, state.ConversationInput.IsUser)
 	noDispatch := !fromUser && len(requests) == 0
 	if checkpoint == nil {
-		// An unfinished legacy attempt may already have sent a paid request.
 		err := errors.New("an earlier attempt was interrupted before its reply was saved")
 		return r.finishCall(ctx, callCtx, f, t, Reply{}, err, noDispatch, historyView{})
 	}
@@ -198,8 +191,6 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 			break
 		}
 	}
-	// Provider callbacks only write the usage ledger. The turn owner alone
-	// mutates/checkpoints Attempt, including while Jev and setup overlap.
 	record := func(ctx context.Context, u state.Usage) error {
 		u.InputID = inputID
 		if err := r.tasks.Store.RecordUsage(ctx, u); err != nil {
@@ -286,8 +277,6 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 	}
 	advice, _ := json.Marshal(advisoryPayload)
 	advisory := modelMessage(map[string]string{"role": "system", "content": prompts.Runtime("call-advisory-context-for-the-current-inputs", nil) + string(advice)})
-	// The oldest recent turns give way first when the whole input would pass its budget. Compaction folds them into
-	// the summary.
 	for t.Attempt.ContextBytes+len(advisory) > state.OuterInputBytes && len(view.Turns) > 0 {
 		view.Turns, view.Truncated = view.Turns[1:], true
 		messages, breakpoints = buildMessages(t, visible, view, next)
@@ -319,7 +308,6 @@ func (r *Runner) call(ctx context.Context, f state.ConversationFence, t *state.C
 				t.Attempt.ServedModel = reply.ServedModel
 			}
 			if modelErr == nil && len(request.WorkRequests) == 0 {
-				// The reply schema carries no ID enums (they would defeat prompt caching), so check IDs here.
 				modelErr = validateReplyIDs(reply.Calls, request.TaskIDs, request.MemoryIDs)
 			}
 			reply.Usage.InputID = inputID
@@ -463,8 +451,6 @@ func (r *Runner) modelFailureText(ctx context.Context, inputs []state.Conversati
 		}
 		id := input.Event.RunID
 		seen[id] = true
-		// Re-read after the failed call: a panel answer or newer task state may
-		// have superseded this event while the model request was in flight.
 		run, err := r.tasks.Store.GetRun(ctx, id)
 		if err != nil {
 			text += "\n\nTask " + id + prompts.Runtime("task-notification-saved", nil)
@@ -570,14 +556,6 @@ type historyView struct {
 
 const recordBytes = 4 << 10
 
-// buildMessages orders messages static -> append-only -> volatile:
-//
-//	[static system prompt] -> [append-only history turns] -> [Core Memory + Working Summary] -> [current inputs]
-//
-// Keeping Core Memory and the Working Summary after history ensures that memory
-// mutations (remember/forget/idle extraction) do not invalidate the cached prefix
-// for the entire conversation history. Breakpoints mark: static system prompt (0),
-// the ends of the last two history turns, and the end of the memory/summary block.
 func buildMessages(t *state.ConversationTurn, visible []Message, view historyView, next string) ([]json.RawMessage, []int) {
 	messages := []json.RawMessage{modelMessage(map[string]string{"role": "system", "content": prompts.Conversation})}
 	breakpoints := []int{0}
@@ -614,8 +592,6 @@ func buildMessages(t *state.ConversationTurn, visible []Message, view historyVie
 		size += len(p)
 		records = append(records, m)
 	}
-	// Merge older visible records around complete protocol blocks. Appending all
-	// records after history makes old conversation look like new input.
 	recordIndex := len(records) - 1
 	appendRecord := func() {
 		m := records[recordIndex]
@@ -647,9 +623,6 @@ func buildMessages(t *state.ConversationTurn, visible []Message, view historyVie
 	if view.Summary != nil {
 		messages = append(messages, summaryMessage(*view.Summary))
 	}
-	// Do not place a cache breakpoint on Core Memory + Working Summary: they sit after
-	// append-only history, so every new turn shifts their prefix and a breakpoint here
-	// pays a 1.25x Anthropic cache-write surcharge without ever being read on the next turn.
 	t.Attempt.ContextTruncated = truncated
 	t.Attempt.ContextTurns = len(history)
 	for _, in := range t.Inputs {
@@ -686,8 +659,6 @@ func (r *Runner) finishCall(
 		if stale {
 			return r.checkpoint(ctx, f, *t)
 		}
-		// Retain rejected provider messages in private attempt records for diagnosis.
-		// They must never become conversation history or accepted commands.
 		t.Attempt.Reply = string(reply.Message)
 		t.Attempt.StructuredReply = reply.Structured
 		t.Attempt.ProtocolInvalid = len(reply.Message) > 0
@@ -722,20 +693,15 @@ func (r *Runner) finishCall(
 		} else {
 			t.Attempt.Reply = string(reply.Message)
 			t.Attempt.Text = reply.Text
-			// Only a turn carrying the user's own message can show a result, mutate Core Memory, or hand files to a task.
-			// Task output reaches the model too, and it mustn't be able to get a file into another task or write Core Memory.
 			fromUser := slices.ContainsFunc(t.Inputs, func(input state.ConversationInput) bool { return input.IsUser() })
 			if fromUser {
 				t.Attempt.ShowResults = shows
 			}
 			if fromUser && len(remembered) > 0 {
-				// INV-MEM-04: live remember/forget requires a verified user source input on this turn
-				// and must never target or accept task_outcome provenance.
 				if source := state.SourceInput(t.Inputs); source.IsUser() && source.ID != "" {
 					t.Attempt.Memory, _ = planMemory(t.Attempt.ID, remembered, userProvenanceMemories(view.Memories))
 				}
 			}
-			// A message's files go with it when it reaches one task. When it reaches several, each dispatch names its own.
 			receivers := 0
 			for _, command := range commands {
 				if command.Kind == state.CommandStart || command.Kind == state.CommandSteer || command.Kind == state.CommandAnswer {
@@ -750,7 +716,6 @@ func (r *Runner) finishCall(
 					command.Attachments, command.Revises = nil, ""
 				}
 				if command.Revises != "" {
-					// A revision must link to a result that exists, and the task is told which one.
 					if _, err := r.tasks.Store.GetResult(ctx, command.Revises); errors.Is(err, state.ErrNotFound) {
 						command.Revises = ""
 					} else if err != nil {
@@ -817,13 +782,10 @@ func (r *Runner) startHint(
 		}
 		hintReady <- hintResult{hint: hint, durationMS: -1}
 	} else {
-		// Classification is advisory. A cutoff before its result leaves this
-		// fallback usable without resending a potentially billed request.
 		t.Attempt.Hint = string(modelMessage(Classification{}))
 		if err := r.checkpoint(callCtx, f, *t); err != nil {
 			return nil, err
 		}
-		// Exclude this batch and any subsequently queued inputs from Jev's history.
 		classificationHistory := classifyHistory(visible, t)
 		inputs := make([]state.ConversationInput, 0, len(t.Inputs))
 		for _, in := range t.Inputs {
@@ -835,7 +797,6 @@ func (r *Runner) startHint(
 			classifyStarted := r.now()
 			hint, err := r.classifier.Classify(callCtx, ClassifyRequest{Inputs: inputs, History: classificationHistory, RecordUsage: record})
 			durationMS := r.now().Sub(classifyStarted).Milliseconds()
-			// Preserve observed usage even if setup failed or the turn was superseded.
 			var usageErr error
 			if hint.Usage.ID != "" {
 				hint.Usage.InputID = inputID
@@ -882,8 +843,6 @@ func (r *Runner) readAttemptHistory(ctx context.Context, from time.Time) history
 	if err != nil {
 		return result(err)
 	}
-	// Context maintenance is part of preparing a turn, not dependent on finding
-	// idle time. A committed extractive view survives a failed or interrupted refinement.
 	for {
 		probe := state.NewHistoryWindow()
 		for _, t := range turns {
@@ -939,7 +898,6 @@ func (r *Runner) prepareAttemptTasks(
 	callCtx context.Context, t *state.ConversationTurn, request *ReplyRequest, snapshot state.Session, contextFrom time.Time,
 ) (TaskContext, error) {
 	if !contextFrom.IsZero() {
-		// A retained history cutoff still exposes work that can act on the user's behalf.
 		snapshot.Runs = slices.DeleteFunc(snapshot.Runs, func(run state.Run) bool {
 			return run.StartedAt.Before(contextFrom) && (run.Status == state.RunCompleted || run.Status == state.RunFailed || run.Status == state.RunCancelled)
 		})
@@ -965,8 +923,6 @@ func (r *Runner) prepareAttemptTasks(
 	return taskContext, nil
 }
 
-// userProvenanceMemories excludes any task_outcome records so live remember/forget
-// operations strictly enforce user-provenance isolation (INV-MEM-04).
 func userProvenanceMemories(memories []state.Memory) []state.Memory {
 	filtered := make([]state.Memory, 0, len(memories))
 	for _, m := range memories {

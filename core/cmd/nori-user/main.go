@@ -1,4 +1,3 @@
-// nori-user provisions a user row. It never moves the user's retained records.
 package main
 
 import (

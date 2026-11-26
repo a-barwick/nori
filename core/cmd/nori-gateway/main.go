@@ -1,6 +1,3 @@
-// Command nori-gateway runs a local loopback-only LLM proxy backed by llmguard
-// for persona-sim and local test harnesses. Upstream provider API keys stay in
-// this process only; child processes authenticate with a short-lived local token.
 package main
 
 import (

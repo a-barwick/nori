@@ -1,6 +1,4 @@
 #!/bin/sh
-# Build a static container image for Nori Dokyu from docs/site/.
-# Pass an image tag as the first argument (defaults to nori-docs:local).
 set -eu
 
 image="${1:-nori-docs:local}"

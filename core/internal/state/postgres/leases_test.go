@@ -11,10 +11,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"nori/internal/state/docstore"
 )
 
-func openTestBackend(t *testing.T) (*backend, string) {
+func openTestBackend(t testing.TB) (*backend, string) {
 	t.Helper()
 	url := os.Getenv("NORI_TEST_POSTGRES_URL")
 	if url == "" {
@@ -43,12 +45,10 @@ func TestPostgresTaskLeaseLifecycleAndWakeSeqRace(t *testing.T) {
 	userID := prefix + "u1"
 	runID := "run-1"
 
-	// WakeTask creates runnable row with wake_seq = 1.
 	if err := b.WakeTask(ctx, userID, runID, time.Now().UTC().Add(-time.Second)); err != nil {
 		t.Fatalf("WakeTask: %v", err)
 	}
 
-	// ClaimTaskByID claims it without modifying wake_seq.
 	claimed, ok, err := b.ClaimTaskByID(ctx, userID, runID, "worker-1", 30*time.Second)
 	if err != nil || !ok {
 		t.Fatalf("ClaimTaskByID = (%+v, %v, %v), want ok=true", claimed, ok, err)
@@ -57,12 +57,10 @@ func TestPostgresTaskLeaseLifecycleAndWakeSeqRace(t *testing.T) {
 		t.Fatalf("unexpected claimed lease: %+v", claimed)
 	}
 
-	// Competing worker cannot claim while lease is held.
 	if _, ok2, err := b.ClaimTaskByID(ctx, userID, runID, "worker-2", 30*time.Second); err != nil || ok2 {
 		t.Fatalf("competing ClaimTaskByID = (%v, %v), want ok=false", ok2, err)
 	}
 
-	// RenewTaskLeases extends for matching owner only.
 	n, err := b.RenewTaskLeases(ctx, "worker-1", []docstore.TaskKey{{UserID: userID, RunID: runID}}, 45*time.Second)
 	if err != nil || n != 1 {
 		t.Fatalf("RenewTaskLeases owner = (%d, %v), want 1", n, err)
@@ -72,30 +70,25 @@ func TestPostgresTaskLeaseLifecycleAndWakeSeqRace(t *testing.T) {
 		t.Fatalf("RenewTaskLeases wrong owner = (%d, %v), want 0", nWrong, err)
 	}
 
-	// Concurrent wake while owned: preserves owner/lease_until and bumps wake_seq to 2.
 	if err := b.WakeTask(ctx, userID, runID, time.Now().UTC()); err != nil {
 		t.Fatalf("concurrent WakeTask: %v", err)
 	}
 
-	// ParkTask with stale wake_seq=1 MUST fail (parked=false) so wake is never lost!
 	parked, err := b.ParkTask(ctx, userID, runID, "worker-1", 1, docstore.WaitQuestion)
 	if err != nil || parked {
 		t.Fatalf("stale ParkTask = (%v, %v), want (false, nil)", parked, err)
 	}
 
-	// RefreshTaskClaim re-reads wake_seq=2 while preserving ownership.
 	refreshed, ok, err := b.RefreshTaskClaim(ctx, userID, runID, "worker-1", 30*time.Second)
 	if err != nil || !ok || refreshed.WakeSeq != 2 || refreshed.Owner != "worker-1" {
 		t.Fatalf("RefreshTaskClaim = (%+v, %v, %v), want wake_seq=2 owner=worker-1", refreshed, ok, err)
 	}
 
-	// ParkTask with fresh wake_seq=2 succeeds.
 	parked, err = b.ParkTask(ctx, userID, runID, "worker-1", 2, docstore.WaitQuestion)
 	if err != nil || !parked {
 		t.Fatalf("fresh ParkTask = (%v, %v), want (true, nil)", parked, err)
 	}
 
-	// WakeWaitingTasks wakes parked task (wake_seq -> 3).
 	if err := b.WakeWaitingTasks(ctx, userID, docstore.WaitQuestion); err != nil {
 		t.Fatalf("WakeWaitingTasks: %v", err)
 	}
@@ -104,7 +97,6 @@ func TestPostgresTaskLeaseLifecycleAndWakeSeqRace(t *testing.T) {
 		t.Fatalf("ListTaskLeases after WakeWaitingTasks = (%+v, %v)", leases, err)
 	}
 
-	// ReleaseTask with future nextWake: pushes wake_at when wake_seq matches.
 	claimed, ok, err = b.ClaimTaskByID(ctx, userID, runID, "worker-1", 30*time.Second)
 	if err != nil || !ok || claimed.WakeSeq != 3 {
 		t.Fatalf("re-claim = (%+v, %v, %v)", claimed, ok, err)
@@ -117,7 +109,6 @@ func TestPostgresTaskLeaseLifecycleAndWakeSeqRace(t *testing.T) {
 		t.Fatalf("claim before future nextWake = (%v, %v), want false", ok, err)
 	}
 
-	// ReleaseTask when wake_seq changed concurrently does NOT push wake_at forward.
 	if err := b.WakeTask(ctx, userID, runID, time.Now().UTC().Add(-time.Second)); err != nil {
 		t.Fatalf("WakeTask immediate: %v", err)
 	}
@@ -136,7 +127,6 @@ func TestPostgresTaskLeaseLifecycleAndWakeSeqRace(t *testing.T) {
 		t.Fatalf("expected task to stay immediately claimable after stale ReleaseTask; ok=%v err=%v", ok, err)
 	}
 
-	// DeleteTaskLease: guarded rejects stale wake_seq, accepts matching wake_seq; unconditional deletes any.
 	deleted, err := b.DeleteTaskLease(ctx, userID, runID, claimed2.WakeSeq-1)
 	if err != nil || deleted {
 		t.Fatalf("stale DeleteTaskLease = (%v, %v), want false", deleted, err)
@@ -146,7 +136,6 @@ func TestPostgresTaskLeaseLifecycleAndWakeSeqRace(t *testing.T) {
 		t.Fatalf("matching DeleteTaskLease = (%v, %v), want true", deleted, err)
 	}
 
-	// EnsureTaskLease inserts once and is idempotent on conflict.
 	created, err := b.EnsureTaskLease(ctx, userID, runID, time.Now().UTC())
 	if err != nil || !created {
 		t.Fatalf("EnsureTaskLease first = (%v, %v), want true", created, err)
@@ -166,7 +155,6 @@ func TestPostgresUserWakeLifecycle(t *testing.T) {
 	ctx := context.Background()
 	userID := prefix + "u-conv"
 
-	// Use an older wake_at so ClaimUserWake picks this test's user first even on a shared local dev DB.
 	if err := b.WakeUser(ctx, userID, docstore.LaneConversation, time.Now().UTC().Add(-24*time.Hour)); err != nil {
 		t.Fatalf("WakeUser: %v", err)
 	}
@@ -183,7 +171,6 @@ func TestPostgresUserWakeLifecycle(t *testing.T) {
 		t.Fatalf("RenewUserWake = (%v, %v), want true", renewed, err)
 	}
 
-	// Concurrent WakeUser bumps wake_seq -> ParkUserWake with stale seq returns false.
 	if err := b.WakeUser(ctx, userID, docstore.LaneConversation, time.Now().UTC().Add(-time.Second)); err != nil {
 		t.Fatalf("concurrent WakeUser: %v", err)
 	}
@@ -192,7 +179,6 @@ func TestPostgresUserWakeLifecycle(t *testing.T) {
 		t.Fatalf("stale ParkUserWake = (%v, %v), want false", parked, err)
 	}
 
-	// ReleaseUserWake with stale wake_seq preserves earlier concurrent wake_at via LEAST.
 	if err := b.ReleaseUserWake(ctx, userID, docstore.LaneConversation, "outer-1", 1, time.Now().UTC().Add(time.Hour)); err != nil {
 		t.Fatalf("ReleaseUserWake stale: %v", err)
 	}
@@ -204,7 +190,6 @@ func TestPostgresUserWakeLifecycle(t *testing.T) {
 		t.Fatalf("ReleaseUserWake clobbered earlier concurrent wake_at: %v", wakes[0].WakeAt)
 	}
 
-	// Re-claim and park cleanly with fresh wake_seq=2.
 	claimed, ok, err = b.ClaimUserWake(ctx, docstore.LaneConversation, "outer-2", 30*time.Second)
 	if err != nil || !ok || claimed.WakeSeq != 2 {
 		t.Fatalf("re-claim user wake = (%+v, %v, %v)", claimed, ok, err)
@@ -276,7 +261,6 @@ func TestPostgresSameTxWakeRollbackVsCommitAndListenNotify(t *testing.T) {
 	eventsCh, cancelListen, listenDone := startWakeListener(t, ctx, b, 64)
 	defer cancelListen()
 
-	// 1. Rolled-back transaction must NOT persist lease row OR emit pg_notify.
 	rollbackErr := errors.New("intentional rollback")
 	err := b.RunTransaction(ctx, false, 1, func(tb docstore.TransactionBackend) error {
 		w := tb.(docstore.WakeWriter)
@@ -292,7 +276,6 @@ func TestPostgresSameTxWakeRollbackVsCommitAndListenNotify(t *testing.T) {
 	if err != nil || len(leases) != 0 {
 		t.Fatalf("rolled-back tx persisted leases: %+v, err=%v", leases, err)
 	}
-	// Intentional short negative-assertion window confirming rollback emitted no pg_notify.
 	select {
 	case ev := <-eventsCh:
 		if ev.Payload == docstore.TaskWakePayload(userID, "run-rolled-back") {
@@ -301,7 +284,6 @@ func TestPostgresSameTxWakeRollbackVsCommitAndListenNotify(t *testing.T) {
 	case <-time.After(75 * time.Millisecond):
 	}
 
-	// 2. Committed transaction persists rows and emits post-commit pg_notify (skipping future WakeUser).
 	err = b.RunTransaction(ctx, false, 1, func(tb docstore.TransactionBackend) error {
 		w := tb.(docstore.WakeWriter)
 		if err := w.WakeTask(ctx, userID, "run-committed", time.Now().UTC()); err != nil {
@@ -342,7 +324,6 @@ func TestPostgresSameTxWakeRollbackVsCommitAndListenNotify(t *testing.T) {
 		}
 	}
 
-	// 3. WakeWaitingTasks fanout: >32 tasks for one user emits t:<user>:*; global unpause emits t:*.
 	bulkUser := prefix + "u-bulk"
 	for i := 0; i < 33; i++ {
 		rid := fmt.Sprintf("r-%02d", i)
@@ -374,7 +355,6 @@ func TestPostgresSameTxWakeRollbackVsCommitAndListenNotify(t *testing.T) {
 	}
 bulkOK:
 
-	// Global unpause (userID == "") emits t:*.
 	claimed, ok, err := b.ClaimTaskByID(ctx, bulkUser, "r-00", "pause-owner", 30*time.Second)
 	if err != nil || !ok {
 		t.Fatalf("ClaimTaskByID r-00: ok=%v err=%v", ok, err)
@@ -427,11 +407,11 @@ func TestPostgresBatchedEmitWakesSingleRoundTrip(t *testing.T) {
 		{Channel: docstore.WakeChannel, Payload: ""},
 		{Channel: docstore.WakeChannel, Payload: docstore.TaskWakePayload(u, "r1")},
 		{Channel: docstore.WakeChannel, Payload: docstore.TaskWakePayload(u, "r2")},
-		{Channel: docstore.WakeChannel, Payload: docstore.TaskWakePayload(u, "r1")}, // duplicate
+		{Channel: docstore.WakeChannel, Payload: docstore.TaskWakePayload(u, "r1")},
 		{Channel: docstore.WakeChannel, Payload: docstore.UserWakePayload(u, docstore.LaneConversation)},
-		{Channel: docstore.WakeChannel, Payload: docstore.UserWakePayload(u, docstore.LaneConversation)}, // duplicate
+		{Channel: docstore.WakeChannel, Payload: docstore.UserWakePayload(u, docstore.LaneConversation)},
 		{Channel: watchChannel, Payload: prefix + "/events"},
-		{Channel: watchChannel, Payload: prefix + "/events"}, // duplicate
+		{Channel: watchChannel, Payload: prefix + "/events"},
 	}
 	b.emitWakes(ctx, batch)
 
@@ -460,7 +440,6 @@ func TestPostgresBatchedEmitWakesSingleRoundTrip(t *testing.T) {
 		}
 	}
 
-	// Intentional short negative-assertion window confirming deduplicated payloads are not delivered twice.
 	time.Sleep(50 * time.Millisecond)
 drain:
 	for {
@@ -514,7 +493,6 @@ func TestPostgresListenWakesDedicatedListenURLAndReconnectMetrics(t *testing.T) 
 	eventsCh, cancelListen, listenDone := startWakeListener(t, ctx, b, 32)
 	defer cancelListen()
 
-	// Verify ListenWakes actually connected using Options.ListenURL (matching application_name).
 	var pid int
 	if err := b.pool.QueryRow(ctx, `
 		SELECT pid
@@ -527,12 +505,10 @@ func TestPostgresListenWakesDedicatedListenURLAndReconnectMetrics(t *testing.T) 
 		t.Fatalf("ListenWakes did not connect using ListenURL (application_name=%q not found in pg_stat_activity, err=%v)", appName, err)
 	}
 
-	// Terminate that exact LISTEN backend to trigger real reconnect + resync + metrics + slog recovery.
 	if _, err := b.pool.Exec(ctx, "SELECT pg_terminate_backend($1)", pid); err != nil {
 		t.Fatalf("pg_terminate_backend(%d): %v", pid, err)
 	}
 
-	// Wait for synthetic resync event on reconnect.
 	resyncDeadline := time.After(3 * time.Second)
 	for {
 		select {
@@ -551,7 +527,6 @@ gotResync:
 		t.Fatalf("ListenStats after wake reconnect = %+v, want WakeErrors>=1 and WakeReconnects>=1", stats)
 	}
 
-	// Verify live notifications still arrive after reconnect.
 	u := prefix + "after-reconnect"
 	if err := b.WakeTask(ctx, u, "r-post-reconnect", time.Now().UTC().Add(-time.Second)); err != nil {
 		t.Fatalf("WakeTask after reconnect: %v", err)
@@ -603,7 +578,6 @@ func TestPostgresPostCommitWakeWaitingTasksRollbackAndConcurrentMVCC(t *testing.
 		t.Fatalf("seed conversation doc: %v", err)
 	}
 
-	// Park task r-parked waiting on routing_pending.
 	if err := b.WakeTask(ctx, userID, "r-parked", time.Now().UTC().Add(-time.Second)); err != nil {
 		t.Fatalf("WakeTask r-parked: %v", err)
 	}
@@ -615,11 +589,9 @@ func TestPostgresPostCommitWakeWaitingTasksRollbackAndConcurrentMVCC(t *testing.
 		t.Fatalf("ParkTask r-parked: parked=%v err=%v", parked, err)
 	}
 
-	// Start listener to verify rollback emits NO wakes and commit emits wakes for both tasks.
 	eventsCh, cancelListen, listenDone := startWakeListener(t, ctx, b, 32)
 	defer cancelListen()
 
-	// 1. Rollback safety: tx.WakeWaitingTasks in an aborted SERIALIZABLE tx must NOT wake r-parked!
 	rollbackErr := errors.New("abort before commit")
 	err = b.RunTransaction(ctx, false, 1, func(tb docstore.TransactionBackend) error {
 		if _, err := tb.Get(ctx, docPath); err != nil {
@@ -645,18 +617,11 @@ func TestPostgresPostCommitWakeWaitingTasksRollbackAndConcurrentMVCC(t *testing.
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	// 2. Concurrent MVCC insert visibility (reproduces and verifies fix for the 60s MVCC stall!):
-	// Begin a SERIALIZABLE tx and take its snapshot (via Get), THEN insert & claim a brand-new
-	// task r-concurrent in READ COMMITTED BEFORE the SERIALIZABLE tx calls WakeWaitingTasks & commits.
-	// Because tx.WakeWaitingTasks flushes post-commit in READ COMMITTED, it MUST see r-concurrent
-	// and bump its wake_seq so the worker's subsequent ParkTask(..., staleWakeSeq) returns false!
 	var concurrentClaim docstore.TaskLease
 	err = b.RunTransaction(ctx, false, 3, func(tb docstore.TransactionBackend) error {
-		// Take SERIALIZABLE snapshot before r-concurrent exists.
 		if _, err := tb.Get(ctx, docPath); err != nil {
 			return err
 		}
-		// Insert and claim r-concurrent AFTER the SERIALIZABLE snapshot started!
 		if concurrentClaim.RunID == "" {
 			if err := b.WakeTask(ctx, userID, "r-concurrent", time.Now().UTC().Add(-time.Second)); err != nil {
 				return fmt.Errorf("concurrent WakeTask: %w", err)
@@ -674,7 +639,6 @@ func TestPostgresPostCommitWakeWaitingTasksRollbackAndConcurrentMVCC(t *testing.
 		}); err != nil {
 			return err
 		}
-		// Call twice to verify deduplication in flushWakeWaitings as well.
 		w := tb.(docstore.WakeWriter)
 		if err := w.WakeWaitingTasks(ctx, userID, docstore.WaitRoutingPending); err != nil {
 			return err
@@ -685,7 +649,6 @@ func TestPostgresPostCommitWakeWaitingTasksRollbackAndConcurrentMVCC(t *testing.
 		t.Fatalf("commit tx with concurrent task insert: %v", err)
 	}
 
-	// Verify r-parked was woken AND r-concurrent had its wake_seq bumped (so ParkTask fails!).
 	leases, err = b.ListTaskLeases(ctx, userID)
 	if err != nil || len(leases) != 2 {
 		t.Fatalf("ListTaskLeases = (%+v, %v), want 2 rows", leases, err)
@@ -708,7 +671,6 @@ func TestPostgresPostCommitWakeWaitingTasksRollbackAndConcurrentMVCC(t *testing.
 			concurrentClaim.WakeSeq, parked, err)
 	}
 
-	// Verify post-commit NOTIFY events were emitted for BOTH r-parked and r-concurrent.
 	wantPayloads := map[string]bool{
 		docstore.TaskWakePayload(userID, "r-parked"):     false,
 		docstore.TaskWakePayload(userID, "r-concurrent"): false,
@@ -736,20 +698,41 @@ func openTestBackendWithPrefix(t *testing.T) (*backend, *sqlQueryCounter, string
 	return openTracedTestBackend(t, Options{})
 }
 
-func TestPostgresQueueMetrics(t *testing.T) {
+func openIsolatedTestBackend(t *testing.T) *backend {
+	t.Helper()
 	b, prefix := openTestBackend(t)
 	ctx := context.Background()
-
-	// Ensure this test's isolated DB starts clean for exact aggregate assertions.
-	var existingTasks, existingWakes int
-	if err := b.pool.QueryRow(ctx, "SELECT (SELECT COUNT(*) FROM nori_task_leases), (SELECT COUNT(*) FROM nori_user_wakes)").Scan(&existingTasks, &existingWakes); err != nil {
-		t.Fatalf("check existing queue rows: %v", err)
+	schema := strings.ReplaceAll(prefix, "-", "_") + "isolated"
+	qualified := pgx.Identifier{schema}.Sanitize()
+	adminPool := b.pool
+	if _, err := b.pool.Exec(ctx, "CREATE SCHEMA "+qualified); err != nil {
+		t.Fatal(err)
 	}
-	if existingTasks != 0 || existingWakes != 0 {
-		t.Skipf("skipping exact QueueMetrics counts on non-empty DB (tasks=%d wakes=%d)", existingTasks, existingWakes)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = adminPool.Exec(ctx, "DROP SCHEMA "+qualified+" CASCADE")
+	})
+	cfg := b.pool.Config()
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
 	}
+	t.Cleanup(pool.Close)
+	isolated := &backend{pool: pool}
+	for i := range isolated.ownerWriteLocks {
+		isolated.ownerWriteLocks[i] = make(chan struct{}, 1)
+	}
+	if err := isolated.migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return isolated
+}
 
-	// 1. Empty tables -> all zeros.
+func TestPostgresQueueMetrics(t *testing.T) {
+	b := openIsolatedTestBackend(t)
+	ctx := context.Background()
 	emptyM, err := b.QueueMetrics(ctx)
 	if err != nil {
 		t.Fatalf("QueueMetrics empty: %v", err)
@@ -759,9 +742,8 @@ func TestPostgresQueueMetrics(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	u := prefix + "qm"
+	u := "queue-metrics-user"
 
-	// 2. Only future runnable rows -> positive runnable depth, 0 lag (never negative).
 	if err := b.WakeTask(ctx, u, "r-future", now.Add(10*time.Minute)); err != nil {
 		t.Fatalf("WakeTask future: %v", err)
 	}
@@ -776,12 +758,6 @@ func TestPostgresQueueMetrics(t *testing.T) {
 		t.Fatalf("future-only QueueMetrics = %+v, want TaskRunnable=1 TaskLag=0 SchedRunnable=1 SchedLag=0", futureM)
 	}
 
-	// 3. Seed mixed task lease states:
-	// - r-future: runnable unleased, future wake_at (+10m)
-	// - r-due-1: runnable unleased, overdue by 30s
-	// - r-due-2: runnable unleased, overdue by 10s
-	// - r-leased: actively leased (wake_at -120s must NOT count toward TaskOldestLagSec!)
-	// - r-parked-1, r-parked-2: parked (runnable=false)
 	if err := b.WakeTask(ctx, u, "r-due-1", now.Add(-30*time.Second)); err != nil {
 		t.Fatalf("WakeTask r-due-1: %v", err)
 	}
@@ -807,9 +783,6 @@ func TestPostgresQueueMetrics(t *testing.T) {
 		}
 	}
 
-	// 4. Seed mixed user wakes:
-	// - conversation: 1 overdue (-25s), 1 actively leased (-200s, must NOT skew lag), 1 parked (excluded)
-	// - scheduler: 1 future (+10m, already added above), 1 overdue (-15s)
 	if err := b.WakeUser(ctx, u+"-c-due", docstore.LaneConversation, now.Add(-25*time.Second)); err != nil {
 		t.Fatalf("WakeUser conv due: %v", err)
 	}
@@ -886,7 +859,6 @@ func TestPostgresScopedLeaseClaimIsolation(t *testing.T) {
 	u2 := prefix + "scoped-u2"
 	now := time.Now().UTC()
 
-	// u2 has an earlier wake than u1; ClaimTaskForUser(u1) must skip u2 and claim u1's earliest.
 	if err := b.WakeTask(ctx, u2, "r-u2-early", now.Add(-120*time.Second)); err != nil {
 		t.Fatalf("WakeTask u2: %v", err)
 	}
@@ -904,7 +876,6 @@ func TestPostgresScopedLeaseClaimIsolation(t *testing.T) {
 	if err != nil || !ok || c1.UserID != u1 || c1.RunID != "r-u1-early" {
 		t.Fatalf("ClaimTaskForUser(u1) #1 = (%+v, %v, %v), want %s/r-u1-early", c1, ok, err, u1)
 	}
-	// Mutual exclusion against ClaimTaskByID on already-leased row.
 	if _, ok, err := b.ClaimTaskByID(ctx, u1, "r-u1-early", "w2", 30*time.Second); err != nil || ok {
 		t.Fatalf("ClaimTaskByID on leased u1 row = (%v, %v), want false", ok, err)
 	}
@@ -915,13 +886,11 @@ func TestPostgresScopedLeaseClaimIsolation(t *testing.T) {
 	if c3, ok, err := b.ClaimTaskForUser(ctx, u1, "w1", 30*time.Second); err != nil || ok {
 		t.Fatalf("ClaimTaskForUser(u1) #3 = (%+v, %v, %v), want ok=false", c3, ok, err)
 	}
-	// u2 remains claimable for u2.
 	cu2, ok, err := b.ClaimTaskForUser(ctx, u2, "w2", 30*time.Second)
 	if err != nil || !ok || cu2.UserID != u2 || cu2.RunID != "r-u2-early" {
 		t.Fatalf("ClaimTaskForUser(u2) = (%+v, %v, %v)", cu2, ok, err)
 	}
 
-	// User wakes: u2 due earlier, u1 conv due, u1 sched future.
 	if err := b.WakeUser(ctx, u2, docstore.LaneConversation, now.Add(-120*time.Second)); err != nil {
 		t.Fatalf("WakeUser u2 conv: %v", err)
 	}

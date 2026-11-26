@@ -30,8 +30,6 @@ func (m *captureModel) Inspect(_ context.Context, _ agent.InspectRequest) (agent
 	return agent.Inspection{CostKnown: true}, nil
 }
 
-// TestInnerOptimizationBaselineMetrics prints deterministic inner-loop payload & timing metrics
-// so Before/After comparisons are directly measurable.
 func TestInnerOptimizationBaselineMetrics(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 25, 18, 0, 0, 0, time.UTC)
@@ -40,7 +38,6 @@ func TestInnerOptimizationBaselineMetrics(t *testing.T) {
 	u := users.User{ID: "11111111-1111-4111-8111-111111111111", Email: "bench@example.com"}
 	store := state.Compose(records.NewShared(backend, u, 5.0), memstore.NewArtifacts())
 
-	// Seed 10 completed prior tasks with ~3 KiB each of conversation messages (~30 KiB total)
 	for i := 0; i < 10; i++ {
 		runID := fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
 		cmd := state.Command{
@@ -82,14 +79,12 @@ func TestInnerOptimizationBaselineMetrics(t *testing.T) {
 		bgBytes += len(raw)
 	}
 
-	// Capture real Round-1 agent.Request (instructions + tools + reasoning)
 	_, err = svc.Decide(ctx, append(bgMsgs, transcript.UserText("Check my calendar for tomorrow")), true, true)
 	if err != nil {
 		t.Fatalf("Decide: %v", err)
 	}
 	toolsJSON, _ := json.Marshal(capModel.lastReq.Tools)
 
-	// Measure memory_read output size with 25 memories including verbose SourceText
 	mems := make([]state.Memory, 0, 25)
 	for i := 0; i < 25; i++ {
 		mems = append(mems, state.Memory{

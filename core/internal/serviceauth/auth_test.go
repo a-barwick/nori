@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	testSecret = "0123456789abcdef0123456789abcdef" // 32 bytes
+	testSecret = "0123456789abcdef0123456789abcdef"
 	testAud    = "nori-core"
 )
 

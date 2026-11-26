@@ -1,4 +1,4 @@
-.PHONY: dev web web-build web-start core local-web local-core check sim-deep sim-pg sim-personas-validate sim-personas-smoke sim-personas-quick sim-personas-core sim-personas-memory sim-personas-full deps deps-stop deploy-gcp
+.PHONY: contracts contracts-check dev web web-build web-start core local-web local-core check sim-deep sim-pg sim-personas-validate sim-personas-smoke sim-personas-quick sim-personas-core sim-personas-memory sim-personas-full deps deps-stop deploy-gcp
 
 NORI_ENV_FILE ?= $(abspath .env)
 NORI_TASK_ENV_FILE ?= $(NORI_ENV_FILE)
@@ -27,10 +27,18 @@ web-start:
 core:
 	$(MAKE) -C core run
 
-check:
-	$(MAKE) -C core check
+contracts:
 	cd core && go run ./cmd/contracts-check -strict -emit-ts ../web/src/lib/contracts/fixtures.check.ts
-	cd web && node scripts/contract-types.mjs --check && ./node_modules/.bin/next typegen && ./node_modules/.bin/tsc --noEmit -p . && ./node_modules/.bin/eslint src && bun test
+	cd web && node scripts/contract-types.mjs
+
+contracts-check:
+	@out=$$(mktemp); trap 'rm -f "$$out"' EXIT; \
+	  (cd core && go run ./cmd/contracts-check -strict -emit-ts "$$out") && \
+	  (cmp "$$out" web/src/lib/contracts/fixtures.check.ts || (echo "Run make contracts to update generated fixtures."; exit 1))
+
+check: contracts-check
+	$(MAKE) -C core check
+	cd web && node scripts/contract-types.mjs --check && ./node_modules/.bin/next typegen && ./node_modules/.bin/tsc --noEmit -p . && ./node_modules/.bin/eslint src && bun test src
 
 sim-deep:
 	$(MAKE) -C core sim-deep
@@ -44,8 +52,6 @@ sim-personas-validate:
 sim-personas-smoke:
 	python3 scripts/persona-sim/runner.py --preset smoke --tag smoke
 
-# Multi-persona runs go through suite.py: one runner process + ephemeral DB per persona (runner.py
-# --concurrency shares one DB across personas and cross-contaminates them). Optional BASELINE=<scorecard.json>.
 sim-personas-quick:
 	python3 scripts/persona-sim/suite.py --preset core --weeks 1 --outer-reasoning low --inner-reasoning low --tag quick $(if $(BASELINE),--compare $(BASELINE),)
 
@@ -58,7 +64,6 @@ sim-personas-memory:
 sim-personas-full:
 	python3 scripts/persona-sim/suite.py --preset full --tag full $(if $(BASELINE),--compare $(BASELINE),)
 
-# Local dependencies retain their named volumes across stop/start.
 deps:
 	docker compose -f core/infrastructure/local/compose.yaml up -d --wait
 

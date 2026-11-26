@@ -4,11 +4,6 @@ import { useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { MarkState } from "@/lib/types";
 
-/**
- * Nori's mark: at most five simple shapes, appearance-aware tokens from
- * docs/design-system.md §4 (separate body, seaweed, ink, and edge tokens so
- * Dark Mode never auto-inverts). Reads as a silhouette at 20px.
- */
 
 const RICE = "M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z";
 const FACE = { stroke: "var(--mark-ink)", strokeWidth: 2.6, strokeLinecap: "round" as const, fill: "none" };
@@ -63,7 +58,6 @@ function useBlink(enabled: boolean) {
   return blink;
 }
 
-/** The eyes follow your pointer, a few pixels at most; they look down at the composer while you type. */
 function useLook(enabled: boolean, attentive: boolean) {
   const svg = useRef<SVGSVGElement>(null);
   const look = useRef<SVGGElement>(null);
@@ -145,11 +139,6 @@ export function NoriMark({
   );
 }
 
-/**
- * Monochrome onigiri navigation icon ported from iOS `NoriMark.tabBarIcon(selected:)`.
- * Active: solid silhouette with negative-space expression and seaweed wrap seam.
- * Inactive: clean outline silhouette with solid seaweed wrap and expression.
- */
 export function NoriTabIcon({ active = false, size = 18 }: { active?: boolean; size?: number }) {
   const id = useId().replace(/:/g, "");
   if (active) {

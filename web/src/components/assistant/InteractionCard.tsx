@@ -16,7 +16,7 @@ import {
   responseAnnouncement,
   submitInteractionResponse,
 } from "@/lib/assistant/interactions";
-import { useAction, useResource } from "@/lib/assistant/useResource";
+import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant/useResource";
 import type {
   AccountSelectionPayload,
   ApprovalPayload,
@@ -48,6 +48,7 @@ export function safeAuthorizeURL(url: string) {
 
 function useRespond(interaction: Interaction, onResolved?: OnInteractionResolved) {
   const { runtime } = useAssistant();
+  const invalidate = useResourceInvalidation();
   const action = useAction();
   const [current, setCurrent] = useState<Interaction>();
   const legacy = !!interaction.legacy_question_id && interaction.id.startsWith("legacy:");
@@ -62,7 +63,7 @@ function useRespond(interaction: Interaction, onResolved?: OnInteractionResolved
           return;
         }
         try {
-          const result = await submitInteractionResponse(interaction, value);
+          const result = await submitInteractionResponse(interaction, value, invalidate);
           if (!result.ok) {
             setCurrent(result.current);
             throw new Error(result.message);
@@ -85,7 +86,6 @@ function isInternalScheduleApproval(payload: Partial<ApprovalPayload>) {
   return !!payload.tool_id?.startsWith("nori/") && !payload.account?.connection_id && !payload.account?.label?.trim();
 }
 
-/** Core uses an approval's whole summary as its prompt (task external.go); the card shows that summary below, so the heading is a short question. */
 function heading(interaction: Interaction) {
   const payload = interaction.payload as Partial<ApprovalPayload>;
   if (interaction.kind !== "approval" || interaction.prompt !== payload.summary) return interaction.prompt;

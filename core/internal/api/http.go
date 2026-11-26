@@ -27,25 +27,15 @@ type Deps struct {
 	Tasks         *conversation.Tasks
 	Waker         wake.Waker
 	Ops           Operations
-	// Assistant serves the /v1 management routes. Nil leaves them unregistered.
-	Assistant *Assistant
-	// Deltas optionally broadcasts ephemeral action-free outer streaming text snapshots.
-	Deltas *DeltaBroker
-	// ReadyCheck optionally verifies backend readiness for /readyz and /api/readyz.
-	ReadyCheck func(context.Context) error
-	// ReadyTimeout optionally overrides the default 2s readiness probe timeout.
-	ReadyTimeout time.Duration
+	Assistant     *Assistant
+	Deltas        *DeltaBroker
+	ReadyCheck    func(context.Context) error
+	ReadyTimeout  time.Duration
 }
 
 type Operations interface {
-	// Process drains saved conversation work and repairs task delivery. It is the
-	// handler of /api/process, so an error makes the queue retry.
 	Process(ctx context.Context) error
-	// Resume repairs delivery and wakes retained workflows after the operator
-	// reopens admission.
 	Resume(ctx context.Context) error
-	// RepairWake derives missing notification demand from all of this user's
-	// committed work, independently of the conversation a client is viewing.
 	RepairWake(ctx context.Context) error
 }
 

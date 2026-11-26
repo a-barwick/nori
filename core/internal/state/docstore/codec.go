@@ -11,8 +11,6 @@ import (
 
 var timeType = reflect.TypeFor[time.Time]()
 
-// Encode retains the saved field names (the existing firestore tags), including
-// private lease fields omitted from public JSON. Backends see only plain values.
 func Encode(v any) (map[string]any, error) {
 	x, e := Value(v)
 	if e != nil {
@@ -289,8 +287,6 @@ func decode(x any, v reflect.Value) error {
 	return fmt.Errorf("cannot decode %T into %s", x, v.Type())
 }
 
-// JSONValue normalizes timestamps for Postgres JSONB comparison. Fixed fractional
-// precision preserves chronological ordering, including exact-second timestamps.
 func JSONValue(v any) any {
 	switch x := v.(type) {
 	case time.Time:
@@ -312,7 +308,6 @@ func JSONValue(v any) any {
 	}
 }
 
-// NormalizeNumbers keeps Data() integer assertions identical across backends.
 func NormalizeNumbers(v any) any {
 	switch x := v.(type) {
 	case json.Number:

@@ -21,8 +21,6 @@ type TaskContext struct {
 	Instructions string               `json:"instructions,omitempty"`
 }
 
-// SavedResult is what the outer loop knows about a saved result. Titles came from task requests and tool calls, so
-// they're untrusted data.
 type SavedResult struct {
 	ID           string     `json:"id"`
 	TaskID       string     `json:"task_id"`
@@ -37,7 +35,6 @@ type SavedResult struct {
 }
 
 type TaskContextRecord struct {
-	// Kept separately so a shortened question can't be mistaken for the exact action shown in chat.
 	QuestionTextTruncated   bool                 `json:"-"`
 	Holds                   []state.TaskHold     `json:"held_questions,omitempty"`
 	ID                      string               `json:"id"`
@@ -77,8 +74,6 @@ type TaskContextCommand struct {
 	TextTruncated  bool              `json:"text_truncated,omitempty"`
 }
 
-// ContextRecords reads each selected task's accepted commands once. Direct panel
-// commands are user instructions even though they create no conversation message.
 func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunIDs []string, since time.Time) (TaskContext, error) {
 	result := TaskContext{ActiveTasks: []*TaskContextRecord{}, EventTasks: []*TaskContextRecord{}, RecentTasks: []*TaskContextRecord{}}
 	seen := map[string]bool{}
@@ -108,7 +103,6 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 			return result, err
 		}
 	}
-	// A parent's report needs its subtasks' writes and results.
 	for _, id := range eventRunIDs {
 		snapshot, err := t.Store.GetRun(ctx, id)
 		if err != nil {
@@ -120,7 +114,6 @@ func (t *Tasks) ContextRecords(ctx context.Context, runs []state.Run, eventRunID
 			}
 		}
 	}
-	// Only the turn reporting a task's end compares its answer with the cited results.
 	for _, record := range result.EventTasks {
 		if record.Status == state.RunRunning || record.Status == "cancelled" {
 			continue
@@ -179,7 +172,6 @@ func (t *Tasks) contextRecord(ctx context.Context, id string) (*TaskContextRecor
 	if run.Question != nil {
 		question := *run.Question
 		record.Question = &question
-		// The current question already supplies the waiting text.
 		record.Waiting = ""
 	}
 	for _, command := range snapshot.Commands {
@@ -215,15 +207,12 @@ func fitTaskContext(result *TaskContext, records []*TaskContextRecord) error {
 		return nil
 	}
 	result.Truncated = true
-	// Prefer the newest commands when the complete histories cannot fit.
 	for _, record := range records {
 		if len(record.Commands) > 4 {
 			record.Commands = record.Commands[len(record.Commands)-4:]
 			record.CommandHistoryTruncated = true
 		}
 	}
-	// Cited results are what the report is checked against, so they are shortened last: first other text, then
-	// background (recent) tasks, then the cited results themselves.
 	for _, limit := range []int{8192, 4096, 2048, 1024, 512, 256, 64, 0} {
 		if fits() {
 			return nil

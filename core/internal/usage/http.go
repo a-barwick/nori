@@ -16,8 +16,6 @@ import (
 	"nori/internal/state"
 )
 
-// Config chooses the built-in durable meter, optional host HTTP meter,
-// and optional Postgres-backed per-user pre-I/O admission limits.
 type Config struct {
 	Mode, Endpoint, Token string
 	MaxCallsPerHour       int
@@ -71,8 +69,6 @@ func Open(c Config, userID string, local Meter) (Meter, error) {
 	return WithHost(meter, &HTTP{Endpoint: c.Endpoint, Token: c.Token, UserID: userID, Client: &http.Client{Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}), nil
 }
 
-// HTTP posts metadata only. The receiver upserts by (user_id, usage.id), and
-// recognizes pending versus terminal observations; tokens and cost may be absent.
 type HTTP struct {
 	Endpoint, Token, UserID string
 	Client                  *http.Client

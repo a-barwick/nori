@@ -151,7 +151,6 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
       return Response.json({ id: "u1", size: buf.byteLength });
     });
 
-    // Oversized Content-Length -> immediate 413 without hitting upstream
     const tooBigHeader = new Request(`${APP_ORIGIN}/api/v1/uploads?id=u1&filename=big.bin`, {
       method: "POST",
       headers: await authHeaders(email, { "content-length": String(MAX_FILE_BYTES + 1) }),
@@ -161,7 +160,6 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     assert.equal(headerRes.status, 413);
     assert.equal(runtimeCalled, false);
 
-    // Oversized chunked ReadableStream without Content-Length -> 413 and stream cancelled
     let cancelled = false;
     let chunksSent = 0;
     const hugeStream = new ReadableStream<Uint8Array>({
@@ -182,7 +180,6 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     assert.equal(chunksSent >= 11 && chunksSent <= 12, true);
     assert.equal(runtimeCalled, false);
 
-    // Small valid upload forwards cleanly
     const okReq = new Request(`${APP_ORIGIN}/api/v1/uploads?id=u3&filename=note.txt`, {
       method: "POST",
       headers: await authHeaders(email, { "content-type": "text/plain" }),
@@ -199,7 +196,6 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     const userID = "22222222-2222-4222-8222-222222222202";
     await mockUpstream({ [email]: userID }, () => Response.json({ ok: true }));
 
-    // Oversized JSON body to assistantRoute (>128,000 bytes) -> 413
     const hugeJson = JSON.stringify({ data: "x".repeat(130_000) });
     const bigAssistant = await assistantRoute(
       new Request(`${APP_ORIGIN}/api/v1/work`, {
@@ -212,7 +208,6 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     );
     assert.equal(bigAssistant.status, 413);
 
-    // Malformed JSON to assistantRoute -> 400
     const badJson = await assistantRoute(
       new Request(`${APP_ORIGIN}/api/v1/work`, {
         method: "POST",
@@ -224,7 +219,6 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     );
     assert.equal(badJson.status, 400);
 
-    // Unknown operation -> 404; oversized operation body -> 413
     const unknownOp = await operationRoute(
       new Request(`${APP_ORIGIN}/api/nope`, { method: "POST", headers: await authHeaders(email), body: "{}" }),
       "nope",
@@ -237,7 +231,6 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     );
     assert.equal(bigOp.status, 413);
 
-    // Retry operation is allowlisted and proxied to upstream api/retry
     const retryOp = await operationRoute(
       new Request(`${APP_ORIGIN}/api/retry`, { method: "POST", headers: await authHeaders(email), body: JSON.stringify({ turn_id: "t1" }) }),
       "retry",
@@ -259,7 +252,6 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
       return new Response(null, { status: 303, headers: upstreamLocation ? { location: upstreamLocation } : {} });
     });
 
-    // Non-navigate request rejected with 403
     const nonNav = await assistantRoute(
       new Request(`${APP_ORIGIN}/api/v1/connections/oauth/callback?code=1`, {
         method: "GET",
@@ -270,7 +262,6 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     );
     assert.equal(nonNav.status, 403);
 
-    // Safe relative Location header passes through
     upstreamLocation = "/apps?result=connected";
     const safeRes = await assistantRoute(
       new Request(`${APP_ORIGIN}/api/v1/connections/oauth/callback?code=1`, {
@@ -283,7 +274,6 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     assert.equal(safeRes.status, 303);
     assert.equal(safeRes.headers.get("location"), "/apps?result=connected");
 
-    // JSON redirect fallback works for safe relative paths
     jsonFallback = true;
     upstreamLocation = "/apps?result=json-ok";
     const jsonRes = await assistantRoute(
@@ -297,7 +287,6 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     assert.equal(jsonRes.status, 303);
     assert.equal(jsonRes.headers.get("location"), "/apps?result=json-ok");
 
-    // Dangerous open-redirect payloads must all collapse to /apps?result=failed
     jsonFallback = false;
     for (const unsafe of ["//evil.com/phish", "/\\evil.com/phish", "/apps\\evil", "https://evil.com/steal", "javascript:alert(1)"]) {
       upstreamLocation = unsafe;
@@ -313,7 +302,6 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
       assert.equal(res.headers.get("location"), "/apps?result=failed", `expected sanitized redirect for ${unsafe}`);
     }
 
-    // Network failure also falls back safely to /apps?result=failed
     throwError = true;
     const errRes = await assistantRoute(
       new Request(`${APP_ORIGIN}/api/v1/connections/oauth/callback?code=4`, {
@@ -352,12 +340,10 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
         ["summary"],
       );
 
-    // 500 is NOT cached
     const r1 = await getSummary();
     assert.equal(r1.status, 500);
     assert.equal(summaryCalls, 1);
 
-    // Hosted 429 strips private HTML body, relays sanitized Retry-After, and is NOT cached
     mode = "error429";
     const r2 = await getSummary();
     assert.equal(r2.status, 429);
@@ -365,13 +351,11 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     assert.deepEqual(await r2.json(), { error: "Nori is busy. Try again shortly." });
     assert.equal(summaryCalls, 2);
 
-    // Non-JSON upstream 200 is rejected as 502 and NOT cached
     mode = "html";
     const r3 = await getSummary();
     assert.equal(r3.status, 502);
     assert.equal(summaryCalls, 3);
 
-    // Successful 200 JSON IS cached across repeated reads
     mode = "ok";
     const r4 = await getSummary();
     assert.equal(r4.status, 200);
@@ -382,7 +366,6 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     assert.deepEqual(await r5.json(), { attention: 4 });
     assert.equal(summaryCalls, 4);
 
-    // A mutation by the same user drops their shared read cache immediately
     const mutateRes = await assistantRoute(
       new Request(`${APP_ORIGIN}/api/v1/work`, {
         method: "POST",
@@ -423,7 +406,6 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     });
 
     const headers = await authHeaders(email);
-    // Warm JWKS and resolveUser cache on a separate path so both /v1/work requests race on sharedRead directly.
     const warm = await assistantRoute(new Request(`${APP_ORIGIN}/api/v1/connections`, { headers }), "connections", []);
     assert.equal(warm.status, 200);
 
@@ -431,7 +413,6 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     await firstEntered;
 
     const second = assistantRoute(new Request(`${APP_ORIGIN}/api/v1/work`, { headers }), "work", []);
-    // Allow second to finish local JWT verification and park on the in-flight sharedRead promise.
     await new Promise((resolve) => setTimeout(resolve, 25));
     assert.equal(calls, 1);
 

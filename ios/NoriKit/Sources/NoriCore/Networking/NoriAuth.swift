@@ -2,22 +2,17 @@ import CryptoKit
 import Foundation
 import Security
 
-// MARK: - Live Production Configuration
 
 public enum NoriConfig {
-    /// Live Nori Core production endpoint on Cloud Run.
     public static let serverURL = URL(string: "https://nori-core-8273801370.us-central1.run.app")!
 
-    /// iOS deep-link callback target for Connections and MCP OAuth sign-in.
     public static let oauthCallbackURL = "nori://oauth/callback"
 
-    /// Google OAuth 2.0 iOS Client ID configured in Info.plist (`GOOGLE_OAUTH_CLIENT_ID`).
     public static var googleOAuthClientID: String {
         (Bundle.main.object(forInfoDictionaryKey: "GOOGLE_OAUTH_CLIENT_ID") as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
-    /// Reversed Google Client ID URL scheme (e.g. `com.googleusercontent.apps.<id>`).
     public static func reversedClientIDScheme(for clientID: String = googleOAuthClientID) -> String {
         let suffix = ".apps.googleusercontent.com"
         guard clientID.hasSuffix(suffix) else { return "nori" }
@@ -30,7 +25,6 @@ public enum NoriConfig {
     }
 }
 
-// MARK: - Auth Session & State
 
 public enum AuthState: Sendable, Equatable {
     case signedOut
@@ -66,7 +60,6 @@ public struct AuthSession: Codable, Sendable, Equatable {
     }
 }
 
-// MARK: - Google OAuth 2.0 + PKCE
 
 public struct GoogleOAuthPKCE: Sendable {
     public let clientID: String
@@ -271,7 +264,6 @@ public struct GoogleOAuthPKCE: Sendable {
     }
 }
 
-// MARK: - Auth Token Provider (Keychain-backed, Auto-Refreshing)
 
 public actor AuthTokenProvider {
     private let keychain: KeychainStore
@@ -279,6 +271,7 @@ public actor AuthTokenProvider {
     private let urlSession: URLSession
     private let clientID: String?
     private var cached: AuthSession?
+    private var generation: UInt64 = 0
 
     public init(
         keychain: KeychainStore = KeychainStore(),
@@ -302,6 +295,11 @@ public actor AuthTokenProvider {
     }
 
     public func saveSession(_ session: AuthSession) {
+        generation &+= 1
+        persistSession(session)
+    }
+
+    private func persistSession(_ session: AuthSession) {
         cached = session
         if let data = try? JSONEncoder().encode(session),
            let raw = String(data: data, encoding: .utf8) {
@@ -310,6 +308,7 @@ public actor AuthTokenProvider {
     }
 
     public func clearSession() {
+        generation &+= 1
         cached = nil
         keychain.deleteToken(account: account)
     }
@@ -330,19 +329,23 @@ public actor AuthTokenProvider {
                 retryable: false
             )
         }
+        let activeGeneration = generation
         do {
             var refreshed = try await GoogleOAuthPKCE.refreshIDToken(
                 refreshToken: refreshToken,
                 clientID: clientID ?? NoriConfig.googleOAuthClientID,
                 session: urlSession
             )
+            guard activeGeneration == generation else { throw CancellationError() }
+            if let latest = cached, latest != current { return latest.idToken }
             if refreshed.email.isEmpty {
                 refreshed.email = current.email
             }
-            saveSession(refreshed)
+            persistSession(refreshed)
             return refreshed.idToken
         } catch let apiErr as NoriAPIError where apiErr.statusCode == 400 || apiErr.statusCode == 401 {
-            // Only clear persisted session when Google explicitly rejects the refresh token (HTTP 400/401).
+            guard activeGeneration == generation else { throw CancellationError() }
+            if let latest = cached, latest != current { return latest.idToken }
             clearSession()
             throw NoriAPIError(
                 message: "Session expired. Please sign in again.",
@@ -351,12 +354,10 @@ public actor AuthTokenProvider {
                 retryable: false
             )
         } catch let apiErr as NoriAPIError {
-            // Preserve session on transient 5xx/429 or configuration errors.
             throw apiErr
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            // Preserve session on transient URLSession/network/DNS/timeout failures.
             throw NoriAPIError(
                 message: error.localizedDescription,
                 statusCode: 0,
@@ -367,7 +368,6 @@ public actor AuthTokenProvider {
     }
 }
 
-// MARK: - Keychain Helper
 
 public struct KeychainStore: Sendable {
     public let service: String

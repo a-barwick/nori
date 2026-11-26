@@ -34,8 +34,6 @@ func (s *stubRuntimeBackend) QueueMetrics(ctx context.Context) (docstore.QueueMe
 }
 
 func TestUnsampledRuntimeMetricsPrometheusOutput(t *testing.T) {
-	// Explicitly initialize observability with empty Sentry DSN and 0% trace sampling
-	// to prove operational metrics are completely unsampled and independent of Sentry.
 	stop := Init(context.Background(), "nori-test", settings.Settings{
 		Observability: settings.Observability{
 			SentryDSN:  "",
@@ -98,7 +96,6 @@ func TestUnsampledRuntimeMetricsPrometheusOutput(t *testing.T) {
 	SetRuntimeMetrics(sources)
 	t.Cleanup(func() { SetRuntimeMetrics(RuntimeMetricsSources{}) })
 
-	// Verify typed snapshot.
 	snap := RuntimeMetricsSnapshot(context.Background())
 	if !snap.HasPool || !snap.HasTx || !snap.HasListen || !snap.HasQueue || !snap.HasWorkerLanes {
 		t.Fatalf("expected all metric groups populated in snapshot: %+v", snap)
@@ -107,7 +104,6 @@ func TestUnsampledRuntimeMetricsPrometheusOutput(t *testing.T) {
 		t.Fatalf("unexpected snapshot values: %+v", snap)
 	}
 
-	// Verify Prometheus exposition format and all required metric families.
 	handler := MetricsHandler()
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
@@ -156,7 +152,6 @@ func TestUnsampledRuntimeMetricsPrometheusOutput(t *testing.T) {
 		}
 	}
 
-	// Prove scraping is never capped at 200/hr (unlike Sentry metrics).
 	for i := range 250 {
 		r := httptest.NewRecorder()
 		handler.ServeHTTP(r, httptest.NewRequest(http.MethodGet, "/metrics", nil))
@@ -165,7 +160,6 @@ func TestUnsampledRuntimeMetricsPrometheusOutput(t *testing.T) {
 		}
 	}
 
-	// HEAD returns 200 with empty body; POST returns 405.
 	headRec := httptest.NewRecorder()
 	handler.ServeHTTP(headRec, httptest.NewRequest(http.MethodHead, "/metrics", nil))
 	if headRec.Code != http.StatusOK || headRec.Body.Len() != 0 {
@@ -193,7 +187,7 @@ func TestQueueMetricsCacheAndTimeoutResilience(t *testing.T) {
 	}
 
 	var calls atomic.Int32
-	var mode atomic.Int32 // 0=ok, 1=error, 2=block
+	var mode atomic.Int32
 	backend := &stubRuntimeBackend{
 		pool: docstore.PoolStats{MaxConns: 25, TotalConns: 5},
 		queue: func(ctx context.Context) (docstore.QueueMetrics, error) {
@@ -218,7 +212,6 @@ func TestQueueMetricsCacheAndTimeoutResilience(t *testing.T) {
 		Now:           clock,
 	})
 
-	// Rapid scrapes within 1s cache TTL hit QueueMetrics only once.
 	s1 := collector.Snapshot(context.Background())
 	advance(500 * time.Millisecond)
 	s2 := collector.Snapshot(context.Background())
@@ -226,14 +219,12 @@ func TestQueueMetricsCacheAndTimeoutResilience(t *testing.T) {
 		t.Fatalf("expected 1 cached QueueMetrics call, got calls=%d s1=%d s2=%d", calls.Load(), s1.Queue.TaskRunnable, s2.Queue.TaskRunnable)
 	}
 
-	// Advancing past TTL triggers a fresh query.
 	advance(600 * time.Millisecond)
 	s3 := collector.Snapshot(context.Background())
 	if calls.Load() != 2 || s3.Queue.TaskRunnable != 2 {
 		t.Fatalf("expected refresh after TTL, got calls=%d s3=%d", calls.Load(), s3.Queue.TaskRunnable)
 	}
 
-	// When QueueMetrics errors, pool metrics are still served while stale/zero queue depth is omitted.
 	advance(2 * time.Second)
 	mode.Store(1)
 	rec := httptest.NewRecorder()
@@ -252,7 +243,6 @@ func TestQueueMetricsCacheAndTimeoutResilience(t *testing.T) {
 		t.Fatalf("expected scrape error counter == 1: %s", body)
 	}
 
-	// When QueueMetrics hangs, bounded QueueTimeout cancels it promptly.
 	mode.Store(2)
 	start := time.Now()
 	s4 := collector.Snapshot(context.Background())
@@ -322,7 +312,6 @@ func TestMetricsConcurrentScrapesAndHTTPHandlerReadyz(t *testing.T) {
 	}()
 	wg.Wait()
 
-	// Verify HTTPHandler passes through healthy 200 and failing 503 /readyz probes cleanly.
 	var status atomic.Int32
 	status.Store(http.StatusOK)
 	wrapped := HTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

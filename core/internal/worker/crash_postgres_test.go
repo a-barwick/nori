@@ -240,7 +240,7 @@ func waitForQuiescence(t *testing.T, ctx context.Context, pool *pgxpool.Pool, us
 	var leases, wakes int64
 	for time.Now().Before(deadline) {
 		_ = pool.QueryRow(ctx, "SELECT count(*) FROM nori_task_leases WHERE user_id = $1", userID).Scan(&leases)
-		_ = pool.QueryRow(ctx, "SELECT count(*) FROM nori_user_wakes WHERE user_id = $1 AND (runnable = true OR owner <> '' OR lease_until IS NOT NULL)", userID).Scan(&wakes)
+		_ = pool.QueryRow(ctx, "SELECT count(*) FROM nori_user_wakes WHERE user_id = $1 AND ((runnable AND wake_at <= now()) OR owner <> '' OR lease_until IS NOT NULL)", userID).Scan(&wakes)
 		if leases == 0 && wakes == 0 {
 			return
 		}
@@ -249,8 +249,6 @@ func waitForQuiescence(t *testing.T, ctx context.Context, pool *pgxpool.Pool, us
 	t.Fatalf("Postgres did not reach quiescence for user %s: nori_task_leases=%d active_nori_user_wakes=%d", userID, leases, wakes)
 }
 
-// expireDeadWorkerLease simulates elapsed wall time past the dead worker's 30s
-// lease TTL after SIGKILL + Wait() has confirmed the old worker process exited.
 func expireDeadWorkerLease(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ownerShard, userID, runID string) {
 	t.Helper()
 	past := time.Now().UTC().Add(-2 * time.Second).Format("2006-01-02T15:04:05.000000000Z")
@@ -289,9 +287,6 @@ func expireDeadWorkerLease(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	}
 }
 
-// expireModelCheckpointRecoveryWindow verifies an unsettled TaskModelCheckpoint exists
-// after mid-model SIGKILL and fast-forwards its recovery_until past now() while keeping
-// ModelStepStartedAt fresh so D-053 retries cleanly without waiting 240s.
 func expireModelCheckpointRecoveryWindow(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ownerShard, runID string) {
 	t.Helper()
 	past := time.Now().UTC().Add(-2 * time.Second).Format("2006-01-02T15:04:05.000000000Z")
@@ -323,8 +318,6 @@ func expireModelCheckpointRecoveryWindow(t *testing.T, ctx context.Context, pool
 	}
 }
 
-// verifyPendingOperation verifies an unsettled pending operation exists
-// after mid-tool SIGKILL and optionally fast-forwards its recovery_until past now().
 func verifyPendingOperation(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ownerShard, runID string, expireRecovery bool) {
 	t.Helper()
 	opCollection := fmt.Sprintf("%s/runs/%s/operations", ownerShard, runID)
@@ -364,15 +357,6 @@ func findToolBySuffix(tools []any, suffix string) string {
 	return ""
 }
 
-// TestSplitRoleSIGKILLCrashRecovery exercises real split-role cmd/nori subprocesses
-// (--role=api and --role=worker) against an isolated Postgres database under real
-// syscall.SIGKILL crashes:
-//  1. Mid-model SIGKILL (D-053): kill worker inside model call -> restart worker -> recovers & completes.
-//  2. Mid-tool safe read SIGKILL: kill worker inside safe-read tool -> restart worker -> re-executes & completes.
-//  3. Mid-tool write SIGKILL: kill worker inside external write -> restart worker -> settles uncertain without double execution.
-//  4. Mid-task API SIGKILL: kill --role=api while task is in flight -> worker finishes cleanly -> restarted --role=api reflects completed task.
-//
-// Gated behind NORI_POSTGRES_CRASH_TEST_URL so normal `go test ./...` skips it cleanly.
 func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 	pgURL := strings.TrimSpace(os.Getenv("NORI_POSTGRES_CRASH_TEST_URL"))
 	if pgURL == "" {
@@ -389,7 +373,6 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	// Compile the real single-binary cmd/nori into a temporary directory.
 	tmpDir := t.TempDir()
 	binPath := filepath.Join(tmpDir, "nori")
 	buildCmd := exec.CommandContext(ctx, "go", "build", "-o", binPath, "../../cmd/nori")
@@ -397,8 +380,6 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 		t.Fatalf("go build ../../cmd/nori failed: %v\n%s", err, string(out))
 	}
 
-	// Shared deterministic synchronization channels & counters for the loopback stubs.
-	// Scope prompt markers by a per-run nonce so stale rows on a reused DB can never trigger hooks.
 	nonce := uuid.NewString()[:8]
 	tagMidModel := "CRASH_MID_MODEL_" + nonce + ":"
 	tagMidRead := "CRASH_MID_READ_" + nonce + ":"
@@ -406,7 +387,8 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 	tagAPIDispatch := "CRASH_API_DISPATCH_" + nonce + ":"
 
 	var (
-		callSeq atomic.Int64
+		scenario atomic.Value
+		callSeq  atomic.Int64
 
 		midModelCalls   atomic.Int64
 		midModelEntered = make(chan struct{}, 2)
@@ -428,7 +410,6 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 		apiKillOnce.Do(func() { close(apiKillRelease) })
 	}
 
-	// Loopback model stub speaking /v1/chat/completions (outer) and /v1/responses (inner).
 	modelSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -457,12 +438,12 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 						if mm["role"] != "user" {
 							continue
 						}
-						txt, _ := mm["content"].(string)
-						if strings.Contains(txt, tagAPIDispatch) {
+						txt, _ := json.Marshal(mm["content"])
+						if strings.Contains(string(txt), tagAPIDispatch) {
 							actions = append(actions, map[string]any{
 								"name": "dispatch",
 								"arguments": map[string]any{
-									"request": txt, "for": nil, "question_id": nil,
+									"request": tagAPIDispatch + " run task across API SIGKILL", "for": nil, "question_id": nil,
 									"attachments": []any{}, "revises": nil,
 								},
 							})
@@ -505,19 +486,19 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 			rawInput, _ := json.Marshal(items)
 			inputStr := string(rawInput)
 			fnOutputs := strings.Count(inputStr, `"type":"function_call_output"`)
+			active, _ := scenario.Load().(string)
 
 			var outItem map[string]any
 			callID := fmt.Sprintf("call_crash_%d", callSeq.Add(1))
 
 			switch {
-			case strings.Contains(inputStr, tagMidModel):
+			case active == tagMidModel && strings.Contains(inputStr, tagMidModel):
 				n := midModelCalls.Add(1)
 				if n == 1 {
 					select {
 					case midModelEntered <- struct{}{}:
 					default:
 					}
-					// Hold open until the worker is SIGKILL'd and drops the TCP connection.
 					<-r.Context().Done()
 					return
 				}
@@ -536,7 +517,7 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 					}
 				}
 
-			case strings.Contains(inputStr, tagMidRead):
+			case active == tagMidRead && strings.Contains(inputStr, tagMidRead):
 				switch fnOutputs {
 				case 0:
 					readTool := findToolBySuffix(tools, "resources_list")
@@ -548,7 +529,6 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 						"type": "function_call", "name": readTool, "arguments": `{}`, "call_id": callID,
 					}
 				case 1:
-					// Exercise built-in safe read memory_read after recovering from the MCP safe-read SIGKILL.
 					outItem = map[string]any{
 						"type": "function_call", "name": "memory_read", "arguments": `{}`, "call_id": callID,
 					}
@@ -563,7 +543,7 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 					}
 				}
 
-			case strings.Contains(inputStr, tagMidWrite):
+			case active == tagMidWrite && strings.Contains(inputStr, tagMidWrite):
 				writeTool := findToolBySuffix(tools, "send_brief")
 				if writeTool == "" {
 					http.Error(w, "missing MCP send_brief tool", http.StatusUnprocessableEntity)
@@ -585,7 +565,7 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 					}
 				}
 
-			case strings.Contains(inputStr, tagAPIDispatch):
+			case active == tagAPIDispatch && strings.Contains(inputStr, tagAPIDispatch):
 				if fnOutputs == 0 {
 					select {
 					case apiKillEntered <- struct{}{}:
@@ -612,7 +592,6 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 				}
 
 			default:
-				// Fallback summary or unexpected prompt.
 				outItem = map[string]any{
 					"type":    "message",
 					"content": []any{map[string]any{"type": "output_text", "text": "Summary."}},
@@ -638,9 +617,6 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 		modelSrv.Close()
 	})
 
-	// Loopback Streamable HTTP MCP stub exposing:
-	// - resources/list (protocol tool @resources_list -> EffectRead, Retry: "safe")
-	// - tools/call send_brief (regular MCP tool -> EffectUnknown, Retry: "reconcile_only")
 	mcpSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/mcp" {
 			http.NotFound(w, r)
@@ -718,11 +694,9 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 				case midReadEntered <- struct{}{}:
 				default:
 				}
-				// Hold open until Worker 2 is SIGKILL'd.
 				<-r.Context().Done()
 				return
 			}
-			// Only count calls made after the test has entered Scenario 2 (ignore initial connect discovery).
 			if taskReadCalls.Load() > 0 {
 				taskReadCalls.Add(1)
 			}
@@ -749,7 +723,6 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 				case midWriteEntered <- struct{}{}:
 				default:
 				}
-				// Hold open until Worker 3 is SIGKILL'd.
 				<-r.Context().Done()
 				return
 			}
@@ -770,7 +743,6 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 		mcpSrv.Close()
 	})
 
-	// Open direct Postgres handles for user provisioning, state verification, and lease/checkpoint expiry.
 	backend, err := postgres.OpenBackend(ctx, pgURL)
 	if err != nil {
 		t.Fatalf("postgres.OpenBackend: %v", err)
@@ -852,13 +824,11 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 		return append(env, extra...)
 	}
 
-	// Start --role=api subprocess and wait for /readyz.
 	apiPort := freeLoopbackPort(t)
 	apiBase := fmt.Sprintf("http://127.0.0.1:%d", apiPort)
 	apiProc := startNoriRole(t, binPath, "nori-api-1", baseEnv(fmt.Sprintf("PORT=%d", apiPort)), "--role=api")
 	waitHTTPReady(t, apiProc, apiBase+"/readyz")
 
-	// Register the loopback MCP server via --role=api, discover its tools, and allow them via standing rules.
 	mcpBase := fmt.Sprintf("%s/users/%s/v1/mcp", apiBase, testUser.ID)
 	var createdMCP struct {
 		Resource struct {
@@ -951,10 +921,8 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 		return runID
 	}
 
-	// -------------------------------------------------------------------------
-	// Scenario 1: Mid-model SIGKILL (D-053)
-	// -------------------------------------------------------------------------
 	t.Run("mid_model_sigkill_d053", func(t *testing.T) {
+		scenario.Store(tagMidModel)
 		worker1 := startWorker(t, "nori-worker-1")
 		runID := startTask(t, tagMidModel+" verify D-053 recovery after SIGKILL")
 		select {
@@ -963,15 +931,11 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 			t.Fatalf("worker-1 never reached model call\nlogs:\n%s", worker1.logs.String())
 		}
 
-		// Abruptly kill worker-1 mid-model HTTP request.
 		worker1.killSIGKILL(t)
 
-		// Verify crashed lease & unsettled TaskModelCheckpoint exist, then fast-forward
-		// dead worker TTLs so worker-2 takes over immediately without waiting 240s.
 		expireDeadWorkerLease(t, ctx, obsPool, ownerShard, testUser.ID, runID)
 		expireModelCheckpointRecoveryWindow(t, ctx, obsPool, ownerShard, runID)
 
-		// Restart replacement worker and verify D-053 re-asks and completes cleanly.
 		worker2 := startWorker(t, "nori-worker-2")
 		defer worker2.stopGraceful(t)
 
@@ -985,10 +949,8 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 		waitForQuiescence(t, ctx, obsPool, testUser.ID, 15*time.Second)
 	})
 
-	// -------------------------------------------------------------------------
-	// Scenario 2: Mid-tool safe read SIGKILL (safe read re-executed cleanly)
-	// -------------------------------------------------------------------------
 	t.Run("mid_tool_safe_read_sigkill", func(t *testing.T) {
+		scenario.Store(tagMidRead)
 		worker2 := startWorker(t, "nori-worker-read-1")
 		armReadBlock.Store(true)
 		runID := startTask(t, tagMidRead+" verify safe read re-execution after SIGKILL")
@@ -1001,8 +963,6 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 
 		worker2.killSIGKILL(t)
 
-		// Verify active lease + unsettled pending read operation; intentionally do NOT expire
-		// operations.recovery_until because safe-read tools bypass waitForReceipt immediately.
 		expireDeadWorkerLease(t, ctx, obsPool, ownerShard, testUser.ID, runID)
 		verifyPendingOperation(t, ctx, obsPool, ownerShard, runID, false)
 
@@ -1019,10 +979,8 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 		waitForQuiescence(t, ctx, obsPool, testUser.ID, 15*time.Second)
 	})
 
-	// -------------------------------------------------------------------------
-	// Scenario 3: Mid-tool write SIGKILL (settled uncertain, never double-executed)
-	// -------------------------------------------------------------------------
 	t.Run("mid_tool_write_sigkill_uncertain_no_double_exec", func(t *testing.T) {
+		scenario.Store(tagMidWrite)
 		worker3 := startWorker(t, "nori-worker-write-1")
 		armWriteBlock.Store(true)
 		runID := startTask(t, tagMidWrite+" verify external write never double-executes after SIGKILL")
@@ -1041,8 +999,6 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 		worker4 := startWorker(t, "nori-worker-write-2")
 		defer worker4.stopGraceful(t)
 
-		// Restarted worker MUST settle the interrupted write as uncertain and park in WaitQuestion
-		// without calling send_brief a second time.
 		parked := waitForRunQuestion(t, ctx, userApp.Store, runID, 25*time.Second)
 		if got := taskWriteCalls.Load(); got != 1 {
 			t.Fatalf("external write was double-executed after SIGKILL: calls=%d want=1", got)
@@ -1065,7 +1021,6 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 			t.Fatalf("expected uncertain-action confirmation question with Clears, got %+v", parked.Question)
 		}
 
-		// Cleanly stop the parked task so zero active leases remain.
 		httpJSON(t, http.MethodPost, fmt.Sprintf("%s/users/%s/api/command", apiBase, testUser.ID), map[string]any{
 			"id":     uuid.NewString(),
 			"run_id": runID,
@@ -1075,29 +1030,24 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 		waitForQuiescence(t, ctx, obsPool, testUser.ID, 15*time.Second)
 	})
 
-	// -------------------------------------------------------------------------
-	// Scenario 4: Mid-task API SIGKILL -> worker completes -> restarted API reads state
-	// -------------------------------------------------------------------------
 	t.Run("mid_task_api_sigkill", func(t *testing.T) {
+		scenario.Store(tagAPIDispatch)
 		worker4 := startWorker(t, "nori-worker-api-kill")
 		defer worker4.stopGraceful(t)
 		defer closeAPIKill()
 
-		// Submit a user message over HTTP to --role=api that dispatches an inner task.
 		turnID := uuid.NewString()
 		httpJSON(t, http.MethodPost, fmt.Sprintf("%s/users/%s/v1/conversations/assistant/messages", apiBase, testUser.ID), map[string]any{
 			"id":   turnID,
 			"text": tagAPIDispatch + " run task across API SIGKILL",
 		}, http.StatusAccepted, nil)
 
-		// Wait until the dispatched task is actively executing on --role=worker.
 		select {
 		case <-apiKillEntered:
 		case <-time.After(15 * time.Second):
 			t.Fatalf("dispatched task did not enter model call\nworker logs:\n%s\napi logs:\n%s", worker4.logs.String(), apiProc.logs.String())
 		}
 
-		// Find the dispatched runID while it is in flight.
 		var dispatchedRunID string
 		runs, err := userApp.Store.RecentRuns(ctx, 20)
 		if err != nil {
@@ -1113,10 +1063,8 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 			t.Fatalf("could not locate in-flight CRASH_API_DISPATCH run in %+v", runs)
 		}
 
-		// SIGKILL the --role=api process while the task is actively running on --role=worker!
 		apiProc.killSIGKILL(t)
 
-		// Release the model stub so --role=worker completes the task while --role=api is dead.
 		closeAPIKill()
 		completed := waitForRunStatus(t, ctx, userApp.Store, dispatchedRunID, state.RunCompleted, 25*time.Second)
 		if !strings.Contains(completed.Result, "Completed while API was SIGKILLed.") {
@@ -1124,7 +1072,6 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 		}
 		waitForQuiescence(t, ctx, obsPool, testUser.ID, 15*time.Second)
 
-		// Restart --role=api and verify /readyz, /v1/snapshot, and /v1/work/{task_id} reflect completion cleanly.
 		apiPort2 := freeLoopbackPort(t)
 		apiBase2 := fmt.Sprintf("http://127.0.0.1:%d", apiPort2)
 		apiProc2 := startNoriRole(t, binPath, "nori-api-2", baseEnv(fmt.Sprintf("PORT=%d", apiPort2)), "--role=api")
@@ -1165,7 +1112,6 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 			t.Fatalf("restarted API /v1/work/%s result = %q", dispatchedRunID, detail.Result)
 		}
 
-		// Verify zero leaked leases remain after full split-role crash recovery suite.
 		waitForQuiescence(t, ctx, obsPool, testUser.ID, 10*time.Second)
 	})
 }

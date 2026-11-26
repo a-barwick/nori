@@ -22,30 +22,23 @@ import (
 )
 
 const (
-	// ExtensionID is the synthetic extension identifier for simulated tools.
 	ExtensionID = "sim/ext"
 
-	// ToolIDRead, ToolIDWrite, and ToolIDSend are the namespaced tool definition IDs.
 	ToolIDRead  = "sim/tools/read"
 	ToolIDWrite = "sim/tools/write"
 	ToolIDSend  = "sim/tools/send"
 
-	// ToolNameRead, ToolNameWrite, and ToolNameSend are the model-facing tool names.
 	ToolNameRead  = "sim_read"
 	ToolNameWrite = "sim_write"
 	ToolNameSend  = "sim_send"
 )
 
 var (
-	// ErrInjectedToolTemp is returned inside *invoke.TemporaryError when a retryable tool fault triggers.
-	ErrInjectedToolTemp = errors.New("sim/inner: temporary tool refusal (429/503)")
-	// ErrInjectedToolFail is returned when a clean non-side-effecting tool failure triggers.
-	ErrInjectedToolFail = errors.New("sim/inner: injected tool failure before side effect")
-	// ErrInjectedToolUncertain is returned when a simulated crash/drop occurs after applying a write.
+	ErrInjectedToolTemp      = errors.New("sim/inner: temporary tool refusal (429/503)")
+	ErrInjectedToolFail      = errors.New("sim/inner: injected tool failure before side effect")
 	ErrInjectedToolUncertain = errors.New("sim/inner: connection dropped after external write")
 )
 
-// Sealed tool definitions registered in the simulator's extension source.
 var (
 	SimReadDef  = mustSeal(buildSimReadDef())
 	SimWriteDef = mustSeal(buildSimWriteDef())
@@ -117,8 +110,6 @@ func buildSimWriteDef() extensions.Definition {
 			Version: "1",
 		},
 		Policy: extensions.Policy{
-			// EffectUnknown guarantees unruled calls open a real approval interaction card
-			// bound to (run_id, revision, action_digest) even for direct user requests.
 			Effect:    extensions.EffectUnknown,
 			Retry:     "reconcile_only",
 			TimeoutMS: 30_000,
@@ -161,24 +152,20 @@ func buildSimSendDef() extensions.Definition {
 	}
 }
 
-// ToolDefinitions returns the sealed simulated external tool definitions in canonical order.
 func ToolDefinitions() []extensions.Definition {
 	return []extensions.Definition{SimReadDef, SimWriteDef, SimSendDef}
 }
 
-// ExtensionSource supplies the simulated sealed tool definitions to agent.Service.
 type ExtensionSource struct {
 	Definitions []extensions.Definition
 }
 
 var _ extensions.Source = (*ExtensionSource)(nil)
 
-// NewExtensionSource creates an ExtensionSource offering sim_read, sim_write, and sim_send.
 func NewExtensionSource() *ExtensionSource {
 	return &ExtensionSource{Definitions: ToolDefinitions()}
 }
 
-// Inventory implements extensions.Source.
 func (s *ExtensionSource) Inventory(_ context.Context) (extensions.Inventory, error) {
 	defs := s.Definitions
 	if len(defs) == 0 {
@@ -198,21 +185,13 @@ func (s *ExtensionSource) Inventory(_ context.Context) (extensions.Inventory, er
 	}, nil
 }
 
-// AdapterConfig configures deterministic fault injection probabilities in [0.0, 1.0] for FakeAdapter.
 type AdapterConfig struct {
-	// TempErrProb returns a retryable *invoke.TemporaryError (safe reads retry via externalSleep).
-	TempErrProb float64
-	// FailProb returns a clean failed outcome with ClearedDidNotRun (no side effect).
-	FailProb float64
-	// UncertainProb applies the external side effect on writes/sends and then drops the response
-	// (returning outcome="uncertain") so Reconcile is exercised.
-	UncertainProb float64
-	// ReconcileMissProb causes Reconcile to return (_, false) so the operation remains uncertain
-	// and opens an uncertain-action question + unresolved write block.
+	TempErrProb       float64
+	FailProb          float64
+	UncertainProb     float64
 	ReconcileMissProb float64
 }
 
-// DefaultAdapterConfig returns a moderate adversarial tool fault profile.
 func DefaultAdapterConfig() AdapterConfig {
 	return AdapterConfig{
 		TempErrProb:       0.08,
@@ -222,7 +201,6 @@ func DefaultAdapterConfig() AdapterConfig {
 	}
 }
 
-// ExecutedCall is one immutable entry in FakeAdapter's append-only external execution ledger.
 type ExecutedCall struct {
 	UserID            string
 	RunID             string
@@ -254,16 +232,11 @@ type providerOpState struct {
 	actionDigest string
 }
 
-// ForcedOutcome overrides the next Execute/Reconcile decision in targeted tests.
 type ForcedOutcome struct {
-	// Outcome may be "confirmed", "failed", "temporary_error", or "uncertain".
-	Outcome string
-	// ReconcileMiss, when true, forces the next Reconcile call to return (_, false).
+	Outcome       string
 	ReconcileMiss bool
 }
 
-// FakeAdapter is a deterministic external tool adapter implementing both invoke.Adapter
-// and invoke.Reconciler with an append-only execution ledger for invariant checking.
 type FakeAdapter struct {
 	mu            sync.Mutex
 	clock         *env.Clock
@@ -285,7 +258,6 @@ var (
 	_ invoke.Reconciler = (*FakeAdapter)(nil)
 )
 
-// NewFakeAdapter constructs a deterministic FakeAdapter.
 func NewFakeAdapter(clock *env.Clock, cfg AdapterConfig, rng *rand.Rand) *FakeAdapter {
 	if clock == nil {
 		clock = env.NewClock(time.Time{})
@@ -303,40 +275,34 @@ func NewFakeAdapter(clock *env.Clock, cfg AdapterConfig, rng *rand.Rand) *FakeAd
 	}
 }
 
-// Register binds this adapter into reg for all "sim/*" native bindings.
 func (a *FakeAdapter) Register(reg *invoke.Registry) {
 	reg.Register(extensions.AdapterNative, "sim", a)
 }
 
-// SetFaultsEnabled toggles fault injection without changing probabilities.
 func (a *FakeAdapter) SetFaultsEnabled(enabled bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.faultsEnabled = enabled
 }
 
-// FaultsEnabled reports whether fault injection is active.
 func (a *FakeAdapter) FaultsEnabled() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.faultsEnabled
 }
 
-// SetConfig updates the fault probabilities.
 func (a *FakeAdapter) SetConfig(cfg AdapterConfig) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.cfg = cfg
 }
 
-// QueueForcedOutcome queues a deterministic override consumed by the next Execute call.
 func (a *FakeAdapter) QueueForcedOutcome(forced ...ForcedOutcome) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.forcedQueue = append(a.forcedQueue, forced...)
 }
 
-// Executed returns a deep-copied snapshot of the append-only external execution ledger.
 func (a *FakeAdapter) Executed() []ExecutedCall {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -350,14 +316,12 @@ func (a *FakeAdapter) Executed() []ExecutedCall {
 	return out
 }
 
-// ReconcileCount returns how many times Reconcile was invoked.
 func (a *FakeAdapter) ReconcileCount() int64 {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.reconcileSeq
 }
 
-// Prepare implements invoke.Adapter without performing any external writes.
 func (a *FakeAdapter) Prepare(_ context.Context, call invoke.Call) (invoke.Prepared, error) {
 	switch call.Exec.Binding.Target {
 	case "sim/read":
@@ -419,7 +383,6 @@ func (a *FakeAdapter) Prepare(_ context.Context, call invoke.Call) (invoke.Prepa
 	}
 }
 
-// Execute implements invoke.Adapter and records every execution attempt in the append-only ledger.
 func (a *FakeAdapter) Execute(ctx context.Context, call invoke.Call, prepared invoke.Prepared) invoke.Result {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -482,7 +445,6 @@ func (a *FakeAdapter) Execute(ctx context.Context, call invoke.Call, prepared in
 		}
 	}
 
-	// Execute the operation against the fake external provider state.
 	if prepared.Effect == extensions.EffectRead {
 		key := prepared.Spec["key"]
 		val, found := a.kv[userID+":"+key]
@@ -498,7 +460,6 @@ func (a *FakeAdapter) Execute(ctx context.Context, call invoke.Call, prepared in
 		}
 	}
 
-	// Non-read side effect (sim_write or sim_send).
 	a.nextRefSeq++
 	ref := state.ProviderRef{
 		Kind:       toolName,
@@ -554,8 +515,6 @@ func (a *FakeAdapter) Execute(ctx context.Context, call invoke.Call, prepared in
 	}
 }
 
-// Reconcile implements invoke.Reconciler by checking the fake provider's state for an
-// interrupted or uncertain operation without ever re-executing the write.
 func (a *FakeAdapter) Reconcile(_ context.Context, call invoke.Call, prepared invoke.Prepared) (invoke.Result, bool) {
 	if prepared.Effect == extensions.EffectRead {
 		return invoke.Result{}, false
@@ -596,7 +555,6 @@ func (a *FakeAdapter) chooseOutcomeLocked(effect extensions.Effect) string {
 	if len(a.forcedQueue) > 0 && a.forcedQueue[0].Outcome != "" {
 		choice := a.forcedQueue[0]
 		if choice.ReconcileMiss {
-			// Leave the ReconcileMiss flag queued for the subsequent Reconcile call.
 			a.forcedQueue[0] = ForcedOutcome{ReconcileMiss: true}
 		} else {
 			a.forcedQueue = a.forcedQueue[1:]
@@ -621,7 +579,6 @@ func (a *FakeAdapter) chooseOutcomeLocked(effect extensions.Effect) string {
 	return "confirmed"
 }
 
-// Digest returns a canonical hex-encoded SHA-256 hash of FakeAdapter's Executed ledger.
 func (a *FakeAdapter) Digest() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()

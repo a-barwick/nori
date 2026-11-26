@@ -1,9 +1,3 @@
-// Command nori-sim runs a local-only Nori API + worker.Pool server wired to a
-// controllable virtual clock for real-life month-long persona simulations.
-//
-// Safety guard: refuses to start unless NORI_CLOUD=local, Postgres
-// points to loopback, and the database name is not "nori" (unless
-// --allow-default-db is explicitly passed).
 package main
 
 import (
@@ -587,7 +581,6 @@ func drainUserToQuiescence(ctx context.Context, svc *app.Service, backend *simCl
 			schedDue = true
 		}
 
-		// Inspect user wake rows; only nudge if due AND currently neither owned nor runnable.
 		laneBusy := false
 		convRunnable := false
 		schedRunnable := false
@@ -597,7 +590,6 @@ func drainUserToQuiescence(ctx context.Context, svc *app.Service, backend *simCl
 				if w.Owner != "" && (w.LeaseUntil == nil || w.LeaseUntil.After(realNow)) {
 					laneBusy = true
 				}
-				// Only treat as already runnable in Postgres if wake_at is not parked at farHorizon.
 				if w.Lane == docstore.LaneConversation && w.Runnable && !w.WakeAt.After(realNow.Add(shortUserWakeThreshold)) {
 					convRunnable = true
 				}
@@ -639,10 +631,6 @@ func drainUserToQuiescence(ctx context.Context, svc *app.Service, backend *simCl
 			)
 		}
 
-		// Quiescent when conversation is idle, no runnable/cleanup tasks remain,
-		// and no conversation/scheduler work is due at simClock.Now().
-		// Tasks parked specifically waiting for user input/approval are allowed to pause drain
-		// so the runner / adaptive persona responder can answer them.
 		nonParkedOpen := len(openTasks) - parkedInteractive
 		if nonParkedOpen < 0 {
 			nonParkedOpen = 0

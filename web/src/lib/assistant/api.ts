@@ -33,19 +33,12 @@ function pendingMutations(): PendingMutation[] {
   try { return JSON.parse(sessionStorage.getItem(PENDING_KEY) || "[]"); } catch { return []; }
 }
 function savePending(list: PendingMutation[]) {
-  try { if (list.length) sessionStorage.setItem(PENDING_KEY, JSON.stringify(list.slice(-50))); else sessionStorage.removeItem(PENDING_KEY); } catch { /* current tab only */ }
+  try { if (list.length) sessionStorage.setItem(PENDING_KEY, JSON.stringify(list.slice(-50))); else sessionStorage.removeItem(PENDING_KEY); } catch {  }
 }
 
 export const newRequestID = () => crypto.randomUUID();
 
-/**
- * Sends a management mutation. The request ID is kept until a receipt arrives, so a lost
- * response is resolved by retrying the identical request or reading /v1/mutations/{id};
- * it never becomes a second, different request.
- */
 export async function mutate<T = unknown>(path: string, input: { request_id: string } & Record<string, unknown>, method = "POST"): Promise<MutationReceipt & { resource: T }> {
-  // Submitting the identical change again while an earlier attempt is unconfirmed reuses that attempt's request
-  // ID, so the core returns the saved receipt instead of applying it twice.
   const { request_id: _fresh, ...change } = input;
   void _fresh;
   const withoutID = (value: unknown) => JSON.stringify(Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([key]) => key !== "request_id")));
@@ -65,7 +58,6 @@ export async function mutate<T = unknown>(path: string, input: { request_id: str
         savePending(pendingMutations().filter((item) => item.request_id !== body.request_id));
         return error.body.receipt as MutationReceipt & { resource: T };
       }
-      // A definite rejection is final; an ambiguous failure keeps the ID for an identical retry.
       if (error.status < 500 && error.status !== 429) savePending(pendingMutations().filter((item) => item.request_id !== body.request_id));
       throw error;
     }
@@ -78,27 +70,11 @@ export async function mutate<T = unknown>(path: string, input: { request_id: str
   }
 }
 
-/**
- * Sends a secret (an access token or app-specific password) once. Unlike mutate(), nothing is kept for retry:
- * the browser never stores credentials. A lost response is resolved by reading the
- * resource, which says only whether a credential is present.
- */
 export async function sendSecret<T>(path: string, body: { request_id: string } & Record<string, unknown>): Promise<MutationReceipt & { resource: T }> {
   const response = await fetch(assistantURL(path), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store", redirect: "error" });
   return readJSON<MutationReceipt & { resource: T }>(response);
 }
 
-export async function receiptFor<T>(requestID: string) {
+async function receiptFor<T>(requestID: string) {
   return getJSON<MutationReceipt & { resource: T }>(`/mutations/${encodeURIComponent(requestID)}`);
-}
-
-/** Retry a mutation with its original request ID and body. */
-export function retryMutation<T>(requestID: string) {
-  const saved = pendingMutations().find((item) => item.request_id === requestID);
-  if (!saved) throw new APIError("That change is no longer pending.", 0);
-  return mutate<T>(saved.path, saved.body as { request_id: string }, saved.method);
-}
-
-export function errorText(error: unknown) {
-  return error instanceof Error ? error.message : "Something went wrong.";
 }

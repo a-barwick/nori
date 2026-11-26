@@ -110,7 +110,6 @@ func (d *Database) AdvanceTaskStep(ctx context.Context, f state.TaskFence, ctrl 
 	var savedCtrl state.TaskControl
 	var updatedRun state.Run
 	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
-		// All reads before any writes.
 		ctrlRef := d.taskControls().Doc(runID)
 		stored, err := decodeTaskControl(tx.Get(ctrlRef))
 		if errors.Is(err, state.ErrNotFound) {
@@ -140,7 +139,6 @@ func (d *Database) AdvanceTaskStep(ctx context.Context, f state.TaskFence, ctrl 
 			}
 		}
 
-		// Writes.
 		if spend != nil {
 			spent, budget, costUnknown := state.MergeSpend(run, *spend)
 			if parentRef != nil {

@@ -29,7 +29,6 @@ export function useDraftFiles() {
       ...item, status: "error", error: "The upload could not be confirmed. Retry this file.",
     }));
   }, [update]);
-  // Removing a file that is still uploading cancels its upload.
   const remove = (id: string) => { uploads.current.get(id)?.abort(); uploads.current.delete(id); update((rows) => rows.filter((item) => item.id !== id)); };
 
   const save = async (item: DraftFile, upload: Upload) => {
@@ -62,7 +61,6 @@ export function useDraftFiles() {
 
   function retry(item: DraftFile, upload: Upload) {
     if (item.size > MAX_FILE_BYTES || !current.current.some((file) => file.id === item.id && file.status === "error")) return;
-    // Reuse the upload ID if the service stored the file before its response was lost.
     change(item.id, { status: "uploading", error: undefined });
     void save(item, upload);
   }

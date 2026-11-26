@@ -9,8 +9,6 @@ import (
 	"nori/internal/users"
 )
 
-// Users reads the user directory in the same database as scoped records. It is a trusted
-// server/CLI surface; no route exposes whole rows.
 type Users struct{ db *docstore.Client }
 
 func NewUsers(backend docstore.Backend) *Users { return &Users{db: docstore.New(backend)} }
@@ -78,7 +76,6 @@ func (u *Users) Create(ctx context.Context, row users.User) error {
 	if err := row.Validate(); err != nil {
 		return err
 	}
-	// Email uniqueness is transactional, including concurrent local provisioning.
 	return u.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		matches := tx.Documents(u.rows().Where("email", "==", row.Email).Limit(1))
 		defer matches.Stop()

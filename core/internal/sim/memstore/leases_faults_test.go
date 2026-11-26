@@ -13,7 +13,6 @@ import (
 
 func TestBackendFutureWakeWithoutClockDoesNotNotifyOrSkewUpdatedAt(t *testing.T) {
 	ctx := context.Background()
-	// Explicitly omit WithClock so b.nowFn == nil (wall-clock default).
 	b := memstore.New()
 
 	events := make(chan docstore.WakeEvent, 8)
@@ -42,7 +41,6 @@ func TestBackendFutureWakeWithoutClockDoesNotNotifyOrSkewUpdatedAt(t *testing.T)
 	}
 	after := time.Now().UTC()
 
-	// Future wakes MUST NOT emit immediate WakeEvents.
 	select {
 	case ev := <-events:
 		t.Fatalf("future wake emitted unexpected immediate event: %+v", ev)
@@ -124,7 +122,6 @@ func TestBackendLeaseFaultInjectionAndDropResync(t *testing.T) {
 	case <-time.After(25 * time.Millisecond):
 	}
 
-	// EmitResync bypasses dropWakeEvents to model a LISTEN reconnect resync signal.
 	b.EmitResync()
 	select {
 	case ev := <-events:

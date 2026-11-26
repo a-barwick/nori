@@ -33,7 +33,6 @@ func TestTypedErrorEmissionAndRetryFlow(t *testing.T) {
 	runner.Now = db.Now
 	runner.SyncWork = true
 
-	// 1. Model fails with HTTP 503.
 	model.SetHandler(func(context.Context, ReplyRequest) (Reply, error) {
 		return Reply{}, providerHTTPError{status: 503, detail: "model provider returned HTTP 503"}
 	})
@@ -71,12 +70,10 @@ func TestTypedErrorEmissionAndRetryFlow(t *testing.T) {
 			t.Fatalf("failed message leaked forbidden substring %q: text=%q errMsg=%q", forbidden, failedMsg.Text, failedMsg.Error.Message)
 		}
 	}
-	// Private trace still preserves exact diagnostic detail.
 	if len(sess.Traces) == 0 || !strings.Contains(sess.Traces[0].Error, "HTTP 503") {
 		t.Fatalf("expected private trace to keep diagnostic error, got %+v", sess.Traces)
 	}
 
-	// 2. Tap Retry -> failed message becomes superseded, no duplicate user message, retry succeeds!
 	model.ResetRequests()
 	model.SetHandler(func(_ context.Context, req ReplyRequest) (Reply, error) {
 		joined := ""
@@ -99,7 +96,6 @@ func TestTypedErrorEmissionAndRetryFlow(t *testing.T) {
 	if !retrySess.Conversation.Pending {
 		t.Fatalf("expected conversation pending immediately after Retry")
 	}
-	// Double-tap Retry while pending is idempotent.
 	if _, err := runner.Retry(ctx, failedMsg.TurnID, failedMsg.ID); err != nil {
 		t.Fatalf("second Retry: %v", err)
 	}

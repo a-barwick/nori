@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { cadence, EFFECT_LABEL, eventTime, money, plainText, plural, relative } from "./format";
+import { cadence, EFFECT_LABEL, eventTime, money, plainText, plural, relative, scheduleDayEnd } from "./format";
 
 describe("plainText", () => {
   test("strips markdown links and image syntax while keeping labels", () => {
@@ -105,4 +105,10 @@ describe("format helpers", () => {
     assert.match(timed, /0?9:00–10:30/);
     assert.equal(EFFECT_LABEL.sensitive_send, "Send");
   });
+});
+
+test("routine end date uses the schedule timezone through daylight saving changes", () => {
+  assert.equal(scheduleDayEnd("2026-03-08", "America/Los_Angeles"), "2026-03-09T06:59:59.999Z");
+  assert.equal(scheduleDayEnd("2026-11-01", "America/Los_Angeles"), "2026-11-02T07:59:59.999Z");
+  assert.equal(scheduleDayEnd("2026-02-30", "America/Los_Angeles"), undefined);
 });

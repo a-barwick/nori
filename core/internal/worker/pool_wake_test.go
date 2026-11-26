@@ -55,7 +55,6 @@ func TestPoolConversationDelayedIdleWakeAndPark(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- pool.Run(runCtx) }()
 
-	// Wait for first conversation pass to finish and release with delayedAt (NOT parked).
 	expectSignal(t, doneFirst, "first conversation pass")
 	deadline := time.Now().Add(2 * time.Second)
 	for {
@@ -78,7 +77,6 @@ func TestPoolConversationDelayedIdleWakeAndPark(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	// Advancing virtual clock past delayedAt should automatically wake LaneConversation and then park once idle.
 	clock.Advance(2*time.Minute + time.Second)
 	expectSignal(t, doneSecond, "delayed idle conversation pass")
 
@@ -124,7 +122,6 @@ func TestPoolConversationDelayedWakeYieldsToConcurrentUserInput(t *testing.T) {
 		RunConversation: func(runCtx context.Context, _ *app.App) error {
 			n := calls.Add(1)
 			if n == 1 {
-				// Simulate a new user message arriving mid-pass (bumping wake_seq & clamping wake_at to now).
 				if err := backend.WakeUser(runCtx, u.ID, docstore.LaneConversation, time.Time{}); err != nil {
 					return err
 				}
@@ -135,7 +132,6 @@ func TestPoolConversationDelayedWakeYieldsToConcurrentUserInput(t *testing.T) {
 		},
 		NextConversationWake: func(_ context.Context, _ *app.App) (time.Time, error) {
 			if calls.Load() == 1 {
-				// Returning a +15m AutoDream delay must NOT postpone the concurrent user wake!
 				return clock.Now().Add(15 * time.Minute), nil
 			}
 			return time.Time{}, nil
@@ -149,7 +145,6 @@ func TestPoolConversationDelayedWakeYieldsToConcurrentUserInput(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- pool.Run(runCtx) }()
 
-	// Second pass must fire immediately without advancing the virtual clock!
 	expectSignal(t, secondPass, "immediate wake for concurrent user input")
 
 	cancel()

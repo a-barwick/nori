@@ -18,46 +18,29 @@ import (
 	"nori/internal/state"
 )
 
-// Config configures a multi-worker deterministic outer conversation Harness.
 type Config struct {
-	// UserID is recorded on simulation traces. Defaults to "sim-user".
 	UserID string
 
-	// UserFacts is injected into Runner.UserFacts. Defaults to "Simulation user."
 	UserFacts string
 
-	// TimeZone configures Runner.Clock.Location. Defaults to time.UTC.
 	TimeZone *time.Location
 
-	// Store is shared across all workers, simulating multiple API/worker pods
-	// competing for the same user's conversation lease.
 	Store state.ConversationStore
 
-	// Optional infrastructure fault injectors paused during CheckOuterInvariants
-	// and disabled during DrainConversation.
 	StoreFaults *memstore.FaultInjector
 
-	// Deterministic simulation primitives.
 	Clock *env.Clock
 	IDs   *env.IDGen
 	RNG   *rand.Rand
 	Trace *env.Trace
 
-	// NumWorkers is the number of competing conversation.Runner instances to
-	// construct. Defaults to 2 when <= 0.
 	NumWorkers int
 
-	// ReplyFaults overrides DefaultReplyFaultConfig when non-zero (unless
-	// DisableFaults is true).
 	ReplyFaults ReplyFaultConfig
 
-	// ClassifierFaultProb and SummaryFaultProb configure failure rates for
-	// FakeClassifier and FakeSummaryModel when DisableFaults is false.
-	// Negative values disable faults; zero uses defaults (0.10 and 0.15).
 	ClassifierFaultProb float64
 	SummaryFaultProb    float64
 
-	// DisableFaults disables all model faults on startup.
 	DisableFaults bool
 }
 
@@ -83,9 +66,6 @@ type outerBaseline struct {
 	userRouted   int64
 }
 
-// Harness drives Nori's real conversation.Runner across multiple competing
-// workers with deterministic virtual clocks, IDs, zero-sleep timers, and
-// outer-loop invariant verification.
 type Harness struct {
 	UserID      string
 	Store       state.ConversationStore
@@ -113,7 +93,6 @@ type Harness struct {
 	baseline           outerBaseline
 }
 
-// NewHarness constructs a deterministic multi-worker outer conversation Harness.
 func NewHarness(cfg Config) *Harness {
 	if cfg.Store == nil {
 		panic("sim/outer: Config.Store is required")
@@ -235,14 +214,12 @@ func NewHarness(cfg Config) *Harness {
 	return h
 }
 
-// SetStep sets the logical step number recorded on subsequent trace entries.
 func (h *Harness) SetStep(step int) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.step = step
 }
 
-// Record appends a deterministic event to the harness trace.
 func (h *Harness) Record(actor, action, detail string) {
 	h.mu.Lock()
 	step := h.step
@@ -250,8 +227,6 @@ func (h *Harness) Record(actor, action, detail string) {
 	h.Trace.Record(step, h.Clock.Now(), h.UserID, actor, action, detail)
 }
 
-// SetModelFaultsEnabled toggles faults on all workers' FakeReplyModel,
-// FakeClassifier, and FakeSummaryModel instances.
 func (h *Harness) SetModelFaultsEnabled(enabled bool) {
 	for _, m := range h.ReplyModels {
 		m.SetFaultsEnabled(enabled)
@@ -264,8 +239,6 @@ func (h *Harness) SetModelFaultsEnabled(enabled bool) {
 	}
 }
 
-// SetAllFaultsEnabled toggles faults across all outer models as well as any
-// wired memstore.FaultInjector.
 func (h *Harness) SetAllFaultsEnabled(enabled bool) {
 	h.SetModelFaultsEnabled(enabled)
 	if h.StoreFaults != nil {
@@ -273,38 +246,30 @@ func (h *Harness) SetAllFaultsEnabled(enabled bool) {
 	}
 }
 
-// SetOnBeforeRespond installs or clears the same mid-flight hook on every
-// worker's FakeReplyModel.
 func (h *Harness) SetOnBeforeRespond(fn BeforeRespondHook) {
 	for _, m := range h.ReplyModels {
 		m.SetOnBeforeRespond(fn)
 	}
 }
 
-// SetOnBeforeCompaction installs or clears the same mid-flight hook on every
-// worker's FakeSummaryModel / FakeCompactionModel.
 func (h *Harness) SetOnBeforeCompaction(fn CompactionBeforeRespondHook) {
 	for _, s := range h.SummaryModels {
 		s.SetOnBeforeRespond(fn)
 	}
 }
 
-// EnsureIntroduction enqueues the initial conversation introduction via Worker 0.
 func (h *Harness) EnsureIntroduction(ctx context.Context) error {
 	err := h.Workers[0].EnsureIntroduction(ctx)
 	h.Record("outer", "ensure_intro", fmt.Sprintf("err=%v", err))
 	return err
 }
 
-// AcceptInput accepts a new user message with a deterministic UUID from h.IDs.
 func (h *Harness) AcceptInput(ctx context.Context, text string) (string, error) {
 	id := h.IDs.Next()
 	err := h.AcceptInputWithID(ctx, id, text)
 	return id, err
 }
 
-// AcceptInputWithID submits a user message with a caller-supplied UUID,
-// enabling idempotent replay and ErrConversationConflict testing.
 func (h *Harness) AcceptInputWithID(ctx context.Context, id, text string) error {
 	if _, err := uuid.Parse(id); err != nil {
 		return fmt.Errorf("message ID must be a UUID")
@@ -344,9 +309,6 @@ func (h *Harness) userMessageExistsFaultFree(ctx context.Context, inputID string
 	return err == nil
 }
 
-// ProcessWorker runs one Runner.Process pass on worker workerIdx and waits
-// deterministically for that worker's background lease/compaction ticker
-// goroutines to exit cleanly before returning.
 func (h *Harness) ProcessWorker(ctx context.Context, workerIdx int) error {
 	if workerIdx < 0 || workerIdx >= len(h.Workers) {
 		return fmt.Errorf("sim/outer: invalid worker index %d (numWorkers=%d)", workerIdx, len(h.Workers))
@@ -364,22 +326,16 @@ func (h *Harness) ProcessWorker(ctx context.Context, workerIdx int) error {
 	return err
 }
 
-// Cancel cancels an active turn or the head queued input ID.
 func (h *Harness) Cancel(ctx context.Context, turnID string) error {
 	err := h.Store.CancelConversation(ctx, turnID)
 	h.Record("user", "cancel", fmt.Sprintf("turn=%s err=%v", turnID, err))
 	return err
 }
 
-// Session returns a conversation.Session snapshot via Worker 0.
 func (h *Harness) Session(ctx context.Context) (conversation.Session, error) {
 	return h.Workers[0].Snapshot(ctx)
 }
 
-// TickLeaseWatcher deterministically delivers a single tick to workerIdx's
-// currently active lease watcher goroutine (250ms) and waits synchronously
-// until that watcher tick completes. When expectCancel is true, it waits until
-// the watcher cancels its context and stops.
 func (h *Harness) TickLeaseWatcher(ctx context.Context, workerIdx int, expectCancel bool) bool {
 	if workerIdx < 0 || workerIdx >= len(h.tickers) || !h.workerBusy[workerIdx].Load() {
 		return false
@@ -387,10 +343,6 @@ func (h *Harness) TickLeaseWatcher(ctx context.Context, workerIdx int, expectCan
 	return h.tickers[workerIdx].tickActive(ctx, expectCancel)
 }
 
-// TickCompactionWatcher deterministically delivers a single tick to workerIdx's
-// currently active compaction/AutoDream watcher goroutine (500ms) so mid-flush
-// UserRoutingPending preemption fires deterministically without wall-clock sleeps.
-// When expectCancel is true, it blocks until the watcher cancels watchCtx and exits.
 func (h *Harness) TickCompactionWatcher(ctx context.Context, workerIdx int, expectCancel bool) bool {
 	if workerIdx < 0 || workerIdx >= len(h.tickers) || !h.workerBusy[workerIdx].Load() {
 		return false
@@ -398,8 +350,6 @@ func (h *Harness) TickCompactionWatcher(ctx context.Context, workerIdx int, expe
 	return h.tickers[workerIdx].tickCompaction(ctx, expectCancel)
 }
 
-// AcceptedInputs returns a copy of all user input IDs accepted through this
-// harness in acceptance order.
 func (h *Harness) AcceptedInputs() []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -410,14 +360,6 @@ func (h *Harness) AcceptedInputs() []string {
 	return out
 }
 
-// DrainConversation disables model and infrastructure faults and drives
-// Worker 0 until the conversation is completely idle and all accepted user
-// inputs have been routed (!c.Pending() && c.Active == "" && !UserRoutingPending).
-//
-// If the last turn before drain ended in an injected model error (leaving
-// !c.Pending() while UserRoutingPending remains true per Nori's replay-on-next-
-// user-input contract), DrainConversation submits one deterministic retry user
-// message and processes it so all unrouted inputs resolve cleanly.
 func (h *Harness) DrainConversation(ctx context.Context) error {
 	h.SetAllFaultsEnabled(false)
 	h.SetOnBeforeRespond(nil)
@@ -457,7 +399,6 @@ func (h *Harness) DrainConversation(ctx context.Context) error {
 			continue
 		}
 
-		// One idle pass allows any eligible compaction to finish cleanly.
 		if err := h.ProcessWorker(ctx, 0); err != nil {
 			return fmt.Errorf("sim/outer: drain idle pass: %w", err)
 		}
@@ -481,9 +422,6 @@ func (h *Harness) DrainConversation(ctx context.Context) error {
 		maxIterations, c.Received, c.Consumed, c.UserReceived, c.UserRouted, c.Active)
 }
 
-// CheckOuterInvariants verifies all outer conversation safety, monotonicity,
-// publication uniqueness, input tracking, trace, and fence invariants without
-// consuming store fault RNG draws.
 func (h *Harness) CheckOuterInvariants(ctx context.Context) error {
 	if h.StoreFaults != nil && h.StoreFaults.Enabled() {
 		h.StoreFaults.SetEnabled(false)
@@ -515,7 +453,6 @@ func (h *Harness) CheckOuterInvariants(ctx context.Context) error {
 		violations = append(violations, fmt.Sprintf(format, args...))
 	}
 
-	// 1. Control counter bounds and relationships.
 	if c.Received < 0 || c.Consumed < 0 || c.UserReceived < 0 || c.UserRouted < 0 || c.Fence < 0 {
 		fail("negative control counters: received=%d consumed=%d user_received=%d user_routed=%d fence=%d",
 			c.Received, c.Consumed, c.UserReceived, c.UserRouted, c.Fence)
@@ -533,7 +470,6 @@ func (h *Harness) CheckOuterInvariants(ctx context.Context) error {
 		fail("user_routed (%d) exceeds consumed (%d)", c.UserRouted, c.Consumed)
 	}
 
-	// 2. Monotonic control progression across checks.
 	h.mu.Lock()
 	if h.baseline.initialized {
 		if c.Fence < h.baseline.fence {
@@ -563,7 +499,6 @@ func (h *Harness) CheckOuterInvariants(ctx context.Context) error {
 	acceptedSnapshot := append([]acceptedInput(nil), h.acceptedInputs...)
 	h.mu.Unlock()
 
-	// 3. Active turn & lease fence consistency.
 	if c.Active != "" {
 		if activeTurn == nil {
 			fail("control.Active=%q but active turn document is nil", c.Active)
@@ -601,8 +536,6 @@ func (h *Harness) CheckOuterInvariants(ctx context.Context) error {
 		}
 	}
 
-	// 4. Published assistant messages: monotonic timestamps, unique turn IDs,
-	// immutable once published, and never belonging to a still-active turn.
 	seenMsgIDs := make(map[string]bool, len(messages))
 	seenAssistantTurns := make(map[string]publishedMessage)
 	storedUsers := make(map[string]state.Message)
@@ -660,7 +593,6 @@ func (h *Harness) CheckOuterInvariants(ctx context.Context) error {
 	}
 	h.mu.Unlock()
 
-	// 5. Accepted user inputs tracked vs stored user messages and consumption.
 	for _, in := range acceptedSnapshot {
 		msgID := state.UserMessageID(in.id)
 		msg, ok := storedUsers[msgID]
@@ -681,7 +613,6 @@ func (h *Harness) CheckOuterInvariants(ctx context.Context) error {
 		}
 	}
 
-	// 6. Trace / attempt invariants.
 	completedAttemptsByTurn := make(map[string]string)
 	for _, a := range traces {
 		if a.ID == "" || a.TurnID == "" {
@@ -707,7 +638,6 @@ func (h *Harness) CheckOuterInvariants(ctx context.Context) error {
 		}
 	}
 
-	// 7. Compaction summary consistency.
 	if summary.Through.IsZero() {
 		if !summary.FlushedThrough.IsZero() || !summary.RefinementThrough.IsZero() {
 			fail("summary through is zero while flushed_through=%s refinement_through=%s",
@@ -767,7 +697,6 @@ func (h *Harness) readAllMessages(ctx context.Context) ([]state.Message, error) 
 		seenCursors[next] = true
 		cursor = next
 	}
-	// Pages are fetched newest-page-first, with each page already in chronological order.
 	slices.Reverse(pages)
 	var all []state.Message
 	for _, p := range pages {
@@ -775,8 +704,6 @@ func (h *Harness) readAllMessages(ctx context.Context) ([]state.Message, error) 
 	}
 	return all, nil
 }
-
-// --- Deterministic per-worker timer & ticker hub ---
 
 type simTicker struct {
 	id        int64
@@ -812,8 +739,6 @@ func (h *workerTickerHub) now() time.Time {
 	return t
 }
 
-// after advances the virtual clock immediately and returns a pre-filled channel
-// so Runner.wait (restart quiet-window backoff) never sleeps on wall-clock time.
 func (h *workerTickerHub) after(d time.Duration) <-chan time.Time {
 	if d > 0 {
 		h.clock.Advance(d)
@@ -880,10 +805,6 @@ func (h *workerTickerHub) latestCompactionTickerLocked() *simTicker {
 	return h.latestTickerByIntervalLocked(500 * time.Millisecond)
 }
 
-// tickCompaction synchronously delivers one virtual tick to the most recently
-// registered active compaction/AutoDream watcher ticker (500ms interval).
-// When expectCancel is true, it waits until UserRoutingPending causes the
-// watcher to cancel watchCtx and stop cleanly.
 func (h *workerTickerHub) tickCompaction(ctx context.Context, expectCancel bool) bool {
 	stopCancel := context.AfterFunc(ctx, func() {
 		h.mu.Lock()
@@ -892,7 +813,6 @@ func (h *workerTickerHub) tickCompaction(ctx context.Context, expectCancel bool)
 	})
 	defer stopCancel()
 
-	// Wait for compact/dreamConsolidate watcher goroutine to reach NewTicker(500ms).
 	h.mu.Lock()
 	t := h.latestCompactionTickerLocked()
 	for t == nil {
@@ -925,9 +845,6 @@ func (h *workerTickerHub) tickCompaction(ctx context.Context, expectCancel bool)
 	return true
 }
 
-// tickActive synchronously delivers one virtual tick to the most recently
-// registered active lease watcher ticker (250ms interval) and waits for that
-// tick iteration to finish (or for the ticker to stop when expectCancel is true).
 func (h *workerTickerHub) tickActive(ctx context.Context, expectCancel bool) bool {
 	stopCancel := context.AfterFunc(ctx, func() {
 		h.mu.Lock()
@@ -936,7 +853,6 @@ func (h *workerTickerHub) tickActive(ctx context.Context, expectCancel bool) boo
 	})
 	defer stopCancel()
 
-	// Wait for watchLease goroutine to reach NewTicker(250ms) if it was just spawned.
 	h.mu.Lock()
 	t := h.latestLeaseTickerLocked()
 	for t == nil {

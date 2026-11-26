@@ -463,7 +463,6 @@ func TestWorkerPoolGracefulDrainPauseAndEviction(t *testing.T) {
 			t.Fatalf("AcceptCommandBatch stop: %v", err)
 		}
 
-		// Resume / RepairOnce resolves paused Stop via StopPaused and removes the task lease.
 		if err := uApp.Resume(ctx); err != nil {
 			t.Fatalf("App.Resume while paused: %v", err)
 		}
@@ -504,7 +503,6 @@ func TestWorkerPoolGracefulDrainPauseAndEviction(t *testing.T) {
 		}
 		rel2()
 
-		// u1 is active (refs==1), u2 is idle (refs==0); acquiring u3 must evict u2, keeping u1 and u3.
 		clock.Advance(time.Second)
 		_, rel3, err := svc.Acquire(ctx, u3)
 		if err != nil {
@@ -515,7 +513,6 @@ func TestWorkerPoolGracefulDrainPauseAndEviction(t *testing.T) {
 			t.Fatalf("CachedCount = %d, want 2", svc.CachedCount())
 		}
 
-		// Advance past 10m IdleTTL: u3 is evicted, u1 (still active) stays protected until released.
 		clock.Advance(11 * time.Minute)
 		if evicted := svc.EvictIdle(); evicted != 1 {
 			t.Fatalf("EvictIdle = %d, want 1", evicted)

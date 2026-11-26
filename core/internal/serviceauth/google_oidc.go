@@ -21,13 +21,10 @@ const defaultGoogleJWKSURL = "https://www.googleapis.com/oauth2/v3/certs"
 
 type verifiedEmailKey struct{}
 
-// WithVerifiedEmail attaches an OIDC-verified lowercase email to ctx.
 func WithVerifiedEmail(ctx context.Context, email string) context.Context {
 	return context.WithValue(ctx, verifiedEmailKey{}, strings.ToLower(strings.TrimSpace(email)))
 }
 
-// VerifiedEmail returns the OIDC-verified user email when the request was
-// authenticated with a user ID token rather than a trusted nori-service token.
 func VerifiedEmail(ctx context.Context) (string, bool) {
 	email, ok := ctx.Value(verifiedEmailKey{}).(string)
 	return email, ok && email != ""
@@ -77,7 +74,6 @@ func (c *jwksCache) getKey(ctx context.Context, kid string) (*rsa.PublicKey, err
 		if k, ok := c.keys[kid]; ok {
 			return k, nil
 		}
-		// Rate-limit refreshes on unknown kid to prevent JWKS DoS.
 		if time.Since(c.lastRefresh) < 30*time.Second {
 			return nil, errors.New("unknown signing key")
 		}

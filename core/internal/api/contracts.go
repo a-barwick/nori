@@ -13,10 +13,6 @@ import (
 	"nori/internal/state"
 )
 
-// ContractTypes maps a contract schema reference to a constructor for the Go type the server reads or writes for it.
-// contracts-check decodes every valid fixture into its type with unknown fields disallowed, re-encodes it and
-// validates the result again, so a field the schema allows but the server drops, or a field the server writes but the
-// schema forbids, fails the check. References missing here are served through ad hoc request structs inside handlers.
 var ContractTypes = map[string]func() any{
 	"automations.schema.json#/$defs/Automation":           func() any { return &scheduler.Automation{} },
 	"automations.schema.json#/$defs/AutomationChange":     func() any { return &envelope[scheduler.Editable]{} },
@@ -73,14 +69,12 @@ var ContractTypes = map[string]func() any{
 	"tools.schema.json#/$defs/AvailableTool":              func() any { return &availableTool{} },
 }
 
-// envelope is the Change / ActionRequest wrapper requests carry around their value.
 type envelope[T any] struct {
 	RequestID        string `json:"request_id"`
 	ExpectedRevision *int64 `json:"expected_revision"`
 	Value            T      `json:"value"`
 }
 
-// RoundTrip decodes a fixture into the registered type with unknown fields disallowed and returns its re-encoding.
 func RoundTrip(ref string, data []byte) ([]byte, error) {
 	construct, ok := ContractTypes[ref]
 	if !ok {

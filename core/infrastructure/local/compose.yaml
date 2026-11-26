@@ -5,7 +5,6 @@ services:
     environment:
       POSTGRES_USER: nori
       POSTGRES_DB: nori
-      # Loopback-only development instance; no production credentials.
       POSTGRES_HOST_AUTH_METHOD: trust
     ports:
       - "127.0.0.1:15432:5432"

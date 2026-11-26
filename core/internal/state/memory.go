@@ -12,15 +12,14 @@ import (
 	"nori/internal/prompts"
 )
 
-// MemoryProvenance records how a Core memory or Daily Log entry originated.
 type MemoryProvenance string
 
 const (
-	ProvenanceUserExplicit    MemoryProvenance = "user_explicit"     // Explicit remember tool or UI create/edit
-	ProvenancePreCompactFlush MemoryProvenance = "pre_compact_flush" // Auto-extracted from user turns before compaction
-	ProvenanceSummaryEvicted  MemoryProvenance = "summary_evicted"   // Preserved in Daily Log before FitSummary eviction
-	ProvenanceTaskOutcome     MemoryProvenance = "task_outcome"      // Factual outcome recorded on task completion (Log-only)
-	ProvenanceDreamCurated    MemoryProvenance = "dream_curated"     // Consolidated / demoted during idle AutoDream
+	ProvenanceUserExplicit    MemoryProvenance = "user_explicit"
+	ProvenancePreCompactFlush MemoryProvenance = "pre_compact_flush"
+	ProvenanceSummaryEvicted  MemoryProvenance = "summary_evicted"
+	ProvenanceTaskOutcome     MemoryProvenance = "task_outcome"
+	ProvenanceDreamCurated    MemoryProvenance = "dream_curated"
 )
 
 func ValidMemoryProvenance(p MemoryProvenance) bool {
@@ -32,15 +31,12 @@ func ValidMemoryProvenance(p MemoryProvenance) bool {
 	}
 }
 
-// Memory is one curated durable fact, preference, person, or active context item in Layer 1 (Core Memory).
-// It is never permission: nothing reads it when deciding whether an action is approved.
 type Memory struct {
-	ID      string `json:"id" firestore:"id"`
-	Text    string `json:"text" firestore:"text"`
-	About   string `json:"about" firestore:"about"`
-	Section string `json:"section,omitempty" firestore:"section,omitempty"` // e.g. "Preferences", "People", "Projects"
-	Pinned  bool   `json:"pinned,omitempty" firestore:"pinned,omitempty"`
-	// Provenance tracks origin; empty legacy records default to ProvenanceUserExplicit.
+	ID            string           `json:"id" firestore:"id"`
+	Text          string           `json:"text" firestore:"text"`
+	About         string           `json:"about" firestore:"about"`
+	Section       string           `json:"section,omitempty" firestore:"section,omitempty"`
+	Pinned        bool             `json:"pinned,omitempty" firestore:"pinned,omitempty"`
 	Provenance    MemoryProvenance `json:"provenance,omitempty" firestore:"provenance,omitempty"`
 	SourceInputID string           `json:"source_input_id,omitempty" firestore:"source_input_id,omitempty"`
 	SourceText    string           `json:"source_text,omitempty" firestore:"source_text,omitempty"`
@@ -49,7 +45,6 @@ type Memory struct {
 	UpdatedAt     time.Time        `json:"updated_at" firestore:"updated_at"`
 }
 
-// EffectiveProvenance returns ProvenanceUserExplicit for legacy records with an empty Provenance.
 func (m Memory) EffectiveProvenance() MemoryProvenance {
 	if m.Provenance == "" {
 		return ProvenanceUserExplicit
@@ -57,18 +52,16 @@ func (m Memory) EffectiveProvenance() MemoryProvenance {
 	return m.Provenance
 }
 
-// MemoryLog is one Layer 2 Daily Episodic Log document keyed by user-local YYYY-MM-DD (and optional shard).
 type MemoryLog struct {
-	Date      string           `json:"date" firestore:"date"` // YYYY-MM-DD in user timezone
+	Date      string           `json:"date" firestore:"date"`
 	Shard     int              `json:"shard,omitempty" firestore:"shard,omitempty"`
 	Entries   []MemoryLogEntry `json:"entries" firestore:"entries"`
 	UpdatedAt time.Time        `json:"updated_at" firestore:"updated_at"`
 }
 
-// MemoryLogEntry is one timestamped episodic note inside a Daily Log.
 type MemoryLogEntry struct {
 	ID            string           `json:"id" firestore:"id"`
-	Section       string           `json:"section,omitempty" firestore:"section,omitempty"` // "Decisions", "Context", "Completed Work", "Archived"
+	Section       string           `json:"section,omitempty" firestore:"section,omitempty"`
 	Text          string           `json:"text" firestore:"text"`
 	About         string           `json:"about,omitempty" firestore:"about,omitempty"`
 	Provenance    MemoryProvenance `json:"provenance" firestore:"provenance"`
@@ -79,27 +72,22 @@ type MemoryLogEntry struct {
 	UpdatedAt     time.Time        `json:"updated_at" firestore:"updated_at"`
 }
 
-// MemoryChange is one remember or forget the outer model asked for. It is applied when the turn's reply is published,
-// in the same transaction, so a restart can't apply it twice or apply it without the reply that reports it.
 type MemoryChange struct {
-	Kind string `json:"kind" firestore:"kind"`
-	// ID is the memory written or deleted. A correction keeps the ID of the memory it replaces.
+	Kind     string `json:"kind" firestore:"kind"`
 	ID       string `json:"id" firestore:"id"`
 	Text     string `json:"text,omitempty" firestore:"text,omitempty"`
 	About    string `json:"about,omitempty" firestore:"about,omitempty"`
 	Section  string `json:"section,omitempty" firestore:"section,omitempty"`
 	Replaces bool   `json:"replaces,omitempty" firestore:"replaces,omitempty"`
-	// Error says why the change was refused. A turn with any refused change applies none of them.
-	Error string `json:"error,omitempty" firestore:"error,omitempty"`
+	Error    string `json:"error,omitempty" firestore:"error,omitempty"`
 }
 
 const (
 	MemoryRemember = "remember"
 	MemoryForget   = "forget"
 
-	// Generous modern Layer 1 & Layer 2 memory budgets.
 	CoreMemoryBytes     = 24 << 10
-	MemoryBytes         = CoreMemoryBytes // Backwards-compatible alias
+	MemoryBytes         = CoreMemoryBytes
 	MaxMemoryText       = 2000
 	MaxMemoryAbout      = 80
 	MaxMemorySection    = 64
@@ -110,7 +98,6 @@ const (
 	TailRecallBytes     = 2560
 	TailRecallTopK      = 5
 
-	// Memory mutation kinds for Database.MutateMemory.
 	MemoryMutateCreateCore     = "create_core"
 	MemoryMutateEditCore       = "edit_core"
 	MemoryMutateForgetCore     = "forget_core"
@@ -123,29 +110,26 @@ const (
 	MemoryMutateDismissWorking = "dismiss_working"
 )
 
-// FlushAndCompactRequest is committed atomically in a single SERIALIZABLE transaction.
 type FlushAndCompactRequest struct {
 	ExpectedSummary ConversationSummary
 	NextSummary     ConversationSummary
 	CoreUpserts     []Memory
 	CoreDeletes     []string
-	DailyLogDate    string // YYYY-MM-DD in user timezone
+	DailyLogDate    string
 	DailyLogEntries []MemoryLogEntry
-	CheckPending    bool // If true, abort with ErrConversationStale if conv.Pending()
+	CheckPending    bool
 }
 
-// DreamConsolidateRequest is committed atomically in a single SERIALIZABLE transaction.
 type DreamConsolidateRequest struct {
 	ExpectedSummary ConversationSummary
 	NextSummary     ConversationSummary
 	CoreUpserts     []Memory
 	CoreDeletes     []string
-	DailyLogDate    string // YYYY-MM-DD in user timezone
+	DailyLogDate    string
 	DailyLogEntries []MemoryLogEntry
-	CheckPending    bool // If true, abort with ErrConversationStale if conv.Pending()
+	CheckPending    bool
 }
 
-// MemoryMutationRequest describes one user-initiated /v1/memory* mutation backed by a durable MutationReceipt.
 type MemoryMutationRequest struct {
 	RequestID        string
 	ExpectedRevision int64
@@ -162,7 +146,6 @@ type MemoryMutationRequest struct {
 	FormatResource   func(result MemoryMutationResult) (json.RawMessage, error)
 }
 
-// MemoryMutationResult carries the committed domain state produced by MutateMemory.
 type MemoryMutationResult struct {
 	Memory      *Memory              `json:"memory,omitempty"`
 	Demoted     []Memory             `json:"demoted,omitempty"`
@@ -173,7 +156,6 @@ type MemoryMutationResult struct {
 	Note        string               `json:"note,omitempty"`
 }
 
-// ValidMemoryDate reports whether date is a canonical YYYY-MM-DD calendar date.
 func ValidMemoryDate(date string) bool {
 	if len(date) != 10 {
 		return false
@@ -182,7 +164,6 @@ func ValidMemoryDate(date string) bool {
 	return err == nil && parsed.Format("2006-01-02") == date
 }
 
-// MemoryLogDocID returns the document ID for a Daily Log date and 1-based shard index.
 func MemoryLogDocID(date string, shard int) string {
 	if shard <= 1 {
 		return date
@@ -190,8 +171,6 @@ func MemoryLogDocID(date string, shard int) string {
 	return fmt.Sprintf("%s#%d", date, shard)
 }
 
-// SortCoreMemories orders Core memories deterministically for KV-cache stability:
-// Pinned DESC, CreatedAt ASC, ID ASC.
 func SortCoreMemories(memories []Memory) {
 	slices.SortFunc(memories, func(a, b Memory) int {
 		if a.Pinned != b.Pinned {
@@ -210,7 +189,6 @@ func SortCoreMemories(memories []Memory) {
 	})
 }
 
-// CoreMemorySize returns the total byte length of all Core memory texts.
 func CoreMemorySize(memories []Memory) int {
 	total := 0
 	for _, m := range memories {
@@ -219,9 +197,6 @@ func CoreMemorySize(memories []Memory) int {
 	return total
 }
 
-// DemoteCoreOverflow enforces sum(len(m.Text)) <= limit by demoting oldest unpinned
-// Core memories (CreatedAt ASC, ID ASC) while never auto-demoting Pinned memories.
-// Returns ErrInvalidResource if Pinned memories alone exceed limit.
 func DemoteCoreOverflow(memories []Memory, limit int) (kept []Memory, demoted []Memory, err error) {
 	if limit <= 0 {
 		limit = CoreMemoryBytes
@@ -239,7 +214,6 @@ func DemoteCoreOverflow(memories []Memory, limit int) (kept []Memory, demoted []
 	if pinnedBytes > limit {
 		return nil, nil, ErrInvalidResource
 	}
-	// Sort unpinned oldest-first so oldest items demote first.
 	slices.SortFunc(unpinned, func(a, b Memory) int {
 		if !a.CreatedAt.Equal(b.CreatedAt) {
 			if a.CreatedAt.Before(b.CreatedAt) {
@@ -266,9 +240,6 @@ func DemoteCoreOverflow(memories []Memory, limit int) (kept []Memory, demoted []
 	return kept, demoted, nil
 }
 
-// PlanMemoryChanges validates explicit remember/forget changes. Unpinned Core growth
-// auto-demotes to Daily Logs on commit instead of failing with memory-full; only
-// Pinned + new/edited items exceeding CoreMemoryBytes fail validation.
 func PlanMemoryChanges(saved []Memory, changes []MemoryChange) bool {
 	byID := map[string]Memory{}
 	for _, m := range saved {
@@ -354,7 +325,6 @@ func BoundedSource(text string) string {
 	return text[:limit]
 }
 
-// SourceInput is the user message a turn's memory changes cite: its last one.
 func SourceInput(inputs []ConversationInput) ConversationInput {
 	var source ConversationInput
 	for _, in := range inputs {

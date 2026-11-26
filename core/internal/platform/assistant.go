@@ -20,16 +20,13 @@ import (
 	"nori/internal/users"
 )
 
-// AssistantServices are the user-scoped Connections, Permission checks and connector adapters shared by the
-// API and the task worker.
 type AssistantServices struct {
 	Connections *connections.Service
 	Permissions *permissions.Service
 	Adapters    *invoke.Registry
 	Scheduler   *scheduler.Service
 	MCP         *mcp.Service
-	// Tools is the inventory the agent and the API offer: connected integrations, MCP servers and Nori's own tools.
-	Tools extensions.Source
+	Tools       extensions.Source
 }
 
 var (
@@ -37,7 +34,6 @@ var (
 	wrapper rowstore.KeyWrapper
 )
 
-// credentialKeys resolves the master key for the database credential store once per process.
 func credentialKeys(s settings.Settings) (rowstore.KeyWrapper, error) {
 	keyMu.Lock()
 	defer keyMu.Unlock()
@@ -71,8 +67,6 @@ func credentialKeys(s settings.Settings) (rowstore.KeyWrapper, error) {
 	return wrapper, nil
 }
 
-// Credentials opens the connected-account credential store for a user: envelope-encrypted rows in the user's own
-// store (D1), or secret.Unavailable when none is configured.
 func Credentials(s settings.Settings, user users.User, store state.ResourceStore) (secret.CredentialStore, error) {
 	if s.Connections.CredentialStore == "" {
 		return secret.Unavailable{}, nil
@@ -87,13 +81,11 @@ func Credentials(s settings.Settings, user users.User, store state.ResourceStore
 	return &rowstore.Store{Resources: store, Keys: keys, Owner: user.ID}, nil
 }
 
-// AssistantStore is the user-scoped storage the assistant services need.
 type AssistantStore interface {
 	state.ResourceStore
 	state.RunStore
 }
 
-// Assistant composes the user's assistant services over their scoped store.
 func Assistant(s settings.Settings, user users.User, store AssistantStore) (*AssistantServices, error) {
 	tasks := store
 	credentials, err := Credentials(s, user, store)
@@ -128,7 +120,6 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 	}
 	nori.Register(adapters, nori.Adapter{Scheduler: sched, Unattended: s.Connections.UnattendedWrites})
 	servers := &mcp.Service{Store: store, Credentials: credentials, LocalProcesses: s.Cloud == "local", Commands: localCommands(s), RedirectURL: s.Connections.RedirectURL}
-	// MCP targets are "<server>/<tool>", so the adapter serves every MCP prefix.
 	adapters.Register(extensions.AdapterMCP, "", mcp.Adapter{Service: servers})
 	return &AssistantServices{
 		Connections: conn, Permissions: perms, Adapters: adapters, Scheduler: sched, MCP: servers,
@@ -136,7 +127,6 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 	}, nil
 }
 
-// localCommands are the declared stdio MCP commands, honoured only on the local development stack.
 func localCommands(s settings.Settings) map[string][]string {
 	if s.Cloud != "local" {
 		return map[string][]string{}

@@ -16,9 +16,6 @@ func receiptDeadline(ctx context.Context) time.Time {
 	return deadline.UTC().Truncate(time.Microsecond)
 }
 
-// A stopped or timed-out worker can still have a result to save. Give that
-// write its own context within the activity's original execution deadline.
-// Uses the runtime clock because context.WithDeadline compares against real time.
 func receiptContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	until := time.Now().Add(10 * time.Second)
 	if deadline := receiptDeadline(ctx); !deadline.IsZero() && deadline.Before(until) {
@@ -27,8 +24,6 @@ func receiptContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithDeadline(context.WithoutCancel(ctx), until)
 }
 
-// A retry waits while the first activity still has time to settle. lookup
-// returns zero when there is a result or no recorded owner to wait for.
 func (a *Activities) waitForReceipt(ctx context.Context, runID string, lookup func() (time.Time, error)) error {
 	for delay := 250 * time.Millisecond; ; delay = min(delay*2, 2*time.Second) {
 		until, err := lookup()
@@ -81,7 +76,6 @@ func (a *Activities) recoverModelRef(ctx context.Context, runID string, intent s
 			return saved.RecoveryUntil, nil
 		})
 		if errors.Is(err, state.ErrCancelled) {
-			// Stop can finish promptly. The task still accounts for the unknown request.
 			return interrupted, nil
 		}
 		if err != nil {
@@ -97,8 +91,6 @@ func (a *Activities) recoverModelRef(ctx context.Context, runID string, intent s
 			return out, nil
 		}
 		intent.RecoveryUntil, intent.Outcome = saved.RecoveryUntil, data
-		// If a receipt or an intent landed since our last read, observe it
-		// before deciding that the model step ended without a result.
 		_, err = a.Store.SaveTaskModelCheckpoint(ctx, runID, intent, nil)
 		if !errors.Is(err, docstore.ErrExists) {
 			return interrupted, err

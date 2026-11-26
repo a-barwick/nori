@@ -55,7 +55,6 @@ struct RoutingAndCodableTests {
 
     @Test("Parses nori:// deep links for 3-tab shell, backwards-compatible subroutes, sheets, and OAuth")
     func deepLinkParsing() {
-        // 3 top-level tabs (direct + legacy /tab/ prefix)
         #expect(NoriDeepLink.parse(URL(string: "nori://chat")!) == .tab(.chat))
         #expect(NoriDeepLink.parse(URL(string: "nori://tab/chat")!) == .tab(.chat))
         #expect(NoriDeepLink.parse(URL(string: "nori://work")!) == .tab(.work))
@@ -64,7 +63,6 @@ struct RoutingAndCodableTests {
         #expect(NoriDeepLink.parse(URL(string: "nori://more")!) == .tab(.more))
         #expect(NoriDeepLink.parse(URL(string: "nori://tab/more")!) == .tab(.more))
 
-        // Backwards-compatible legacy tabs & subroutes
         #expect(NoriDeepLink.parse(URL(string: "nori://apps")!) == .apps)
         #expect(NoriDeepLink.parse(URL(string: "nori://tab/apps")!) == .apps)
         #expect(NoriDeepLink.parse(URL(string: "nori://memory")!) == .memory)
@@ -76,7 +74,6 @@ struct RoutingAndCodableTests {
         #expect(NoriDeepLink.parse(URL(string: "nori://goals")!) == .goals)
         #expect(NoriDeepLink.parse(URL(string: "nori://settings")!) == .settings)
 
-        // Sheets & OAuth callbacks
         #expect(NoriDeepLink.parse(URL(string: "nori://activity")!) == .activitySheet)
         #expect(NoriDeepLink.parse(URL(string: "nori://sheet/activity")!) == .activitySheet)
         if case .oauthCallback(let url) = NoriDeepLink.parse(URL(string: "nori://oauth/callback?code=abc&state=123")!) {
@@ -332,7 +329,7 @@ private actor MockApprovalTransport: NoriTransport {
     nonisolated func eventStream(after position: Int) -> AsyncThrowingStream<NoriStreamEvent, Error> {
         AsyncThrowingStream { $0.finish() }
     }
-    func sendTurn(id: String, message: String, attachmentIDs: [String]) async throws -> Session { Session() }
+    func sendTurn(id: String, message: String, attachmentIDs: [String], modelSelection: ModelSelection?) async throws -> Session { Session() }
     func retryTurn(turnID: String?, messageID: String?) async throws -> Session { Session() }
     func sendTaskCommand(_ command: TaskCommand) async throws -> TaskCommandResponse { TaskCommandResponse(accepted: true) }
     func uploadFile(id: String, filename: String, mediaType: String, data: Data) async throws -> NoriCore.Attachment {

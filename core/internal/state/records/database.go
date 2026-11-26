@@ -1,4 +1,3 @@
-// Package records implements Nori persistence rules over a transactional document backend.
 package records
 
 import (
@@ -31,7 +30,6 @@ func New(backend docstore.Backend, user users.User, taskBudgetUSD float64) *Data
 	return &Database{db: docstore.New(backend), user: user, taskBudgetUSD: taskBudgetUSD}
 }
 
-// NewShared creates a user-scoped Database over a shared backend whose lifetime is owned by the caller.
 func NewShared(backend docstore.Backend, user users.User, taskBudgetUSD float64) *Database {
 	var wrapped docstore.Backend = unclosedBackend{backend}
 	if sr, ok := backend.(docstore.SequenceReader); ok {
@@ -112,8 +110,6 @@ func documents[T any](iter *docstore.DocumentIterator) ([]T, error) {
 	}
 }
 
-// readConversation reads the conversation control record inside a transaction. A conversation that has none yet reads
-// as a new one.
 func (d *Database) readConversation(tx *docstore.Transaction) (state.ConversationControl, error) {
 	doc, err := tx.Get(d.conversation())
 	if notFound(err) {
@@ -172,16 +168,11 @@ func (d *Database) Spend(ctx context.Context, update state.SpendUpdate) error {
 	})
 }
 
-// RecordUsage is idempotent for one observed provider request. The caller keeps the same ID and timestamp when
-// retrying a failed projection.
 func (d *Database) RecordUsage(ctx context.Context, usage state.Usage) error {
 	_, err := d.usage().Doc(usage.ID).Set(ctx, usage)
 	return err
 }
 
-// ReserveUsage atomically checks rolling per-user hourly call and daily spend+exposure caps
-// and writes the pending usage row inside a single transaction, eliminating TOCTOU races across
-// concurrent requests and replicas. Estimated exposure is kept separate from recorded CostUSD.
 func (d *Database) ReserveUsage(
 	ctx context.Context,
 	u state.Usage,
@@ -197,7 +188,6 @@ func (d *Database) ReserveUsage(
 	allowed := false
 	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		allowed = false
-		// Serialize concurrent quota admissions for this user via a dedicated lock document.
 		quotaRef := d.root().Collection("meta").Doc("usage_quota")
 		var quotaDoc struct {
 			Seq int64 `firestore:"seq"`
@@ -207,46 +197,31 @@ func (d *Database) ReserveUsage(
 		} else if err != nil && !errors.Is(err, docstore.ErrNotFound) {
 			return err
 		}
-		// Idempotent re-check if this exact usage ID was already reserved.
 		if existingSnap, err := tx.Get(d.usage().Doc(u.ID)); err == nil && existingSnap.Exists() {
 			allowed = true
 			return nil
 		} else if err != nil && !errors.Is(err, docstore.ErrNotFound) {
 			return err
 		}
-		rows, err := documents[state.Usage](tx.Documents(d.usage().Where("created_at", ">=", since)))
+		window, aggregated, err := tx.UsageWindow(d.usage().Path, hourCutoff, dayCutoff, unknownEstimateUSD)
 		if err != nil {
 			return err
 		}
-		var hourCalls int
-		var dayActualUSD, dayExposureUSD float64
-		for _, r := range rows {
-			if r.RequestStatus == "not_sent" || r.ID == u.ID {
-				continue
+		if !aggregated {
+			rows, err := documents[state.Usage](tx.Documents(d.usage().Where("created_at", ">=", since)))
+			if err != nil {
+				return err
 			}
-			if !r.CreatedAt.Before(hourCutoff) {
-				hourCalls++
-			}
-			if !r.CreatedAt.Before(dayCutoff) {
-				if r.CostUSD != nil && *r.CostUSD > 0 {
-					dayActualUSD += *r.CostUSD
-				} else if r.CostStatus != "provider" && r.CostStatus != "calculated" {
-					if r.EstimatedExposureUSD > 0 {
-						dayExposureUSD += r.EstimatedExposureUSD
-					} else {
-						dayExposureUSD += unknownEstimateUSD
-					}
-				}
-			}
+			window = summarizeUsage(rows, hourCutoff, dayCutoff, unknownEstimateUSD)
 		}
-		if maxCallsPerHour > 0 && hourCalls+1 > maxCallsPerHour {
+		if maxCallsPerHour > 0 && window.Calls+1 > maxCallsPerHour {
 			return nil
 		}
 		incomingExposure := u.EstimatedExposureUSD
 		if incomingExposure <= 0 {
 			incomingExposure = unknownEstimateUSD
 		}
-		if maxUSDPerDay > 0 && dayActualUSD+dayExposureUSD+incomingExposure > maxUSDPerDay {
+		if maxUSDPerDay > 0 && window.ActualUSD+window.ExposureUSD+incomingExposure > maxUSDPerDay {
 			return nil
 		}
 		u.EstimatedExposureUSD = incomingExposure
@@ -263,10 +238,10 @@ func (d *Database) ReserveUsage(
 	return allowed, err
 }
 
-// UsageWindowSummary aggregates durable usage rows for this user in a single scan
-// since dayCutoff so multi-replica Cloud Run instances enforce shared per-user
-// hourly call and daily spend admission limits.
-func (d *Database) UsageWindowSummary(ctx context.Context, hourCutoff, dayCutoff time.Time) (hourCalls int, daySpendUSD float64, dayUnknownCalls int, err error) {
+func (d *Database) UsageWindowSummary(ctx context.Context, hourCutoff, dayCutoff time.Time) (int, float64, int, error) {
+	if window, aggregated, err := d.db.UsageWindow(ctx, d.usage().Path, hourCutoff, dayCutoff, 0); aggregated {
+		return window.Calls, window.ActualUSD, window.Unknown, err
+	}
 	since := dayCutoff
 	if hourCutoff.Before(since) {
 		since = hourCutoff
@@ -275,22 +250,34 @@ func (d *Database) UsageWindowSummary(ctx context.Context, hourCutoff, dayCutoff
 	if err != nil {
 		return 0, 0, 0, err
 	}
+	window := summarizeUsage(rows, hourCutoff, dayCutoff, 0)
+	return window.Calls, window.ActualUSD, window.Unknown, nil
+}
+
+func summarizeUsage(rows []state.Usage, hour, day time.Time, unknown float64) docstore.UsageWindow {
+	var window docstore.UsageWindow
 	for _, r := range rows {
 		if r.RequestStatus == "not_sent" {
 			continue
 		}
-		if !r.CreatedAt.Before(hourCutoff) {
-			hourCalls++
+		if !r.CreatedAt.Before(hour) {
+			window.Calls++
 		}
-		if !r.CreatedAt.Before(dayCutoff) {
-			if r.CostUSD != nil && *r.CostUSD > 0 {
-				daySpendUSD += *r.CostUSD
-			} else if r.CostStatus != "provider" && r.CostStatus != "calculated" {
-				dayUnknownCalls++
+		if r.CreatedAt.Before(day) {
+			continue
+		}
+		if r.CostUSD != nil && *r.CostUSD > 0 {
+			window.ActualUSD += *r.CostUSD
+		} else if r.CostStatus != "provider" && r.CostStatus != "calculated" {
+			window.Unknown++
+			if r.EstimatedExposureUSD > 0 {
+				window.ExposureUSD += r.EstimatedExposureUSD
+			} else {
+				window.ExposureUSD += unknown
 			}
 		}
 	}
-	return hourCalls, daySpendUSD, dayUnknownCalls, nil
+	return window
 }
 
 func (d *Database) Artifact(ctx context.Context, runID string, artifact state.Artifact) error {
@@ -302,8 +289,6 @@ func (d *Database) Session(ctx context.Context) (state.Session, error) {
 	return d.session(ctx, sessionWithMessages)
 }
 
-// ConversationProjection returns runs and usage without messages. Full provider turns are selected separately;
-// messages stay cursor-accessible.
 func (d *Database) ConversationProjection(ctx context.Context) (state.Session, error) {
 	return d.session(ctx, conversationProjection)
 }
@@ -334,7 +319,6 @@ func (d *Database) session(ctx context.Context, mode sessionMode) (state.Session
 		return session, err
 	}
 	session.Runs = recent
-	// Waiting tasks remain visible even after thirty newer tasks have started.
 	open, err := d.OpenTasks(ctx)
 	if err != nil {
 		return session, err

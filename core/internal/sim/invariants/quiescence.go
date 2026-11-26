@@ -11,9 +11,6 @@ import (
 	"nori/internal/state/docstore"
 )
 
-// CheckQuiescence verifies liveness invariants after faults have been disabled
-// and all task runners, outer conversations, schedulers, and lease repair passes
-// have drained to quiescence with Control.Paused == false.
 func (c *Checker) CheckQuiescence(ctx context.Context, users []UserTarget, now time.Time) error {
 	now = now.UTC()
 	sorted := sortUsers(users)
@@ -35,7 +32,6 @@ func (c *Checker) CheckQuiescence(ctx context.Context, users []UserTarget, now t
 			continue
 		}
 
-		// 1. Control.Paused must be false for a quiescence drain check.
 		control, err := t.Store.Control(ctx)
 		if err != nil {
 			vs = append(vs, Violation{
@@ -53,7 +49,6 @@ func (c *Checker) CheckQuiescence(ctx context.Context, users []UserTarget, now t
 			})
 		}
 
-		// 2. Store.Pending(ctx, "") must have zero undelivered commands.
 		pendingPage, err := t.Store.Pending(ctx, "")
 		if err != nil {
 			vs = append(vs, Violation{
@@ -79,11 +74,6 @@ func (c *Checker) CheckQuiescence(ctx context.Context, users []UserTarget, now t
 			}
 		}
 
-		// 3. Store.CleanupTasks(ctx) must have no stuck CleanupPending or CleanupError.
-		// Note: Admit() sets CleanupPending=true on still-running tasks while Finishing==nil,
-		// and FinishCleanup rejects RunRunning && Finishing==nil with ErrBusy. Thus at
-		// quiescence, any terminal/finishing/errored cleanup task (or running task with a
-		// closed/missing execution) is stuck.
 		cleanupRuns, err := t.Store.CleanupTasks(ctx)
 		if err != nil {
 			vs = append(vs, Violation{
@@ -105,7 +95,6 @@ func (c *Checker) CheckQuiescence(ctx context.Context, users []UserTarget, now t
 			}
 		}
 
-		// 4. Store.OpenTasks(ctx) must have zero stuck Finishing runs.
 		openRuns, err := t.Store.OpenTasks(ctx)
 		if err != nil {
 			vs = append(vs, Violation{
@@ -127,7 +116,6 @@ func (c *Checker) CheckQuiescence(ctx context.Context, users []UserTarget, now t
 			}
 		}
 
-		// 5. Store.PublicationTasks(ctx) must be empty when UserRoutingPending is false.
 		routingPending, err := t.Store.UserRoutingPending(ctx)
 		if err != nil {
 			vs = append(vs, Violation{
@@ -156,16 +144,6 @@ func (c *Checker) CheckQuiescence(ctx context.Context, users []UserTarget, now t
 			})
 		}
 
-		// 6. Store.WorkVersion(ctx, true) exact check against core/internal/state/records/work.go.
-		// WorkVersion returns non-empty only for:
-		//   - unconsumed conversation inputs without an active lease ("assistant:<received>")
-		//   - open tasks with Finishing != nil ("finishing:...")
-		//   - paused CancelRequested tasks ("stop:...")
-		//   - undelivered commands ("command:...")
-		//   - held PublicationTasks when !RoutingPending ("publication:...")
-		//   - terminal CleanupTasks ("cleanup:...")
-		// Therefore when !conv.Pending(), WorkVersion(ctx, true) MUST be "".
-		// Even when conv.Pending() is true, WorkVersion MUST NOT report non-assistant stuck task work.
 		conv, _, err := t.Store.ConversationStatus(ctx)
 		if err != nil {
 			vs = append(vs, Violation{
@@ -192,7 +170,6 @@ func (c *Checker) CheckQuiescence(ctx context.Context, users []UserTarget, now t
 			}
 		}
 
-		// 7. Cross-user isolation on live Session projection.
 		if sess, err := t.Store.Session(ctx); err != nil {
 			vs = append(vs, Violation{
 				Invariant: "quiescence.session_read",
@@ -210,8 +187,6 @@ func (c *Checker) CheckQuiescence(ctx context.Context, users []UserTarget, now t
 			}
 		}
 
-		// 8. Automations & Occurrences: all due non-paused automations advanced their cursor,
-		// no duplicate occurrence keys or task IDs, no stuck pending/unsettled occurrences.
 		vs = append(vs, c.checkSchedulerQuiescenceLocked(ctx, t, now)...)
 	}
 
@@ -219,7 +194,6 @@ func (c *Checker) CheckQuiescence(ctx context.Context, users []UserTarget, now t
 		vs = append(vs, c.checkLeaseQuiescenceLocked(ctx, sorted, now)...)
 	}
 
-	// Coupled Memory & Compaction post-drain quiescence (INV-MEM-08).
 	vs = append(vs, c.checkMemoryQuiescenceLocked(ctx, sorted, now)...)
 
 	if len(vs) > 0 {
@@ -228,9 +202,6 @@ func (c *Checker) CheckQuiescence(ctx context.Context, users []UserTarget, now t
 	return nil
 }
 
-// CheckLeaseQuiescence verifies lease-to-run and user-wake discovery parity at
-// quiescence by inspecting a fault-free memstore.BackendSnapshot against
-// authoritative Run, Control, ConversationControl, and Automation state.
 func (c *Checker) CheckLeaseQuiescence(ctx context.Context, users []UserTarget, now time.Time) error {
 	now = now.UTC()
 	sorted := sortUsers(users)
@@ -322,7 +293,6 @@ func (c *Checker) checkLeaseQuiescenceLocked(_ context.Context, sorted []UserTar
 		lanes[w.Lane] = w
 	}
 
-	// 1. Every Run with Status == RunRunning || CleanupPending MUST have a nori_task_leases row.
 	for _, t := range sorted {
 		userID := t.User.ID
 		runs := runsByUser[userID]
@@ -341,7 +311,6 @@ func (c *Checker) checkLeaseQuiescenceLocked(_ context.Context, sorted []UserTar
 		}
 	}
 
-	// 2, 3, 4. Validate every nori_task_leases row against Run & Control state.
 	for _, lease := range snap.TaskLeases {
 		if _, known := usersByID[lease.UserID]; !known {
 			vs = append(vs, Violation{
@@ -353,7 +322,6 @@ func (c *Checker) checkLeaseQuiescenceLocked(_ context.Context, sorted []UserTar
 			continue
 		}
 
-		// 3a. No leaked live lease owner / lease_until at quiescence.
 		if lease.Owner != "" || lease.LeaseUntil != nil {
 			until := "<nil>"
 			if lease.LeaseUntil != nil {
@@ -367,7 +335,6 @@ func (c *Checker) checkLeaseQuiescenceLocked(_ context.Context, sorted []UserTar
 			})
 		}
 
-		// 3b. No undrained due runnable task at quiescence.
 		if lease.Runnable && !lease.WakeAt.After(now) {
 			vs = append(vs, Violation{
 				Invariant: "quiescence.task_lease_undrained_runnable",
@@ -377,7 +344,6 @@ func (c *Checker) checkLeaseQuiescenceLocked(_ context.Context, sorted []UserTar
 			})
 		}
 
-		// 2. Every nori_task_leases row MUST correspond to an existing Run with Status == RunRunning || CleanupPending.
 		runs := runsByUser[lease.UserID]
 		run, exists := runs[lease.RunID]
 		if !exists {
@@ -408,7 +374,6 @@ func (c *Checker) checkLeaseQuiescenceLocked(_ context.Context, sorted []UserTar
 			})
 		}
 
-		// 4. Parked waiting_reason validity when Control.Paused == false.
 		if !control.Paused && !lease.Runnable {
 			switch lease.WaitingReason {
 			case docstore.WaitPaused:
@@ -457,7 +422,6 @@ func (c *Checker) checkLeaseQuiescenceLocked(_ context.Context, sorted []UserTar
 		}
 	}
 
-	// 5. Validate nori_user_wakes rows and check for missing due wakes.
 	for _, w := range snap.UserWakes {
 		if _, known := usersByID[w.UserID]; !known {
 			vs = append(vs, Violation{
@@ -615,7 +579,6 @@ func (c *Checker) checkSchedulerQuiescenceLocked(ctx context.Context, t UserTarg
 		after = next
 	}
 
-	// Verify due enabled automations advanced their cursor / next_at.
 	for _, autoID := range sortedKeys(automations) {
 		a := automations[autoID]
 		if a.Status == "enabled" && a.NextAt != nil && !a.NextAt.After(now) {
@@ -628,11 +591,8 @@ func (c *Checker) checkSchedulerQuiescenceLocked(ctx context.Context, t UserTarg
 		}
 	}
 
-	// Verify no duplicate occurrence keys or duplicate task IDs.
 	vs = append(vs, c.checkOccurrenceUniquenessAndOwnershipLocked(userID, automations, occurrences)...)
 
-	// Verify no pending occurrence remained undrained and no accepted/running occurrence
-	// points to an already-terminal task.
 	for _, occ := range occurrences {
 		if occ.Status == "pending" {
 			vs = append(vs, Violation{

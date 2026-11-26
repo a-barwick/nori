@@ -10,8 +10,6 @@ import (
 	"nori/internal/state/docstore"
 )
 
-// Counters live separately from the run because run projections replace the run document. They cap authoritative
-// records without growing the run's arrays.
 func (d *Database) evidenceCount(tx *docstore.Transaction, runID, kind string) (*docstore.DocumentRef, int64, error) {
 	ref := d.runs().Doc(runID).Collection("evidence_metadata").Doc(kind)
 	doc, err := tx.Get(ref)
@@ -98,8 +96,6 @@ func (d *Database) putOperation(ctx context.Context, runID string, op state.Oper
 			return err
 		}
 		if event, notify := state.LateWriteEvent(run, saved, op, d.now()); notify {
-			// Reading the run in this transaction serializes the result with Stop:
-			// either its terminal notification can see the answer, or this one follows it.
 			inserted, err := d.appendTaskEvent(tx, run, event, run.TraceContext)
 			if err != nil {
 				return err
@@ -119,7 +115,6 @@ func (d *Database) putOperation(ctx context.Context, runID string, op state.Oper
 		if err = log.add(state.EventOperation, runID+"/"+op.ID); err != nil {
 			return err
 		}
-		// Merge preserves admitted_at and any existing receipt/admission metadata.
 		data := map[string]any{
 			"id": op.ID, "call_id": op.CallID, "name": op.Name, "effect_class": op.EffectClass, "outcome": op.Outcome,
 			"result_ref": op.ResultRef, "revision": op.Revision, "attempt": op.Attempt, "artifact_ids": op.ArtifactIDs,
@@ -131,7 +126,6 @@ func (d *Database) putOperation(ctx context.Context, runID string, op state.Oper
 		if op.Cleared != "" {
 			data["cleared"] = op.Cleared
 		}
-		// Identity and provenance fields are fixed once recorded (PlanOperation checks them), so they must be saved.
 		if op.Tool != nil {
 			data["tool"] = op.Tool
 		}
@@ -229,8 +223,6 @@ func (d *Database) PutCompletionCheck(ctx context.Context, runID string, check s
 	})
 }
 
-// ReadTaskSourceInputs resolves exact retained inputs instead of relying on the bounded recent-conversation view.
-// Direct task commands remain in Reconcile.
 func (d *Database) ReadTaskSourceInputs(ctx context.Context, runID string) ([]state.ConversationInput, error) {
 	if !state.ValidEvidenceID(runID) {
 		return nil, errors.New("invalid task source task")
@@ -270,7 +262,6 @@ func (d *Database) ReadTaskSourceInputs(ctx context.Context, runID string) ([]st
 	return sources.Inputs(), nil
 }
 
-// ReadTaskOutcome reads the last proposal's unmet items and the results it cites.
 func (d *Database) ReadTaskOutcome(ctx context.Context, runID string) (state.TaskOutcome, error) {
 	if !state.ValidEvidenceID(runID) {
 		return state.TaskOutcome{}, errors.New("invalid task outcome task")
@@ -305,7 +296,6 @@ func (d *Database) ReadTaskOutcome(ctx context.Context, runID string) (state.Tas
 	if err := cite(runID, ops); err != nil {
 		return state.TaskOutcome{}, err
 	}
-	// A continuation can cite results the task it continues saved.
 	if run, err := d.GetRun(ctx, runID); err == nil {
 		for hops := 0; hops < 8 && run.Origin != nil && run.Origin.ContinuesTaskID != ""; hops++ {
 			previous := run.Origin.ContinuesTaskID
@@ -383,8 +373,6 @@ func (d *Database) AppendHistory(ctx context.Context, runID, parent string, data
 	return ref, nil
 }
 
-// ReadHistory returns exact payloads in chronological order. Missing, foreign, malformed or over-limit chains fail
-// closed rather than return partial context.
 func (d *Database) ReadHistory(ctx context.Context, runID, ref string) ([][]byte, error) {
 	if !state.ValidEvidenceID(runID) {
 		return nil, errors.New("invalid task history task")

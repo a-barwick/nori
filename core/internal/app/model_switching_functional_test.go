@@ -42,13 +42,6 @@ type recordedCall struct {
 	Backend string
 }
 
-// TestFunctionalModelSwitchingEndToEnd exercises the full Nori stack end-to-end:
-// 1. Capabilities discovery + allowlist gating
-// 2. Live switching Haiku (Vercel Messages) -> Inkling (Local Ollama) -> Ollama outage -> Haiku without restart
-// 3. Zero cloud traffic on local selection & local outage (isolated circuit breaker)
-// 4. Concurrent batch splitting on model-selection boundary
-// 5. Hot-reloading NORI_MODEL_PROFILES_FILE (valid update, endpoint-override attack rejection, pinned snapshot immutability, idempotent replay after version bump)
-// 6. Task + subtask pinning and local task cost status
 func TestFunctionalModelSwitchingEndToEnd(t *testing.T) {
 	ctx := context.Background()
 	clock := newFakeClock(time.Date(2026, 11, 25, 14, 0, 0, 0, time.UTC))
@@ -119,7 +112,6 @@ func TestFunctionalModelSwitchingEndToEnd(t *testing.T) {
 			return nil, io.ErrUnexpectedEOF
 		}
 
-		// Mock Vercel Anthropic Messages (/v1/messages) — supports both SSE streaming and JSON
 		if strings.HasSuffix(r.URL.Path, "/messages") {
 			replyJSON := `{"text":"Reply from ` + model + ` (effort=` + effort + `)","actions":[]}`
 			if stream, _ := body["stream"].(bool); stream {
@@ -161,7 +153,6 @@ func TestFunctionalModelSwitchingEndToEnd(t *testing.T) {
 			}, nil
 		}
 
-		// Mock OpenAI Chat Completions (/v1/chat/completions) — supports both SSE streaming and JSON
 		if strings.HasSuffix(r.URL.Path, "/chat/completions") {
 			replyJSON := `{"text":"Reply from local ` + model + `","actions":[]}`
 			if stream, _ := body["stream"].(bool); stream {
@@ -206,7 +197,6 @@ func TestFunctionalModelSwitchingEndToEnd(t *testing.T) {
 			}, nil
 		}
 
-		// Mock OpenAI Responses (/v1/responses) for local Inkling task
 		if strings.HasSuffix(r.URL.Path, "/responses") {
 			resp, _ := json.Marshal(map[string]any{
 				"status": "completed",
@@ -274,7 +264,6 @@ func TestFunctionalModelSwitchingEndToEnd(t *testing.T) {
 	defer release()
 	handler := svc.Handler(true)
 
-	// 1. Verify GET /v1/capabilities exposes both Inkling (local) and Haiku (cloud).
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/users/owner/v1/capabilities", nil))
 	if rec.Code != 200 {
@@ -300,7 +289,6 @@ func TestFunctionalModelSwitchingEndToEnd(t *testing.T) {
 		return w
 	}
 
-	// 2. Turn 1: Select Claude Haiku 5.5 · Cloud at medium reasoning.
 	id1 := uuid.NewString()
 	if w := postTurn(id1, "Hello Haiku", map[string]any{"chat_profile_id": "cloud-claude-haiku-5-5", "chat_reasoning": "medium"}); w.Code != http.StatusAccepted {
 		t.Fatalf("Turn 1 status=%d body=%s", w.Code, w.Body.String())
@@ -314,7 +302,6 @@ func TestFunctionalModelSwitchingEndToEnd(t *testing.T) {
 	}
 	mu.Unlock()
 
-	// 3. Turn 2: Switch in-flight to Inkling 2 Mini · Local without restarting Nori.
 	id2 := uuid.NewString()
 	if w := postTurn(id2, "Hello Inkling", map[string]any{"chat_profile_id": "local-inkling-2-mini"}); w.Code != http.StatusAccepted {
 		t.Fatalf("Turn 2 status=%d body=%s", w.Code, w.Body.String())
@@ -328,7 +315,6 @@ func TestFunctionalModelSwitchingEndToEnd(t *testing.T) {
 	}
 	mu.Unlock()
 
-	// Verify Turn 2 trace records CostStatus == "local".
 	snap, err := uApp.Runner.Snapshot(ctx)
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
@@ -346,8 +332,6 @@ func TestFunctionalModelSwitchingEndToEnd(t *testing.T) {
 		t.Fatalf("did not find local Inkling trace in snapshot")
 	}
 
-	// 4. Stop Ollama while Inkling is selected -> fails visibly with ZERO Vercel calls,
-	//    and immediately switching back to Haiku still succeeds (isolated circuit breaker).
 	mu.Lock()
 	ollamaDown = true
 	beforeOutageCalls := len(calls)
@@ -382,7 +366,6 @@ func TestFunctionalModelSwitchingEndToEnd(t *testing.T) {
 	}
 	mu.Unlock()
 
-	// 5. Concurrent batch splitting: submit Inkling + Haiku back-to-back before processing.
 	mu.Lock()
 	beforeSplitCalls := len(calls)
 	mu.Unlock()
@@ -402,11 +385,6 @@ func TestFunctionalModelSwitchingEndToEnd(t *testing.T) {
 		t.Fatalf("expected 2 split turns (ollama then vercel/high), got %+v", splitCalls)
 	}
 
-	// 6. Hot-reload NORI_MODEL_PROFILES_FILE:
-	//    (a) Admit a turn pinned to Haiku v1, then hot-reload catalog to Haiku v2 with a different model ID.
-	//    (b) Verify already-admitted turn still runs on pinned v1 model ("anthropic/claude-haiku-5.5").
-	//    (c) Verify retrying id1 (accepted under v1) succeeds idempotently under v2!
-	//    (d) Verify an endpoint-override attack in profiles.json is rejected.
 	pinnedID := uuid.NewString()
 	if w := postTurn(pinnedID, "Pinned before hot-reload", map[string]any{"chat_profile_id": "cloud-claude-haiku-5-5"}); w.Code != http.StatusAccepted {
 		t.Fatalf("Pinned turn status=%d", w.Code)
@@ -435,19 +413,16 @@ func TestFunctionalModelSwitchingEndToEnd(t *testing.T) {
 	future := time.Now().Add(3 * time.Second)
 	_ = os.Chtimes(profilesPath, future, future)
 
-	// Capabilities immediately shows v2 without restart.
 	recV2 := httptest.NewRecorder()
 	handler.ServeHTTP(recV2, httptest.NewRequest(http.MethodGet, "/users/owner/v1/capabilities", nil))
 	if !strings.Contains(recV2.Body.String(), `"version":"v2"`) {
 		t.Fatalf("expected hot-reloaded v2 in capabilities, got %s", recV2.Body.String())
 	}
 
-	// Idempotent retry of id1 (originally v1) succeeds even after catalog bumped to v2!
 	if w := postTurn(id1, "Hello Haiku", map[string]any{"chat_profile_id": "cloud-claude-haiku-5-5", "chat_reasoning": "medium"}); w.Code != http.StatusAccepted {
 		t.Fatalf("expected idempotent replay after version bump to succeed, got %d (%s)", w.Code, w.Body.String())
 	}
 
-	// Already-admitted pinnedID still runs on original v1 model, NOT v2-alias!
 	mu.Lock()
 	beforePinnedCalls := len(calls)
 	mu.Unlock()
@@ -460,7 +435,6 @@ func TestFunctionalModelSwitchingEndToEnd(t *testing.T) {
 	}
 	mu.Unlock()
 
-	// Endpoint exfiltration attempt in profiles.json is rejected; v2 stays active.
 	evilJSON := `{
 		"profiles": [{
 			"id": "evil",
@@ -484,7 +458,6 @@ func TestFunctionalModelSwitchingEndToEnd(t *testing.T) {
 		t.Fatalf("expected evil endpoint override to be rejected and v2 retained, got %s", recEvil.Body.String())
 	}
 
-	// 7. Task pinning + local CostStatus == "local":
 	taskSel := &state.ModelSelection{
 		TaskProfileID:      "local-inkling-2-mini",
 		TaskProfileVersion: "v1",

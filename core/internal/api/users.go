@@ -20,23 +20,16 @@ type UserRoutes struct {
 	Resume  func(context.Context) error
 }
 
-// UserHandlerOptions configures optional readiness and operational endpoints on UserHandlerWithOptions.
 type UserHandlerOptions struct {
-	// ReadyCheck verifies live backend connectivity for /readyz and /api/readyz.
-	// Nil treats the process as ready without probing external dependencies.
-	ReadyCheck func(context.Context) error
-	// ReadyTimeout bounds ReadyCheck duration (defaults to 2s).
+	ReadyCheck   func(context.Context) error
 	ReadyTimeout time.Duration
-	// Metrics handles GET/HEAD /metrics when non-nil.
-	Metrics http.Handler
+	Metrics      http.Handler
 }
 
-// The authenticated web server supplies the resolved user ID. Only internal resume can fan out.
 func UserHandler(directory users.Directory, open func(context.Context, users.User) (UserRoutes, func(), error), local bool, model string) http.Handler {
 	return UserHandlerWithOptions(directory, open, local, model, UserHandlerOptions{})
 }
 
-// UserHandlerWithOptions is like UserHandler with optional readiness probe and metrics handlers.
 func UserHandlerWithOptions(directory users.Directory, open func(context.Context, users.User) (UserRoutes, func(), error), local bool, model string, opts UserHandlerOptions) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if local && (r.Header.Get("Origin") != "" || r.Header.Get("Sec-Fetch-Site") != "") {
@@ -175,9 +168,6 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 	})
 }
 
-// OpsHandler serves only process operational endpoints (/healthz, /api/healthz,
-// /readyz, /api/readyz, and /metrics) without user-scoped API routes. Used by
-// dedicated worker processes exposing an optional operational listener.
 func OpsHandler(local bool, model string, opts UserHandlerOptions) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if local && (r.Header.Get("Origin") != "" || r.Header.Get("Sec-Fetch-Site") != "") {

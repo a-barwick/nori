@@ -1,10 +1,3 @@
-// Package extensions is the Extension registry: immutable tool definitions, their execution bindings and policies,
-// and the snapshots a task chooses from. It holds definitions only. Account state belongs to Connections and
-// execution to the Tool executor; neither is looked up here.
-//
-// A definition is identified by its namespaced ID, version and a content digest. The digest covers everything that
-// changes what a call means or how it runs, so a pending call pinned to a digest never silently picks up a newer
-// package, schema or policy.
 package extensions
 
 import (
@@ -17,7 +10,6 @@ import (
 	"strings"
 )
 
-// Effect classifies what a call can change. It is not replay safety and it is not authority.
 type Effect string
 
 const (
@@ -36,7 +28,6 @@ func (e Effect) Valid() bool {
 	return false
 }
 
-// Exposure says how a model can reach a tool, independently of whether the tool is authorized.
 type Exposure string
 
 const (
@@ -46,14 +37,12 @@ const (
 	ExposureDisabled     Exposure = "disabled"
 )
 
-// Location says where a call runs.
 type Location string
 
 const (
 	LocationRuntime Location = "runtime"
 )
 
-// Adapter names the execution backend for a binding.
 type Adapter string
 
 const (
@@ -61,7 +50,6 @@ const (
 	AdapterMCP    Adapter = "mcp"
 )
 
-// BuiltinExtension is the extension ID of the tools compiled into Nori's engine.
 const BuiltinExtension = "nori/builtin"
 
 type DefinitionRef struct {
@@ -72,16 +60,12 @@ type DefinitionRef struct {
 
 type Binding struct {
 	Adapter Adapter `json:"adapter"`
-	// Target is adapter-specific: a native adapter's operation, an MCP server and tool name, or a built-in name.
-	Target  string `json:"target"`
-	Version string `json:"version"`
+	Target  string  `json:"target"`
+	Version string  `json:"version"`
 }
 
-// Policy is the execution metadata a call is pinned to. Old workflow histories derive it from the tool name.
 type Policy struct {
-	Effect Effect `json:"effect"`
-	// Retry: safe means a transport retry cannot repeat an effect; provider_key means the provider deduplicates an
-	// identical request; reconcile_only means an interrupted attempt is resolved only by reading provider state.
+	Effect                 Effect   `json:"effect"`
 	Retry                  string   `json:"retry"`
 	TimeoutMS              int      `json:"timeout_ms"`
 	Location               Location `json:"location"`
@@ -90,37 +74,27 @@ type Policy struct {
 	Cancellation           string   `json:"cancellation,omitempty"`
 }
 
-// Definition is one immutable tool definition.
 type Definition struct {
-	Ref       DefinitionRef `json:"ref"`
-	Extension DefinitionRef `json:"extension"`
-	ModelName string        `json:"model_name"`
-	Title     string        `json:"title"`
-	// Description is model-facing text. It says "the user", never a person's name.
-	Description string `json:"description"`
-	// Capability groups tools for discovery and the Apps inventory, for example "calendar" or "web_search".
-	Capability      string `json:"capability"`
-	CapabilityTitle string `json:"capability_title,omitempty"`
-	IntegrationID   string `json:"integration_id,omitempty"`
-	// InputSchema is the canonical JSON Schema 2020-12. Arguments are validated against it, never against the
-	// model-facing projection.
-	InputSchema  json.RawMessage `json:"input_schema"`
-	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
-	// ModelSchemaTransform records the projection applied for the model provider; empty means none was needed.
-	ModelSchemaTransform string  `json:"model_schema_transform,omitempty"`
-	Binding              Binding `json:"binding"`
-	ConnectionType       string  `json:"connection_type,omitempty"`
-	// RequiredCapability is the connection purpose a call needs, such as calendar.write. Account choice and the
-	// connection's grant are checked against it.
-	RequiredCapability string   `json:"required_capability,omitempty"`
-	Policy             Policy   `json:"policy"`
-	Exposure           Exposure `json:"exposure"`
+	Ref                  DefinitionRef   `json:"ref"`
+	Extension            DefinitionRef   `json:"extension"`
+	ModelName            string          `json:"model_name"`
+	Title                string          `json:"title"`
+	Description          string          `json:"description"`
+	Capability           string          `json:"capability"`
+	CapabilityTitle      string          `json:"capability_title,omitempty"`
+	IntegrationID        string          `json:"integration_id,omitempty"`
+	InputSchema          json.RawMessage `json:"input_schema"`
+	OutputSchema         json.RawMessage `json:"output_schema,omitempty"`
+	ModelSchemaTransform string          `json:"model_schema_transform,omitempty"`
+	Binding              Binding         `json:"binding"`
+	ConnectionType       string          `json:"connection_type,omitempty"`
+	RequiredCapability   string          `json:"required_capability,omitempty"`
+	Policy               Policy          `json:"policy"`
+	Exposure             Exposure        `json:"exposure"`
 }
 
-// Builtin reports whether the definition is compiled into the engine.
 func (d Definition) Builtin() bool { return d.Extension.ID == BuiltinExtension }
 
-// Exec is the bounded execution metadata a model call is pinned to in workflow history.
 type Exec struct {
 	Tool               DefinitionRef `json:"tool"`
 	Builtin            bool          `json:"builtin,omitempty"`
@@ -137,17 +111,14 @@ func (d Definition) Exec() Exec {
 var modelName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 var definitionID = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*){1,3}$`)
 
-// Reserved are runtime orchestration and engine names no external definition may claim.
 var Reserved = map[string]bool{
 	"complete": true, "compose": true, "request_input": true, "request_work": true, "capability_load": true, "tool_search": true,
 	"operation_read": true, "task_history_read": true, "answer": true, "dispatch": true, "forget": true, "hold": true, "remember": true,
 	"show_result": true, "steer": true, "stop": true,
 }
 
-// ValidModelName reports whether a provider accepts the name as a function name.
 func ValidModelName(name string) bool { return modelName.MatchString(name) }
 
-// Seal validates a definition and fills in its digest. A definition whose digest is already set must match.
 func Seal(d Definition) (Definition, error) {
 	if !definitionID.MatchString(d.Ref.ID) || d.Ref.Version == "" || len(d.Ref.Version) > 64 {
 		return d, fmt.Errorf("tool definition %q needs a namespaced id and a version", d.Ref.ID)
@@ -220,7 +191,6 @@ func Seal(d Definition) (Definition, error) {
 	return d, nil
 }
 
-// Digest is a SHA-256 over the canonical JSON of the fields that define a call's meaning and execution.
 func Digest(d Definition) (string, error) {
 	canonical := func(raw json.RawMessage) (any, error) {
 		if len(raw) == 0 {
@@ -240,7 +210,6 @@ func Digest(d Definition) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// encoding/json writes map keys in sorted order, so equal content has equal bytes.
 	data, err := json.Marshal(map[string]any{
 		"id": d.Ref.ID, "version": d.Ref.Version, "extension": d.Extension.ID + "@" + d.Extension.Version,
 		"model_name": d.ModelName, "description": d.Description, "input_schema": input, "output_schema": output,

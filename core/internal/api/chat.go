@@ -11,8 +11,6 @@ import (
 
 const ChatContract = "nori-chat-2"
 
-// capabilitiesView is the GET /v1/capabilities payload (common.schema.json#/$defs/Capabilities).
-// Assistant fields are omitted when the assistant routes are not registered, matching AssistantCapabilities.
 type capabilitiesView struct {
 	Contract             string                       `json:"contract"`
 	ConversationContract string                       `json:"conversationContract,omitempty"`
@@ -29,7 +27,10 @@ type capabilitiesView struct {
 }
 
 func (s *server) capabilities(w http.ResponseWriter, r *http.Request) {
-	modes := []string{"assistant"}
+	modes := []string{}
+	if !s.Features.DisableBackgroundTasks {
+		modes = append(modes, "assistant")
+	}
 	provider := s.ModelProvider
 	if provider == "" {
 		provider = "openai"
@@ -40,13 +41,11 @@ func (s *server) capabilities(w http.ResponseWriter, r *http.Request) {
 		Features: map[string]bool{"backgroundTasks": !s.Features.DisableBackgroundTasks, "jev": !s.Features.DisableBackgroundTasks && !s.Features.DisableJev},
 	}
 	if s.Assistant != nil {
-		// The assistant contract label is advertised only once every family it names is live; until then each
-		// family reports itself.
 		body.AssistantFeatures = s.Assistant.Features
 		accepted := uploadAccept()
 		body.UploadAccept = &accepted
 	}
-	if s.CanPickModels && s.ModelProfiles != nil {
+	if !s.Features.DisableBackgroundTasks && s.CanPickModels && s.ModelProfiles != nil {
 		pub := s.ModelProfiles.Snapshot().Public()
 		if len(pub.Profiles) > 0 {
 			body.ModelProfiles = &pub
@@ -72,12 +71,12 @@ func (s *server) resolveModelSelection(w http.ResponseWriter, sel *state.ModelSe
 		return nil, true
 	}
 	if !s.CanPickModels || s.ModelProfiles == nil {
-		writeJSON(w, 403, map[string]string{"error": "Model selection is not enabled for this account."})
+		writeJSON(w, 403, map[string]string{"error": "Model selection is not enabled for this account.", "code": "model_selection_unavailable"})
 		return nil, false
 	}
 	resolved, err := s.ModelProfiles.ValidateAndResolve(sel)
 	if err != nil {
-		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		writeJSON(w, 400, map[string]string{"error": err.Error(), "code": "model_selection_unavailable"})
 		return nil, false
 	}
 	return resolved, true
@@ -131,7 +130,6 @@ func (s *server) assistantConversationMessage(w http.ResponseWriter, r *http.Req
 		writeError(w, err)
 		return
 	}
-	// AcceptConversationInput already writes LaneConversation in-tx via WakeWriter.
 	view := assistantView(session)
 	writeJSON(w, 202, map[string]any{"turnId": body.ID, "conversation": view})
 }
@@ -151,7 +149,6 @@ func (s *server) assistantConversationCancel(w http.ResponseWriter, r *http.Requ
 		writeError(w, err)
 		return
 	}
-	// CancelConversation already writes waiting-task and pending-conversation wakes in-tx.
 	view, err := s.assistantSnapshot(r.Context(), "")
 	if err != nil {
 		writeError(w, err)

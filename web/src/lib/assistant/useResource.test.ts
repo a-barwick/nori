@@ -1,130 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, test } from "node:test";
-import React from "react";
-import { invalidate, store, useResource } from "./useResource";
-
-type Cleanup = void | (() => void);
-type Dispatcher = {
-  useState<S>(initial: S | (() => S)): [S, (next: S | ((prev: S) => S)) => void];
-  useRef<T>(initial: T): { current: T };
-  useCallback<T>(fn: T, deps?: readonly unknown[]): T;
-  useMemo<T>(fn: () => T, deps?: readonly unknown[]): T;
-  useEffect(create: () => Cleanup, deps?: readonly unknown[]): void;
-  useSyncExternalStore<T>(subscribe: (listener: () => void) => () => void, getSnapshot: () => T): T;
-};
-type ReactClientInternals = { H: Dispatcher | null };
-
-const internals = (React as unknown as {
-  __CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE: ReactClientInternals;
-}).__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
-
-function depsChanged(prev: readonly unknown[] | undefined, next: readonly unknown[] | undefined) {
-  if (!prev || !next || prev.length !== next.length) return true;
-  for (let i = 0; i < next.length; i++) if (!Object.is(prev[i], next[i])) return true;
-  return false;
-}
-
-function mountHook<T>(invoke: () => T) {
-  const slots: unknown[] = [];
-  const effects: { deps?: readonly unknown[]; cleanup?: Cleanup; pending?: () => Cleanup }[] = [];
-  const stores: { subscribe?: (listener: () => void) => () => void; unsubscribe?: () => void }[] = [];
-  let mounted = true;
-  let scheduled = false;
-  let latest!: T;
-
-  const schedule = () => {
-    if (!mounted || scheduled) return;
-    scheduled = true;
-    queueMicrotask(() => {
-      scheduled = false;
-      if (mounted) render();
-    });
-  };
-
-  function render() {
-    let idx = 0;
-    const dispatcher: Dispatcher = {
-      useState<S>(initial: S | (() => S)) {
-        const slot = idx++;
-        if (!(slot in slots)) {
-          slots[slot] = typeof initial === "function" ? (initial as () => S)() : initial;
-        }
-        const setState = (next: S | ((prev: S) => S)) => {
-          const prev = slots[slot] as S;
-          const resolved = typeof next === "function" ? (next as (p: S) => S)(prev) : next;
-          if (!Object.is(prev, resolved)) {
-            slots[slot] = resolved;
-            schedule();
-          }
-        };
-        return [slots[slot] as S, setState];
-      },
-      useRef<R>(initial: R) {
-        const slot = idx++;
-        if (!(slot in slots)) slots[slot] = { current: initial };
-        return slots[slot] as { current: R };
-      },
-      useCallback<F>(fn: F, deps?: readonly unknown[]) {
-        const slot = idx++;
-        const prev = slots[slot] as { fn: F; deps?: readonly unknown[] } | undefined;
-        if (!prev || depsChanged(prev.deps, deps)) slots[slot] = { fn, deps };
-        return (slots[slot] as { fn: F }).fn;
-      },
-      useMemo<M>(fn: () => M, deps?: readonly unknown[]) {
-        const slot = idx++;
-        const prev = slots[slot] as { value: M; deps?: readonly unknown[] } | undefined;
-        if (!prev || depsChanged(prev.deps, deps)) slots[slot] = { value: fn(), deps };
-        return (slots[slot] as { value: M }).value;
-      },
-      useEffect(create: () => Cleanup, deps?: readonly unknown[]) {
-        const slot = idx++;
-        const entry = effects[slot] ?? {};
-        if (!effects[slot] || depsChanged(entry.deps, deps)) {
-          entry.deps = deps;
-          entry.pending = create;
-          effects[slot] = entry;
-        }
-      },
-      useSyncExternalStore<V>(subscribe: (listener: () => void) => () => void, getSnapshot: () => V) {
-        const slot = idx++;
-        const entry = stores[slot] ?? {};
-        if (entry.subscribe !== subscribe) {
-          entry.unsubscribe?.();
-          entry.subscribe = subscribe;
-          entry.unsubscribe = subscribe(schedule);
-          stores[slot] = entry;
-        }
-        return getSnapshot();
-      },
-    };
-    const prev = internals.H;
-    internals.H = dispatcher;
-    try {
-      latest = invoke();
-    } finally {
-      internals.H = prev;
-    }
-    for (const effect of effects) {
-      if (effect?.pending) {
-        const create = effect.pending;
-        effect.pending = undefined;
-        effect.cleanup?.();
-        effect.cleanup = create();
-      }
-    }
-  }
-
-  render();
-  return {
-    get current() { return latest; },
-    rerender: render,
-    unmount() {
-      mounted = false;
-      for (const storeEntry of stores) storeEntry?.unsubscribe?.();
-      for (const effect of effects) effect?.cleanup?.();
-    },
-  };
-}
+import { act, createElement } from "react";
+import { createResourceCache, ResourceCacheContext, useResource } from "./useResource";
+import { installTestDOM, mountTestHook, settleTestDOM } from "./test-dom";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -133,31 +11,15 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-async function flush(turns = 6) {
-  for (let i = 0; i < turns; i++) await Promise.resolve();
-}
-
-function installBrowserStubs() {
-  const g = globalThis as Record<string, unknown>;
-  const prevWindow = g.window;
-  const prevDocument = g.document;
-  const noop = () => undefined;
-  g.window = { addEventListener: noop, removeEventListener: noop };
-  g.document = { visibilityState: "visible", addEventListener: noop, removeEventListener: noop };
-  return () => {
-    if (prevWindow === undefined) delete g.window;
-    else g.window = prevWindow;
-    if (prevDocument === undefined) delete g.document;
-    else g.document = prevDocument;
-  };
-}
-
 describe("useResource", () => {
   let restoreBrowser: () => void;
+  let cache: ReturnType<typeof createResourceCache>;
+  const mountHook = <T,>(hook: () => T) => mountTestHook(hook, (node) => createElement(ResourceCacheContext.Provider, { value: cache }, node));
   let origFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
-    restoreBrowser = installBrowserStubs();
+    restoreBrowser = installTestDOM();
+    cache = createResourceCache();
     origFetch = globalThis.fetch;
   });
 
@@ -176,26 +38,26 @@ describe("useResource", () => {
     const versioned = mountHook(() => useResource<{ revision: number; attention: number }>(versionedPath, { poll: 0 }));
     const unversioned = mountHook(() => useResource<{ revision: number; attention: number }>(summaryPath, { poll: 0, versioned: false }));
     try {
-      await flush();
+      await settleTestDOM();
       assert.deepEqual(versioned.current.data, { revision: 100, attention: 1 });
       assert.deepEqual(unversioned.current.data, { revision: 100, attention: 1 });
 
-      // Stale/lower revision is dropped for versioned entities, but accepted for versioned: false summaries.
-      store(versionedPath, { revision: 42, attention: 0 }, undefined, true);
-      store(summaryPath, { revision: 42, attention: 0 }, undefined, false);
-      await flush();
+      await act(async () => {
+        cache.store(versionedPath, { revision: 42, attention: 0 }, undefined, true);
+        cache.store(summaryPath, { revision: 42, attention: 0 }, undefined, false);
+      });
 
       assert.deepEqual(versioned.current.data, { revision: 100, attention: 1 });
       assert.deepEqual(unversioned.current.data, { revision: 42, attention: 0 });
 
-      // Higher revision updates versioned entity.
-      store(versionedPath, { revision: 101, attention: 0 }, undefined, true);
-      await flush();
+      await act(async () => {
+        cache.store(versionedPath, { revision: 101, attention: 0 }, undefined, true);
+      });
       assert.deepEqual(versioned.current.data, { revision: 101, attention: 0 });
 
-      // For unversioned resources, an older serial never overwrites a newer serial.
-      store(summaryPath, { revision: 999, attention: 9 }, 1, false);
-      await flush();
+      await act(async () => {
+        cache.store(summaryPath, { revision: 999, attention: 9 }, 1, false);
+      });
       assert.deepEqual(unversioned.current.data, { revision: 42, attention: 0 });
     } finally {
       versioned.unmount();
@@ -219,27 +81,25 @@ describe("useResource", () => {
 
     const hook = mountHook(() => useResource<{ revision: number; attention: number }>(path, { poll: 0, versioned: false }));
     try {
-      await flush();
+      await settleTestDOM();
       assert.equal(calls.length, 1);
       assert.equal(calls[0], `/api/v1${path}`);
       assert.equal(hook.current.loading, true);
 
-      // A task finishes while the first summary GET is still in flight and invalidates the summary.
-      invalidate(`/assistant/summary-midflight-${tag}`);
-      await flush();
-      // Still coalesced onto the in-flight request — second fetch must not overlap.
+      await act(async () => {
+        cache.invalidate(`/assistant/summary-midflight-${tag}`);
+      });
       assert.equal(calls.length, 1);
 
-      // First request completes with the stale "1 thing needs you" payload.
-      first.resolve(Response.json({ revision: 50, attention: 1 }));
-      await flush(10);
+      await act(async () => {
+        first.resolve(Response.json({ revision: 50, attention: 1 }));
+      });
 
-      // Because invalidate arrived mid-flight, a follow-up fetch starts automatically.
       assert.equal(calls.length, 2);
 
-      // Second request resolves with lower revision (derived projection) and zero attention.
-      second.resolve(Response.json({ revision: 12, attention: 0 }));
-      await flush(10);
+      await act(async () => {
+        second.resolve(Response.json({ revision: 12, attention: 0 }));
+      });
 
       assert.deepEqual(hook.current.data, { revision: 12, attention: 0 });
       assert.equal(hook.current.loading, false);
@@ -268,14 +128,15 @@ describe("useResource", () => {
     const work = mountHook(() => useResource<{ revision: number; ok: boolean }>(workPath, { poll: 0 }));
     const library = mountHook(() => useResource<{ revision: number; ok: boolean }>(libraryPath, { poll: 0 }));
     try {
-      await flush();
+      await settleTestDOM();
       assert.equal(fetched.length, 2);
       const initialWork = work.current.data;
       assert.ok(initialWork);
 
       failWork = true;
-      invalidate(`/work-prefix-${tag}`);
-      await flush(10);
+      await act(async () => {
+        cache.invalidate(`/work-prefix-${tag}`);
+      });
 
       assert.equal(fetched.filter((u) => u.includes(`work-prefix-${tag}`)).length, 2);
       assert.equal(fetched.filter((u) => u.includes(`library-prefix-${tag}`)).length, 1);
@@ -286,5 +147,34 @@ describe("useResource", () => {
       work.unmount();
       library.unmount();
     }
+  });
+
+  test("a stale refresh clears loading and a stale error preserves the mutation", async () => {
+    const responses = [deferred<Response>(), deferred<Response>()];
+    const path = "/work/stale";
+    let requests = 0;
+    globalThis.fetch = (() => responses[requests++]?.promise ?? Promise.resolve(Response.json({ revision: 100 }))) as typeof fetch;
+    const hook = mountHook(() => useResource<{ revision: number }>(path, { poll: 0 }));
+    try {
+      await act(async () => {
+        cache.store(path, { revision: 100 });
+        responses[0].resolve(Response.json({ revision: 99 }));
+      });
+      assert.equal(hook.current.refreshing, false);
+      assert.deepEqual(hook.current.data, { revision: 100 });
+
+      await act(async () => {
+        cache.invalidate(path);
+        cache.store(path, { revision: 101 });
+        responses[1].reject(new Error("stale failure"));
+      });
+      assert.equal(hook.current.refreshing, false);
+      assert.deepEqual(hook.current.data, { revision: 101 });
+      assert.equal(hook.current.error, undefined);
+    } finally {
+      hook.unmount();
+    }
+    cache.invalidate(path);
+    assert.equal(requests, 2);
   });
 });

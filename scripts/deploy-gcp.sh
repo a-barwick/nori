@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Quick test-and-deploy script for GCP Cloud Run (nori-core + nori-web).
-# Usage:
-#   ./scripts/deploy-gcp.sh [--skip-tests] [--core-only | --web-only] [--allow-branch] [--dry-run]
 
 PROJECT="${GCP_PROJECT:-bot-111549}"
 REGION="${GCP_REGION:-us-central1}"
@@ -24,7 +21,11 @@ for arg in "$@"; do
     --allow-branch) ALLOW_BRANCH=1 ;;
     --dry-run) DRY_RUN=1 ;;
     -h|--help)
-      sed -n '3,6p' "$0"
+      cat <<'USAGE'
+Test and deploy Nori Core and Nori Web to GCP Cloud Run.
+
+Usage: ./scripts/deploy-gcp.sh [--skip-tests] [--core-only | --web-only] [--allow-branch] [--dry-run]
+USAGE
       exit 0
       ;;
     *)
@@ -43,11 +44,15 @@ if [[ "$ALLOW_BRANCH" -eq 0 && "$BRANCH" != "main" ]]; then
   exit 1
 fi
 
-# Ensure deployable paths (core/, web/, contracts/) have no uncommitted changes.
-DIRTY="$(git status --porcelain -- core web contracts)"
+DIRTY="$(git status --porcelain -- core web contracts scripts/deploy-gcp.sh)"
 if [[ -n "$DIRTY" ]]; then
   echo "Refusing to deploy with uncommitted changes under core/, web/, or contracts/:" >&2
   echo "$DIRTY" >&2
+  exit 1
+fi
+
+if [[ "$DEPLOY_WEB" -eq 1 && -n "${NORI_DEPLOY_SMOKE_TOKEN_FILE:-}" && ! -s "$NORI_DEPLOY_SMOKE_TOKEN_FILE" ]]; then
+  echo "NORI_DEPLOY_SMOKE_TOKEN_FILE must contain an ID token for a provisioned account." >&2
   exit 1
 fi
 
@@ -95,40 +100,37 @@ if [[ "$DEPLOY_WEB" -eq 1 ]]; then
     .
 fi
 
+service_url() {
+  gcloud run services describe "$1" --project="$PROJECT" --region="$REGION" --format='value(status.url)'
+}
+
+probe() {
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "+ check $1 $2"
+    return
+  fi
+  local url
+  url="$(service_url "$1")"
+  curl --silent --show-error --fail --output /dev/null --max-time 15 --retry 5 --retry-all-errors "${url}$2"
+}
+
 if [[ "$DEPLOY_CORE" -eq 1 ]]; then
-  echo "==> Deploying nori-core to Cloud Run..."
-  run gcloud run deploy nori-core \
-    --project="${PROJECT}" \
-    --region="${REGION}" \
-    --image="${CORE_IMAGE}" \
-    --quiet
+  if [[ -n "${NORI_GCP_MIGRATION_JOB:-}" ]]; then
+    run gcloud run jobs update "$NORI_GCP_MIGRATION_JOB" --project="$PROJECT" --region="$REGION" --image="$CORE_IMAGE" --args=--migrate-only --quiet
+    run gcloud run jobs execute "$NORI_GCP_MIGRATION_JOB" --project="$PROJECT" --region="$REGION" --wait --quiet
+  fi
+  run gcloud run deploy nori-core --project="$PROJECT" --region="$REGION" --image="$CORE_IMAGE" --quiet
+  probe nori-core /readyz
 fi
 
 if [[ "$DEPLOY_WEB" -eq 1 ]]; then
-  echo "==> Deploying nori-web to Cloud Run..."
-  run gcloud run deploy nori-web \
-    --project="${PROJECT}" \
-    --region="${REGION}" \
-    --image="${WEB_IMAGE}" \
-    --quiet
-fi
-
-if [[ "$DRY_RUN" -eq 0 ]]; then
-  echo "==> Verifying Cloud Run revisions & health..."
-  if [[ "$DEPLOY_CORE" -eq 1 ]]; then
-    CORE_URL="$(gcloud run services describe nori-core --project="${PROJECT}" --region="${REGION}" --format='value(status.url)')"
-    CORE_REV="$(gcloud run services describe nori-core --project="${PROJECT}" --region="${REGION}" --format='value(status.latestReadyRevisionName)')"
-    HTTP_CODE="$(curl -sS -o /dev/null -w '%{http_code}' "${CORE_URL}/readyz")"
-    echo "    nori-core: ${CORE_REV} (${CORE_URL}/readyz -> HTTP ${HTTP_CODE})"
-    if [[ "$HTTP_CODE" != "200" ]]; then
-      echo "ERROR: nori-core readiness check failed (HTTP ${HTTP_CODE})" >&2
-      exit 1
-    fi
-  fi
-  if [[ "$DEPLOY_WEB" -eq 1 ]]; then
-    WEB_URL="$(gcloud run services describe nori-web --project="${PROJECT}" --region="${REGION}" --format='value(status.url)')"
-    WEB_REV="$(gcloud run services describe nori-web --project="${PROJECT}" --region="${REGION}" --format='value(status.latestReadyRevisionName)')"
-    echo "    nori-web:  ${WEB_REV} (${WEB_URL})"
+  run gcloud run deploy nori-web --project="$PROJECT" --region="$REGION" --image="$WEB_IMAGE" --quiet
+  probe nori-web /api/health
+  if [[ -n "${NORI_DEPLOY_SMOKE_TOKEN_FILE:-}" && "$DRY_RUN" -eq 0 ]]; then
+    web_url="$(service_url nori-web)"
+    smoke_token="$(<"$NORI_DEPLOY_SMOKE_TOKEN_FILE")"
+    printf 'Authorization: Bearer %s\nSec-Fetch-Site: same-origin\n' "$smoke_token" |
+      curl --silent --show-error --fail --output /dev/null --max-time 15 --retry 5 --retry-all-errors -H @- "${web_url}/api/v1/capabilities"
   fi
 fi
 

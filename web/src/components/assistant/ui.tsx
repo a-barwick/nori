@@ -11,9 +11,6 @@ import { useAssistant } from "@/lib/assistant/context";
 import { cn } from "@/lib/utils";
 import { SERVICE_UNAVAILABLE } from "@/lib/runtime/messages";
 
-/**
- * Unified 960px screen with NoriTopWash header band, optional underline tabs, and scrollable body.
- */
 export function Screen({
   title,
   subtitle,
@@ -34,7 +31,6 @@ export function Screen({
   tabs?: ReactNode;
   hideHeaderTitle?: boolean;
   children: ReactNode;
-  /** Kept for backwards-compatible call sites; every tab uses the unified 960px column. */
   wide?: boolean;
 }) {
   const router = useRouter();
@@ -86,10 +82,6 @@ export function Screen({
   );
 }
 
-export function HeroCard({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn("nori-hero-card p-4 sm:p-5", className)}>{children}</div>;
-}
-
 export function NoriLine({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <p className={cn("flex items-center gap-2.5 text-meta text-ink-2", className)} role="status">
@@ -99,7 +91,6 @@ export function NoriLine({ children, className }: { children: ReactNode; classNa
   );
 }
 
-export { announce } from "@/lib/assistant/announce";
 
 export function Section({
   title,
@@ -125,7 +116,6 @@ export function Section({
   );
 }
 
-/** A rounded group of rows. */
 export function Rows({ children, label }: { children: ReactNode; label?: string }) {
   return (
     <ul
@@ -229,7 +219,6 @@ export function Badge({ count, label }: { count?: number; label: string }) {
   );
 }
 
-/** Calm empty state matching iOS NoriEmptyState. */
 export function Empty({
   title,
   children,
@@ -385,7 +374,6 @@ export const inputBase =
   "rounded-tile border border-card-border bg-fill-1 px-3 py-2 text-input text-ink placeholder:text-ink-3 focus-visible:border-accent-signal focus-visible:bg-surface";
 export const inputClass = `w-full ${inputBase}`;
 
-/** Redesigned iOS NoriUnderlineTabs — animated Electric Violet indicator bar & subtle count pills. */
 export function UnderlineTabs<T extends string>({
   value,
   onChange,
@@ -464,7 +452,6 @@ export function UnderlineTabs<T extends string>({
   );
 }
 
-/** Pill filter tabs (used for compact filter chips like Library kind & Permission effect filters). */
 export function Tabs<T extends string>({
   value,
   onChange,

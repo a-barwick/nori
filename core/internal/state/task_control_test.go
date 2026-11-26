@@ -29,11 +29,9 @@ func TestTaskControlLeaseAndFenceRules(t *testing.T) {
 		t.Fatalf("unexpected fence/lease: fence=%+v until=%v", f1, ctrl.LeaseUntil)
 	}
 
-	// Cannot acquire while lease is live.
 	if err := state.CanAcquireTask(ctrl, t0.Add(10*time.Second)); !errors.Is(err, state.ErrTaskBusy) {
 		t.Fatalf("CanAcquireTask while active = %v, want ErrTaskBusy", err)
 	}
-	// Ownership holds before expiry, fails at exact expiry.
 	if err := state.CheckTaskOwned(ctrl, f1, t0.Add(29*time.Second)); err != nil {
 		t.Fatalf("CheckTaskOwned before expiry: %v", err)
 	}
@@ -41,7 +39,6 @@ func TestTaskControlLeaseAndFenceRules(t *testing.T) {
 		t.Fatalf("CheckTaskOwned at expiry = %v, want ErrTaskBusy", err)
 	}
 
-	// Renew extends lease.
 	t1 := t0.Add(10 * time.Second)
 	renewed, err := state.RenewTask(ctrl, f1, t1)
 	if err != nil {
@@ -51,8 +48,7 @@ func TestTaskControlLeaseAndFenceRules(t *testing.T) {
 		t.Fatalf("RenewTask LeaseUntil = %v, want %v", renewed.LeaseUntil, t1.Add(state.TaskLease))
 	}
 
-	// ApplyTaskControlUpdate preserves stored Owner/Fence/LeaseUntil even if caller passes stale lease metadata.
-	staleNext := ctrl // older LeaseUntil from t0
+	staleNext := ctrl
 	staleNext.Phase = state.TaskPhaseCalls
 	staleNext.Models = 2
 	staleNext.Owner = "spoofed"
@@ -68,14 +64,12 @@ func TestTaskControlLeaseAndFenceRules(t *testing.T) {
 		t.Fatalf("ApplyTaskControlUpdate dropped cursor fields: %+v", updated)
 	}
 
-	// Defense-in-depth: ApplyTaskControlUpdate rejects counter/watermark regressions under the same fence.
 	regressed := updated
 	regressed.Models = 1
 	if _, err := state.ApplyTaskControlUpdate(updated, regressed, f1, t1.Add(6*time.Second)); err == nil {
 		t.Fatal("expected ApplyTaskControlUpdate to reject Models regression")
 	}
 
-	// After expiry, worker-b takes over with Fence=2 and worker-a is fenced out.
 	tExp := renewed.LeaseUntil.Add(time.Second)
 	if err := state.CanAcquireTask(updated, tExp); err != nil {
 		t.Fatalf("CanAcquireTask after expiry: %v", err)
@@ -88,7 +82,6 @@ func TestTaskControlLeaseAndFenceRules(t *testing.T) {
 		t.Fatalf("stale worker-a write = %v, want ErrTaskBusy", err)
 	}
 
-	// Release clears Owner and LeaseUntil while preserving Fence and cursor.
 	released, err := state.ReleaseTask(taken, f2, tExp.Add(time.Second))
 	if err != nil {
 		t.Fatalf("ReleaseTask: %v", err)

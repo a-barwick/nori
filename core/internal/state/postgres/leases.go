@@ -19,7 +19,6 @@ const (
 	logRateLimitInterval   = 30 * time.Second
 )
 
-// Package-internal backoff knobs (overridable in tests).
 var (
 	listenInitialBackoff = 100 * time.Millisecond
 	listenMaxBackoff     = 5 * time.Second
@@ -37,7 +36,6 @@ func newLogLimiter(interval time.Duration) *logLimiter {
 	return &logLimiter{interval: interval}
 }
 
-// allowWarn allows the first failure in an outage and at most one warning per interval thereafter.
 func (l *logLimiter) allowWarn(now time.Time) (bool, int64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -52,7 +50,6 @@ func (l *logLimiter) allowWarn(now time.Time) (bool, int64) {
 	return false, 0
 }
 
-// recover clears the active failure state and reports whether a failure was in progress.
 func (l *logLimiter) recover() (bool, int64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -230,9 +227,6 @@ func wakeTaskSQL(ctx context.Context, q executor, userID, runID string, wakeAt t
 }
 
 func wakeWaitingTasksSQL(ctx context.Context, q executor, userID, reason string) ([]docstore.WakeEvent, error) {
-	// Match both parked rows for this waiting_reason AND any runnable row (owned or
-	// still unclaimed in a SERIALIZABLE snapshot) so a concurrent wake arriving around
-	// ClaimTask -> ParkTask always bumps wake_seq and never leaves a task parked for 60s.
 	var rows pgx.Rows
 	var err error
 	if userID == "" {
@@ -334,9 +328,6 @@ func wakeUserSQL(ctx context.Context, q executor, userID, lane string, wakeAt ti
 	return nil, nil
 }
 
-// Same-tx WakeWriter implementation on *transaction.
-// Notifications are buffered on t.wakes and emitted only after tx.Commit succeeds.
-
 func (t *transaction) WakeTask(ctx context.Context, userID, runID string, wakeAt time.Time) error {
 	events, err := wakeTaskSQL(ctx, t.q, userID, runID, wakeAt)
 	if err != nil {
@@ -347,9 +338,6 @@ func (t *transaction) WakeTask(ctx context.Context, userID, runID string, wakeAt
 }
 
 func (t *transaction) WakeWaitingTasks(_ context.Context, userID, reason string) error {
-	// Defer to post-commit READ COMMITTED flushWakeWaitings so the SERIALIZABLE tx
-	// neither takes global SIREAD locks on nori_task_leases nor misses lease rows
-	// inserted concurrently after the SERIALIZABLE snapshot began.
 	t.wakeWaitings = append(t.wakeWaitings, pendingWakeWaiting{
 		userID: userID,
 		reason: reason,
@@ -373,8 +361,6 @@ func (t *transaction) NotifyPause(_ context.Context) error {
 	})
 	return nil
 }
-
-// Standalone READ COMMITTED WakeWriter implementation on *backend.
 
 func (b *backend) WakeTask(ctx context.Context, userID, runID string, wakeAt time.Time) error {
 	var events []docstore.WakeEvent
@@ -425,8 +411,6 @@ func (b *backend) NotifyPause(ctx context.Context) error {
 	}})
 	return nil
 }
-
-// READ COMMITTED LeaseStore implementation on *backend.
 
 func scanTaskLease(row pgx.Row) (docstore.TaskLease, bool, error) {
 	var l docstore.TaskLease
@@ -1023,15 +1007,10 @@ func closeConn(conn *pgx.Conn) {
 	_ = conn.Close(ctx)
 }
 
-// ListenWakes opens a dedicated pgx connection (outside pgxpool) executing LISTEN nori_wake
-// and delivers wake events until ctx is canceled, reconnecting with bounded exponential backoff.
 func (b *backend) ListenWakes(ctx context.Context, onEvent func(docstore.WakeEvent)) error {
 	return b.listenWakes(ctx, onEvent, nil)
 }
 
-// ListenWakesReady behaves like ListenWakes and closes ready (if non-nil) once the initial
-// LISTEN subscription has succeeded. It provides a deterministic readiness barrier for tests
-// without altering the public docstore.WakeListener interface.
 func (b *backend) ListenWakesReady(ctx context.Context, onEvent func(docstore.WakeEvent), ready chan<- struct{}) error {
 	return b.listenWakes(ctx, onEvent, ready)
 }
@@ -1077,8 +1056,6 @@ func (b *backend) listenWakes(ctx context.Context, onEvent func(docstore.WakeEve
 			continue
 		}
 
-		// Emit a synthetic resync event on reconnect so callers poll immediately for
-		// any notifications missed while disconnected.
 		if connectedOnce {
 			reconnects := b.wakeReconnects.Add(1)
 			if wasFailing, suppressed := limiter.recover(); wasFailing {

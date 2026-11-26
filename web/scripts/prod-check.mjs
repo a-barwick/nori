@@ -1,14 +1,4 @@
 #!/usr/bin/env node
-// Local production check: run the production build (`next start`) against a local core without loosening the app's
-// production checks. A production build only accepts an HTTPS runtime and a verified OIDC (or IAP) user, so this
-// stands up, on loopback only:
-//   - an HTTPS OIDC issuer (discovery + JWKS) that mints one ID token for a made-up test address, and
-//   - an HTTPS front for the local core, so the web's hosted-runtime path (signed service token) is the one used.
-// Everything it makes (a throwaway CA, keys, the token) goes to $NORI_PROD_CHECK_DIR, outside the repository,
-// and is useless anywhere else. Not part of the image (the Dockerfile ships only .next/standalone).
-//
-// Usage: node scripts/prod-check.mjs <core-url> <email>   e.g. http://127.0.0.1:8082 frontend.real@example.com
-// Then start the web with the printed environment and set the printed cookie in the browser on the web's origin.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import https from "node:https";
@@ -17,16 +7,15 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 
-const [core = "http://127.0.0.1:8082", email = "frontend.real@example.com"] = process.argv.slice(2);
+const [core = "http://127.0.0.1:8082", email = "frontend.real@example.com", alternateEmail] = process.argv.slice(2);
 const target = new URL(core);
-if (!["127.0.0.1", "localhost"].includes(target.hostname) || !email.endsWith("@example.com")) {
+if (!["127.0.0.1", "localhost"].includes(target.hostname) || !email.endsWith("@example.com") || (alternateEmail && !alternateEmail.endsWith("@example.com"))) {
   throw new Error("prod-check only fronts a loopback core and only mints tokens for @example.com test addresses.");
 }
 const dir = process.env.NORI_PROD_CHECK_DIR || join(process.env.TMPDIR || "/tmp", "nori-prod-check");
 mkdirSync(dir, { recursive: true, mode: 0o700 });
 const file = (name) => join(dir, name);
 
-// A throwaway CA and a certificate for 127.0.0.1, made once.
 if (!existsSync(file("cert.pem"))) {
   const run = (...args) => execFileSync("openssl", args, { stdio: "ignore" });
   run("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "7", "-subj", "/CN=nori prod-check CA", "-keyout", file("ca-key.pem"), "-out", file("ca.pem"));
@@ -42,10 +31,12 @@ const audience = "nori-prod-check";
 const { publicKey, privateKey } = await generateKeyPair("ES256");
 const jwk = { ...(await exportJWK(publicKey)), kid: "prod-check", alg: "ES256", use: "sig" };
 const now = Math.floor(Date.now() / 1000);
-const token = await new SignJWT({ email, email_verified: true })
+const tokenFor = (email) => new SignJWT({ email, email_verified: true })
   .setProtectedHeader({ alg: "ES256", kid: "prod-check" })
   .setIssuer(issuer).setAudience(audience).setSubject(`prod-check:${email}`).setIssuedAt(now).setExpirationTime(now + 8 * 3600)
   .sign(privateKey);
+const token = await tokenFor(email);
+const alternateToken = alternateEmail ? await tokenFor(alternateEmail) : token;
 writeFileSync(file("id-token"), token, { mode: 0o600 });
 const serviceKey = randomBytes(32).toString("base64url");
 
@@ -56,7 +47,6 @@ https.createServer(tls, (req, res) => {
   res.writeHead(404); res.end();
 }).listen(ISSUER_PORT, "127.0.0.1");
 
-// Streams through unchanged (the event log is server-sent events).
 https.createServer(tls, (req, res) => {
   const upstream = http.request({ host: target.hostname, port: target.port, path: req.url, method: req.method, headers: { ...req.headers, host: target.host } }, (reply) => {
     res.writeHead(reply.statusCode ?? 502, reply.headers);
@@ -67,13 +57,12 @@ https.createServer(tls, (req, res) => {
   res.on("close", () => upstream.destroy());
 }).listen(RUNTIME_PORT, "127.0.0.1");
 
-// Signs the browser in: cookies on 127.0.0.1 are shared across ports, so this sets the cookie the web reads and
-// sends the browser on to the web. Open http://127.0.0.1:9445/sign-in?to=http://127.0.0.1:<web port>/
 http.createServer((req, res) => {
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
   const to = url.searchParams.get("to") ?? "";
   if (url.pathname !== "/sign-in" || !/^http:\/\/127\.0\.0\.1:\d+\//.test(to)) { res.writeHead(404); res.end(); return; }
-  res.writeHead(302, { "Set-Cookie": `nori_prod_check=${token}; Path=/; HttpOnly; SameSite=Lax`, Location: to });
+  const signedIn = url.searchParams.get("account") === "second" ? alternateToken : token;
+  res.writeHead(302, { "Set-Cookie": `nori_prod_check=${signedIn}; Path=/; HttpOnly; SameSite=Lax`, Location: to });
   res.end();
 }).listen(9445, "127.0.0.1");
 

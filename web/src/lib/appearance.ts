@@ -25,7 +25,7 @@ export function appearanceLabel(appearance: NoriAppearance): string {
   return appearance === "light" ? "Light" : appearance === "dark" ? "Dark" : "System";
 }
 
-export function readStoredAppearance(): NoriAppearance {
+function readStoredAppearance(): NoriAppearance {
   if (typeof window === "undefined") return "system";
   try {
     return parseAppearance(window.localStorage.getItem(APPEARANCE_STORAGE_KEY));
@@ -34,7 +34,7 @@ export function readStoredAppearance(): NoriAppearance {
   }
 }
 
-export function applyAppearanceToDocument(appearance: NoriAppearance): void {
+function applyAppearanceToDocument(appearance: NoriAppearance): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   if (appearance === "system") {
@@ -44,12 +44,11 @@ export function applyAppearanceToDocument(appearance: NoriAppearance): void {
   }
 }
 
-export function setStoredAppearance(next: NoriAppearance): void {
+function setStoredAppearance(next: NoriAppearance): void {
   if (typeof window !== "undefined") {
     try {
       window.localStorage.setItem(APPEARANCE_STORAGE_KEY, next);
     } catch {
-      // Storage unavailable (private browsing / restricted iframe)
     }
   }
   applyAppearanceToDocument(next);
@@ -89,8 +88,4 @@ export function useAppearance(): [NoriAppearance, (next: NoriAppearance) => void
   return [appearance, update];
 }
 
-/**
- * Inline boot script placed in <head> so the saved Light/Dark preference applies
- * before first paint with zero flash of the wrong color scheme.
- */
 export const APPEARANCE_BOOT_SCRIPT = `(function(){try{var v=localStorage.getItem(${JSON.stringify(APPEARANCE_STORAGE_KEY)});if(v==="light"||v==="dark"){document.documentElement.dataset.appearance=v;}}catch(e){}})();`;

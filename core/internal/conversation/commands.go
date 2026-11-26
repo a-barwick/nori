@@ -33,7 +33,6 @@ func splitShows(calls []ToolCall) ([]ToolCall, []string, error) {
 	return commands, shows, nil
 }
 
-// The turn owner assigns stable command IDs and source inputs after validation.
 func commandRequests(calls []ToolCall) ([]state.Command, error) {
 	if len(calls) > 16 {
 		return nil, fmt.Errorf("a turn can issue at most 16 task commands")
@@ -49,11 +48,9 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 		switch call.Function.Name {
 		case "dispatch":
 			var args struct {
-				Request string  `json:"request"`
-				For     *string `json:"for"`
-				// The question it settles, so a late dispatch can't attach to a newer request.
-				QuestionID *string `json:"question_id"`
-				// Earlier files the task also needs. The current message's files go with it anyway.
+				Request     string   `json:"request"`
+				For         *string  `json:"for"`
+				QuestionID  *string  `json:"question_id"`
 				Attachments []string `json:"attachments"`
 				Revises     *string  `json:"revises"`
 			}
@@ -161,7 +158,6 @@ func workRequests(inputs []state.ConversationInput) []WorkRequest {
 	return requests
 }
 
-// workCommandsAllowed keeps a notification turn to settling its own requests. It can't stop or steer.
 func workCommandsAllowed(commands []state.Command, requests []WorkRequest) bool {
 	for _, command := range commands {
 		allowed := false
@@ -192,8 +188,6 @@ func decodeCommandArguments(arguments string, target any) error {
 	return nil
 }
 
-// Tool-only model messages are valid. Acknowledge only durable receipts, after
-// admission (or recovery), without another model call or a claim of completion.
 func acceptedCommandText(actions []state.ConversationAction) string {
 	counts := map[string]int{}
 	for _, action := range actions {

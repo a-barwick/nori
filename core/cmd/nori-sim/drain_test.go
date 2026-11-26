@@ -46,7 +46,6 @@ func (m *simFakeSummaryModel) Respond(ctx context.Context, req agent.Request) (a
 func newDrainTestEnv(t *testing.T, start time.Time, scopedUserID string) (*app.Service, *memstore.Backend, *simClockBackend, *simClock) {
 	t.Helper()
 	clock := newSimClock(start)
-	// memstore uses wall clock for lease_until / wake_at, matching Postgres now().
 	mem := memstore.New(memstore.WithClock(time.Now))
 	simBackend := newSimClockBackend(mem, clock)
 	artifacts := memstore.NewArtifacts()
@@ -212,11 +211,9 @@ func TestDrainUserToQuiescenceReleasesDelayedWakes(t *testing.T) {
 
 	startSimWorkerPool(t, svc, clock, u.ID)
 
-	// 1. Admit a conversation message and also schedule a 2s delayed task wake.
 	if err := uApp.Store.AcceptConversationInput(ctx, uuid.NewString(), "hello nori", nil); err != nil {
 		t.Fatalf("AcceptConversationInput: %v", err)
 	}
-	// Schedule a 2s task wake (<= 2m shortTaskWakeThreshold -> wall clock) and a 2s scheduler wake (<= 30s shortUserWakeThreshold).
 	if err := simBackend.WakeUser(ctx, u.ID, docstore.LaneScheduler, clock.Now().Add(2*time.Second)); err != nil {
 		t.Fatalf("WakeUser scheduler +2s: %v", err)
 	}
@@ -230,12 +227,10 @@ func TestDrainUserToQuiescenceReleasesDelayedWakes(t *testing.T) {
 	if !res.Quiescent || replyCalls.Load() != 1 {
 		t.Fatalf("expected quiescent with 1 reply, got res=%+v replies=%d", res, replyCalls.Load())
 	}
-	// Crucial H-9 invariant: 2m IdleExtractDelay must NOT have triggered yet because simClock is 0x frozen!
 	if extractCalls.Load() != 0 {
 		t.Fatalf("2m IdleExtractDelay triggered prematurely before clock advance (extractCalls=%d)", extractCalls.Load())
 	}
 
-	// 2. Now advance clock by 2m + 1s (crossing IdleExtractDelay) and drain -> extraction MUST run cleanly.
 	clock.Advance(state.IdleExtractDelay + time.Second)
 	res2, err := drainUserToQuiescence(drainCtx, svc, simBackend, clock, u.ID)
 	if err != nil {
@@ -276,7 +271,6 @@ func TestDrainUserToQuiescenceBurstCoalescingRestartQuiet(t *testing.T) {
 					case <-mCtx.Done():
 						return conversation.Reply{}, mCtx.Err()
 					}
-					// Runner checks StaleFor after Respond and restarts after RestartQuiet.
 					return simReply("first-attempt-should-be-superseded", clock.Now()), nil
 				}
 				mu.Lock()
@@ -305,8 +299,6 @@ func TestDrainUserToQuiescenceBurstCoalescingRestartQuiet(t *testing.T) {
 
 	startSimWorkerPool(t, svc, clock, u.ID)
 
-	// Send message #1, wait until Runner is inside ReplyModel call #1, then admit message #2
-	// while clock is still frozen at `start` (triggering RestartWait = 1s).
 	if err := uApp.Store.AcceptConversationInput(ctx, uuid.NewString(), "burst msg 1", nil); err != nil {
 		t.Fatalf("AcceptConversationInput 1: %v", err)
 	}
@@ -332,7 +324,6 @@ func TestDrainUserToQuiescenceBurstCoalescingRestartQuiet(t *testing.T) {
 	if replyCalls.Load() != 2 {
 		t.Fatalf("expected 2 ReplyModel calls (1 superseded + 1 coalesced), got %d", replyCalls.Load())
 	}
-	// Clock should have advanced by ~1.001s (RestartQuiet + 1ms), well short of 2m IdleExtractDelay and 30s ConversationLease.
 	elapsed := clock.Now().Sub(start)
 	if elapsed < state.RestartQuiet || elapsed > 5*time.Second {
 		t.Fatalf("expected clock advance ~1.001s for RestartQuiet, got %s", elapsed)
@@ -340,7 +331,6 @@ func TestDrainUserToQuiescenceBurstCoalescingRestartQuiet(t *testing.T) {
 	if extractCalls.Load() != 0 {
 		t.Fatalf("expected 0 idle extractions during burst coalesce, got %d", extractCalls.Load())
 	}
-	// Verify both messages were coalesced into a single assistant reply.
 	msgs, _, err := uApp.Store.ConversationMessages(ctx, "")
 	if err != nil {
 		t.Fatalf("ConversationMessages: %v", err)
@@ -390,9 +380,6 @@ func TestDrainUserToQuiescenceFarHorizonNudge(t *testing.T) {
 	}
 	defer rel()
 
-	// Seed a pending conversation input, then overwrite its memstore user wake row to
-	// runnable=true, owner="", wake_at=now+365d (farHorizon) while clearing simBackend.userWakes
-	// to simulate a restart/missed in-memory wake entry.
 	if err := uApp.Store.AcceptConversationInput(ctx, uuid.NewString(), "needs nudge", nil); err != nil {
 		t.Fatalf("AcceptConversationInput: %v", err)
 	}
@@ -439,7 +426,6 @@ func TestSimContextFromAndClockEndpoints(t *testing.T) {
 
 	handler := buildSimHandler(svc, simBackend, clock, u1.ID)
 
-	// 1. Unknown user -> 404.
 	req404 := httptest.NewRequest(http.MethodPost, "/_sim/users/"+uuid.NewString()+"/context_from", bytes.NewReader([]byte(`{}`)))
 	rec404 := httptest.NewRecorder()
 	handler.ServeHTTP(rec404, req404)
@@ -447,7 +433,6 @@ func TestSimContextFromAndClockEndpoints(t *testing.T) {
 		t.Fatalf("unknown user status = %d, want 404 (body=%s)", rec404.Code, rec404.Body.String())
 	}
 
-	// 2. Bad timestamp / malformed JSON -> 400.
 	reqBadTime := httptest.NewRequest(http.MethodPost, "/_sim/users/"+u1.ID+"/context_from", bytes.NewReader([]byte(`{"context_from":"not-a-timestamp"}`)))
 	recBadTime := httptest.NewRecorder()
 	handler.ServeHTTP(recBadTime, reqBadTime)
@@ -462,7 +447,6 @@ func TestSimContextFromAndClockEndpoints(t *testing.T) {
 		t.Fatalf("bad JSON status = %d, want 400 (body=%s)", recBadJSON.Code, recBadJSON.Body.String())
 	}
 
-	// 3. Empty object {} defaults to clock.Now().UTC().Truncate(time.Microsecond) and preserves Received/Consumed.
 	clock.Advance(5*time.Minute + 123*time.Nanosecond)
 	expectedDefault := clock.Now().UTC().Truncate(time.Microsecond)
 	reqDefault := httptest.NewRequest(http.MethodPost, "/_sim/users/"+u1.ID+"/context_from", bytes.NewReader([]byte(`{}`)))
@@ -486,7 +470,6 @@ func TestSimContextFromAndClockEndpoints(t *testing.T) {
 			afterCtrl, err, expectedDefault, beforeCtrl.Received)
 	}
 
-	// 4. Explicit RFC3339 timestamp updates ContextFrom accurately.
 	explicitTime := start.Add(2 * time.Hour).UTC()
 	reqExplicit := httptest.NewRequest(http.MethodPost, "/_sim/users/"+u1.ID+"/context_from",
 		bytes.NewReader([]byte(`{"context_from":"`+explicitTime.Format(time.RFC3339)+`"}`)))
@@ -500,7 +483,6 @@ func TestSimContextFromAndClockEndpoints(t *testing.T) {
 		t.Fatalf("after explicit ConversationStatus = (%+v, %v), want ContextFrom=%s", afterExplicit, err, explicitTime)
 	}
 
-	// 5. Scoped wakeDueForAllUsers via POST /_sim/clock/advance only wakes u1, not u2.
 	dueAt := clock.Now().Add(2 * time.Minute)
 	if err := simBackend.WakeUser(ctx, u1.ID, docstore.LaneConversation, dueAt); err != nil {
 		t.Fatalf("WakeUser u1: %v", err)

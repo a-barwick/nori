@@ -111,7 +111,7 @@ describe("memory byte budget formatting and calculations", () => {
   });
 
   test("coreBudgetStats prefers working.core_bytes and falls back to UTF-8 sum of facts", () => {
-    const facts = [{ text: "Prefers aisle seats" }, { text: "日本語テスト" }]; // 19 + 18 = 37 bytes
+    const facts = [{ text: "Prefers aisle seats" }, { text: "日本語テスト" }];
     assert.equal(utf8Bytes(facts[0].text), 19);
     assert.equal(utf8Bytes(facts[1].text), 18);
 
@@ -141,7 +141,6 @@ describe("memory text validation and task-outcome promote guard", () => {
     const tooLongAscii = "a".repeat(MAX_MEMORY_TEXT_BYTES + 1);
     assert.equal(validateMemoryText(tooLongAscii).ok, false);
 
-    // 4-byte emoji: 500 * 4 = 2000 bytes (ok), 501 * 4 = 2004 bytes (rejected)
     const exactEmoji = "🚀".repeat(500);
     assert.equal(validateMemoryText(exactEmoji).ok, true);
     const overEmoji = "🚀".repeat(501);
@@ -217,7 +216,6 @@ describe("working memory watermark formatting", () => {
     assert.equal(empty.windowThrough, "—");
     assert.equal(empty.lastDream, "Not yet");
 
-    // 20m session-idle extraction before any compaction: extracted_through set, flushed/through omitted.
     const idleExtracted: Pick<WorkingMemory, "extracted_through" | "flushed_through" | "through" | "last_dream_at"> = {
       extracted_through: "2026-11-23T13:30:00Z",
     };
@@ -226,7 +224,6 @@ describe("working memory watermark formatting", () => {
     assert.equal(idle.flushedThrough, "Not flushed yet");
     assert.equal(idle.windowThrough, "—");
 
-    // Coupled compaction + ahead idle extraction + dream.
     const compacted = workingMemoryWatermarks(
       {
         extracted_through: "2026-11-23T13:40:00Z",

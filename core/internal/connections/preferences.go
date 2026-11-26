@@ -9,7 +9,6 @@ import (
 	"nori/internal/state"
 )
 
-// Preferences is the contract Preferences. One revision guards every field, including account defaults.
 type Preferences struct {
 	Revision              int64             `json:"revision"`
 	Timezone              string            `json:"timezone"`
@@ -23,7 +22,6 @@ type Preferences struct {
 	UpdatedAt             *time.Time        `json:"updated_at,omitempty"`
 }
 
-// WorkingHours lists working intervals by weekday, 0 = Sunday.
 type WorkingHours []WorkingInterval
 
 type WorkingInterval struct {
@@ -46,7 +44,6 @@ type InputPreferences struct {
 	DictationLanguage string `json:"dictation_language,omitempty"`
 }
 
-// PreferencesEditable is the contract PreferencesEditable.
 type PreferencesEditable struct {
 	Timezone              string            `json:"timezone"`
 	Locale                string            `json:"locale,omitempty"`
@@ -58,7 +55,6 @@ type PreferencesEditable struct {
 	Input                 *InputPreferences `json:"input,omitempty"`
 }
 
-// DefaultTimezone and DefaultTaskBudget seed a user's preferences before they save any.
 var (
 	DefaultTimezone   = "UTC"
 	DefaultTaskBudget = 5.0
@@ -77,7 +73,6 @@ func defaultPreferences(zone string) Preferences {
 	}
 }
 
-// Preferences returns the user's saved preferences, or defaults at revision 0.
 func (s *Service) Preferences(ctx context.Context) (Preferences, state.Resource, error) {
 	r, err := s.Store.Resource(ctx, CollectionPreferences, PreferencesID)
 	if errors.Is(err, state.ErrNotFound) {
@@ -105,8 +100,6 @@ func (s *Service) Preferences(ctx context.Context) (Preferences, state.Resource,
 	return prefs, r, nil
 }
 
-// SavePreferences replaces preferences under the revision guard. Account defaults must name connections the user
-// owns that support the purpose.
 func (s *Service) SavePreferences(ctx context.Context, requestID string, expected int64, value PreferencesEditable) (state.MutationReceipt, error) {
 	if _, err := time.LoadLocation(value.Timezone); err != nil || value.Budgets.TaskUSD <= 0 {
 		return state.MutationReceipt{}, state.ErrInvalidResource

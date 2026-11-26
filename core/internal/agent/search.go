@@ -17,8 +17,6 @@ import (
 	"nori/internal/prompts"
 )
 
-// SearchCostUSD is Brave's listed Search API price of $5.00 per 1,000 requests
-// (checked 2026-10-31). Brave reports no per-request cost.
 const SearchCostUSD = 0.005
 
 const (
@@ -48,7 +46,6 @@ func (s *Service) webSearch(ctx context.Context, query string) (map[string]any, 
 	req.Header.Set("X-Subscription-Token", s.Capabilities.SearchKey)
 	res, err := s.HTTP.Do(req)
 	if err != nil {
-		// A dropped response may already have been billed.
 		return map[string]any{"cost_usd": SearchCostUSD}, errors.New(prompts.Runtime("tool-web-search-request-failed-before-a-response-arrived", nil))
 	}
 	defer res.Body.Close()
@@ -102,7 +99,6 @@ func compactSearchText(text string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
 }
 
-// FormatSearchQuerySummary formats a human-readable Work Actions summary for a web search query.
 func FormatSearchQuerySummary(query string) string {
 	q := compactSearchText(query)
 	if q == "" {
@@ -111,7 +107,6 @@ func FormatSearchQuerySummary(query string) string {
 	return "Searched: " + clipText(q, maxSearchSummaryBytes)
 }
 
-// FormatWebSearchSummary formats a human-readable Work Actions summary for a native provider web_search_call.
 func FormatWebSearchSummary(call WebSearchCall) string {
 	if q := compactSearchText(call.Query); q != "" {
 		return "Searched: " + clipText(q, maxSearchSummaryBytes)

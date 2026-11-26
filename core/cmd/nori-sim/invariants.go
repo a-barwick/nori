@@ -65,9 +65,6 @@ type simMemoryBaseline struct {
 	pinnedCore                map[string]state.Memory
 }
 
-// simInvariantTracker retains per-user monotonic baselines across /_sim/users/{id}/state
-// snapshots so nori-sim enforces cross-snapshot invariants (watermark monotonicity,
-// pinned auto-demotion protection, dismissed-item durability, and silent eviction).
 type simInvariantTracker struct {
 	mu        sync.Mutex
 	baselines map[string]simMemoryBaseline
@@ -165,7 +162,6 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 	}
 	snap.FTSChunkCount = len(chunks)
 
-	// Load full owner collections directly from docstore for DST-parity checks and usage export.
 	var violations []invariantViolation
 
 	allLogsMap, dVs := loadCollectionDocs[state.MemoryLog](ctx, backend, owner, "memory_logs", "INV-MEM-06.decode_log")
@@ -204,11 +200,10 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 
 	prev := tracker.get(user.ID)
 
-	// Collect all Daily Log entries across all shards for INV-MEM-02/03/04/05/06/07.
 	allLogEntriesByID := map[string]state.MemoryLogEntry{}
 	evictedEntries := []state.MemoryLogEntry{}
 	expectedChunks := map[string]docstore.MemoryChunk{}
-	seenDateEntry := map[string]map[string]string{} // date -> entryID -> docID
+	seenDateEntry := map[string]map[string]string{}
 	var preContextLogEntries []state.MemoryLogEntry
 
 	logEntries := 0
@@ -243,7 +238,6 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 					Message:   "daily log entry text is invalid UTF-8",
 				})
 			}
-			// INV-MEM-04: Daily Log provenance & non-user source input check.
 			if entry.Provenance != "" && !state.ValidMemoryProvenance(entry.Provenance) {
 				violations = append(violations, invariantViolation{
 					Invariant: "INV-MEM-04.invalid_provenance",
@@ -270,7 +264,6 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 	}
 	snap.DailyLogEntryCount = logEntries
 
-	// --- INV-MEM-03, INV-MEM-04, INV-MEM-05 (Core Memory) ---
 	memByID := make(map[string]state.Memory, len(memories))
 	currPinned := map[string]state.Memory{}
 	seenTurnMem := map[string]string{}
@@ -282,7 +275,6 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 			currPinned[m.ID] = m
 		}
 
-		// INV-MEM-03: item bounds, UTF-8, timestamps.
 		if strings.TrimSpace(m.Text) == "" || len(m.Text) < 1 || len(m.Text) > state.MaxMemoryText || !utf8.ValidString(m.Text) {
 			violations = append(violations, invariantViolation{
 				Invariant: "INV-MEM-03.item_bounds",
@@ -312,7 +304,6 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 			})
 		}
 
-		// INV-MEM-04: provenance & SourceInputID verification.
 		if m.Provenance == state.ProvenanceTaskOutcome || m.EffectiveProvenance() == state.ProvenanceTaskOutcome {
 			violations = append(violations, invariantViolation{
 				Invariant: "INV-MEM-04.task_outcome_in_core",
@@ -363,7 +354,6 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 			}
 		}
 
-		// INV-MEM-05: duplicate Core memory check per (Provenance, SourceInputID, Text).
 		if m.SourceInputID != "" && m.SourceInputID != "ui" {
 			dedupKey := string(m.EffectiveProvenance()) + "\x00" + m.SourceInputID + "\x00" + m.Text
 			if firstID, dup := seenTurnMem[dedupKey]; dup {
@@ -389,7 +379,6 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 		})
 	}
 
-	// INV-MEM-03: previously observed Pinned Core memories must never be auto-demoted.
 	for _, pinnedID := range sortedMapKeys(prev.pinnedCore) {
 		if _, stillCore := memByID[pinnedID]; stillCore {
 			continue
@@ -406,7 +395,6 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 		}
 	}
 
-	// --- INV-MEM-05: Non-completed/superseded/refused attempts leave zero memory mutations ---
 	actualChunks := make(map[string]docstore.MemoryChunk, len(chunks))
 	for _, ch := range chunks {
 		actualChunks[ch.ChunkID] = ch
@@ -477,7 +465,6 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 		}
 	}
 
-	// --- INV-MEM-06: Exact 1-to-1 bijection AND content/metadata parity ---
 	for _, chunkID := range sortedMapKeys(expectedChunks) {
 		want := expectedChunks[chunkID]
 		got, exists := actualChunks[chunkID]
@@ -507,7 +494,6 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 		}
 	}
 
-	// --- INV-MEM-01, INV-MEM-02, INV-MEM-07 (ConversationSummary, Watermarks & Excerpts) ---
 	nextBase := simMemoryBaseline{
 		hadSummary:                prev.hadSummary,
 		epoch:                     prev.epoch,
@@ -576,7 +562,6 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 			}
 		}
 
-		// ExtractedThrough bounds.
 		if !summary.From.IsZero() && extracted.Before(summary.From) {
 			violations = append(violations, invariantViolation{
 				Invariant: "INV-MEM-01.watermark_bounds",
@@ -608,7 +593,6 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 			}
 		}
 
-		// Monotonicity per epoch & failure watermark checks.
 		if sameEpoch {
 			if flushed.Before(prev.flushedThrough) {
 				violations = append(violations, invariantViolation{
@@ -657,7 +641,6 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 			})
 		}
 
-		// Excerpt budget & unflushed excerpt coverage.
 		excerptsBytes := 0
 		if len(summary.Excerpts) > 0 {
 			rawEx, _ := json.Marshal(summary.Excerpts)
@@ -673,7 +656,6 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 			violations = append(violations, simCheckUnflushedExcerptCoverage(summary, flushed, excerptsBytes, allTurns)...)
 		}
 
-		// INV-MEM-02: Working Memory summary budget, dismissed items, and no silent eviction.
 		if len(summary.Items) > state.MaxSummaryItems {
 			violations = append(violations, invariantViolation{
 				Invariant: "INV-MEM-02.summary_budget",
@@ -706,7 +688,6 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 					Message:   fmt.Sprintf("dismissed summary item %q reappeared in summary.Items", itemID),
 				})
 			}
-			// INV-MEM-07: pre-ContextFrom input check on SummaryItem.
 			if item.InputID != "" && !conv.ContextFrom.IsZero() && summary.From.Equal(conv.ContextFrom) {
 				if in, ok := allInputs[item.InputID]; ok && !in.CreatedAt.IsZero() && in.CreatedAt.Before(conv.ContextFrom) {
 					violations = append(violations, invariantViolation{
@@ -776,7 +757,6 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 		}
 	}
 
-	// --- INV-MEM-07: Active ContextFrom read isolation check ---
 	if !conv.ContextFrom.IsZero() {
 		if len(preContextLogEntries) > 0 {
 			qToken := simFirstSearchableToken(preContextLogEntries[0].Text)
@@ -824,7 +804,6 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 		}
 	}
 
-	// --- INV-MEM-08: Quiescence, stale excerpts, idle extraction liveness & wake hygiene ---
 	if !conv.Pending() && conv.Active == "" {
 		var convWake docstore.UserWake
 		hasConvWake := false
@@ -838,8 +817,6 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 			}
 		}
 
-		// Resolve true virtual wake time (parked wakes are stored at farHorizon in Postgres
-		// while their virtual wake timestamp lives in backend.PendingUserWakeAt).
 		virtualWakeAt := time.Time{}
 		hasVirtualFutureWake := false
 		if hasConvWake && convWake.Runnable {
@@ -849,7 +826,6 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 			} else {
 				realNow := time.Now().UTC()
 				if convWake.WakeAt.After(realNow.Add(shortUserWakeThreshold)) {
-					// Parked far-horizon wake without an in-memory entry (e.g. direct test setup).
 					hasVirtualFutureWake = true
 					virtualWakeAt = convWake.WakeAt
 				} else if convWake.WakeAt.After(now) {
@@ -861,7 +837,6 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 			}
 		}
 
-		// Wake lease hygiene on LaneConversation at quiescence.
 		if hasConvWake {
 			realNow := time.Now().UTC()
 			if convWake.Owner != "" && (convWake.LeaseUntil == nil || convWake.LeaseUntil.After(realNow)) {
@@ -900,7 +875,6 @@ func inspectUserStateWithTracker(ctx context.Context, user users.User, userApp *
 			}
 		}
 
-		// Decoupled session-idle extraction liveness check.
 		effectiveExtracted := conv.ContextFrom
 		if summaryInEpoch {
 			if ex := summary.EffectiveExtractedThrough(); ex.After(effectiveExtracted) {

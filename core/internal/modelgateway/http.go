@@ -1,4 +1,3 @@
-// Package modelgateway handles errors from the deployment-owned model endpoint.
 package modelgateway
 
 import (
@@ -8,8 +7,6 @@ import (
 
 const Provider = "gateway"
 
-// HTTPError carries the status and a repair hint. Provider bodies and headers
-// may contain secrets or account details and are excluded from diagnostics.
 type HTTPError int
 
 func (e HTTPError) HTTPStatusCode() int { return int(e) }

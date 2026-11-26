@@ -1,13 +1,12 @@
-// Package postgres stores Nori records as indexed JSONB documents. The shared
-// state/records layer owns every state transition; serializable transactions
-// preserve its read/check/write fences and event-head updates.
 package postgres
 
 import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,8 +22,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"nori/internal/state/docstore"
-	"nori/internal/state/records"
-	"nori/internal/users"
 )
 
 const (
@@ -40,8 +37,6 @@ const (
 //go:embed migrations/*.sql
 var migrations embed.FS
 
-// Options configures a Postgres backend pool and LISTEN endpoint.
-// Zero values select safe production defaults.
 type Options struct {
 	ListenURL         string
 	MaxConns          int32
@@ -52,30 +47,12 @@ type Options struct {
 	StatementTimeout  time.Duration
 }
 
-// OpenBackend opens one shared Postgres connection pool with default options and runs migrations once.
 func OpenBackend(ctx context.Context, url string) (docstore.Backend, error) {
 	return openBackend(ctx, url, Options{})
 }
 
-// OpenBackendWithOptions opens one shared Postgres connection pool using opts and runs migrations once.
 func OpenBackendWithOptions(ctx context.Context, url string, opts Options) (docstore.Backend, error) {
 	return openBackend(ctx, url, opts)
-}
-
-func Open(ctx context.Context, url string, user users.User, taskBudgetUSD float64) (*records.Database, error) {
-	b, err := openBackend(ctx, url, Options{})
-	if err != nil {
-		return nil, err
-	}
-	return records.New(b, user, taskBudgetUSD), nil
-}
-
-func OpenUsers(ctx context.Context, url string) (*records.Users, error) {
-	b, err := openBackend(ctx, url, Options{})
-	if err != nil {
-		return nil, err
-	}
-	return records.NewUsers(b), nil
 }
 
 func connStringKeys(connStr string) map[string]bool {
@@ -180,7 +157,6 @@ func openBackend(ctx context.Context, url string, opts Options) (*backend, error
 	return b, nil
 }
 
-// TxStats reports cumulative serializable transaction counts for a Postgres backend.
 type TxStats struct {
 	Total     int64
 	Attempts  int64
@@ -188,7 +164,6 @@ type TxStats struct {
 	Exhausted int64
 }
 
-// TxStatsOf extracts serializable transaction stats if b is a Postgres backend.
 func TxStatsOf(b docstore.Backend) (TxStats, bool) {
 	pg, ok := b.(*backend)
 	if !ok {
@@ -225,11 +200,8 @@ type backend struct {
 	txRetries   atomic.Int64
 	txExhausted atomic.Int64
 
-	// Per-backend owner write serializer (zero DB connections held while waiting,
-	// zero RDS Proxy pinning, no cross-backend sharing across independent pools).
 	ownerWriteLocks [shardLockShards]chan struct{}
 
-	// Listen / watch telemetry and hub state (owned by leases.go and watch.go).
 	wakeReconnects  atomic.Int64
 	wakeErrors      atomic.Int64
 	watchReconnects atomic.Int64
@@ -306,7 +278,6 @@ func (b *backend) TryAdvisoryLock(ctx context.Context, key int64) (func(), bool,
 			defer cancel()
 			_, unlockErr := conn.Exec(unlockCtx, "SELECT pg_advisory_unlock($1)", key)
 			if unlockErr != nil {
-				// Close underlying conn if unlock failed so Postgres immediately releases the session lock.
 				_ = conn.Conn().Close(unlockCtx)
 			}
 			conn.Release()
@@ -422,8 +393,6 @@ func (t *transaction) ensureTx(ctx context.Context, shard string) error {
 		}
 		return err
 	}
-	// Every query inside SERIALIZABLE transactions is indexed by shard/collection/PK or partial index.
-	// Preventing planner SeqScan avoids table-wide relation SIREAD locks on cold or small tables.
 	if _, err := tx.Exec(ctx, "SET LOCAL enable_seqscan = off"); err != nil {
 		_ = tx.Rollback(context.WithoutCancel(ctx))
 		if t.unlockShard != nil {
@@ -644,7 +613,6 @@ func (b *backend) Apply(ctx context.Context, m docstore.Mutation) error {
 					watch = isWatchableCollection(collection, fields)
 					return nil
 				}
-				// Another transaction inserted the row concurrently; loop to lock and merge it.
 				continue
 			}
 			if err != nil {
@@ -807,7 +775,6 @@ func (b *backend) RunTransaction(ctx context.Context, readOnly bool, attempts in
 			b.txExhausted.Add(1)
 			break
 		}
-		// Full-jitter exponential backoff avoids lockstep 40001 retry storms under high contention.
 		capMS := min(250, 5*(1<<min(attempt, 6)))
 		wait := time.Duration(1+rand.IntN(capMS)) * time.Millisecond
 		timer := time.NewTimer(wait)
@@ -826,44 +793,73 @@ func (b *backend) RunTransaction(ctx context.Context, readOnly bool, attempts in
 }
 
 func (b *backend) migrate(ctx context.Context) error {
-	tx, e := b.pool.Begin(ctx)
-	if e != nil {
-		return e
+	err := b.migrationTransaction(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `CREATE TABLE IF NOT EXISTS nori_migrations (
+			name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now(), checksum text
+		);
+		ALTER TABLE nori_migrations ADD COLUMN IF NOT EXISTS checksum text`)
+		return err
+	})
+	if err != nil {
+		return err
 	}
-	defer tx.Rollback(context.WithoutCancel(ctx))
-	// Disable statement_timeout for DDL/index builds inside the migration transaction only.
-	if _, e = tx.Exec(ctx, "SET LOCAL statement_timeout = 0"); e != nil {
-		return e
-	}
-	// One migrator at a time, including concurrent API and worker startup.
-	if _, e = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(7162384101)"); e != nil {
-		return e
-	}
-	if _, e = tx.Exec(ctx, "CREATE TABLE IF NOT EXISTS nori_migrations(name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())"); e != nil {
-		return e
-	}
-	files, e := migrations.ReadDir("migrations")
-	if e != nil {
-		return e
+
+	files, err := migrations.ReadDir("migrations")
+	if err != nil {
+		return err
 	}
 	for _, file := range files {
-		var exists bool
-		if e = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM nori_migrations WHERE name=$1)", file.Name()).Scan(&exists); e != nil {
-			return e
+		name := file.Name()
+		body, err := migrations.ReadFile("migrations/" + name)
+		if err != nil {
+			return err
 		}
-		if exists {
-			continue
+		sum := sha256.Sum256(body)
+		checksum := hex.EncodeToString(sum[:])
+		err = b.migrationTransaction(ctx, func(ctx context.Context, tx pgx.Tx) error {
+			var existing *string
+			err := tx.QueryRow(ctx, "SELECT checksum FROM nori_migrations WHERE name=$1", name).Scan(&existing)
+			switch {
+			case errors.Is(err, pgx.ErrNoRows):
+				if _, err = tx.Exec(ctx, string(body)); err != nil {
+					return err
+				}
+				_, err = tx.Exec(ctx, "INSERT INTO nori_migrations(name, checksum) VALUES($1, $2)", name, checksum)
+				return err
+			case err != nil:
+				return err
+			case existing == nil:
+				_, err = tx.Exec(ctx, "UPDATE nori_migrations SET checksum=$2 WHERE name=$1", name, checksum)
+				return err
+			case *existing != checksum:
+				return errors.New("applied migration checksum differs from the embedded file")
+			default:
+				return nil
+			}
+		})
+		if err != nil {
+			return fmt.Errorf("%s: %w", name, err)
 		}
-		sql, e := migrations.ReadFile("migrations/" + file.Name())
-		if e != nil {
-			return e
-		}
-		if _, e = tx.Exec(ctx, string(sql)); e != nil {
-			return fmt.Errorf("%s failed: %w", file.Name(), e)
-		}
-		if _, e = tx.Exec(ctx, "INSERT INTO nori_migrations(name) VALUES($1)", file.Name()); e != nil {
-			return e
-		}
+	}
+	return nil
+}
+
+func (b *backend) migrationTransaction(ctx context.Context, run func(context.Context, pgx.Tx) error) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	tx, err := b.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(context.WithoutCancel(ctx))
+	if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '5min'"); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(7162384101)"); err != nil {
+		return err
+	}
+	if err := run(ctx, tx); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
 }

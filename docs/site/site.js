@@ -146,7 +146,6 @@ if (railHeads.length > 1 && currentLink) {
   follow();
 }
 
-// IDs are added after load, so scroll to a linked section here
 const openLinked = () => {
   const target = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
   if (!target) return;
@@ -258,13 +257,11 @@ if (document.querySelector('.trace')) {
     line.before(panel);
     step.querySelector('.t').after(dataButton(open => { panel.hidden = !open; }));
   });
-  // A link to a step shows that step until the reader starts scrolling
   const linked = steps.findIndex(step => step.querySelector('.t').id === decodeURIComponent(location.hash.slice(1)));
   let pinned = linked >= 0;
   ['wheel', 'touchmove', 'keydown'].forEach(type => addEventListener(type, () => { pinned = false; }, { passive: true }));
   last = Math.max(linked, 0);
   showStep(last);
-  // The current step is the one crossing a line 64% down the window
   let queued = false;
   const follow = () => {
     queued = false;

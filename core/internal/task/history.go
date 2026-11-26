@@ -23,8 +23,6 @@ import (
 	"nori/internal/transcript"
 )
 
-// The history chain retains every exact Responses item, including opaque
-// reasoning, in private storage and is never reconstructed from a summary.
 type HistoryInput struct {
 	Step
 	Ref      string
@@ -32,16 +30,13 @@ type HistoryInput struct {
 	Question *state.Question
 }
 type HistorySync struct {
-	Ref                string
-	Revision, Position int64
-	QuestionResolved   bool
-	Request            string
-	// Spent is this task's own persisted spend; Others, Budget and CostUnknown are the family's shared accounting:
-	// what its other tasks have spent, its budget, and whether any of it has an unknown cost.
+	Ref                   string
+	Revision, Position    int64
+	QuestionResolved      bool
+	Request               string
 	Spent, Others, Budget float64
 	CostUnknown           bool
-	// Subtask and ReadOnly are fixed when the task is accepted.
-	Subtask, ReadOnly bool
+	Subtask, ReadOnly     bool
 }
 type CurrentPosition struct{ Revision, Position int64 }
 
@@ -64,19 +59,16 @@ type RefModelInput struct {
 type CallRef struct {
 	ID, Name string
 	Index    int
-	// Exec pins the definition, binding and policy the call was offered under. Histories recorded before pinning
-	// have none and use the engine's name-based policy, so they replay unchanged.
-	Exec *extensions.Exec `json:",omitempty"`
+	Exec     *extensions.Exec `json:",omitempty"`
 }
 type RefModelOutcome struct {
-	Ref       string
-	Calls     []CallRef
-	Cost      float64
-	CostKnown bool
-	NotSent   bool
-	Failure   string
-	Invalid   bool
-	// Interrupted marks a request whose worker stopped before its result was saved; the task may ask again.
+	Ref         string
+	Calls       []CallRef
+	Cost        float64
+	CostKnown   bool
+	NotSent     bool
+	Failure     string
+	Invalid     bool
 	Interrupted bool `json:",omitempty"`
 }
 type RefToolInput struct {
@@ -88,17 +80,13 @@ type RefToolInput struct {
 }
 type RefToolOutcome struct {
 	Ref, Outcome, EffectClass string
-	// Cost is spend the tool incurred outside a model decision.
-	Cost        float64
-	CostUnknown bool
-	// Unresolved names the operations a question about this result is for, and Clears lists those an answer releases.
-	Unresolved string
-	Clears     []string
-	// InteractionID and Prompt are set when a registry tool waits on the user's approval or account choice.
-	InteractionID string `json:",omitempty"`
-	Prompt        string `json:",omitempty"`
-	// ToolSig is a compact hash of (tool_name, canonical_args, outcome) for semantic loop detection.
-	ToolSig string `json:",omitempty"`
+	Cost                      float64
+	CostUnknown               bool
+	Unresolved                string
+	Clears                    []string
+	InteractionID             string `json:",omitempty"`
+	Prompt                    string `json:",omitempty"`
+	ToolSig                   string `json:",omitempty"`
 }
 type RefInput struct {
 	Step
@@ -186,9 +174,6 @@ func lastCall(messages []transcript.Message, index int) (transcript.ToolCall, er
 func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out HistorySync, err error) {
 	ctx, span := startActivity(ctx, "task.history.sync", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.history.sync"); span.End() }()
-	// A saved result may settle during pause, but its parent must not consume
-	// the delivery until resume. Completion/publication of an admitted reply
-	// uses separate steps and remains allowed.
 	control, e := a.Store.Control(ctx)
 	if e != nil {
 		return out, e
@@ -270,7 +255,6 @@ func (a *Activities) SyncHistory(ctx context.Context, in HistoryInput) (out Hist
 				out.QuestionResolved = true
 			}
 		case state.CommandSubtaskResult:
-			// A closed wait already has its call's one result.
 			if q != nil && q.ID == cmd.QuestionID {
 				result, e := a.subtaskResult(ctx, snap.Run, *q, cmd)
 				if e != nil {
@@ -341,9 +325,6 @@ func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefMod
 			NotSent:   outcome.Response.NotSent,
 		}, e
 	}
-	// Only an explicit context refusal permits a smaller second request. The
-	// original checkpoint already fences the whole step: a crash during either
-	// request recovers the receipt or settles unknown, never sends again.
 	if outcome.ContextOverflow && ctx.Err() == nil {
 		reduced, fitErr := managedContext(messages, in.Ref, true)
 		if fitErr == nil && contextMessagesBytes(reduced) < contextMessagesBytes(view) {
@@ -389,8 +370,6 @@ func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefMod
 		out.Ref, e = a.Store.SaveTaskModelCheckpoint(save, in.RunID, checkpoint, messagesJSON)
 		cancel()
 		if e != nil {
-			// A timed-out commit can already be visible. Check the same receipt
-			// before reporting that the output could not be saved.
 			read, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			saved, readErr := a.Store.TaskModelCheckpoint(read, in.RunID, checkpoint.ID)
 			cancel()
@@ -401,7 +380,6 @@ func (a *Activities) ModelRef(ctx context.Context, in RefModelInput) (out RefMod
 	}
 	if e != nil {
 		observability.RecordErrorCategory(ctx, "task.model.checkpoint", e)
-		// Return known usage even if the checkpoint could not be committed.
 		out.Ref, out.Calls, out.Failure = in.Ref, nil, modelSaveFailure
 	}
 	span.SetAttributes(attribute.Int("nori.tool.call_count", len(out.Calls)))
@@ -479,9 +457,6 @@ func lastCallFromBlocks(blocks [][]byte, index int) (transcript.ToolCall, error)
 	return transcript.ToolCall{}, errCallRefUnresolved
 }
 
-// ToolBatchRef executes a contiguous slice of independent read-only tool calls
-// concurrently with deterministic pre-assigned OperationIDs, then appends all
-// tool results in original call order in a single history block.
 func (a *Activities) ToolBatchRef(ctx context.Context, in RefToolBatchInput) (out RefToolBatchOutcome, err error) {
 	ctx, span := startActivity(ctx, "task.history.tool_batch", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.history.tool_batch"); span.End() }()
@@ -568,7 +543,6 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 		return out, e
 	}
 	var result map[string]any
-	// A compose call carries the read-only limit to each nested call instead.
 	if in.ReadOnly && call.Name != "compose" && agent.PolicyFor(call.Name, in.Exec).Effect != "read" {
 		result = map[string]any{
 			"outcome":      "needs_input",
@@ -584,7 +558,6 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 	}
 	result["evidence_ref"] = in.OperationID
 	if waiting, _ := result["awaiting_interaction"].(bool); waiting && call.Name == "compose" {
-		// A compose script stopped at a nested call that needs the user: the task asks, exactly as for a direct call.
 		result["outcome"] = "needs_interaction"
 	}
 	out.Ref, e = a.appendMessages(ctx, in.RunID, in.Ref, []transcript.Message{transcript.ToolResultMessage(call.ID, call.Name, result)})
@@ -627,8 +600,6 @@ func (a *Activities) InputRef(ctx context.Context, in RefInput) (out state.Quest
 	if call.Name == "request_work" {
 		return a.workQuestion(ctx, in, call)
 	}
-	// A provider may explain a failure in output_text and put only the next
-	// question in request_input. Publish both so the user can make a decision.
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role != transcript.RoleModel {
 			continue
@@ -650,7 +621,6 @@ func (a *Activities) InputRef(ctx context.Context, in RefInput) (out state.Quest
 		return out, e
 	}
 	if named != "" {
-		// The runtime's lines come first and stay whole, so a long model question is the part that's shortened.
 		named = clip(named, 4096)
 		text = named + "\n\n" + clip(text, state.MaxMessageBytes-len(named)-8)
 	}
@@ -677,8 +647,6 @@ func (a *Activities) InputRef(ctx context.Context, in RefInput) (out state.Quest
 func (a *Activities) AppendToolResult(ctx context.Context, in AppendResult) (ref string, err error) {
 	ctx, span := startActivity(ctx, "task.history.append_result", "CHAIN", a.activityRun(ctx, in.RunID), in.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.history.append_result"); span.End() }()
-	// A rejected completion can already have its result saved before a
-	// publication loses a revision race. Keep exactly one output for each call.
 	messages, e := a.history(ctx, in.RunID, in.Ref)
 	if e != nil {
 		return "", e
@@ -724,7 +692,6 @@ func (a *Activities) PublishRef(ctx context.Context, in RefPublication) (run sta
 	return state.Run{ID: run.ID, Status: run.Status, Revision: run.Revision}, e
 }
 
-// reminderParts extracts inline PartReminder cards from confirmed one-time reminder creations in this task.
 func (a *Activities) reminderParts(ctx context.Context, runID string, ops []state.OperationRecord) []state.Part {
 	var parts []state.Part
 	seen := map[string]bool{}

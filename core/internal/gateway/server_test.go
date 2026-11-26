@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -47,7 +48,6 @@ func TestGateway_AuthRoutingCostInjectionAndKillSwitch(t *testing.T) {
 	}
 	handler := srv.Handler()
 
-	// 1. Reject missing/wrong token.
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4.1-mini"}`))
 	handler.ServeHTTP(rec, req)
@@ -55,7 +55,6 @@ func TestGateway_AuthRoutingCostInjectionAndKillSwitch(t *testing.T) {
 		t.Fatalf("expected 401 without token, got %d", rec.Code)
 	}
 
-	// 2. Call 1: OpenAI chat completions -> injects calculated cost into usage.cost.
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4.1-mini","messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Authorization", "Bearer ephemeral-tok-123")
@@ -72,7 +71,6 @@ func TestGateway_AuthRoutingCostInjectionAndKillSwitch(t *testing.T) {
 		t.Fatalf("expected injected usage.cost > 0, got %+v", usage1)
 	}
 
-	// 3. Call 2: OpenRouter responses (model has "/") -> routes to openrouter with OpenRouter key.
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"openai/gpt-6.1-terra","input":[]}`))
 	req.Header.Set("Authorization", "Bearer ephemeral-tok-123")
@@ -87,7 +85,6 @@ func TestGateway_AuthRoutingCostInjectionAndKillSwitch(t *testing.T) {
 		t.Fatalf("unexpected upstream auth headers: %v", seenAuth)
 	}
 
-	// 4. Call 3: Exceeds MaxCalls=2 -> immediately killed with HTTP 429 local_budget_exceeded!
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{"model":"gpt-4.1-mini","messages":[{"role":"user","content":"third"}]}`))
 	req.Header.Set("Authorization", "Bearer ephemeral-tok-123")
@@ -102,7 +99,6 @@ func TestGateway_AuthRoutingCostInjectionAndKillSwitch(t *testing.T) {
 		t.Fatalf("expected call 3 blocked before upstream, got %d upstream calls", len(seenTargets))
 	}
 
-	// 5. Stats endpoint reports budget_exceeded and cumulative spend.
 	st := srv.Stats()
 	if !st.BudgetExceeded || st.TotalAdmitted != 2 || st.BlockedCallLimit != 1 || st.RecordedActualUSD <= 0 {
 		t.Fatalf("unexpected stats: %+v", st)
@@ -138,9 +134,41 @@ func TestGateway_LunaCostCalculation(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	u := body["usage"].(map[string]any)
-	// 1M input (>272k -> $0.20/M) + 1M output (>272k -> $0.75/M) = $0.95
 	cost, ok := u["cost"].(float64)
 	if !ok || cost < 0.949 || cost > 0.951 {
 		t.Fatalf("expected gpt-6-luna cost ~0.95, got %v (usage=%+v)", cost, u)
+	}
+}
+
+func TestStreamUsageAcrossLongAndPartialStreams(t *testing.T) {
+	anthropic := streamUsage{provider: "anthropic", model: "claude-sonnet-4-6"}
+	anthropic.write([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"cache_read_input_tokens\":20}}}\r\n"))
+	content := []byte("data: " + strings.Repeat("x", 180<<10) + "\n")
+	for i := 0; i < 4; i++ {
+		for chunk := range slices.Chunk(content, 4096) {
+			anthropic.write(chunk)
+		}
+	}
+	anthropic.write([]byte("data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":"))
+	anthropic.write([]byte("30}}\n\n"))
+	if _, _, _, ok := anthropic.cost(); ok {
+		t.Fatal("incomplete Anthropic stream reported final cost")
+	}
+	anthropic.write([]byte("data: {\"type\":\"message_stop\"}\n\n"))
+	if cost, in, out, ok := anthropic.cost(); !ok || cost <= 0 || in != 30 || out != 30 {
+		t.Fatalf("Anthropic cost = %v, %d, %d, %v", cost, in, out, ok)
+	}
+
+	openai := streamUsage{provider: "openai", model: "gpt-4.1"}
+	openai.write([]byte("data: {\"usage\":{}}\n"))
+	if _, _, _, ok := openai.cost(); ok {
+		t.Fatal("empty usage reported final cost")
+	}
+	for i := 0; i < 4; i++ {
+		openai.write(content)
+	}
+	openai.write([]byte("data: {\"usage\":{\"prompt_tokens\":20,\"completion_tokens\":30}}\n\ndata: [DONE]\n"))
+	if cost, in, out, ok := openai.cost(); !ok || cost <= 0 || in != 20 || out != 30 {
+		t.Fatalf("OpenAI cost = %v, %d, %d, %v", cost, in, out, ok)
 	}
 }

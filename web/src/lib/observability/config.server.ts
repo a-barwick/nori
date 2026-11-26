@@ -10,7 +10,6 @@ export function initServerObservability(ignoreSpans?: RegExp[]) {
     environment: process.env.SENTRY_ENVIRONMENT || process.env.NODE_ENV,
     release: process.env.SENTRY_RELEASE,
     ...privacyOptions(process.env.SENTRY_TRACES_SAMPLE_RATE),
-    // The runtime relay creates sanitized upstream trace headers itself.
     tracePropagationTargets: [],
     ignoreSpans,
   });

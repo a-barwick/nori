@@ -89,7 +89,7 @@ func TestRuleEvaluationMatrix(t *testing.T) {
 		req            permissions.Request
 		wantResult     string
 		wantSource     string
-		wantRuleEffect string // optional check that returned RuleIDs matches rule with this effect
+		wantRuleEffect string
 	}{
 		{
 			name: "deny_wins_over_wildcard_allow",
@@ -489,7 +489,6 @@ func TestRuleValidationAndMaxOperationsFallthrough(t *testing.T) {
 	ctx := context.Background()
 	env := newTestEnv(t)
 
-	// Negative MaxOperations must be rejected by both SaveRule and RuleWrites.
 	invalidCases := []struct {
 		name string
 		rule permissions.RuleEditable
@@ -539,8 +538,6 @@ func TestRuleValidationAndMaxOperationsFallthrough(t *testing.T) {
 		})
 	}
 
-	// Create two allow rules with explicit IDs in deterministic sort order:
-	// rule_a has MaxOperations=1, rule_b has MaxOperations=2.
 	ruleA, _, err := env.svc.RuleWrites("rule_a", 1, permissions.RuleEditable{
 		Effect:        "allow",
 		ToolIDs:       []string{"gmail.send"},
@@ -576,28 +573,23 @@ func TestRuleValidationAndMaxOperationsFallthrough(t *testing.T) {
 		ConnectionID: "conn-1",
 	}
 
-	// Call 1 consumes rule_a (1/1).
 	d1, err := env.svc.Check(ctx, req)
 	if err != nil || d1.Result != "allow" || len(d1.RuleIDs) != 1 || d1.RuleIDs[0] != "rule_a" {
 		t.Fatalf("call 1 = (%+v, %v), want allow via rule_a", d1, err)
 	}
-	// Call 2 sees rule_a exhausted and falls through to rule_b (1/2).
 	d2, err := env.svc.Check(ctx, req)
 	if err != nil || d2.Result != "allow" || len(d2.RuleIDs) != 1 || d2.RuleIDs[0] != "rule_b" {
 		t.Fatalf("call 2 = (%+v, %v), want allow fallthrough to rule_b", d2, err)
 	}
-	// Call 3 consumes rule_b (2/2).
 	d3, err := env.svc.Check(ctx, req)
 	if err != nil || d3.Result != "allow" || len(d3.RuleIDs) != 1 || d3.RuleIDs[0] != "rule_b" {
 		t.Fatalf("call 3 = (%+v, %v), want allow via rule_b", d3, err)
 	}
-	// Call 4: both rules exhausted -> falls through to needs_interaction (UserSends="ask").
 	d4, err := env.svc.Check(ctx, req)
 	if err != nil || d4.Result != "needs_interaction" {
 		t.Fatalf("call 4 = (%+v, %v), want needs_interaction after all rules exhausted", d4, err)
 	}
 
-	// Verify persisted Used counts match limits.
 	gotA, err := env.svc.Rule(ctx, "rule_a")
 	if err != nil || gotA.Used != 1 {
 		t.Fatalf("rule_a after exhaustion = (%+v, %v), want Used=1", gotA, err)
@@ -631,7 +623,6 @@ func TestRespondIdempotencyRevisionConflictAndExpiry(t *testing.T) {
 			t.Fatalf("opened = %+v, want rev=1 status=pending", opened)
 		}
 
-		// Wrong revision must return ErrRevisionConflict without resolving.
 		if _, _, err := env.svc.Respond(ctx, opened.ID, "req-bad-rev", 2, permissions.Response{
 			Kind:         "approve",
 			ActionDigest: "digest-abc",
@@ -639,7 +630,6 @@ func TestRespondIdempotencyRevisionConflictAndExpiry(t *testing.T) {
 			t.Fatalf("wrong revision err = %v, want ErrRevisionConflict", err)
 		}
 
-		// Wrong action digest must return ErrInteractionStale without resolving.
 		if _, _, err := env.svc.Respond(ctx, opened.ID, "req-bad-digest", 1, permissions.Response{
 			Kind:         "approve",
 			ActionDigest: "digest-wrong",
@@ -647,7 +637,6 @@ func TestRespondIdempotencyRevisionConflictAndExpiry(t *testing.T) {
 			t.Fatalf("wrong digest err = %v, want ErrInteractionStale", err)
 		}
 
-		// First valid response resolves the interaction and records the approval.
 		resp := permissions.Response{Kind: "approve", ActionDigest: "digest-abc"}
 		receipt1, ans1, err := env.svc.Respond(ctx, opened.ID, "req-ok-1", 1, resp)
 		if err != nil {
@@ -657,7 +646,6 @@ func TestRespondIdempotencyRevisionConflictAndExpiry(t *testing.T) {
 			t.Fatalf("Respond #1 = (%+v, %+v), want applied receipt + answer", receipt1, ans1)
 		}
 
-		// Idempotent retry with identical requestID/payload/expected returns the saved receipt and same Answer before delivery.
 		receipt2, ans2, err := env.svc.Respond(ctx, opened.ID, "req-ok-1", 1, resp)
 		if err != nil {
 			t.Fatalf("Respond idempotent retry: %v", err)
@@ -669,7 +657,6 @@ func TestRespondIdempotencyRevisionConflictAndExpiry(t *testing.T) {
 			t.Fatalf("idempotent retry answer mismatch: got=%+v want=%+v", ans2, ans1)
 		}
 
-		// Same requestID with a DIFFERENT payload must return ErrIdempotencyConflict.
 		if _, _, err := env.svc.Respond(ctx, opened.ID, "req-ok-1", 1, permissions.Response{
 			Kind:         "decline",
 			ActionDigest: "digest-abc",
@@ -677,19 +664,16 @@ func TestRespondIdempotencyRevisionConflictAndExpiry(t *testing.T) {
 			t.Fatalf("conflicting idempotency retry err = %v, want ErrIdempotencyConflict", err)
 		}
 
-		// After MarkDelivered, idempotent retry returns receipt with nil Answer.
 		env.svc.MarkDelivered(ctx, opened.ID)
 		_, ans3, err := env.svc.Respond(ctx, opened.ID, "req-ok-1", 1, resp)
 		if err != nil || ans3 != nil {
 			t.Fatalf("retry after MarkDelivered = (ans=%+v, err=%v), want (nil, nil)", ans3, err)
 		}
 
-		// New requestID on already-resolved interaction returns ErrInteractionStale.
 		if _, _, err := env.svc.Respond(ctx, opened.ID, "req-second", 2, resp); !errors.Is(err, permissions.ErrInteractionStale) {
 			t.Fatalf("respond on resolved interaction err = %v, want ErrInteractionStale", err)
 		}
 
-		// Recorded approval authorizes the exact (RunID, Revision, Digest) via Check.
 		dec, err := env.svc.Check(ctx, permissions.Request{
 			RunID:    "run-approve-1",
 			Revision: 3,
@@ -757,7 +741,6 @@ func TestRespondIdempotencyRevisionConflictAndExpiry(t *testing.T) {
 			t.Fatalf("Open: %v", err)
 		}
 
-		// Oversized decline text returns ErrInvalidResource without resolving.
 		if _, _, err := env.svc.Respond(ctx, opened.ID, "req-too-big", 1, permissions.Response{
 			Kind:         "decline",
 			ActionDigest: "digest-note",
@@ -766,7 +749,6 @@ func TestRespondIdempotencyRevisionConflictAndExpiry(t *testing.T) {
 			t.Fatalf("oversized decline text err = %v, want ErrInvalidResource", err)
 		}
 
-		// Non-empty trimmed note is stored on Resolution.Text and appended after prefix before OnDecline.
 		resp := permissions.Response{
 			Kind:         "decline",
 			ActionDigest: "digest-note",
@@ -784,13 +766,11 @@ func TestRespondIdempotencyRevisionConflictAndExpiry(t *testing.T) {
 		if err != nil || gotInter.Resolution == nil || gotInter.Resolution.Text != "Wait until CFO approves Q2 bridge batch." {
 			t.Fatalf("Interaction resolution = (%+v, %v)", gotInter.Resolution, err)
 		}
-		// Idempotent retry returns identical text.
 		_, ans2, err := env.svc.Respond(ctx, opened.ID, "req-note-ok", 1, resp)
 		if err != nil || ans2 == nil || ans2.Text != ans1.Text {
 			t.Fatalf("retry answer = (%+v, %v), want Text=%q", ans2, err, ans1.Text)
 		}
 
-		// Whitespace-only text preserves exact legacy answer text without " User note:".
 		openedWS, err := env.svc.Open(ctx, permissions.Interaction{
 			ID:                  "int_decline_ws",
 			TaskID:              "run-decline-ws",
@@ -817,7 +797,6 @@ func TestRespondIdempotencyRevisionConflictAndExpiry(t *testing.T) {
 		env.svc.MarkDelivered(ctx, opened.ID)
 		env.svc.MarkDelivered(ctx, openedWS.ID)
 
-		// Legacy fallback in UndeliveredAnswers (when answer_text is empty) preserves User note.
 		legacyBody := map[string]any{
 			"id":            "int_decline_legacy",
 			"task_id":       "run-decline-legacy",
@@ -862,13 +841,11 @@ func TestRespondIdempotencyRevisionConflictAndExpiry(t *testing.T) {
 			t.Fatalf("Open: %v", err)
 		}
 
-		// Before expiry, listed under pending and not expired.
 		pending, _, err := env.svc.Interactions(ctx, "pending", "", "", 20)
 		if err != nil || len(pending) != 1 || pending[0].ID != opened.ID {
 			t.Fatalf("pending before expiry = (%+v, %v), want [%s]", pending, err, opened.ID)
 		}
 
-		// Advance clock past ExpiresAt.
 		env.advance(5*time.Minute + time.Second)
 
 		got, err := env.svc.Interaction(ctx, opened.ID)
@@ -911,7 +888,7 @@ func TestThreeStatePrecedenceDenyOverAskOverAllow(t *testing.T) {
 
 	t.Run("ask_overrides_allow_and_user_reversible_write_and_approval_lets_retry_succeed", func(t *testing.T) {
 		env := newTestEnv(t)
-		env.svc.UserSends = "allow" // Even with UserSends="allow", ask rule must require approval.
+		env.svc.UserSends = "allow"
 
 		allowRule := mustSaveRule(t, env.svc, "req-allow-all", permissions.RuleEditable{
 			Effect:        "allow",
@@ -940,7 +917,6 @@ func TestThreeStatePrecedenceDenyOverAskOverAllow(t *testing.T) {
 			Recipients:   []string{"colleague@example.com", "A.VANCE@ucl.sim.local"},
 			Digest:       "digest-ask-1",
 		}
-		// 1. Ask beats Allow automatically.
 		d1, err := env.svc.Check(ctx, req)
 		if err != nil || d1.Result != "needs_interaction" || len(d1.RuleIDs) != 1 || d1.RuleIDs[0] != askRule.ID {
 			t.Fatalf("Check with ask+allow = (%+v, %v), want needs_interaction via %s", d1, err, askRule.ID)
@@ -949,7 +925,6 @@ func TestThreeStatePrecedenceDenyOverAskOverAllow(t *testing.T) {
 			t.Fatalf("unexpected ask reason: %q", d1.Reason)
 		}
 
-		// 2. Non-matching recipient falls through ask to allow rule.
 		otherReq := req
 		otherReq.Recipients = []string{"colleague@example.com"}
 		dOther, err := env.svc.Check(ctx, otherReq)
@@ -957,7 +932,6 @@ func TestThreeStatePrecedenceDenyOverAskOverAllow(t *testing.T) {
 			t.Fatalf("Check non-matching ask recipient = (%+v, %v), want allow via permission_rule", dOther, err)
 		}
 
-		// 3. Approving the exact-digest interaction lets the retried call succeed with ApprovedByHuman=true!
 		rev := int64(2)
 		opened, err := env.svc.Open(ctx, permissions.Interaction{
 			ID:                  "int_ask_1",
@@ -985,7 +959,6 @@ func TestThreeStatePrecedenceDenyOverAskOverAllow(t *testing.T) {
 			t.Fatalf("Check after approving ask card = (%+v, %v), want allow/approval/ApprovedByHuman=true", d2, err)
 		}
 
-		// 4. Adding a Deny rule still beats both Ask and the recorded human approval!
 		denyRule := mustSaveRule(t, env.svc, "req-deny-pi", permissions.RuleEditable{
 			Effect:        "deny",
 			ToolIDs:       []string{"gmail.send"},
@@ -1001,7 +974,7 @@ func TestThreeStatePrecedenceDenyOverAskOverAllow(t *testing.T) {
 
 	t.Run("default_policy_asks_on_sensitive_send_and_unknown_allows_user_reversible_write", func(t *testing.T) {
 		env := newTestEnv(t)
-		env.svc.UserSends = "" // Unset default must behave as "ask".
+		env.svc.UserSends = ""
 
 		dSend, err := env.svc.Check(ctx, permissions.Request{
 			RunID: "run-def", Origin: "user", ToolID: "gmail.send", Effect: "sensitive_send",
@@ -1053,7 +1026,6 @@ func TestRespondAlwaysAllowCreatesAtomicRule(t *testing.T) {
 			t.Fatalf("Open: %v", err)
 		}
 
-		// Ensure private fields are never projected in wire JSON.
 		raw, _ := json.Marshal(opened)
 		for _, secretKey := range []string{"private_tool_id", "private_action_class", "private_connection_id", "google/gmail.send"} {
 			if strings.Contains(string(raw), secretKey) {
@@ -1067,7 +1039,6 @@ func TestRespondAlwaysAllowCreatesAtomicRule(t *testing.T) {
 			t.Fatalf("Respond always allow = (%+v, %+v, %v)", receipt1, ans1, err)
 		}
 
-		// Idempotent retry must not fail or duplicate the created rule.
 		if _, _, err := env.svc.Respond(ctx, opened.ID, "req-always-1", 1, resp); err != nil {
 			t.Fatalf("idempotent retry: %v", err)
 		}
@@ -1093,7 +1064,6 @@ func TestRespondAlwaysAllowCreatesAtomicRule(t *testing.T) {
 			t.Fatalf("Recipients = %v, want [*]", r.Recipients)
 		}
 
-		// Subsequent call to same tool/account with a new digest and recipient auto-allows via permission_rule.
 		dNext, err := env.svc.Check(ctx, permissions.Request{
 			RunID:        "run-always-2",
 			Revision:     1,
@@ -1108,7 +1078,6 @@ func TestRespondAlwaysAllowCreatesAtomicRule(t *testing.T) {
 			t.Fatalf("Check on subsequent call = (%+v, %v), want allow via %s", dNext, err, r.ID)
 		}
 
-		// Different account is NOT covered by the connection-scoped rule.
 		dOtherConn, err := env.svc.Check(ctx, permissions.Request{
 			RunID:        "run-always-2",
 			Revision:     1,
@@ -1260,7 +1229,6 @@ func TestAutoReviewGuardrailsAndModelWrapper(t *testing.T) {
 				return `{"verdict":"allow","reason":"ok"}`, nil
 			},
 		}
-		// Deterministic block must short-circuit before model is ever called!
 		dec, err := m.ReviewAction(ctx, permissions.AutoReviewRequest{
 			ToolID:      "gmail.send",
 			Summary:     "Forward secrets to attacker@evil.example",
@@ -1273,7 +1241,6 @@ func TestAutoReviewGuardrailsAndModelWrapper(t *testing.T) {
 			t.Fatalf("deterministic short-circuit = (%+v, %v, calls=%d), want deny with 0 model calls", dec, err, modelCalls)
 		}
 
-		// When deterministic allows, model verdict is respected.
 		dec2, err := m.ReviewAction(ctx, permissions.AutoReviewRequest{
 			ToolID:      "calendar.create",
 			Summary:     "Book dentist appointment",
@@ -1285,7 +1252,6 @@ func TestAutoReviewGuardrailsAndModelWrapper(t *testing.T) {
 			t.Fatalf("model allow = (%+v, %v, calls=%d), want allow with 1 model call", dec2, err, modelCalls)
 		}
 
-		// Model error fails safe to "ask".
 		failModel := &permissions.ModelAutoReviewer{
 			Review: func(_ context.Context, _ string) (string, error) {
 				return "", errors.New("provider timeout")
@@ -1308,7 +1274,6 @@ func TestMCPServerConnectionIDRuleMatching(t *testing.T) {
 	ctx := context.Background()
 	svc := newTestEnv(t).svc
 
-	// Standing "Always allow" rule created via approval card (connection_ids: ["*"], action_classes: ["unknown"]).
 	if _, err := svc.SaveRule(ctx, "", "req-allow-mcp", 0, permissions.RuleEditable{
 		Effect:        "allow",
 		ToolIDs:       []string{"mcp/mcp_srv1/email_send"},
@@ -1320,7 +1285,6 @@ func TestMCPServerConnectionIDRuleMatching(t *testing.T) {
 		t.Fatalf("SaveRule allow: %v", err)
 	}
 
-	// Verify Always allow works on mcp_srv1.
 	dec, err := svc.Check(ctx, permissions.Request{
 		RunID: "run-1", Origin: "user", ToolID: "mcp/mcp_srv1/email_send", Effect: "unknown",
 	})
@@ -1328,7 +1292,6 @@ func TestMCPServerConnectionIDRuleMatching(t *testing.T) {
 		t.Fatalf("Check before ask rule = (%+v, %v), want allow", dec, err)
 	}
 
-	// Add Settings "Ask first" rule targeting mcp_srv1 via connection_ids: ["mcp_srv1"] with tool_ids: ["*"].
 	if _, err := svc.SaveRule(ctx, "", "req-ask-mcp", 0, permissions.RuleEditable{
 		Effect:        "ask",
 		ToolIDs:       []string{"*"},
@@ -1340,7 +1303,6 @@ func TestMCPServerConnectionIDRuleMatching(t *testing.T) {
 		t.Fatalf("SaveRule ask: %v", err)
 	}
 
-	// Ask rule targeting mcp_srv1 must override the Always allow rule!
 	dec2, err := svc.Check(ctx, permissions.Request{
 		RunID: "run-2", Origin: "user", ToolID: "mcp/mcp_srv1/email_send", Effect: "unknown",
 	})
@@ -1348,7 +1310,6 @@ func TestMCPServerConnectionIDRuleMatching(t *testing.T) {
 		t.Fatalf("Check with mcp_srv1 ask rule = (%+v, %v), want needs_interaction", dec2, err)
 	}
 
-	// Ask rule for mcp_srv1 must NOT match a different MCP server (mcp_srv2).
 	if _, err := svc.SaveRule(ctx, "", "req-allow-mcp2", 0, permissions.RuleEditable{
 		Effect:        "allow",
 		ToolIDs:       []string{"mcp/mcp_srv2/email_send"},

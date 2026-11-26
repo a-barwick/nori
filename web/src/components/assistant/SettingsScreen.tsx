@@ -21,7 +21,7 @@ import {
   type RuleEffect,
   type RuleFilter,
 } from "@/lib/assistant/permissions";
-import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
+import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant/useResource";
 import type { Connection, MCPServer, OperationProjection as Operation, PermissionRule, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
 import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "@/lib/runtime/messages";
 import { cn } from "@/lib/utils";
@@ -69,6 +69,7 @@ export function SettingsScreen({ section }: { section: SettingsSection }) {
 }
 
 function Permissions() {
+  const invalidate = useResourceInvalidation();
   const { has } = useAssistant();
   const rules = useResource<List<PermissionRule>>("/permissions", { poll: 30_000 });
   const connections = useResource<List<Connection>>(has("connections") ? "/connections" : null, { poll: 0 });
@@ -129,6 +130,7 @@ function Permissions() {
 }
 
 export function NewRule({ connections, servers, onDone }: { connections: Connection[]; servers: MCPServer[]; onDone: () => void }) {
+  const invalidate = useResourceInvalidation();
   const action = useAction();
   const [effect, setEffect] = useState<RuleEffect>("allow");
   const [account, setAccount] = useState(connections[0]?.id ?? "*");
@@ -190,6 +192,7 @@ function editable(preferences: Preferences): PreferencesEditable {
 }
 
 function PreferencesEditor({ current, onSaved }: { current: Preferences; onSaved: (next: Preferences) => void }) {
+  const invalidate = useResourceInvalidation();
   const action = useAction();
   const [value, setValue] = useState<PreferencesEditable>(editable(current));
   const [conflict, setConflict] = useState<Preferences>();
@@ -264,7 +267,6 @@ function AppearanceSettings() {
   const [appearance, setAppearance] = useAppearance();
   return (
     <div className="rounded-card border border-card-border bg-surface p-4 sm:p-5">
-      {/* Live interactive preview matching iOS AppearanceSettingsView */}
       <div className="space-y-3 rounded-tile border border-hairline bg-canvas p-4">
         <div className="flex justify-end">
           <span className="rounded-full bg-accent px-3.5 py-2 text-[13px] font-medium text-on-accent">
@@ -279,7 +281,6 @@ function AppearanceSettings() {
         </div>
       </div>
 
-      {/* System / Light / Dark segmented control */}
       <div
         role="radiogroup"
         aria-label="Appearance"

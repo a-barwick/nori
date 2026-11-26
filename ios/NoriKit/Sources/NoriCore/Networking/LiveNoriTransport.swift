@@ -1,6 +1,5 @@
 import Foundation
 
-// MARK: - Endpoint Router (Testable Pure Value Type)
 
 public struct NoriEndpointRouter: Sendable, Hashable {
     public let baseURL: URL
@@ -9,13 +8,11 @@ public struct NoriEndpointRouter: Sendable, Hashable {
         self.baseURL = baseURL
     }
 
-    /// Builds a URL for an unscoped endpoint (`/readyz`, `/api/users/resolve`).
     public func unscopedURL(path: String, queryItems: [URLQueryItem] = []) throws -> URL {
         let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
         return try buildURL(path: normalizedPath, queryItems: queryItems)
     }
 
-    /// Builds a URL for a user-scoped endpoint (`/v1/...`, `/api/turn`, `/api/command`).
     public func scopedURL(path: String, userID: String, queryItems: [URLQueryItem] = []) throws -> URL {
         guard !userID.isEmpty else {
             throw NoriAPIError(message: "User ID has not been resolved.", statusCode: 401)
@@ -45,7 +42,6 @@ public struct NoriEndpointRouter: Sendable, Hashable {
     }
 }
 
-// MARK: - Live HTTP + SSE Transport
 
 public actor LiveNoriTransport: NoriTransport {
     public let baseURL: URL
@@ -58,7 +54,7 @@ public actor LiveNoriTransport: NoriTransport {
     private let sseInitialBackoffSeconds: Double
     private let sseRolloverDelayMilliseconds: Int
     private var resolvedUserID: String?
-    private var identityGeneration = 0
+    private var identityGeneration: UInt64 = 0
 
     public init(
         baseURL: URL = NoriConfig.serverURL,
@@ -80,7 +76,6 @@ public actor LiveNoriTransport: NoriTransport {
             self.session = URLSession(configuration: apiConfig)
 
             let sseConfig = URLSessionConfiguration.default
-            // Server rolls over SSE streams at 150s; give 185s timeout so rollover is clean.
             sseConfig.timeoutIntervalForRequest = 185
             sseConfig.timeoutIntervalForResource = 0
             sseConfig.requestCachePolicy = .reloadIgnoringLocalCacheData
@@ -94,12 +89,11 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func clearCachedIdentity() {
-        identityGeneration += 1
+        identityGeneration &+= 1
         resolvedUserID = nil
         NoriTelemetryRuntime.shared.setUser(id: nil)
     }
 
-    // MARK: - Identity & Auth Headers
 
     private func ensureUserID() async throws -> String {
         if let resolvedUserID { return resolvedUserID }
@@ -173,7 +167,9 @@ public actor LiveNoriTransport: NoriTransport {
         contentType: String? = nil,
         traceContext: NoriTraceContext
     ) async throws -> (Data, URLResponse) {
+        let generation = identityGeneration
         let token = try await authProvider.validIDToken(forceRefresh: false)
+        guard generation == identityGeneration else { throw CancellationError() }
         var req = baseRequest
         req.setValue("no-store", forHTTPHeaderField: "Cache-Control")
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -182,10 +178,11 @@ public actor LiveNoriTransport: NoriTransport {
         }
         applyTraceHeaders(to: &req, traceContext: traceContext)
         let (data, response) = try await session.data(for: req)
+        guard generation == identityGeneration else { throw CancellationError() }
         if let http = response as? HTTPURLResponse, http.statusCode == 401 {
             NoriLogger.auth.warning("auth.token_refresh_retry", attributes: ["http.status_code": "401"], remote: false)
-            // Retry once with a freshly refreshed Google ID token.
             let freshToken = try await authProvider.validIDToken(forceRefresh: true)
+            guard generation == identityGeneration else { throw CancellationError() }
             var retryReq = baseRequest
             retryReq.setValue("no-store", forHTTPHeaderField: "Cache-Control")
             retryReq.setValue("Bearer \(freshToken)", forHTTPHeaderField: "Authorization")
@@ -193,7 +190,9 @@ public actor LiveNoriTransport: NoriTransport {
                 retryReq.setValue(contentType, forHTTPHeaderField: "Content-Type")
             }
             applyTraceHeaders(to: &retryReq, traceContext: traceContext)
-            return try await session.data(for: retryReq)
+            let result = try await session.data(for: retryReq)
+            guard generation == identityGeneration else { throw CancellationError() }
+            return result
         }
         return (data, response)
     }
@@ -291,7 +290,6 @@ public actor LiveNoriTransport: NoriTransport {
         }
     }
 
-    /// Idempotent `/v1/*` mutation with automatic `/v1/mutations/{request_id}` recovery on ambiguous transport drop.
     private func mutate<Body: Encodable, Resource: Sendable & Codable & Hashable>(
         _ path: String,
         method: String = "POST",
@@ -303,7 +301,6 @@ public actor LiveNoriTransport: NoriTransport {
         } catch let apiErr as NoriAPIError {
             throw apiErr
         } catch {
-            // Network drop before response arrived — check if the server recorded a receipt.
             if let encodedID = requestID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
                let receipt: MutationReceipt<Resource> = try? await getJSON("/v1/mutations/\(encodedID)") {
                 return receipt
@@ -317,7 +314,6 @@ public actor LiveNoriTransport: NoriTransport {
         }
     }
 
-    // MARK: - Ping & Capabilities
 
     public func ping() async -> HealthCheckResult {
         let start = ContinuousClock.now
@@ -418,7 +414,6 @@ public actor LiveNoriTransport: NoriTransport {
         )
     }
 
-    // MARK: - Resumable SSE Event Stream (150s rollover + exponential backoff)
 
     public nonisolated func eventStream(after position: Int) -> AsyncThrowingStream<NoriStreamEvent, Error> {
         AsyncThrowingStream { continuation in
@@ -508,7 +503,6 @@ public actor LiveNoriTransport: NoriTransport {
                             )
                         }
 
-                        // Connected cleanly — reset backoff and auth retry state.
                         backoffSeconds = initialBackoff
                         retriedAuthOnCurrentCycle = false
                         reportedReconnectFailure = false
@@ -518,13 +512,11 @@ public actor LiveNoriTransport: NoriTransport {
                         var parser = SSEParser()
                         let jsonDecoder = JSONDecoder()
 
-                        // Note: URLSession.AsyncBytes.lines omits blank lines on Darwin,
-                        // which breaks SSE event dispatch (`\n\n`). Read raw UTF-8 lines directly.
                         var lineBuffer: [UInt8] = []
                         lineBuffer.reserveCapacity(1024)
                         for try await byte in bytes {
                             if Task.isCancelled { break }
-                            if byte == 0x0A { // '\n'
+                            if byte == 0x0A {
                                 let line = String(decoding: lineBuffer, as: UTF8.self)
                                 lineBuffer.removeAll(keepingCapacity: true)
                                 if let frame = parser.feedLine(line),
@@ -552,7 +544,6 @@ public actor LiveNoriTransport: NoriTransport {
                             continuation.yield(event)
                         }
 
-                        // Clean EOF (e.g. 150s server rollover): reconnect immediately without backoff penalty.
                         if !Task.isCancelled && rolloverDelayMs > 0 {
                             try? await Task.sleep(for: .milliseconds(rolloverDelayMs))
                         }
@@ -582,7 +573,6 @@ public actor LiveNoriTransport: NoriTransport {
                             NoriTelemetryRuntime.shared.captureError(error, category: "sse.reconnect", tags: sseTags)
                         }
                         if forceNextTokenRefresh {
-                            // Refresh attempt itself failed transiently; allow retrying it after backoff.
                             retriedAuthOnCurrentCycle = false
                         }
                         let delay = min(backoffSeconds, 15.0)
@@ -599,7 +589,6 @@ public actor LiveNoriTransport: NoriTransport {
         }
     }
 
-    // MARK: - Conversation & Uploads
 
     public func sendTurn(id: String, message: String, attachmentIDs: [String]) async throws -> Session {
         try await sendTurn(id: id, message: message, attachmentIDs: attachmentIDs, modelSelection: nil)
@@ -656,7 +645,6 @@ public actor LiveNoriTransport: NoriTransport {
         }
     }
 
-    // MARK: - Work & Interactions
 
     public func fetchWorkItems(bucket: WorkBucket?) async throws -> [WorkItem] {
         var query: [URLQueryItem] = []
@@ -724,7 +712,6 @@ public actor LiveNoriTransport: NoriTransport {
         )
     }
 
-    // MARK: - Apps: MCP Servers & Connections
 
     public func fetchMCPServers() async throws -> [MCPServer] {
         let resp: ListResponse<MCPServer> = try await getJSON("/v1/mcp")
@@ -852,7 +839,6 @@ public actor LiveNoriTransport: NoriTransport {
         )
     }
 
-    // MARK: - Library & Search
 
     public func fetchLibrary() async throws -> [LibraryItem] {
         let resp: ListResponse<LibraryItem> = try await getJSON("/v1/library")
@@ -933,7 +919,6 @@ public actor LiveNoriTransport: NoriTransport {
         )
     }
 
-    // MARK: - Memory
 
     public func fetchCoreMemories() async throws -> [MemoryFact] {
         let resp: ListResponse<MemoryFact> = try await getJSON("/v1/memory")
@@ -1038,7 +1023,6 @@ public actor LiveNoriTransport: NoriTransport {
         )
     }
 
-    // MARK: - Automations, Goals, Permissions, Preferences
 
     public func fetchAutomations() async throws -> [Automation] {
         let resp: ListResponse<Automation> = try await getJSON("/v1/automations")

@@ -1,7 +1,3 @@
-// Package outer provides a deterministic simulation harness for Nori's outer
-// conversation loop (core/internal/conversation), including seeded fake models
-// (ReplyModel, IntentClassifier, SummaryModel), multi-worker lease competition,
-// zero-sleep deterministic timers, and outer-loop invariant verification.
 package outer
 
 import (
@@ -24,51 +20,27 @@ import (
 )
 
 var (
-	// ErrInjectedReplyFault is returned by FakeReplyModel when a transient
-	// provider error fault triggers.
 	ErrInjectedReplyFault = errors.New("sim/outer: injected reply model error")
 
-	// ErrInjectedClassifierFault is returned by FakeClassifier when a classifier
-	// failure fault triggers.
 	ErrInjectedClassifierFault = errors.New("sim/outer: injected classifier error")
 
-	// ErrInjectedSummaryFault is returned by FakeSummaryModel when a compaction
-	// summary failure fault triggers.
 	ErrInjectedSummaryFault = errors.New("sim/outer: injected summary model error")
 )
 
-// ReplyFaultConfig configures deterministic fault and timing injection for
-// FakeReplyModel. Probabilities are in [0.0, 1.0].
 type ReplyFaultConfig struct {
-	// ErrorProb is the probability of returning a transient provider error
-	// after RecordUsage has been called.
 	ErrorProb float64
 
-	// OverflowProb is the probability of returning contextview.ErrOverflow on a
-	// non-CommandPlan turn with sufficient history, exercising context reduction.
 	OverflowProb float64
 
-	// SlowLeaseRenewProb is the probability of advancing the virtual clock by
-	// 11s-15s (crossing the 10s lease-renewal interval while staying under the
-	// 30s lease TTL).
 	SlowLeaseRenewProb float64
 
-	// SlowLeaseExpireProb is the probability of advancing the virtual clock by
-	// 31s-40s (exceeding state.ConversationLease so a competing worker can steal
-	// the lease mid-flight).
 	SlowLeaseExpireProb float64
 
-	// PlanMismatchProb is the probability on a CommandPlan request of returning
-	// a clarification response instead of matching the proposed commands.
 	PlanMismatchProb float64
 
-	// StreamChunks controls how many cumulative chunks are emitted when
-	// ReplyRequest.Stream is non-nil. Defaults to 3 when <= 0.
 	StreamChunks int
 }
 
-// DefaultReplyFaultConfig returns an adversarial default fault profile for
-// FakeReplyModel.
 func DefaultReplyFaultConfig() ReplyFaultConfig {
 	return ReplyFaultConfig{
 		ErrorProb:           0.10,
@@ -80,8 +52,6 @@ func DefaultReplyFaultConfig() ReplyFaultConfig {
 	}
 }
 
-// BeforeRespondEvent describes an in-flight ReplyModel.Respond call passed to
-// OnBeforeRespond hooks.
 type BeforeRespondEvent struct {
 	CallNum        int
 	WorkerIdx      int
@@ -90,17 +60,10 @@ type BeforeRespondEvent struct {
 	LeaseExpired   bool
 }
 
-// BeforeRespondHook is invoked synchronously during FakeReplyModel.Respond
-// after RecordUsage and simulated slow-response clock advancement, allowing
-// deterministic mid-flight interleaving (competing worker takeover, new user
-// input, cancellation, or explicit lease-watcher ticks).
 type BeforeRespondHook func(ctx context.Context, ev BeforeRespondEvent) error
 
-// ScriptedReplyFunc lets tests override FakeReplyModel output for specific
-// calls. Returning handled=false falls through to normal seeded generation.
 type ScriptedReplyFunc func(ctx context.Context, req conversation.ReplyRequest) (reply conversation.Reply, err error, handled bool)
 
-// ReplyModelStats records counters observed by FakeReplyModel.
 type ReplyModelStats struct {
 	Calls            int
 	Errors           int
@@ -116,15 +79,11 @@ type ReplyModelStats struct {
 	MemoriesEmitted  int
 }
 
-// PlanCache shares proposed planned commands across worker ReplyModels so a
-// competing worker resuming a proposedReply checkpoint can still deterministically
-// match the original command plan.
 type PlanCache struct {
 	mu    sync.Mutex
 	plans map[string][]conversation.ToolCall
 }
 
-// NewPlanCache creates an empty PlanCache.
 func NewPlanCache() *PlanCache {
 	return &PlanCache{plans: make(map[string][]conversation.ToolCall)}
 }
@@ -155,7 +114,6 @@ func (c *PlanCache) Get(key string) ([]conversation.ToolCall, bool) {
 	return copied, true
 }
 
-// ReplyModelConfig configures a FakeReplyModel.
 type ReplyModelConfig struct {
 	Name          string
 	WorkerIdx     int
@@ -167,7 +125,6 @@ type ReplyModelConfig struct {
 	Plans         *PlanCache
 }
 
-// FakeReplyModel is a deterministic seeded conversation.ReplyModel.
 type FakeReplyModel struct {
 	mu              sync.Mutex
 	name            string
@@ -186,7 +143,6 @@ type FakeReplyModel struct {
 
 var _ conversation.ReplyModel = (*FakeReplyModel)(nil)
 
-// NewFakeReplyModel constructs a deterministic FakeReplyModel.
 func NewFakeReplyModel(cfg ReplyModelConfig) *FakeReplyModel {
 	name := cfg.Name
 	if name == "" {
@@ -227,45 +183,38 @@ func NewFakeReplyModel(cfg ReplyModelConfig) *FakeReplyModel {
 	}
 }
 
-// Name returns the model name recorded on conversation attempts and traces.
 func (m *FakeReplyModel) Name() string { return m.name }
 
-// SetFaultsEnabled toggles fault and slow-response injection.
 func (m *FakeReplyModel) SetFaultsEnabled(enabled bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.faultsEnabled = enabled
 }
 
-// FaultsEnabled reports whether fault injection is enabled.
 func (m *FakeReplyModel) FaultsEnabled() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.faultsEnabled
 }
 
-// SetOnBeforeRespond installs or clears a mid-flight hook invoked during Respond.
 func (m *FakeReplyModel) SetOnBeforeRespond(fn BeforeRespondHook) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onBeforeRespond = fn
 }
 
-// SetScripted installs or clears a scripted response override.
 func (m *FakeReplyModel) SetScripted(fn ScriptedReplyFunc) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.scripted = fn
 }
 
-// Stats returns a snapshot of model invocation counters.
 func (m *FakeReplyModel) Stats() ReplyModelStats {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.stats
 }
 
-// Respond implements conversation.ReplyModel deterministically.
 func (m *FakeReplyModel) Respond(ctx context.Context, req conversation.ReplyRequest) (conversation.Reply, error) {
 	if err := ctx.Err(); err != nil {
 		return conversation.Reply{}, err
@@ -302,7 +251,6 @@ func (m *FakeReplyModel) Respond(ctx context.Context, req conversation.ReplyRequ
 	}
 	usage.RequestStatus = "unknown"
 
-	// Choose deterministic simulated latency and advance virtual clock.
 	var delay time.Duration
 	leaseExpired := false
 	m.mu.Lock()
@@ -360,7 +308,6 @@ func (m *FakeReplyModel) Respond(ctx context.Context, req conversation.ReplyRequ
 		}
 	}
 
-	// Deterministic transient provider faults / context overflow.
 	m.mu.Lock()
 	var injectedErr error
 	if faultsEnabled {
@@ -437,14 +384,12 @@ func (m *FakeReplyModel) generateReply(req conversation.ReplyRequest, usage stat
 	faultsEnabled := m.faultsEnabled
 	planMismatchProb := m.faults.PlanMismatchProb
 
-	// 1. NoDispatch turns (introduction & non-work-request notifications): plain text only.
 	if req.NoDispatch {
 		m.mu.Unlock()
 		text := fmt.Sprintf("Outer notification reply #%d.", seq)
 		return BuildPlainReply(text, finalizeReplyUsage(usage, req, text, true))
 	}
 
-	// 2. CommandPlan turns: independently plan dispatch/steer from user context.
 	if req.CommandPlan {
 		mismatch := faultsEnabled && m.rng.Float64() < planMismatchProb
 		m.mu.Unlock()
@@ -461,7 +406,6 @@ func (m *FakeReplyModel) generateReply(req conversation.ReplyRequest, usage stat
 				DispatchCall("action_0", fmt.Sprintf("Planned task #%d for %s", seq, safeSnippet(req.TelemetryInput, 48)), "", ""),
 			}
 		} else {
-			// Ensure every steer target still exists in req.TaskIDs.
 			filtered := make([]conversation.ToolCall, 0, len(planned))
 			for _, c := range planned {
 				if c.Function.Name == "steer" {
@@ -483,8 +427,6 @@ func (m *FakeReplyModel) generateReply(req conversation.ReplyRequest, usage stat
 		return BuildStructuredReply(text, planned, finalizeReplyUsage(usage, req, text, true))
 	}
 
-	// 3. WorkRequests turns (no user input, settling a task's QuestionWork):
-	// only subtask dispatch(for, question_id) or answer(run_id, question_id) are allowed.
 	if len(req.WorkRequests) > 0 {
 		wr := req.WorkRequests[0]
 		choice := m.rng.IntN(3)
@@ -501,7 +443,6 @@ func (m *FakeReplyModel) generateReply(req conversation.ReplyRequest, usage stat
 				AnswerCall("action_0", wr.TaskID, wr.QuestionID, fmt.Sprintf("Work request answer #%d", seq)),
 			}
 		default:
-			// Plain acknowledgement without settling yet.
 		}
 		if len(calls) > 0 {
 			m.mu.Lock()
@@ -512,7 +453,6 @@ func (m *FakeReplyModel) generateReply(req conversation.ReplyRequest, usage stat
 		return BuildStructuredReply(text, calls, finalizeReplyUsage(usage, req, text, true))
 	}
 
-	// 4. Normal user turns: choose a deterministic action mix respecting TaskIDs and MemoryIDs.
 	openQuestions := extractOpenQuestions(req.Messages)
 	roll := m.rng.IntN(100)
 	taskIdx := 0
@@ -532,36 +472,28 @@ func (m *FakeReplyModel) generateReply(req conversation.ReplyRequest, usage stat
 
 	switch {
 	case roll < 30:
-		// Plain conversational reply, no tool calls.
 	case roll < 52:
-		// Top-level task dispatch.
 		c := DispatchCall("action_0", fmt.Sprintf("Task request #%d: %s", seq, safeSnippet(req.TelemetryInput, 64)), "", "")
 		calls = append(calls, c)
 		plannedCalls = append(plannedCalls, c)
 	case roll < 64 && len(req.TaskIDs) > 0:
-		// Steer an existing task.
 		c := SteerCall("action_0", req.TaskIDs[taskIdx], fmt.Sprintf("Steer update #%d", seq), interrupt)
 		calls = append(calls, c)
 		plannedCalls = append(plannedCalls, c)
 	case roll < 73 && len(req.TaskIDs) > 0:
-		// Stop an existing task.
 		calls = append(calls, StopCall("action_0", req.TaskIDs[taskIdx]))
 	case roll < 80 && len(openQuestions) > 0:
-		// Answer a live open task question.
 		q := openQuestions[0]
 		calls = append(calls, AnswerCall("action_0", q.TaskID, q.QuestionID, fmt.Sprintf("User answer #%d", seq)))
 	case roll < 88:
-		// Remember a new user preference/fact (or update an existing memory).
 		replaces := ""
 		if len(req.MemoryIDs) > 0 && roll%2 == 0 {
 			replaces = req.MemoryIDs[memIdx]
 		}
 		calls = append(calls, RememberCall("action_0", fmt.Sprintf("Preference #%d", seq), "the user", replaces))
 	case roll < 94 && len(req.MemoryIDs) > 0:
-		// Forget an existing memory.
 		calls = append(calls, ForgetCall("action_0", req.MemoryIDs[memIdx]))
 	default:
-		// Combined dispatch + remember (tests planned + memory call batching).
 		dc := DispatchCall("action_0", fmt.Sprintf("Combined task #%d", seq), "", "")
 		mc := RememberCall("action_1", fmt.Sprintf("Combined fact #%d", seq), "the user", "")
 		calls = append(calls, dc, mc)
@@ -668,8 +600,6 @@ func extractOpenQuestions(messages []json.RawMessage) []conversation.WorkRequest
 	return out
 }
 
-// BuildPlainReply constructs a valid non-structured conversation.Reply (used for
-// NoDispatch turns such as introductions and task notifications).
 func BuildPlainReply(text string, usage state.Usage) conversation.Reply {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -687,9 +617,6 @@ func BuildPlainReply(text string, usage state.Usage) conversation.Reply {
 	}
 }
 
-// BuildStructuredReply constructs a valid structured conversation.Reply whose
-// serialized Message decodes cleanly via conversation/response.go's decodeResponse
-// and assigns canonical action_<index> tool call IDs.
 func BuildStructuredReply(text string, calls []conversation.ToolCall, usage state.Usage) conversation.Reply {
 	text = strings.TrimSpace(text)
 	type encodedAction struct {
@@ -731,8 +658,6 @@ func BuildStructuredReply(text string, calls []conversation.ToolCall, usage stat
 	}
 }
 
-// DispatchCall builds a valid "dispatch" conversation.ToolCall matching
-// conversation/commands.go's strict JSON schema.
 func DispatchCall(callID, request, parentID, questionID string) conversation.ToolCall {
 	payload := struct {
 		Request     string   `json:"request"`
@@ -753,7 +678,6 @@ func DispatchCall(callID, request, parentID, questionID string) conversation.Too
 	return newToolCall(callID, "dispatch", payload)
 }
 
-// SteerCall builds a valid "steer" conversation.ToolCall.
 func SteerCall(callID, runID, text string, interrupt bool) conversation.ToolCall {
 	return newToolCall(callID, "steer", struct {
 		RunID     string `json:"run_id"`
@@ -766,7 +690,6 @@ func SteerCall(callID, runID, text string, interrupt bool) conversation.ToolCall
 	})
 }
 
-// StopCall builds a valid "stop" conversation.ToolCall.
 func StopCall(callID, runID string) conversation.ToolCall {
 	return newToolCall(callID, "stop", struct {
 		RunID string `json:"run_id"`
@@ -785,7 +708,6 @@ func HoldCall(callID, taskID, question string) conversation.ToolCall {
 	})
 }
 
-// AnswerCall builds a valid "answer" conversation.ToolCall.
 func AnswerCall(callID, runID, questionID, text string) conversation.ToolCall {
 	return newToolCall(callID, "answer", struct {
 		RunID      string `json:"run_id"`
@@ -798,8 +720,6 @@ func AnswerCall(callID, runID, questionID, text string) conversation.ToolCall {
 	})
 }
 
-// RememberCall builds a valid "remember" conversation.ToolCall matching
-// conversation/memory.go's strict JSON schema.
 func RememberCall(callID, text, about, replaces string) conversation.ToolCall {
 	payload := struct {
 		Text     string  `json:"text"`
@@ -815,8 +735,6 @@ func RememberCall(callID, text, about, replaces string) conversation.ToolCall {
 	return newToolCall(callID, state.MemoryRemember, payload)
 }
 
-// ForgetCall builds a valid "forget" conversation.ToolCall matching
-// conversation/memory.go's strict JSON schema.
 func ForgetCall(callID, memoryID string) conversation.ToolCall {
 	return newToolCall(callID, state.MemoryForget, struct {
 		MemoryID string `json:"memory_id"`
@@ -836,16 +754,11 @@ func newToolCall(callID, name string, args any) conversation.ToolCall {
 	return call
 }
 
-// ClassifierStats records counters observed by FakeClassifier.
 type ClassifierStats struct {
 	Calls  int
 	Errors int
 }
 
-// FakeClassifier is a deterministic seeded conversation.IntentClassifier.
-// Because conversation.Runner runs Classify concurrently with history/task
-// reads, FakeClassifier uses its own isolated RNG and IDGen and never mutates
-// the virtual clock.
 type FakeClassifier struct {
 	mu            sync.Mutex
 	rng           *rand.Rand
@@ -871,8 +784,6 @@ var allIntents = []conversation.Intent{
 	conversation.Mixed,
 }
 
-// NewFakeClassifier creates a deterministic FakeClassifier with an isolated RNG
-// and IDGen.
 func NewFakeClassifier(rng *rand.Rand, clock *env.Clock, ids *env.IDGen, errorProb float64) *FakeClassifier {
 	if rng == nil {
 		rng = rand.New(rand.NewPCG(3, 4))
@@ -892,22 +803,18 @@ func NewFakeClassifier(rng *rand.Rand, clock *env.Clock, ids *env.IDGen, errorPr
 	}
 }
 
-// SetFaultsEnabled toggles classifier error injection.
 func (c *FakeClassifier) SetFaultsEnabled(enabled bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.faultsEnabled = enabled
 }
 
-// Stats returns a snapshot of classifier call/error counters.
 func (c *FakeClassifier) Stats() ClassifierStats {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.stats
 }
 
-// Classify implements conversation.IntentClassifier deterministically without
-// advancing the virtual clock.
 func (c *FakeClassifier) Classify(ctx context.Context, req conversation.ClassifyRequest) (conversation.Classification, error) {
 	if err := ctx.Err(); err != nil {
 		return conversation.Classification{}, err
@@ -960,7 +867,6 @@ func (c *FakeClassifier) Classify(ctx context.Context, req conversation.Classify
 	}, nil
 }
 
-// SummaryModelStats records counters observed by FakeSummaryModel / FakeCompactionModel.
 type SummaryModelStats struct {
 	Calls        int
 	FlushCalls   int
@@ -970,8 +876,6 @@ type SummaryModelStats struct {
 	Succeeded    int
 }
 
-// CompactionFaultMode selects a specific adversarial fault injected by
-// FakeSummaryModel / FakeCompactionModel.
 type CompactionFaultMode string
 
 const (
@@ -986,21 +890,12 @@ const (
 	CompactionFaultReemitAlreadyExtracted CompactionFaultMode = "reemit_already_extracted"
 )
 
-// CompactionBeforeRespondHook is invoked synchronously during
-// FakeSummaryModel.Respond before producing a response or fault, enabling
-// deterministic interleaving (e.g., mid-flush user arrival + 500ms watcher
-// tick, concurrent replica merge, or concurrent UI EditMemory/MutateMemory).
 type CompactionBeforeRespondHook func(ctx context.Context, toolName string, callNum int, req agent.Request) error
 
-// ScriptedCompactionFunc lets tests completely override FakeSummaryModel output.
 type ScriptedCompactionFunc func(ctx context.Context, req agent.Request) (agent.Response, error, bool)
 
-// FakeCompactionModel is an alias for FakeSummaryModel supporting both
-// flush_and_compact and dream_consolidate tool calls and adversarial fault modes.
 type FakeCompactionModel = FakeSummaryModel
 
-// FakeSummaryModel is a deterministic seeded conversation.SummaryModel
-// supporting flush_and_compact, dream_consolidate, and adversarial fault modes.
 type FakeSummaryModel struct {
 	mu                sync.Mutex
 	name              string
@@ -1020,12 +915,6 @@ type FakeSummaryModel struct {
 
 var _ conversation.SummaryModel = (*FakeSummaryModel)(nil)
 
-// NewFakeCompactionModel creates a deterministic FakeCompactionModel.
-func NewFakeCompactionModel(name string, rng *rand.Rand, clock *env.Clock, ids *env.IDGen, errorProb float64) *FakeCompactionModel {
-	return NewFakeSummaryModel(name, rng, clock, ids, errorProb)
-}
-
-// NewFakeSummaryModel creates a deterministic FakeSummaryModel.
 func NewFakeSummaryModel(name string, rng *rand.Rand, clock *env.Clock, ids *env.IDGen, errorProb float64) *FakeSummaryModel {
 	if name == "" {
 		name = "sim-summary-model"
@@ -1049,54 +938,44 @@ func NewFakeSummaryModel(name string, rng *rand.Rand, clock *env.Clock, ids *env
 	}
 }
 
-// Name returns the summarizer model name recorded on compacted summaries.
 func (s *FakeSummaryModel) Name() string { return s.name }
 
-// SetFaultsEnabled toggles summary model error injection.
 func (s *FakeSummaryModel) SetFaultsEnabled(enabled bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.faultsEnabled = enabled
 }
 
-// SetFaultMode configures a persistent adversarial fault mode (or CompactionFaultNone to clear).
 func (s *FakeSummaryModel) SetFaultMode(mode CompactionFaultMode) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.faultMode = mode
 }
 
-// QueueFaultModes enqueues one-shot adversarial fault modes consumed FIFO on subsequent calls.
 func (s *FakeSummaryModel) QueueFaultModes(modes ...CompactionFaultMode) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.queuedFaultModes = append(s.queuedFaultModes, modes...)
 }
 
-// SetOnBeforeRespond installs or clears a synchronous mid-flight hook.
 func (s *FakeSummaryModel) SetOnBeforeRespond(fn CompactionBeforeRespondHook) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onBeforeRespond = fn
 }
 
-// SetScripted installs or clears a full scripted response override.
 func (s *FakeSummaryModel) SetScripted(fn ScriptedCompactionFunc) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.scripted = fn
 }
 
-// SetCommitThenErrorTrigger registers a callback invoked when
-// CompactionFaultCommitThenError triggers so the immediately following DB
-// commit experiences a deterministic CommitThenError.
 func (s *FakeSummaryModel) SetCommitThenErrorTrigger(fn func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.commitThenErrHook = fn
 }
 
-// Stats returns a snapshot of summary model counters.
 func (s *FakeSummaryModel) Stats() SummaryModelStats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1125,9 +1004,6 @@ func isExtractOnlyRequest(req agent.Request) bool {
 	return head.ExtractOnly
 }
 
-// Respond implements conversation.SummaryModel deterministically, supporting
-// flush_and_compact (both coupled compaction and extract_only session-idle
-// extraction), dream_consolidate, and adversarial fault modes.
 func (s *FakeSummaryModel) Respond(ctx context.Context, req agent.Request) (agent.Response, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.Response{}, err
@@ -1169,7 +1045,6 @@ func (s *FakeSummaryModel) Respond(ctx context.Context, req agent.Request) (agen
 			randomFail = true
 			randomMissingTool = s.rng.IntN(4) == 0
 		} else if toolName != "dream_consolidate" && !extractOnly && s.rng.Float64() < s.errorProb {
-			// Continuously test the runtime's already_extracted deduplication filter during randomized runs.
 			activeMode = CompactionFaultReemitAlreadyExtracted
 		}
 	}
@@ -1350,8 +1225,6 @@ func buildFlushPayload(req agent.Request, seq int, kind string, mode CompactionF
 				quote = strings.ToValidUTF8(quote[:state.MaxSummaryQuote], "")
 			}
 
-			// Normal flush_and_compact summarizes ALL supplied turns (both already_extracted=true
-			// and already_extracted=false) leaving the verbatim window. extract_only leaves summary empty.
 			if !payload.ExtractOnly && !seenSummaryInputs[msg.InputID] && newSummaryCount < 4 {
 				summaryQuote := quote
 				if mode == CompactionFaultQuoteMismatch {
@@ -1367,8 +1240,6 @@ func buildFlushPayload(req agent.Request, seq int, kind string, mode CompactionF
 				newSummaryCount++
 			}
 
-			// By default, only emit Core upserts and Daily Log entries for turns with
-			// already_extracted == false; record already_extracted turns for adversarial re-emit mode.
 			if turn.AlreadyExtracted {
 				alreadyExtractedUsers = append(alreadyExtractedUsers, alreadyExtractedUser{
 					inputID: msg.InputID,
@@ -1383,7 +1254,6 @@ func buildFlushPayload(req agent.Request, seq int, kind string, mode CompactionF
 				firstUserText = trimmed
 			}
 
-			// Extract durable preference/constraint facts into Core and episodic context into Daily Logs.
 			lower := strings.ToLower(trimmed)
 			if len(coreUpserts) < 2 && (strings.Contains(lower, "prefer") || strings.Contains(lower, "remember") || strings.Contains(lower, "constraint")) {
 				coreUpserts = append(coreUpserts, map[string]any{
@@ -1408,10 +1278,8 @@ func buildFlushPayload(req agent.Request, seq int, kind string, mode CompactionF
 		}
 	}
 
-	// Adversarial payload injection modes (the runtime must filter/reject these).
 	switch mode {
 	case CompactionFaultTaskOutcomeToCore:
-		// Attempt to sneak untrusted task output into Core memory using a task run_id or empty input_id.
 		targetID := firstRunID
 		if targetID == "" {
 			targetID = "task-event-injected-run"
@@ -1445,7 +1313,6 @@ func buildFlushPayload(req agent.Request, seq int, kind string, mode CompactionF
 			})
 		}
 	case CompactionFaultDeletePinnedCore:
-		// Attempt to overwrite a pinned Core memory with an unverified/mismatched payload.
 		for _, m := range payload.CoreMemories {
 			if m.Pinned {
 				coreUpserts = append(coreUpserts, map[string]any{
@@ -1460,8 +1327,6 @@ func buildFlushPayload(req agent.Request, seq int, kind string, mode CompactionF
 			}
 		}
 	case CompactionFaultReemitAlreadyExtracted:
-		// Attempt to re-emit Core upserts and Daily Log entries citing already_extracted=true
-		// turns with exact verbatim quotes so the runtime's deduplication filter must drop them.
 		for i, ae := range alreadyExtractedUsers {
 			if i >= 4 {
 				break
@@ -1532,7 +1397,6 @@ func buildDreamPayload(req agent.Request, seq int, mode CompactionFaultMode) map
 	coreDeletes := []any{}
 	dailyLogs := []map[string]any{}
 
-	// Merge duplicate unpinned Core memories with matching normalized text.
 	seenCore := map[string]state.Memory{}
 	for _, m := range payload.CoreMemories {
 		norm := strings.ToLower(strings.TrimSpace(m.Text))
@@ -1548,7 +1412,6 @@ func buildDreamPayload(req agent.Request, seq int, mode CompactionFaultMode) map
 		seenCore[norm] = m
 	}
 
-	// Promote first eligible user-sourced Daily Log entry not already in Core.
 	for _, entry := range payload.DailyLogs {
 		if entry.Provenance == state.ProvenanceTaskOutcome || entry.SourceInputID == "" {
 			continue
@@ -1579,7 +1442,6 @@ func buildDreamPayload(req agent.Request, seq int, mode CompactionFaultMode) map
 		for _, m := range payload.CoreMemories {
 			if m.Pinned {
 				coreDeletes = append(coreDeletes, m.ID)
-				// Also try updating pinned memory without a strictly newer source input.
 				coreUpserts = append(coreUpserts, map[string]any{
 					"id":              m.ID,
 					"text":            "UNAUTHORIZED PINNED OVERWRITE BY DREAM",

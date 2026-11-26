@@ -170,8 +170,6 @@ func reportHTTPFailure(ctx context.Context, status int, attrs []attribute.KeyVal
 	if status != http.StatusTooManyRequests {
 		return status >= 500
 	}
-	// Bound repeated polling diagnostics to one per minute per process. The
-	// response marker is still present on every application-generated rejection.
 	now := time.Now().Unix()
 	last := lastHTTPRejection.Load()
 	if now-last < 60 || !lastHTTPRejection.CompareAndSwap(last, now) {
@@ -188,21 +186,12 @@ type httpFailure int
 func (httpFailure) Error() string         { return "HTTP request failed" }
 func (e httpFailure) HTTPStatusCode() int { return int(e) }
 
-// These routes stay untraced on success. Unknown paths never leave the process.
 func failedPollRoute(path string) string {
 	switch path {
 	case "/healthz", "/api/healthz", "/readyz", "/api/readyz", "/metrics", "/v1/snapshot", "/v1/events", "/api/trace", "/api/artifact", "/operation", "/operation/cancel", "/activity":
 		return path
 	default:
 		return "unknown"
-	}
-}
-
-// RequireRequestFlush marks real work inside an otherwise excluded request.
-// Idle polls stay quiet; the HTTP handler flushes marked requests on return.
-func RequireRequestFlush(ctx context.Context) {
-	if pending, ok := ctx.Value(requestFlushKey{}).(*atomic.Bool); ok {
-		pending.Store(true)
 	}
 }
 
