@@ -37,3 +37,16 @@ func (Unavailable) Replace(context.Context, string, int64, []byte) (int64, error
 	return 0, ErrCredentialUnavailable
 }
 func (Unavailable) Delete(context.Context, string) error { return ErrCredentialUnavailable }
+
+// IsUnavailable reports whether store is nil or explicitly configured as Unavailable.
+func IsUnavailable(store CredentialStore) bool {
+	if store == nil {
+		return true
+	}
+	switch store.(type) {
+	case Unavailable, *Unavailable:
+		return true
+	default:
+		return false
+	}
+}

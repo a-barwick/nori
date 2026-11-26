@@ -5,25 +5,23 @@ import (
 	"strings"
 
 	"nori/internal/conversation"
-	"nori/internal/modelprofiles"
 	"nori/internal/state"
 )
 
 const ChatContract = "nori-chat-2"
 
 type capabilitiesView struct {
-	Contract             string                       `json:"contract"`
-	ConversationContract string                       `json:"conversationContract,omitempty"`
-	Service              string                       `json:"service"`
-	Persistence          string                       `json:"persistence,omitempty"`
-	Provider             string                       `json:"provider,omitempty"`
-	Model                string                       `json:"model,omitempty"`
-	ConversationModes    []string                     `json:"conversationModes"`
-	Features             map[string]bool              `json:"features"`
-	AssistantContract    string                       `json:"assistant_contract,omitempty"`
-	AssistantFeatures    map[string]bool              `json:"assistant_features,omitempty"`
-	UploadAccept         *uploadAcceptView            `json:"upload_accept,omitempty"`
-	ModelProfiles        *modelprofiles.PublicCatalog `json:"model_profiles,omitempty"`
+	Contract             string            `json:"contract"`
+	ConversationContract string            `json:"conversationContract,omitempty"`
+	Service              string            `json:"service"`
+	Persistence          string            `json:"persistence,omitempty"`
+	Provider             string            `json:"provider,omitempty"`
+	Model                string            `json:"model,omitempty"`
+	ConversationModes    []string          `json:"conversationModes"`
+	Features             map[string]bool   `json:"features"`
+	AssistantContract    string            `json:"assistant_contract,omitempty"`
+	AssistantFeatures    map[string]bool   `json:"assistant_features,omitempty"`
+	UploadAccept         *uploadAcceptView `json:"upload_accept,omitempty"`
 }
 
 func (s *server) capabilities(w http.ResponseWriter, r *http.Request) {
@@ -44,12 +42,6 @@ func (s *server) capabilities(w http.ResponseWriter, r *http.Request) {
 		body.AssistantFeatures = s.Assistant.Features
 		accepted := uploadAccept()
 		body.UploadAccept = &accepted
-	}
-	if !s.Features.DisableBackgroundTasks && s.CanPickModels && s.ModelProfiles != nil {
-		pub := s.ModelProfiles.Snapshot().Public()
-		if len(pub.Profiles) > 0 {
-			body.ModelProfiles = &pub
-		}
 	}
 	writeJSON(w, 200, body)
 }
@@ -74,16 +66,8 @@ func (s *server) resolveModelSelection(w http.ResponseWriter, sel *state.ModelSe
 	if sel.IsEmpty() {
 		return nil, true
 	}
-	if !s.CanPickModels || s.ModelProfiles == nil {
-		writeJSON(w, 403, map[string]string{"error": "Model selection is not enabled for this account.", "code": "model_selection_unavailable"})
-		return nil, false
-	}
-	resolved, err := s.ModelProfiles.ValidateAndResolve(sel)
-	if err != nil {
-		writeJSON(w, 400, map[string]string{"error": err.Error(), "code": "model_selection_unavailable"})
-		return nil, false
-	}
-	return resolved, true
+	writeJSON(w, http.StatusForbidden, map[string]string{"error": "Model selection is not enabled for this account.", "code": "model_selection_unavailable"})
+	return nil, false
 }
 
 func (s *server) assistantConversationMessage(w http.ResponseWriter, r *http.Request) {

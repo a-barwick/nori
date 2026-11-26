@@ -13,7 +13,6 @@ import (
 )
 
 const LegacyID = "owner"
-const LegacyOwner = ""
 
 type User struct {
 	ID              string `json:"id" firestore:"id"`
@@ -104,9 +103,6 @@ func (u User) Validate() error {
 
 func (u User) DataOwner() string {
 	if u.ID == LegacyID {
-		if LegacyOwner != "" {
-			return LegacyOwner
-		}
 		if u.Email != "" {
 			return u.Email
 		}

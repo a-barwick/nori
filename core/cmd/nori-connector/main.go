@@ -16,51 +16,70 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
-	if len(os.Args) < 2 {
-		return errors.New("usage: nori-connector <pair|serve|status|doctor|unpair> [options]")
+type commonFlags struct {
+	relay    string
+	stateDir string
+	ollama   string
+}
+
+func bindCommonFlags(fs *flag.FlagSet) *commonFlags {
+	c := &commonFlags{}
+	fs.StringVar(&c.relay, "url", "", "connector relay URL")
+	fs.StringVar(&c.stateDir, "state-dir", "", "private state directory")
+	fs.StringVar(&c.ollama, "ollama-url", "", "Ollama loopback URL")
+	return c
+}
+
+func parseSubcommand(fs *flag.FlagSet, common *commonFlags, args []string) (homeconnector.Config, error) {
+	if err := fs.Parse(args); err != nil {
+		return homeconnector.Config{}, err
 	}
-	command := os.Args[1]
-	flags := flag.NewFlagSet(command, flag.ContinueOnError)
-	relay := flags.String("url", "", "connector relay URL")
-	stateDir := flags.String("state-dir", "", "private state directory")
-	ollama := flags.String("ollama-url", "", "Ollama loopback URL")
-	jsonOutput := flags.Bool("json", false, "write machine-readable output")
-	deviceName := flags.String("device-name", "", "name shown while pairing")
-	if err := flags.Parse(os.Args[2:]); err != nil {
-		return err
+	if fs.NArg() != 0 {
+		return homeconnector.Config{}, errors.New("unexpected arguments")
 	}
-	if flags.NArg() != 0 {
-		return errors.New("unexpected arguments")
+	return (homeconnector.Config{RelayURL: common.relay, StateDir: common.stateDir, OllamaURL: common.ollama}).Validate()
+}
+
+func usageError() error {
+	if homeconnector.DesktopMode == "1" {
+		return errors.New("usage: nori-connector <pair|serve|status|doctor|unpair|desktop-enable|desktop-disable|desktop-revoke-pending> [options]")
 	}
-	cfg, err := (homeconnector.Config{RelayURL: *relay, StateDir: *stateDir, OllamaURL: *ollama}).Validate()
-	if err != nil {
-		return err
+	return errors.New("usage: nori-connector <pair|serve|status|doctor|unpair> [options]")
+}
+
+func run(args []string) error {
+	if len(args) < 1 {
+		return usageError()
 	}
+	command, rest := args[0], args[1:]
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	encoder := json.NewEncoder(os.Stdout)
+
 	switch command {
-	case "desktop-enable":
+	case "desktop-enable", "desktop-disable", "desktop-revoke-pending":
 		if homeconnector.DesktopMode != "1" {
 			return errors.New("desktop sharing controls are unavailable")
 		}
-		if err := homeconnector.DesktopEnable(cfg); err != nil {
+		fs := flag.NewFlagSet(command, flag.ContinueOnError)
+		common := bindCommonFlags(fs)
+		cfg, err := parseSubcommand(fs, common, rest)
+		if err != nil {
 			return err
 		}
-		return encoder.Encode(map[string]bool{"enabled": true})
-	case "desktop-disable", "desktop-revoke-pending":
-		if homeconnector.DesktopMode != "1" {
-			return errors.New("desktop sharing controls are unavailable")
+		if command == "desktop-enable" {
+			if err := homeconnector.DesktopEnable(cfg); err != nil {
+				return err
+			}
+			return encoder.Encode(map[string]bool{"enabled": true})
 		}
 		var pending bool
-		var err error
 		if command == "desktop-disable" {
 			pending, err = homeconnector.DesktopDisable(ctx, cfg)
 		} else {
@@ -70,8 +89,17 @@ func run() error {
 			return err
 		}
 		return encoder.Encode(map[string]bool{"revocation_pending": pending})
+
 	case "pair":
-		err := homeconnector.Pair(ctx, cfg, *deviceName, func(pairing homeconnector.Pairing) error {
+		fs := flag.NewFlagSet(command, flag.ContinueOnError)
+		common := bindCommonFlags(fs)
+		jsonOutput := fs.Bool("json", false, "write machine-readable output")
+		deviceName := fs.String("device-name", "", "name shown while pairing")
+		cfg, err := parseSubcommand(fs, common, rest)
+		if err != nil {
+			return err
+		}
+		err = homeconnector.Pair(ctx, cfg, *deviceName, func(pairing homeconnector.Pairing) error {
 			if *jsonOutput {
 				return encoder.Encode(struct {
 					Type string `json:"type"`
@@ -89,13 +117,28 @@ func run() error {
 		}
 		fmt.Println("Connector paired.")
 		return nil
+
 	case "serve":
+		fs := flag.NewFlagSet(command, flag.ContinueOnError)
+		common := bindCommonFlags(fs)
+		cfg, err := parseSubcommand(fs, common, rest)
+		if err != nil {
+			return err
+		}
 		connector, err := homeconnector.New(cfg)
 		if err != nil {
 			return err
 		}
 		return connector.Serve(ctx)
+
 	case "doctor":
+		fs := flag.NewFlagSet(command, flag.ContinueOnError)
+		common := bindCommonFlags(fs)
+		jsonOutput := fs.Bool("json", false, "write machine-readable output")
+		cfg, err := parseSubcommand(fs, common, rest)
+		if err != nil {
+			return err
+		}
 		connector, err := homeconnector.New(cfg)
 		if err != nil {
 			return err
@@ -109,7 +152,15 @@ func run() error {
 			fmt.Println(status.Message)
 		}
 		return checkErr
+
 	case "status":
+		fs := flag.NewFlagSet(command, flag.ContinueOnError)
+		common := bindCommonFlags(fs)
+		jsonOutput := fs.Bool("json", false, "write machine-readable output")
+		cfg, err := parseSubcommand(fs, common, rest)
+		if err != nil {
+			return err
+		}
 		status, err := homeconnector.ReadStatus(cfg.StateDir)
 		if homeconnector.IsMissingStatus(err) {
 			status = homeconnector.Status{State: "stopped"}
@@ -138,7 +189,15 @@ func run() error {
 		}
 		fmt.Println(message)
 		return nil
+
 	case "unpair":
+		fs := flag.NewFlagSet(command, flag.ContinueOnError)
+		common := bindCommonFlags(fs)
+		jsonOutput := fs.Bool("json", false, "write machine-readable output")
+		cfg, err := parseSubcommand(fs, common, rest)
+		if err != nil {
+			return err
+		}
 		if err := homeconnector.Unpair(ctx, cfg); err != nil {
 			return err
 		}
@@ -147,6 +206,7 @@ func run() error {
 		}
 		fmt.Println("Connector unpaired.")
 		return nil
+
 	default:
 		return fmt.Errorf("unknown command %q", command)
 	}

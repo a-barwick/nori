@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -104,6 +105,9 @@ func accountProfile(id string) (Profile, bool) {
 }
 
 func (a *Account) stored(ctx context.Context) (state.ModelSelection, int64, error) {
+	if a == nil || a.Store == nil {
+		return state.ModelSelection{}, 0, nil
+	}
 	rec, err := a.Store.Resource(ctx, state.ModelSettingsCollection, state.ModelSettingsID)
 	if errors.Is(err, state.ErrNotFound) {
 		return state.ModelSelection{}, 0, nil
@@ -133,6 +137,9 @@ func (a *Account) selected(ctx context.Context, keys []modelkeys.ProviderStatus)
 		return sel, revision, err
 	}
 	if keys == nil {
+		if a == nil || a.Keys == nil {
+			return state.ModelSelection{}, 0, nil
+		}
 		status, err := a.Keys.List(ctx)
 		if err != nil {
 			return state.ModelSelection{}, 0, err
@@ -184,6 +191,9 @@ func (a *Account) CurrentSelection(ctx context.Context) (*state.ModelSelection, 
 }
 
 func (a *Account) EnsureSelection(ctx context.Context) error {
+	if a == nil || a.Store == nil {
+		return nil
+	}
 	_, _, err := a.selected(ctx, nil)
 	return err
 }
@@ -197,6 +207,9 @@ func (a *Account) HomeOnly(ctx context.Context) (bool, error) {
 }
 
 func (a *Account) CheckCloudDispatch(ctx context.Context) error {
+	if a == nil {
+		return nil
+	}
 	homeOnly, err := a.HomeOnly(ctx)
 	if err != nil {
 		return err
@@ -208,23 +221,33 @@ func (a *Account) CheckCloudDispatch(ctx context.Context) error {
 }
 
 func (a *Account) homeProfiles(ctx context.Context) ([]Profile, error) {
-	if a.HomeProfiles == nil {
+	if a == nil || a.HomeProfiles == nil {
 		return nil, nil
 	}
 	return a.HomeProfiles(ctx)
 }
 
 func (a *Account) View(ctx context.Context) (AccountView, error) {
-	keys, err := a.Keys.List(ctx)
+	if a == nil || a.Store == nil {
+		return AccountView{}, modelkeys.ErrMissingAPIKey
+	}
+	var providers []modelkeys.ProviderStatus
+	if a.Keys != nil {
+		keys, err := a.Keys.List(ctx)
+		if err != nil {
+			return AccountView{}, err
+		}
+		providers = keys.Providers
+	}
+	sel, revision, err := a.selected(ctx, providers)
 	if err != nil {
 		return AccountView{}, err
 	}
-	sel, revision, err := a.selected(ctx, keys.Providers)
+	home, err := a.homeProfiles(ctx)
 	if err != nil {
-		return AccountView{}, err
+		slog.WarnContext(ctx, "failed to load home AI model profiles", "err", err)
 	}
-	home, _ := a.homeProfiles(ctx)
-	return accountView(keys.Providers, home, sel, revision), nil
+	return accountView(providers, home, sel, revision), nil
 }
 
 func accountView(keys []modelkeys.ProviderStatus, home []Profile, sel state.ModelSelection, revision int64) AccountView {
@@ -242,11 +265,18 @@ func accountView(keys []modelkeys.ProviderStatus, home []Profile, sel state.Mode
 }
 
 func (a *Account) Save(ctx context.Context, update state.ModelSelection, expected int64, homeOnly *bool) (AccountView, error) {
-	keys, err := a.Keys.List(ctx)
-	if err != nil {
-		return AccountView{}, err
+	if a == nil || a.Store == nil {
+		return AccountView{}, modelkeys.ErrMissingAPIKey
 	}
-	current, revision, err := a.selected(ctx, keys.Providers)
+	var providers []modelkeys.ProviderStatus
+	if a.Keys != nil {
+		keys, err := a.Keys.List(ctx)
+		if err != nil {
+			return AccountView{}, err
+		}
+		providers = keys.Providers
+	}
+	current, revision, err := a.selected(ctx, providers)
 	if err != nil {
 		return AccountView{}, err
 	}
@@ -294,7 +324,7 @@ func (a *Account) Save(ctx context.Context, update state.ModelSelection, expecte
 		if !ok || !p.SupportsReasoning(effort) {
 			return nil, fmt.Errorf("%w: Choose a model and a supported reasoning level for %s.", state.ErrInvalidResource, lane)
 		}
-		for _, key := range keys.Providers {
+		for _, key := range providers {
 			if key.Provider == p.Backend && key.Configured {
 				return nil, nil
 			}
@@ -321,11 +351,11 @@ func (a *Account) Save(ctx context.Context, update state.ModelSelection, expecte
 			return AccountView{}, err
 		}
 	}
-	return accountView(keys.Providers, home, sel, revision), nil
+	return accountView(providers, home, sel, revision), nil
 }
 
 func (a *Account) Resolve(ctx context.Context, lane string, selection *state.ModelSelection) (Profile, string, string, error) {
-	if a == nil || a.Keys == nil {
+	if a == nil || a.Store == nil {
 		return Profile{}, "", "", modelkeys.ErrMissingAPIKey
 	}
 	if selection.IsEmpty() ||
@@ -368,6 +398,9 @@ func (a *Account) Resolve(ctx context.Context, lane string, selection *state.Mod
 	}
 	if effort == "" || !p.SupportsReasoning(effort) {
 		effort = p.DefaultReasoning
+	}
+	if a.Keys == nil {
+		return Profile{}, "", "", modelkeys.ErrMissingAPIKey
 	}
 	key, err := a.Keys.ResolveKey(ctx, p.Backend)
 	return p, effort, key, err

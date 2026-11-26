@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
@@ -288,10 +287,8 @@ func (s *Service) saveCredential(ctx context.Context, credID string, payload []b
 	return secret.ErrCredentialConflict
 }
 
-var apiKeyValue = regexp.MustCompile(`^[A-Za-z0-9._~+/-]+=*$`)
-
 func (s *Service) validateKey(ctx context.Context, provider, apiKey string) error {
-	if !apiKeyValue.MatchString(apiKey) || len(apiKey) > 2048 {
+	if !secret.ValidBearerToken(apiKey) || len(apiKey) > 2048 {
 		return ErrInvalidAPIKey
 	}
 	valCtx, cancel := context.WithTimeout(ctx, defaultValidationTimeout)

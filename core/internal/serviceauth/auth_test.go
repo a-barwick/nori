@@ -208,7 +208,9 @@ func TestProtectMiddleware(t *testing.T) {
 		wantStatus int
 	}{
 		{name: "healthz_unauthenticated_exempt", path: "/healthz", authHeader: "", wantStatus: http.StatusOK},
+		{name: "api_healthz_unauthenticated_exempt", path: "/api/healthz", authHeader: "", wantStatus: http.StatusOK},
 		{name: "readyz_unauthenticated_exempt", path: "/readyz", authHeader: "", wantStatus: http.StatusOK},
+		{name: "api_readyz_unauthenticated_exempt", path: "/api/readyz", authHeader: "", wantStatus: http.StatusOK},
 		{name: "healthz_ignores_bad_auth_header", path: "/healthz", authHeader: "Bearer invalid", wantStatus: http.StatusOK},
 		{name: "metrics_requires_auth_missing_header", path: "/metrics", authHeader: "", wantStatus: http.StatusUnauthorized},
 		{name: "metrics_requires_auth_expired_token", path: "/metrics", authHeader: "Bearer " + expiredTok, wantStatus: http.StatusUnauthorized},

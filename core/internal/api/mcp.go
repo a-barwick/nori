@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -132,6 +133,6 @@ func (a *Assistant) mcpCredential(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, err, value.RequestID, nil)
 		return
 	}
-	data, _ := jsonMarshal(server)
+	data, _ := json.Marshal(server)
 	writeJSON(w, 200, state.MutationReceipt{RequestID: value.RequestID, Accepted: true, Status: "applied", Resource: data})
 }

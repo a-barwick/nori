@@ -447,3 +447,156 @@ func TestForUser_EnforcesDefaultGlobalBudgetWhileIsolatingCircuitBreaker(t *test
 	}
 	_ = respB2.Body.Close()
 }
+
+type customWrapperRT struct {
+	inner http.RoundTripper
+}
+
+func (w customWrapperRT) RoundTrip(req *http.Request) (*http.Response, error) {
+	return w.inner.RoundTrip(req)
+}
+
+func TestGuard_HalfOpenSingleProbeAndCounterReset(t *testing.T) {
+	now := time.Date(2026, 11, 25, 16, 0, 0, 0, time.UTC)
+	g := New(Config{
+		Now:                   func() time.Time { return now },
+		AbortBreakerThreshold: 2,
+		BreakerBaseCooldown:   30 * time.Second,
+	})
+
+	probeStarted := make(chan struct{})
+	probeRelease := make(chan struct{})
+	var phase atomic.Int32 // 0=abort, 1=block-probe-then-abort, 2=abort-once
+
+	rt := g.Transport(fakeRT{fn: func(*http.Request) (*http.Response, error) {
+		switch phase.Load() {
+		case 1:
+			close(probeStarted)
+			<-probeRelease
+			return nil, context.Canceled
+		default:
+			return nil, context.Canceled
+		}
+	}}, CallMeta{UserID: "u-halfopen", Scope: ScopeTask})
+
+	for i := range 2 {
+		req, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/responses", strings.NewReader(`{"n":`+string(rune('0'+i))+`}`))
+		if _, err := rt.RoundTrip(req); !errors.Is(err, context.Canceled) {
+			t.Fatalf("call %d: want context.Canceled, got %v", i, err)
+		}
+	}
+	reqOpen, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/responses", strings.NewReader(`{"n":2}`))
+	if _, err := rt.RoundTrip(reqOpen); !errors.Is(err, ErrCircuitOpen) {
+		t.Fatalf("expected ErrCircuitOpen, got %v", err)
+	}
+
+	// Expire cooldown: only one half-open probe may enter concurrently.
+	now = now.Add(31 * time.Second)
+	phase.Store(1)
+	probeDone := make(chan error, 1)
+	go func() {
+		req, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/responses", strings.NewReader(`{"n":3}`))
+		_, err := rt.RoundTrip(req)
+		probeDone <- err
+	}()
+	<-probeStarted
+
+	reqConcurrent, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/responses", strings.NewReader(`{"n":4}`))
+	if _, err := rt.RoundTrip(reqConcurrent); !errors.Is(err, ErrCircuitOpen) {
+		t.Fatalf("expected concurrent call during half-open probe to fail with ErrCircuitOpen, got %v", err)
+	}
+	close(probeRelease)
+	if err := <-probeDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("half-open probe err = %v, want context.Canceled", err)
+	}
+
+	// Because consecutiveAborts was reset on cooldown expiry, 1 failed probe
+	// must NOT immediately re-open the breaker when threshold=2.
+	phase.Store(2)
+	reqNext, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/responses", strings.NewReader(`{"n":5}`))
+	if _, err := rt.RoundTrip(reqNext); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected 2nd call after half-open reset to be admitted, got %v", err)
+	}
+	// Now 2 consecutive aborts have occurred again -> breaker re-opens.
+	reqReopened, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/responses", strings.NewReader(`{"n":6}`))
+	if _, err := rt.RoundTrip(reqReopened); !errors.Is(err, ErrCircuitOpen) {
+		t.Fatalf("expected ErrCircuitOpen after threshold reached again, got %v", err)
+	}
+}
+
+func TestGuard_ErrDispatchBlockedRollsBackQuotas(t *testing.T) {
+	now := time.Date(2026, 11, 25, 16, 0, 0, 0, time.UTC)
+	parent := New(Config{
+		Now:                func() time.Time { return now },
+		MaxTotalCalls:      1,
+		GlobalMaxPerMinute: 1,
+	})
+	child := New(Config{
+		Now:                func() time.Time { return now },
+		MaxTotalCalls:      1,
+		GlobalMaxPerMinute: 1,
+		Scopes: map[string]ScopePolicy{
+			ScopeOuter: {MaxPerMinute: 1, MaxPerHour: 1, MaxInFlight: 1},
+		},
+	})
+	child.parent = parent
+
+	block := true
+	rt := child.Transport(dispatchTransport{
+		base: fakeRT{fn: func(*http.Request) (*http.Response, error) { return okResp(), nil }},
+		check: func(context.Context) error {
+			if block {
+				return errors.New("not allowed")
+			}
+			return nil
+		},
+	}, CallMeta{UserID: "u-roll", Scope: ScopeOuter})
+
+	req1, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/chat", strings.NewReader(`{"a":1}`))
+	if _, err := rt.RoundTrip(req1); !errors.Is(err, ErrDispatchBlocked) {
+		t.Fatalf("expected ErrDispatchBlocked, got %v", err)
+	}
+	if st := child.Stats(); st.TotalAdmitted != 0 {
+		t.Fatalf("child TotalAdmitted = %d, want 0 after rollback", st.TotalAdmitted)
+	}
+	if st := parent.Stats(); st.TotalAdmitted != 0 {
+		t.Fatalf("parent TotalAdmitted = %d, want 0 after rollback", st.TotalAdmitted)
+	}
+
+	// The subsequent allowed call must succeed within the 1-call quota.
+	block = false
+	req2, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/chat", strings.NewReader(`{"a":1}`))
+	resp, err := rt.RoundTrip(req2)
+	if err != nil {
+		t.Fatalf("expected call after dispatch rollback to succeed, got %v", err)
+	}
+	_ = resp.Body.Close()
+}
+
+func TestGuard_UnwrapsArbitraryRoundTripperForTestGuard(t *testing.T) {
+	if !isRealNetworkTransport(customWrapperRT{inner: http.DefaultTransport}) {
+		t.Fatal("expected custom wrapper around http.DefaultTransport to be detected as real network transport")
+	}
+	if isRealNetworkTransport(customWrapperRT{inner: fakeRT{fn: func(*http.Request) (*http.Response, error) { return okResp(), nil }}}) {
+		t.Fatal("expected custom wrapper around fakeRT not to be treated as real network transport")
+	}
+}
+
+func TestGuard_MeteredBodyConcurrentRecordCostAndClose(t *testing.T) {
+	g := New(DefaultConfig())
+	client := g.WrapClient(&http.Client{Transport: fakeRT{fn: func(*http.Request) (*http.Response, error) {
+		return okResp(), nil
+	}}}, time.Second, CallMeta{Model: "gpt-6.1-sol"})
+	req, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1/model", strings.NewReader("{}"))
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		RecordResponseCost(resp, 0.005)
+		close(done)
+	}()
+	_ = resp.Body.Close()
+	<-done
+}

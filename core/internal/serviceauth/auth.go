@@ -3,10 +3,12 @@ package serviceauth
 import (
 	"context"
 	"errors"
-	"github.com/golang-jwt/jwt/v5"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"nori/internal/httpjson"
 )
 
 const issuer = "nori-service"
@@ -46,19 +48,31 @@ func (c Config) Valid(raw string) bool {
 	token, err := jwt.ParseWithClaims(raw, claims, func(*jwt.Token) (any, error) { return []byte(c.Key), nil }, jwt.WithValidMethods([]string{"HS256"}), jwt.WithIssuer(issuer), jwt.WithAudience(c.Audience), jwt.WithExpirationRequired(), jwt.WithIssuedAt(), jwt.WithLeeway(5*time.Second))
 	return err == nil && token.Valid && claims.IssuedAt != nil && claims.ExpiresAt != nil && claims.ExpiresAt.Sub(claims.IssuedAt.Time) > 0 && claims.ExpiresAt.Sub(claims.IssuedAt.Time) <= time.Minute
 }
+func isHealthExemptPath(path string) bool {
+	return path == "/healthz" || path == "/api/healthz" || path == "/readyz" || path == "/api/readyz"
+}
+
+func writeUnauthorized(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	httpjson.Write(w, http.StatusUnauthorized, map[string]string{
+		"error": "Authentication required",
+		"code":  "unauthorized",
+	})
+}
+
 func (c Config) Protect(next http.Handler) http.Handler {
 	var jwks *jwksCache
 	if len(c.GoogleClientIDs) > 0 {
 		jwks = newJWKSCache(c.GoogleJWKSURL)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+		if isHealthExemptPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
 		scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
 		if !ok || scheme != "Bearer" {
-			http.Error(w, "Authentication required", http.StatusUnauthorized)
+			writeUnauthorized(w)
 			return
 		}
 		if c.Valid(token) {
@@ -72,6 +86,6 @@ func (c Config) Protect(next http.Handler) http.Handler {
 				return
 			}
 		}
-		http.Error(w, "Authentication required", http.StatusUnauthorized)
+		writeUnauthorized(w)
 	})
 }

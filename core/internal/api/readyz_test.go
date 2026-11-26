@@ -242,8 +242,12 @@ func TestServiceAuthProtectReadyzHealthzAndMetrics(t *testing.T) {
 	}{
 		{http.MethodGet, "/healthz"},
 		{http.MethodHead, "/healthz"},
+		{http.MethodGet, "/api/healthz"},
+		{http.MethodHead, "/api/healthz"},
 		{http.MethodGet, "/readyz"},
 		{http.MethodHead, "/readyz"},
+		{http.MethodGet, "/api/readyz"},
+		{http.MethodHead, "/api/readyz"},
 	} {
 		rec := httptest.NewRecorder()
 		protected.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, nil))
@@ -256,8 +260,6 @@ func TestServiceAuthProtectReadyzHealthzAndMetrics(t *testing.T) {
 		method string
 		path   string
 	}{
-		{http.MethodGet, "/api/healthz"},
-		{http.MethodGet, "/api/readyz"},
 		{http.MethodPost, "/api/users/resolve"},
 		{http.MethodPost, "/api/resume"},
 		{http.MethodGet, "/users/11111111-1111-4111-8111-111111111111/v1/snapshot"},
@@ -267,6 +269,13 @@ func TestServiceAuthProtectReadyzHealthzAndMetrics(t *testing.T) {
 		protected.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, nil))
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("unauthenticated %s %s: status = %d, want 401", tc.method, tc.path, rec.Code)
+		}
+		var errBody map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &errBody); err != nil {
+			t.Fatalf("unauthenticated %s %s: invalid JSON error envelope: %v (%s)", tc.method, tc.path, err, rec.Body.String())
+		}
+		if errBody["code"] != "unauthorized" || errBody["error"] == "" {
+			t.Fatalf("unauthenticated %s %s: unexpected error envelope %+v", tc.method, tc.path, errBody)
 		}
 	}
 

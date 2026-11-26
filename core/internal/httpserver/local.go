@@ -3,7 +3,8 @@ package httpserver
 import (
 	"net"
 	"net/http"
-	"strings"
+
+	"nori/internal/netguard"
 )
 
 // RequireLoopbackHost protects local listeners from browser DNS rebinding.
@@ -13,11 +14,10 @@ func RequireLoopbackHost(next http.Handler) http.Handler {
 		if name, _, err := net.SplitHostPort(host); err == nil {
 			host = name
 		}
-		switch strings.ToLower(host) {
-		case "localhost", "127.0.0.1", "::1", "[::1]":
+		if netguard.IsLoopbackHost(host) {
 			next.ServeHTTP(w, r)
-		default:
-			http.Error(w, "A loopback host is required.", http.StatusForbidden)
+			return
 		}
+		http.Error(w, "A loopback host is required.", http.StatusForbidden)
 	})
 }

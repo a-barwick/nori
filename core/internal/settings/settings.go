@@ -15,6 +15,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"nori/internal/llmguard"
+	"nori/internal/netguard"
 	"nori/internal/serviceauth"
 	"nori/internal/usage"
 )
@@ -68,7 +69,7 @@ func (g GoogleWorkspace) validate() error {
 	u, err := url.Parse(g.RedirectURL)
 	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" ||
 		u.Path != "/api/v1/connections/oauth/callback" || (u.Scheme != "https" &&
-		(u.Scheme != "http" || (u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1" && u.Hostname() != "::1"))) {
+		(u.Scheme != "http" || !netguard.IsLoopbackHost(u.Hostname()))) {
 		return fmt.Errorf("NORI_GOOGLE_WORKSPACE_REDIRECT_URL must point to the Web /api/v1/connections/oauth/callback route over HTTPS or local loopback")
 	}
 	return nil
@@ -92,9 +93,6 @@ type Models struct {
 	Provider, OuterProvider, InnerProvider         string
 	GatewayURL, GatewayKey                         string
 	BYOKRequired                                   bool
-	LocalURL, LocalModel                           string
-	ProfilesFile, ProfilesJSON                     string
-	PickerUsers                                    []string
 	MaxUSD                                         float64
 	TestURL                                        string
 }
@@ -232,7 +230,7 @@ func load(defaultCloud string, simulation bool) (Settings, error) {
 	}
 	if s.Models.TestURL != "" {
 		u, err := url.Parse(s.Models.TestURL)
-		if err != nil || s.Cloud != "local" || u.Scheme != "http" || (u.Hostname() != "127.0.0.1" && u.Hostname() != "localhost") {
+		if err != nil || s.Cloud != "local" || u.Scheme != "http" || !netguard.IsLoopbackHost(u.Hostname()) {
 			return Settings{}, fmt.Errorf("NORI_MODEL_TEST_URL is for local development only: an http loopback URL with NORI_CLOUD=local")
 		}
 	}

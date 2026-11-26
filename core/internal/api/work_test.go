@@ -96,7 +96,6 @@ func TestSummaryRevisionMonotonicWhenNeedsYouDrops(t *testing.T) {
 		t.Fatalf("expected positive revision, got %d", s1.Revision)
 	}
 
-	time.Sleep(2 * time.Millisecond)
 	ans := state.Command{
 		ID:         "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
 		RunID:      taskID,

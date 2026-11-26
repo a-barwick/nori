@@ -4,8 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
+
+var bearerTokenPattern = regexp.MustCompile(`^[A-Za-z0-9._~+/-]+=*$`)
+
+// ValidBearerToken reports whether value uses only URL-safe/RFC6750 bearer token characters.
+func ValidBearerToken(value string) bool {
+	return bearerTokenPattern.MatchString(value)
+}
 
 type Lookup interface {
 	Secret(ctx context.Context, ref string) (string, error)

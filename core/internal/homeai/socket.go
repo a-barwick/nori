@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -23,6 +24,11 @@ type socketIdentity struct {
 	connectionID string
 }
 
+type nextAction struct {
+	msg     *homeaiwire.Message
+	waiting bool
+}
+
 func (s *Service) socket(w http.ResponseWriter, r *http.Request) {
 	auth := strings.Fields(r.Header.Get("Authorization"))
 	if len(auth) != 2 || !strings.EqualFold(auth[0], "Bearer") || len(auth[1]) < 32 || len(auth[1]) > 200 {
@@ -36,15 +42,18 @@ func (s *Service) socket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		slog.WarnContext(r.Context(), "homeai socket auth lookup failed", "err", err)
 		http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{homeaiwire.Subprotocol}})
 	if err != nil {
+		slog.WarnContext(r.Context(), "homeai websocket accept failed", "device_id", id.deviceID, "err", err)
 		return
 	}
 	defer conn.CloseNow()
 	if conn.Subprotocol() != homeaiwire.Subprotocol {
+		slog.WarnContext(r.Context(), "homeai websocket subprotocol mismatch", "device_id", id.deviceID, "subprotocol", conn.Subprotocol())
 		_ = conn.Close(websocket.StatusPolicyViolation, "unsupported protocol")
 		return
 	}
@@ -53,10 +62,15 @@ func (s *Service) socket(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	if err = s.attach(ctx, id, auth[1]); err != nil {
+		slog.WarnContext(ctx, "homeai device attach failed", "device_id", id.deviceID, "user_id", id.userID, "err", err)
 		_ = conn.Close(websocket.StatusPolicyViolation, "device unavailable")
 		return
 	}
-	defer s.detach(id)
+	slog.InfoContext(ctx, "homeai device connected", "device_id", id.deviceID, "user_id", id.userID, "connection_id", id.connectionID)
+	defer func() {
+		s.detach(id)
+		slog.Info("homeai device disconnected", "device_id", id.deviceID, "user_id", id.userID, "connection_id", id.connectionID)
+	}()
 	wake, unsubscribe := s.subscribe("d:" + id.deviceID)
 	defer unsubscribe()
 	readerDone := make(chan error, 1)
@@ -110,59 +124,67 @@ func (s *Service) socket(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	for {
-		request, err := s.nextMessage(ctx, id, activeRequest, activeAttempt, cancelSent)
+		action, err := s.nextMessage(ctx, id, activeRequest, activeAttempt, cancelSent)
 		if err != nil {
+			slog.WarnContext(ctx, "homeai nextMessage failed", "device_id", id.deviceID, "connection_id", id.connectionID, "err", err)
 			return
 		}
-		if request != nil {
-			if request.Type == "waiting" {
+		if action.waiting {
+			if readyTimer == nil {
+				readyTimer = time.NewTimer(45 * time.Second)
+				readyTimeout = readyTimer.C
+			}
+		} else if action.msg != nil {
+			request := action.msg
+			if request.Type == "infer" {
+				activeRequest = request.RequestID
+				activeAttempt = request.AttemptID
+			}
+			if request.Type == "cancel" {
+				cancelSent = true
 				if readyTimer == nil {
 					readyTimer = time.NewTimer(45 * time.Second)
 					readyTimeout = readyTimer.C
 				}
-			} else {
-				if request.Type == "infer" {
-					activeRequest = request.RequestID
-					activeAttempt = request.AttemptID
-				}
-				if request.Type == "cancel" {
-					cancelSent = true
-					if readyTimer == nil {
-						readyTimer = time.NewTimer(45 * time.Second)
-						readyTimeout = readyTimer.C
-					}
-				}
-				writeCtx, stop := context.WithTimeout(ctx, 10*time.Second)
-				err = wsjson.Write(writeCtx, conn, request)
-				stop()
-				if err != nil {
-					return
-				}
-				continue
 			}
+			writeCtx, stop := context.WithTimeout(ctx, 10*time.Second)
+			err = wsjson.Write(writeCtx, conn, request)
+			stop()
+			if err != nil {
+				slog.WarnContext(ctx, "homeai websocket write failed", "device_id", id.deviceID, "msg_type", request.Type, "err", err)
+				return
+			}
+			continue
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-readerDone:
+		case readErr := <-readerDone:
+			if readErr != nil && !errors.Is(readErr, context.Canceled) {
+				slog.DebugContext(ctx, "homeai websocket reader closed", "device_id", id.deviceID, "err", readErr)
+			}
 			return
 		case message := <-control:
 			writeCtx, stop := context.WithTimeout(ctx, 10*time.Second)
 			err = wsjson.Write(writeCtx, conn, message)
 			stop()
 			if err != nil {
+				slog.WarnContext(ctx, "homeai control write failed", "device_id", id.deviceID, "msg_type", message.Type, "err", err)
 				return
 			}
 		case <-readyTimeout:
+			slog.WarnContext(ctx, "homeai device ready timeout exceeded", "device_id", id.deviceID, "request_id", activeRequest)
 			return
 		case readyMessage := <-ready:
 			if activeRequest != "" && readyMessage.RequestID == activeRequest && readyMessage.AttemptID == activeAttempt {
 				var status string
 				err := s.pool.QueryRow(ctx, `SELECT status FROM nori_home_ai_requests WHERE id=$1 AND attempt_id=$2 AND device_id=$3 AND connection_id=$4`, activeRequest, activeAttempt, id.deviceID, id.connectionID).Scan(&status)
 				if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+					slog.WarnContext(ctx, "homeai ready status check failed", "device_id", id.deviceID, "request_id", activeRequest, "err", err)
 					return
 				}
 				if err == nil && status != "complete" && status != "failed" && status != "cancelled" {
+					slog.WarnContext(ctx, "homeai premature ready received for non-terminal request", "device_id", id.deviceID, "request_id", activeRequest, "status", status)
 					return
 				}
 				activeRequest = ""
@@ -181,9 +203,11 @@ func (s *Service) socket(w http.ResponseWriter, r *http.Request) {
 			err = conn.Ping(pingCtx)
 			stop()
 			if err != nil {
+				slog.DebugContext(ctx, "homeai websocket ping failed", "device_id", id.deviceID, "err", err)
 				return
 			}
 			if !s.touch(ctx, id) {
+				slog.InfoContext(ctx, "homeai device touch rejected; closing connection", "device_id", id.deviceID)
 				return
 			}
 		}
@@ -429,74 +453,74 @@ func (s *Service) acceptMessage(ctx context.Context, id socketIdentity, msg home
 	return tx.Commit(ctx)
 }
 
-func (s *Service) nextMessage(ctx context.Context, id socketIdentity, activeRequest, activeAttempt string, cancelSent bool) (*homeaiwire.Message, error) {
+func (s *Service) nextMessage(ctx context.Context, id socketIdentity, activeRequest, activeAttempt string, cancelSent bool) (nextAction, error) {
 	var connected bool
 	err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM nori_home_ai_devices d JOIN nori_home_ai_accounts a ON a.id=d.user_id WHERE d.id=$1 AND d.user_id=$2 AND d.generation=$3 AND d.connection_id=$4 AND d.revoked_at IS NULL AND d.access_expires_at>clock_timestamp())`, id.deviceID, id.userID, id.generation, id.connectionID).Scan(&connected)
 	if err != nil {
-		return nil, err
+		return nextAction{}, err
 	}
 	if !connected {
-		return nil, ErrRevoked
+		return nextAction{}, ErrRevoked
 	}
 	if activeRequest != "" {
 		var status, errorCode string
 		err = s.pool.QueryRow(ctx, `SELECT status,COALESCE(error_code,'') FROM nori_home_ai_requests WHERE id=$1 AND attempt_id=$2 AND device_id=$3 AND connection_id=$4`, activeRequest, activeAttempt, id.deviceID, id.connectionID).Scan(&status, &errorCode)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return &homeaiwire.Message{Type: "waiting"}, nil
+			return nextAction{waiting: true}, nil
 		}
 		if err != nil {
-			return nil, err
+			return nextAction{}, err
 		}
 		if !cancelSent && (status == "cancelled" || status == "failed" && !strings.HasPrefix(errorCode, "connector_")) {
-			return &homeaiwire.Message{Type: "cancel", RequestID: activeRequest, AttemptID: activeAttempt}, nil
+			return nextAction{msg: &homeaiwire.Message{Type: "cancel", RequestID: activeRequest, AttemptID: activeAttempt}}, nil
 		}
 		if status == "complete" || status == "failed" || status == "cancelled" {
-			return &homeaiwire.Message{Type: "waiting"}, nil
+			return nextAction{waiting: true}, nil
 		}
-		return nil, nil
+		return nextAction{}, nil
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return nextAction{}, err
 	}
 	defer tx.Rollback(ctx)
 	var draining bool
 	var expiry time.Time
 	err = tx.QueryRow(ctx, `SELECT draining,access_expires_at FROM nori_home_ai_devices WHERE id=$1 AND user_id=$2 AND generation=$3 AND connection_id=$4 AND revoked_at IS NULL FOR UPDATE`, id.deviceID, id.userID, id.generation, id.connectionID).Scan(&draining, &expiry)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrRevoked
+		return nextAction{}, ErrRevoked
 	}
 	if err != nil {
-		return nil, err
+		return nextAction{}, err
 	}
 	if draining || time.Until(expiry) <= homeaiwire.RefreshLead {
 		if err = failPending(ctx, tx, id); err != nil {
-			return nil, err
+			return nextAction{}, err
 		}
 		if err = tx.Commit(ctx); err != nil {
-			return nil, err
+			return nextAction{}, err
 		}
-		return nil, nil
+		return nextAction{}, nil
 	}
 	var msg homeaiwire.Message
 	var sealed []byte
 	err = tx.QueryRow(ctx, `UPDATE nori_home_ai_requests SET status='dispatched',connection_id=$1,updated_at=clock_timestamp() WHERE id=(SELECT r.id FROM nori_home_ai_requests r JOIN nori_home_ai_devices d ON d.id=r.device_id JOIN nori_home_ai_accounts a ON a.id=r.user_id WHERE r.device_id=$2 AND r.user_id=$3 AND r.generation=$4 AND r.status='pending' AND r.deadline>clock_timestamp() AND d.connection_id=$1 AND d.revoked_at IS NULL AND d.generation=$4 FOR UPDATE OF r SKIP LOCKED LIMIT 1) RETURNING id,attempt_id,operation,model,digest,deadline,payload`, id.connectionID, id.deviceID, id.userID, id.generation).Scan(&msg.RequestID, &msg.AttemptID, &msg.Operation, &msg.Model, &msg.Digest, &msg.Deadline, &sealed)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
+		return nextAction{}, nil
 	}
 	if err != nil {
-		return nil, err
+		return nextAction{}, err
 	}
 	payload, err := s.unseal(msg.RequestID, sealed)
 	if err != nil {
-		return nil, err
+		return nextAction{}, err
 	}
 	msg.Type = "infer"
 	msg.Payload = payload
 	if err = tx.Commit(ctx); err != nil {
-		return nil, err
+		return nextAction{}, err
 	}
-	return &msg, nil
+	return nextAction{msg: &msg}, nil
 }
 
 func failPending(ctx context.Context, tx pgx.Tx, id socketIdentity) error {

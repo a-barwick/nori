@@ -15,19 +15,25 @@ const streamHeartbeat = 20 * time.Second
 
 func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	store := s.Tasks.Store
-	stream := prepareEventStream(w, "no-cache, no-transform")
 	position, err := store.EventPosition(r.Context())
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	stream := prepareEventStream(w, "no-cache, no-transform")
+	_ = stream.control.SetWriteDeadline(time.Time{})
 	after, supplied, valid := resumePosition(r)
 	if !supplied || !valid || after > position || position-after > state.EventReplayLimit {
-		w.WriteHeader(200)
-		stream.send("reset", 0, map[string]int64{"position": position})
+		w.WriteHeader(http.StatusOK)
+		if err := stream.send("reset", 0, map[string]int64{"position": position}); err != nil {
+			slog.WarnContext(r.Context(), "event stream reset send failed", "err", err)
+		}
 		return
 	}
-	w.WriteHeader(200)
+	w.WriteHeader(http.StatusOK)
+	if err := stream.control.Flush(); err != nil {
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), streamLifetime)
 	defer cancel()
 
@@ -42,7 +48,10 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 		defer unsub()
 	}
 
-	presence := s.sendPresence(ctx, stream, "")
+	presence, err := s.sendPresence(ctx, stream, "")
+	if err != nil {
+		return
+	}
 	open := map[string]string{}
 	heartbeat := time.NewTicker(streamHeartbeat)
 	defer heartbeat.Stop()
@@ -63,15 +72,15 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 			if stream.comment("heartbeat") != nil {
 				return
 			}
-			presence = s.sendPresence(ctx, stream, presence)
-			open = s.sendOpenTasks(ctx, stream, open)
+			if presence, err = s.sendPresence(ctx, stream, presence); err != nil {
+				return
+			}
+			if open, err = s.sendOpenTasks(ctx, stream, open); err != nil {
+				return
+			}
 		case batch := <-batches:
-			for drained := false; !drained && deltaCh != nil; {
-				select {
-				case <-deltaCh:
-				default:
-					drained = true
-				}
+			if batchSupersedesDeltas(batch) && deltaCh != nil {
+				drainDeltas(deltaCh)
 			}
 			for _, event := range state.CoalesceEvents(batch) {
 				err := s.sendEvent(ctx, stream, event)
@@ -83,6 +92,25 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
+		}
+	}
+}
+
+func batchSupersedesDeltas(batch []state.LogEvent) bool {
+	for _, ev := range batch {
+		if ev.Kind == state.EventMessage || ev.Kind == state.EventDataReset {
+			return true
+		}
+	}
+	return false
+}
+
+func drainDeltas(ch <-chan AssistantDelta) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
 		}
 	}
 }
@@ -127,24 +155,26 @@ func (s *server) sendEvent(ctx context.Context, stream eventStream, event state.
 	return stream.send("unknown", event.Seq, map[string]string{"kind": event.Kind})
 }
 
-func (s *server) sendPresence(ctx context.Context, stream eventStream, last string) string {
+func (s *server) sendPresence(ctx context.Context, stream eventStream, last string) (string, error) {
 	presence, err := s.Runner.Presence(ctx)
 	if err != nil {
-		return last
+		return last, nil
 	}
 	s.repairWake(ctx)
 	encoded, err := json.Marshal(presence)
 	if err != nil || string(encoded) == last {
-		return last
+		return last, nil
 	}
-	stream.send("presence", 0, presence)
-	return string(encoded)
+	if err := stream.send("presence", 0, presence); err != nil {
+		return last, err
+	}
+	return string(encoded), nil
 }
 
-func (s *server) sendOpenTasks(ctx context.Context, stream eventStream, last map[string]string) map[string]string {
+func (s *server) sendOpenTasks(ctx context.Context, stream eventStream, last map[string]string) (map[string]string, error) {
 	runs, err := s.Tasks.Store.OpenTasks(ctx)
 	if err != nil {
-		return last
+		return last, nil
 	}
 	current := make(map[string]string, len(runs))
 	for _, run := range runs {
@@ -154,7 +184,9 @@ func (s *server) sendOpenTasks(ctx context.Context, stream eventStream, last map
 		}
 		current[run.ID] = string(encoded)
 		if last[run.ID] != string(encoded) {
-			stream.send(state.EventTask, 0, map[string]any{"run": run})
+			if err := stream.send(state.EventTask, 0, map[string]any{"run": run}); err != nil {
+				return current, err
+			}
 		}
 	}
 	for id := range last {
@@ -162,8 +194,10 @@ func (s *server) sendOpenTasks(ctx context.Context, stream eventStream, last map
 			continue
 		}
 		if run, err := s.Tasks.Store.GetRun(ctx, id); err == nil {
-			stream.send(state.EventTask, 0, map[string]any{"run": run})
+			if err := stream.send(state.EventTask, 0, map[string]any{"run": run}); err != nil {
+				return current, err
+			}
 		}
 	}
-	return current
+	return current, nil
 }

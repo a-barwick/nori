@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sync"
 
 	"nori/internal/connections"
 	"nori/internal/connectors/google"
@@ -32,17 +31,7 @@ type AssistantServices struct {
 	Tools       extensions.Source
 }
 
-var (
-	keyMu   sync.Mutex
-	wrapper rowstore.KeyWrapper
-)
-
-func credentialKeys(s settings.Settings) (rowstore.KeyWrapper, error) {
-	keyMu.Lock()
-	defer keyMu.Unlock()
-	if wrapper != nil {
-		return wrapper, nil
-	}
+func newCredentialKeys(s settings.Settings) (rowstore.KeyWrapper, error) {
 	c := s.Connections
 	var staticWrapper rowstore.KeyWrapper
 	if c.CredentialKey != "" || c.CredentialKeySecret != "" {
@@ -63,39 +52,51 @@ func credentialKeys(s settings.Settings) (rowstore.KeyWrapper, error) {
 			return nil, err
 		}
 		if staticWrapper != nil {
-			ring, err := rowstore.NewKeyRing(kmsKey, staticWrapper)
-			if err != nil {
-				return nil, err
-			}
-			wrapper = ring
-		} else {
-			wrapper = kmsKey
+			return rowstore.NewKeyRing(kmsKey, staticWrapper)
 		}
+		return kmsKey, nil
 	case staticWrapper != nil:
-		wrapper = staticWrapper
+		return staticWrapper, nil
 	case c.CredentialKeyFile != "":
 		if s.Cloud != "local" {
 			return nil, fmt.Errorf("NORI_CREDENTIAL_KEY_FILE is for local development only and requires NORI_CLOUD=local")
 		}
-		local, err := rowstore.OpenLocalKey(c.CredentialKeyFile)
-		if err != nil {
-			return nil, err
-		}
-		wrapper = local
+		return rowstore.OpenLocalKey(c.CredentialKeyFile)
 	default:
 		return nil, fmt.Errorf("NORI_CREDENTIAL_STORE=database needs NORI_CREDENTIAL_KMS_KEY, NORI_CREDENTIAL_KEY, NORI_CREDENTIAL_KEY_SECRET (or NORI_CREDENTIAL_KEY_FILE on the local stack)")
 	}
-	return wrapper, nil
+}
+
+func (p *Storage) credentialKeys(s settings.Settings) (rowstore.KeyWrapper, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.keyWrapper != nil {
+		return p.keyWrapper, nil
+	}
+	w, err := newCredentialKeys(s)
+	if err != nil {
+		return nil, err
+	}
+	p.keyWrapper = w
+	return w, nil
 }
 
 func Credentials(s settings.Settings, user users.User, store state.ResourceStore) (secret.CredentialStore, error) {
+	return openCredentials(s, user, store, newCredentialKeys)
+}
+
+func (p *Storage) Credentials(s settings.Settings, user users.User, store state.ResourceStore) (secret.CredentialStore, error) {
+	return openCredentials(s, user, store, p.credentialKeys)
+}
+
+func openCredentials(s settings.Settings, user users.User, store state.ResourceStore, keysFn func(settings.Settings) (rowstore.KeyWrapper, error)) (secret.CredentialStore, error) {
 	if s.Connections.CredentialStore == "" {
 		return secret.Unavailable{}, nil
 	}
 	if s.Connections.CredentialStore != "database" {
 		return nil, fmt.Errorf("NORI_CREDENTIAL_STORE must be database or empty")
 	}
-	keys, err := credentialKeys(s)
+	keys, err := keysFn(s)
 	if err != nil {
 		return nil, err
 	}
@@ -108,8 +109,21 @@ type AssistantStore interface {
 }
 
 func Assistant(s settings.Settings, user users.User, store AssistantStore) (*AssistantServices, error) {
+	return openAssistant(s, user, store, Credentials)
+}
+
+func (p *Storage) Assistant(s settings.Settings, user users.User, store AssistantStore) (*AssistantServices, error) {
+	return openAssistant(s, user, store, p.Credentials)
+}
+
+func openAssistant(
+	s settings.Settings,
+	user users.User,
+	store AssistantStore,
+	credsFn func(settings.Settings, users.User, state.ResourceStore) (secret.CredentialStore, error),
+) (*AssistantServices, error) {
 	tasks := store
-	credentials, err := Credentials(s, user, store)
+	credentials, err := credsFn(s, user, store)
 	if err != nil {
 		return nil, err
 	}
