@@ -32,10 +32,27 @@ export async function proxy(request: NextRequest) {
     return finalize(NextResponse.redirect(new URL("/signed-out", request.url)));
   }
   const user = await resolveUser(request.headers);
-  if ("status" in user) {
+  if (request.nextUrl.pathname === "/invite") {
+    if (!("status" in user)) {
+      return finalize(NextResponse.redirect(new URL("/", request.url)));
+    }
+    if (user.status === 403 && user.code === "invite_required") {
+      return finalize(NextResponse.next({ request: { headers: requestHeaders } }));
+    }
     const document = request.headers.get("sec-fetch-dest") === "document" && !request.headers.has("rsc");
     return finalize(
-      document && user.status !== 403
+      document && (user.status === 429 || user.status === 503)
+        ? reconnectingPage(user.status, user.retryAfter, nonce)
+        : accessFailureResponse(user, true),
+    );
+  }
+  if ("status" in user) {
+    const document = request.headers.get("sec-fetch-dest") === "document" && !request.headers.has("rsc");
+    if (document && user.status === 403 && user.code === "invite_required") {
+      return finalize(NextResponse.redirect(new URL("/invite", request.url)));
+    }
+    return finalize(
+      document && (user.status === 429 || user.status === 503)
         ? reconnectingPage(user.status, user.retryAfter, nonce)
         : accessFailureResponse(user, true),
     );
