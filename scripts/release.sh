@@ -12,19 +12,21 @@ BAKE_INTERVAL="${NORI_RELEASE_BAKE_INTERVAL:-30}"
 
 usage() {
   cat <<'USAGE'
-Release Nori Core and Web to Cloud Run. The Release workflow runs this every three hours
-and on demand with --latest-green.
+Release Nori Core, Web and the public site to Cloud Run. The Release workflow runs this
+every three hours and on demand with --latest-green.
 
 Usage:
-  scripts/release.sh [--latest-green] [--dry-run] [--core] [--web] [--force-unverified]
-  scripts/release.sh rollback core|web|all
+  scripts/release.sh [--latest-green] [--dry-run] [--core] [--web] [--site] [--force-unverified]
+  scripts/release.sh rollback core|web|site|all
 
 Releases HEAD (or NORI_RELEASE_SHA) using the images CI built for that commit.
 --latest-green instead picks the newest commit on main whose CI checks passed and whose
-images exist.
-Only groups whose code changed since the live release ship; --core / --web force a group.
+core and web images exist.
+Only groups whose code changed since the live release ship; --core / --web / --site force a group.
   core: nori-migrate job, then nori-core (API) and nori-worker
   web:  nori-web and nori-web-mac (same image)
+  site: nori-site (public marketing site). Skipped when the commit has no nori-site image
+        or the service doesn't exist yet.
 Each service is staged with no traffic and must pass its HTTP startup probe and checks
 before promotion. Promoted revisions are then watched for NORI_RELEASE_BAKE_SECONDS
 (default 600); any 5xx or crash reverts that group to its previous revision.
@@ -44,29 +46,34 @@ group_services() {
   case "$1" in
     core) echo "nori-core nori-worker" ;;
     web) echo "nori-web nori-web-mac" ;;
+    site) echo "nori-site" ;;
   esac
 }
 group_paths() {
   case "$1" in
     core) echo "core api contracts" ;;
     web) echo "web api contracts" ;;
+    site) echo "site" ;;
   esac
 }
 group_image() {
   case "$1" in
     core) echo "$REGISTRY/nori-core:$SHA" ;;
     web) echo "$REGISTRY/nori-web:$SHA" ;;
+    site) echo "$REGISTRY/nori-site:$SHA" ;;
   esac
 }
 probe_path() {
   case "$1" in
     nori-core|nori-worker) echo /readyz ;;
+    nori-site) echo /healthz ;;
     *) echo /api/health ;;
   esac
 }
 group_of() {
   case "$1" in
     nori-core|nori-worker) echo core ;;
+    nori-site) echo site ;;
     *) echo web ;;
   esac
 }
@@ -83,6 +90,15 @@ revision_label() {
 revision_ready() {
   revision_json "$1" | jq -e 'any(.status.conditions[]?; .type == "Ready" and .status == "True")' >/dev/null
 }
+# Exit status: 0 if the service exists, 1 if it doesn't, 2 if Cloud Run couldn't be listed.
+service_exists() {
+  local names
+  names="$(cloud_run services list --filter="metadata.name=$1" --format='value(metadata.name)')" || return 2
+  grep -qx -- "$1" <<< "$names"
+}
+image_exists() {
+  gcloud artifacts docker images describe "$1" --project="$PROJECT" --format='value(image_summary.digest)' >/dev/null 2>&1
+}
 tagged() {
   service_json "$1" | jq -r --arg tag "$2" '.status.traffic[]? | select(.tag == $tag) | "\(.revisionName)\t\(.url)"'
 }
@@ -93,11 +109,15 @@ http_status() {
 rollback() {
   local group="$1" services svc current previous
   case "$group" in
-    core|web) services="$(group_services "$group")" ;;
-    all) services="$(group_services core) $(group_services web)" ;;
+    core|web|site) services="$(group_services "$group")" ;;
+    all) services="$(group_services core) $(group_services web) $(group_services site)" ;;
     *) usage >&2; exit 2 ;;
   esac
   for svc in $services; do
+    if [[ "$group" == all && "$svc" == nori-site ]] && ! service_exists "$svc"; then
+      log "Skipping $svc: it doesn't exist."
+      continue
+    fi
     current="$(serving_revision "$svc")"
     [[ -n "$current" ]] || die "$svc has split traffic; set it to one revision first."
     previous="$(revision_label "$current" nori-prev)"
@@ -110,6 +130,7 @@ rollback() {
 
 FORCE_CORE=0
 FORCE_WEB=0
+FORCE_SITE=0
 FORCE_UNVERIFIED=0
 LATEST_GREEN=0
 if [[ "${1:-}" == rollback ]]; then
@@ -122,6 +143,7 @@ for arg in "$@"; do
     --dry-run) DRY_RUN=1 ;;
     --core) FORCE_CORE=1 ;;
     --web) FORCE_WEB=1 ;;
+    --site) FORCE_SITE=1 ;;
     --force-unverified) FORCE_UNVERIFIED=1 ;;
     --latest-green) LATEST_GREEN=1 ;;
     -h|--help) usage; exit 0 ;;
@@ -141,10 +163,12 @@ ci_green() {
   [[ "${NORI_RELEASE_CI_GATED:-}" == 1 ]] && return 0
   NORI_GITHUB_REPO="$REPO_SLUG" "$CI_STATUS" "$1" --exclude-job "Swift package and iOS app" >/dev/null
 }
+# The site image is optional: commits from before site/ existed, or whose site build
+# failed, still release core and web.
 images_exist() {
   local name
   for name in nori-core nori-web; do
-    gcloud artifacts docker images describe "$REGISTRY/$name:$1" --project="$PROJECT" --format='value(image_summary.digest)' >/dev/null 2>&1 || return 1
+    image_exists "$REGISTRY/$name:$1" || return 1
   done
 }
 
@@ -168,7 +192,7 @@ TAG="release-${SHA:0:12}"
 
 if [[ "${GITHUB_ACTIONS:-}" != true ]]; then
   git merge-base --is-ancestor "$SHA" origin/main || die "$SHA is not on origin/main; push it first."
-  [[ -z "$(git status --porcelain -- core web contracts)" ]] || die "uncommitted changes under core/, web/, or contracts/."
+  [[ -z "$(git status --porcelain -- core web api contracts site)" ]] || die "uncommitted changes under core/, web/, api/, contracts/, or site/."
 fi
 
 if [[ "$LATEST_GREEN" -eq 1 ]]; then
@@ -180,10 +204,19 @@ elif ! ci_green "$SHA"; then
 fi
 
 group_change() {
-  local group="$1" svc revision live paths
+  local group="$1" svc revision live paths exists
   for svc in $(group_services "$group"); do
     revision="$(serving_revision "$svc")"
-    [[ -n "$revision" ]] || { echo "changed: $svc has split traffic"; return; }
+    if [[ -z "$revision" ]]; then
+      exists=0
+      service_exists "$svc" || exists=$?
+      case "$exists" in
+        0) echo "changed: $svc has split traffic" ;;
+        1) echo "missing: $svc does not exist yet (see core/infrastructure/README.md)" ;;
+        *) echo "unknown: could not list Cloud Run services" ;;
+      esac
+      return
+    fi
     live="$(revision_label "$revision" nori-commit)"
     if [[ -z "$live" ]]; then echo "changed: $svc has no release label"; return; fi
     [[ "$live" == "$SHA" ]] && continue
@@ -200,12 +233,26 @@ group_change() {
 
 RELEASE_GROUPS=()
 SUMMARY=()
-for group in core web; do
+for group in core web site; do
   forced=0
   [[ "$group" == core && "$FORCE_CORE" -eq 1 ]] && forced=1
   [[ "$group" == web && "$FORCE_WEB" -eq 1 ]] && forced=1
+  [[ "$group" == site && "$FORCE_SITE" -eq 1 ]] && forced=1
   change="$(group_change "$group")"
+  case "$change" in
+    unknown:*) die "${change#*: }." ;;
+    missing:*)
+      [[ "$group" == site && "$forced" -eq 0 ]] || die "cannot release $group: ${change#*: }."
+      SUMMARY+=("$group: skip (${change#*: })")
+      continue
+      ;;
+  esac
   if [[ "$forced" -eq 1 || "$change" == changed:* ]]; then
+    if [[ "$group" == site ]] && ! image_exists "$(group_image site)"; then
+      [[ "$forced" -eq 0 ]] || die "image $(group_image site) does not exist; CI builds it after the checks pass."
+      SUMMARY+=("site: skip (no nori-site image for ${SHA:0:12})")
+      continue
+    fi
     RELEASE_GROUPS+=("$group")
     suffix=""
     if [[ "$forced" -eq 1 ]]; then suffix=", forced"; fi
@@ -222,8 +269,7 @@ if [[ "${#RELEASE_GROUPS[@]}" -eq 0 ]]; then
 fi
 for group in "${RELEASE_GROUPS[@]}"; do
   image="$(group_image "$group")"
-  gcloud artifacts docker images describe "$image" --project="$PROJECT" --format='value(image_summary.digest)' >/dev/null 2>&1 ||
-    die "image $image does not exist; CI builds it after the checks pass."
+  image_exists "$image" || die "image $image does not exist; CI builds it after the checks pass."
 done
 
 var_name() { printf '%s_%s' "$1" "${2//-/_}"; }
@@ -261,6 +307,10 @@ check_staged() {
       [[ "$(http_status "$url/api/health")" == 200 ]] &&
         [[ "$(http_status "$url/")" == 403 ]] &&
         [[ "$(http_status -H 'Authorization: Bearer invalid' "$url/")" == 403 ]]
+      ;;
+    nori-site)
+      [[ "$(http_status "$url/")" == 200 ]] &&
+        [[ "$(http_status "$url/healthz")" == 200 ]]
       ;;
     *) return 0 ;;
   esac

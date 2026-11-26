@@ -20,7 +20,22 @@ function commitFile(repo, path, contents) {
   return git(repo, "rev-parse", "HEAD");
 }
 
-function fixture(t, { change, live = "base", failDeploy = "", badRevisions = "", webRootStatus = "200", failLogReads = 0, args = [], green = null } = {}) {
+function fixture(
+  t,
+  {
+    change,
+    live = "base",
+    failDeploy = "",
+    badRevisions = "",
+    webRootStatus = "200",
+    siteRootStatus = "200",
+    missingImages = "",
+    missingServices = "",
+    failLogReads = 0,
+    args = [],
+    green = null,
+  } = {},
+) {
   const dir = mkdtempSync(join(tmpdir(), "nori-release-test-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const repo = join(dir, "repo");
@@ -31,7 +46,7 @@ function fixture(t, { change, live = "base", failDeploy = "", badRevisions = "",
   git(repo, "config", "user.email", "fixture@example.com");
   git(repo, "config", "user.name", "Fixture");
   git(repo, "config", "commit.gpgsign", "false");
-  for (const path of ["core/main.go", "web/page.tsx", "contracts/api.json", "ios/App.swift"]) {
+  for (const path of ["core/main.go", "web/page.tsx", "contracts/api.json", "ios/App.swift", "site/index.html"]) {
     mkdirSync(join(repo, path, ".."), { recursive: true });
     writeFileSync(join(repo, path), "v1\n");
   }
@@ -50,8 +65,15 @@ function fixture(t, { change, live = "base", failDeploy = "", badRevisions = "",
   const command = (name, source) => writeFileSync(join(bin, name), "#!/bin/bash\n" + source, { mode: 0o755 });
   command("gcloud", `
 printf 'gcloud %s\\n' "$*" >> "$FIXTURE_LOG"
+is_missing_service() { for svc in $FIXTURE_MISSING_SERVICES; do [ "$svc" = "$1" ] && return 0; done; return 1; }
 case "$1 $2 $3" in
+  "artifacts docker images")
+    for name in $FIXTURE_MISSING_IMAGES; do case "$5" in */$name:*) exit 1 ;; esac; done ;;
+  "run services list")
+    svc="\${4#--filter=metadata.name=}"
+    is_missing_service "$svc" || printf '%s\n' "$svc" ;;
   "run services describe")
+    is_missing_service "$4" && exit 1
     printf '{"status":{"traffic":[{"revisionName":"%s-live","percent":100},{"revisionName":"%s-new","tag":"%s","url":"https://%s-new.example"}]}}' "$4" "$4" "$FIXTURE_TAG" "$4" ;;
   "run revisions describe")
     case "$4" in
@@ -77,6 +99,8 @@ url="\${@: -1}"
 case "$url" in
   */readyz|*/api/health) printf 200 ;;
   *nori-web-new.example/) printf '%s' "$FIXTURE_WEB_ROOT_STATUS" ;;
+  *nori-site-new.example/healthz) printf 200 ;;
+  *nori-site-new.example/) printf '%s' "$FIXTURE_SITE_ROOT_STATUS" ;;
   *) printf 403 ;;
 esac`);
 
@@ -93,6 +117,9 @@ esac`);
       FIXTURE_FAIL_DEPLOY: failDeploy,
       FIXTURE_BAD: badRevisions,
       FIXTURE_WEB_ROOT_STATUS: webRootStatus,
+      FIXTURE_SITE_ROOT_STATUS: siteRootStatus,
+      FIXTURE_MISSING_IMAGES: missingImages,
+      FIXTURE_MISSING_SERVICES: missingServices,
       FIXTURE_FAIL_LOG_READS: String(failLogReads),
       FIXTURE_LOG_FAIL_FILE: join(dir, "log-fail-count"),
       GITHUB_ACTIONS: "true",
@@ -138,10 +165,10 @@ test("an iOS-only change releases nothing", (t) => {
   assert.doesNotMatch(calls, /run deploy|update-traffic/);
 });
 
-test("services without a release label get both groups", (t) => {
+test("services without a release label get every group", (t) => {
   const { result, deployed } = fixture(t, { change: "ios/App.swift", live: "" });
   assert.equal(result.status, 0, result.stderr + result.stdout);
-  assert.deepEqual(deployed, ["nori-core", "nori-worker", "nori-web", "nori-web-mac"]);
+  assert.deepEqual(deployed, ["nori-core", "nori-worker", "nori-web", "nori-web-mac", "nori-site"]);
 });
 
 test("an older commit never replaces a newer live release", (t) => {
@@ -203,6 +230,88 @@ test("a 500 on nori-web root blocks promotion and removes tags", (t) => {
 test("transient gcloud logging read errors during bake are retried", (t) => {
   const { result } = fixture(t, { change: "web/page.tsx", failLogReads: 2 });
   assert.equal(result.status, 0, result.stderr + result.stdout);
+});
+
+test("a site change releases only nori-site after checking / and /healthz", (t) => {
+  const { result, calls, head, deployed } = fixture(t, { change: "site/index.html" });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.deepEqual(deployed, ["nori-site"]);
+  assert.doesNotMatch(calls, /jobs execute/);
+  assert.match(calls, new RegExp(`deploy nori-site --image=\\S+/nori-site:${head} --no-traffic --tag=release-${head.slice(0, 12)}`));
+  assert.match(calls, /deploy nori-site .*--startup-probe=httpGet\.path=\/healthz,/);
+  assert.match(calls, /update-traffic nori-site .*--to-revisions=nori-site-new=100/);
+  assert.match(result.stdout, /site: release/);
+});
+
+test("a site root that isn't 200 blocks promotion and removes the tag", (t) => {
+  const { result, calls } = fixture(t, { change: "site/index.html", siteRootStatus: "403" });
+  assert.equal(result.status, 1);
+  assert.doesNotMatch(calls, /--to-revisions=nori-site-new=100/);
+  assert.match(calls, /update-traffic nori-site .*--remove-tags=release-/);
+});
+
+test("a commit without a nori-site image still releases web and skips the site", (t) => {
+  const { result, deployed } = fixture(t, { change: ["site/index.html", "web/page.tsx"], missingImages: "nori-site" });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.deepEqual(deployed, ["nori-web", "nori-web-mac"]);
+  assert.match(result.stdout, /site: skip \(no nori-site image for /);
+});
+
+test("--site with no nori-site image fails before deploying anything", (t) => {
+  const { result, calls } = fixture(t, { change: "web/page.tsx", missingImages: "nori-site", args: ["--site"] });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /nori-site:\S+ does not exist/);
+  assert.doesNotMatch(calls, /run deploy/);
+});
+
+test("--latest-green does not require a nori-site image", (t) => {
+  const { result, released, deployed } = fixture(t, {
+    change: ["web/page.tsx"],
+    green: [0],
+    missingImages: "nori-site",
+    args: ["--latest-green"],
+  });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.match(result.stdout, new RegExp(`Release ${released.slice(0, 12)}`));
+  assert.deepEqual(deployed, ["nori-web", "nori-web-mac"]);
+});
+
+test("a missing nori-site service is skipped while web still releases", (t) => {
+  const { result, calls, deployed } = fixture(t, { change: ["site/index.html", "web/page.tsx"], missingServices: "nori-site" });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.deepEqual(deployed, ["nori-web", "nori-web-mac"]);
+  assert.match(result.stdout, /site: skip \(nori-site does not exist yet/);
+  assert.doesNotMatch(calls, /deploy nori-site/);
+});
+
+test("--site with a missing nori-site service fails before deploying anything", (t) => {
+  const { result, calls } = fixture(t, { change: "site/index.html", missingServices: "nori-site", args: ["--site"] });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /cannot release site: nori-site does not exist yet/);
+  assert.doesNotMatch(calls, /run deploy/);
+});
+
+test("--dry-run --site prints the staging and promotion steps without running them", (t) => {
+  const { result, calls, head } = fixture(t, { change: "ios/App.swift", args: ["--dry-run", "--site"] });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.match(result.stdout, /site: release \(unchanged, forced\)/);
+  assert.match(result.stdout, new RegExp(`\\+ cloud_run deploy nori-site --image=\\S+/nori-site:${head} --no-traffic`));
+  assert.match(result.stdout, /\+ cloud_run services update-traffic nori-site --to-revisions=nori-site-staged=100/);
+  assert.doesNotMatch(calls, /run deploy|update-traffic/);
+});
+
+test("rollback site moves nori-site to its previous revision", (t) => {
+  const { result, calls } = fixture(t, { args: ["rollback", "site"] });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.match(calls, /update-traffic nori-site .*--to-revisions=nori-site-older=100/);
+  assert.doesNotMatch(calls, /update-traffic nori-web/);
+});
+
+test("rollback all skips nori-site when it doesn't exist", (t) => {
+  const { result, calls } = fixture(t, { args: ["rollback", "all"], missingServices: "nori-site" });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.match(calls, /update-traffic nori-web-mac .*--to-revisions=nori-web-mac-older=100/);
+  assert.doesNotMatch(calls, /update-traffic nori-site/);
 });
 
 test("ci-status.sh --exclude-job ignores excluded job failures while still gating on them by default", (t) => {

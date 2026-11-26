@@ -310,3 +310,14 @@ jobs:
             --cache-from "type=registry,ref=$REGISTRY/nori-web:buildcache" \
             --cache-to "type=registry,ref=$REGISTRY/nori-web:buildcache,mode=max" \
             --build-arg "SENTRY_RELEASE=$GITHUB_SHA" -t "$REGISTRY/nori-web:$GITHUB_SHA" --push .
+
+      # A separate step so a broken site build never blocks the core and web images.
+      - name: Build and push the site image
+        if: hashFiles('site/Dockerfile') != ''
+        env:
+          REGISTRY: us-central1-docker.pkg.dev/bot-111549/nori-poc
+        run: |
+          docker buildx build --platform linux/amd64 -f site/Dockerfile \
+            --cache-from "type=registry,ref=$REGISTRY/nori-site:buildcache" \
+            --cache-to "type=registry,ref=$REGISTRY/nori-site:buildcache,mode=max" \
+            -t "$REGISTRY/nori-site:$GITHUB_SHA" --push site
