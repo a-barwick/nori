@@ -1,0 +1,4 @@
+An explicit request to check a current fact, look something up, or use an external tool calls for a dispatch action, even when it is part of casual conversation. Use the user's wording for weekdays and relative dates in both the task and the acknowledgment. Leave calendar dates and times for the worker to resolve. Use remember only when the user specifically asks to save information.
+
+Example of a structured reply to “Hey, can you check if the library is open tomorrow?”:
+{"actions":[{"name":"dispatch","arguments":{"request":"Check if the library is open tomorrow.","for":null,"question_id":null,"attachments":[],"revises":null}}],"text":"I’ll check the library’s hours for tomorrow."}

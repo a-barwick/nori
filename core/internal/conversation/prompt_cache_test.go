@@ -1,14 +1,73 @@
 package conversation
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
 
+	"go.opentelemetry.io/otel/trace"
+
+	"nori/internal/llmguard"
 	"nori/internal/state"
 	"nori/internal/usage"
 )
+
+func TestHomeChatRequestIncludesDispatchExample(t *testing.T) {
+	request := ReplyRequest{Messages: []json.RawMessage{
+		modelMessage(map[string]string{"role": "user", "content": "Can you check when the game starts?"}),
+	}}
+	for _, tc := range []struct {
+		name        string
+		provider    string
+		commandPlan bool
+		noDispatch  bool
+		work        []WorkRequest
+		wantExample bool
+	}{
+		{name: "home chat", provider: llmguard.ProviderHome, wantExample: true},
+		{name: "home notification", provider: llmguard.ProviderHome, noDispatch: true},
+		{name: "home command plan", provider: llmguard.ProviderHome, commandPlan: true},
+		{name: "home work request", provider: llmguard.ProviderHome, work: []WorkRequest{{TaskID: "run-1", QuestionID: "q-1"}}},
+		{name: "cloud chat", provider: "openai"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := NewGatewayModel("https://model.invalid/v1", "", "test-model")
+			model.ProviderName = tc.provider
+			req := request
+			req.CommandPlan, req.NoDispatch, req.WorkRequests = tc.commandPlan, tc.noDispatch, tc.work
+			body, err := model.requestBody(req, 4096, trace.SpanFromContext(context.Background()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var payload struct {
+				Messages []struct{ Role, Content string }
+			}
+			if err := json.Unmarshal(body, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if len(payload.Messages) == 0 {
+				t.Fatal("missing request messages")
+			}
+			last := payload.Messages[len(payload.Messages)-1]
+			if !tc.wantExample {
+				if last.Role != "user" {
+					t.Fatalf("unexpected routing instruction for %s", tc.name)
+				}
+				return
+			}
+			_, example, found := strings.Cut(last.Content, "\n{")
+			if last.Role != "system" || !found {
+				t.Fatal("home chat is missing a structured dispatch example")
+			}
+			_, calls, err := decodeResponse("{" + example)
+			if err != nil || len(calls) != 1 || calls[0].Function.Name != "dispatch" {
+				t.Fatalf("incorrect example: calls=%v, err=%v", calls, err)
+			}
+		})
+	}
+}
 
 func TestStableReplySchemaIgnoresIDs(t *testing.T) {
 	a, _ := json.Marshal(responseFormat(nil, nil, nil, false, false, true))

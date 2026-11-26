@@ -365,6 +365,12 @@ func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span tr
 	if !request.NoDispatch {
 		stable := m.gatewayURL == "" && !request.CommandPlan
 		body["response_format"] = responseFormat(request.TaskIDs, request.WorkRequests, request.MemoryIDs, request.CommandPlan, m.gatewayURL != "", stable)
+		if m.ProviderName == llmguard.ProviderHome && !request.Foreground && !request.CommandPlan && len(request.WorkRequests) == 0 {
+			body["messages"] = append(input, map[string]any{
+				"role":    "system",
+				"content": prompts.Runtime("home-chat-routing", nil),
+			})
+		}
 	}
 	return json.Marshal(body)
 }
