@@ -5,6 +5,8 @@ public struct NoriFullSnapshot: Sendable, Hashable {
     public var session: Session
     public var workItems: [WorkItem]
     public var interactions: [Interaction]
+    var didLoadWorkItems: Bool
+    var didLoadInteractions: Bool
     public var mcpServers: [MCPServer]
     public var mcpTools: [String: [MCPServerTool]]
     public var connections: [Connection]
@@ -12,10 +14,12 @@ public struct NoriFullSnapshot: Sendable, Hashable {
     public var coreMemories: [MemoryFact]
     public var memoryLogs: [MemoryLog]
     public var workingMemory: WorkingMemory
+    var didLoadWorkingMemory: Bool
     public var automations: [Automation]
     public var goals: [Goal]
     public var permissions: [PermissionRule]
     public var preferences: Preferences
+    var didLoadPreferences: Bool
     public var modelKeys: ModelKeysResponse
 
     public init(
@@ -34,12 +38,18 @@ public struct NoriFullSnapshot: Sendable, Hashable {
         goals: [Goal] = [],
         permissions: [PermissionRule] = [],
         preferences: Preferences = Preferences(),
-        modelKeys: ModelKeysResponse = ModelKeysResponse()
+        modelKeys: ModelKeysResponse = ModelKeysResponse(),
+        didLoadWorkItems: Bool = true,
+        didLoadInteractions: Bool = true,
+        didLoadWorkingMemory: Bool = true,
+        didLoadPreferences: Bool = true
     ) {
         self.capabilities = capabilities
         self.session = session
         self.workItems = workItems
         self.interactions = interactions
+        self.didLoadWorkItems = didLoadWorkItems
+        self.didLoadInteractions = didLoadInteractions
         self.mcpServers = mcpServers
         self.mcpTools = mcpTools
         self.connections = connections
@@ -47,10 +57,12 @@ public struct NoriFullSnapshot: Sendable, Hashable {
         self.coreMemories = coreMemories
         self.memoryLogs = memoryLogs
         self.workingMemory = workingMemory
+        self.didLoadWorkingMemory = didLoadWorkingMemory
         self.automations = automations
         self.goals = goals
         self.permissions = permissions
         self.preferences = preferences
+        self.didLoadPreferences = didLoadPreferences
         self.modelKeys = modelKeys
     }
 }

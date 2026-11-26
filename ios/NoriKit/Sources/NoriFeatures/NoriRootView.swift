@@ -19,6 +19,8 @@ public struct NoriRootView: View {
     @State private var chatScrollToBottomTrigger: Int = 0
     @State private var workTabFilter: WorkTabFilter = .tasks
     @State private var workPath: [String] = []
+    @State private var didApplyInitialWorkTab = false
+    @State private var selectedWorkTabExplicitly = false
     @State private var morePath: [MoreRoute] = []
 
     @State private var isActivitySheetPresented = false
@@ -81,16 +83,22 @@ public struct NoriRootView: View {
             if !isSignedIn {
                 tabRefreshTask?.cancel()
                 tabRefreshTask = nil
+                didApplyInitialWorkTab = false
+                selectedWorkTabExplicitly = false
+            } else if selectedTab != .chat {
+                scheduleRefresh(for: selectedTab)
             }
         }
         .onChange(of: selectedTab) { _, nextTab in
-            tabRefreshTask?.cancel()
-            guard store.authState.isSignedIn else { return }
-            tabRefreshTask = Task {
-                await refresh(for: nextTab)
-            }
+            scheduleRefresh(for: nextTab)
         }
         .preferredColorScheme(appearance.colorScheme)
+    }
+
+    private func scheduleRefresh(for tab: NoriTab) {
+        tabRefreshTask?.cancel()
+        guard store.authState.isSignedIn else { return }
+        tabRefreshTask = Task { await refresh(for: tab) }
     }
 
     private func refresh(for tab: NoriTab) async {
@@ -103,7 +111,16 @@ public struct NoriRootView: View {
             async let workTask: Void = store.refreshWorkAndInteractions()
             async let libraryTask: Void = store.refreshLibrary()
             async let routinesGoalsTask: Void = store.refreshRoutinesAndGoals()
-            _ = await (workTask, libraryTask, routinesGoalsTask)
+            _ = await (workTask, libraryTask)
+            if !Task.isCancelled, !didApplyInitialWorkTab {
+                didApplyInitialWorkTab = true
+                if !selectedWorkTabExplicitly, workTabFilter == .tasks,
+                   store.hasLoadedWorkOverview, store.pendingInteractions.isEmpty,
+                   store.workItems.isEmpty, !store.libraryItems.isEmpty {
+                    workTabFilter = .artifacts
+                }
+            }
+            await routinesGoalsTask
         case .more:
             async let summaryTask: Void = store.refreshSummary()
             async let appsTask: Void = store.refreshApps()
@@ -148,7 +165,14 @@ public struct NoriRootView: View {
                 NavigationStack(path: $workPath) {
                     WorkView(
                         store: store,
-                        selectedTab: $workTabFilter,
+                        selectedTab: Binding(
+                            get: { workTabFilter },
+                            set: { selection in
+                                selectedWorkTabExplicitly = true
+                                workTabFilter = selection
+                            }
+                        ),
+                        isLoadingOverview: !didApplyInitialWorkTab,
                         onOpenDocument: openDocument,
                         onOpenTask: openWorkTask,
                         onStartInChat: startInChat
@@ -245,6 +269,7 @@ public struct NoriRootView: View {
         isActivitySheetPresented = false
         presentedDocument = nil
         workPath = []
+        selectedWorkTabExplicitly = true
         workTabFilter = .tasks
         selectedTab = .work
     }
@@ -271,6 +296,7 @@ public struct NoriRootView: View {
             selectedTab = tab
             if tab == .work {
                 workPath = []
+                selectedWorkTabExplicitly = true
                 workTabFilter = .tasks
             } else if tab == .more {
                 morePath = []

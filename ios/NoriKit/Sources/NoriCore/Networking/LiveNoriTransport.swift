@@ -373,18 +373,18 @@ public actor LiveNoriTransport: NoriTransport {
         let caps = try? await fetchCapabilities()
         let session = try await fetchSession(before: nil)
 
-        async let workTask = (try? await fetchWorkItems(bucket: nil)) ?? []
-        async let interactionsTask = (try? await fetchInteractions()) ?? []
+        async let workTask = try? await fetchWorkItems(bucket: nil)
+        async let interactionsTask = try? await fetchInteractions()
         async let mcpTask = (try? await fetchMCPServers()) ?? []
         async let connectionsTask = (try? await fetchConnections()) ?? []
         async let libraryTask = (try? await fetchLibrary()) ?? []
         async let memoriesTask = (try? await fetchCoreMemories()) ?? []
         async let logsTask = (try? await fetchMemoryLogs()) ?? []
-        async let workingTask = (try? await fetchWorkingMemory()) ?? WorkingMemory()
+        async let workingTask = try? await fetchWorkingMemory()
         async let automationsTask = (try? await fetchAutomations()) ?? []
         async let goalsTask = (try? await fetchGoals()) ?? []
         async let permissionsTask = (try? await fetchPermissions()) ?? []
-        async let preferencesTask = (try? await fetchPreferences()) ?? Preferences()
+        async let preferencesTask = try? await fetchPreferences()
         async let modelKeysTask = (try? await fetchModelKeys()) ?? ModelKeysResponse()
 
         let servers = await mcpTask
@@ -408,23 +408,28 @@ public actor LiveNoriTransport: NoriTransport {
             return result
         }
 
+        let (workItems, interactions, workingMemory, preferences) = await (workTask, interactionsTask, workingTask, preferencesTask)
         return await NoriFullSnapshot(
             capabilities: caps,
             session: session,
-            workItems: workTask,
-            interactions: interactionsTask,
+            workItems: workItems ?? [],
+            interactions: interactions ?? [],
             mcpServers: servers,
             mcpTools: toolsByServer,
             connections: connectionsTask,
             libraryItems: libraryTask,
             coreMemories: memoriesTask,
             memoryLogs: logsTask,
-            workingMemory: workingTask,
+            workingMemory: workingMemory ?? WorkingMemory(),
             automations: automationsTask,
             goals: goalsTask,
             permissions: permissionsTask,
-            preferences: preferencesTask,
-            modelKeys: modelKeysTask
+            preferences: preferences ?? Preferences(),
+            modelKeys: modelKeysTask,
+            didLoadWorkItems: workItems != nil,
+            didLoadInteractions: interactions != nil,
+            didLoadWorkingMemory: workingMemory != nil,
+            didLoadPreferences: preferences != nil
         )
     }
 

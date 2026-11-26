@@ -8,7 +8,7 @@ extension NoriStore {
         async let logs = captureMemoryRefresh { try await activeTransport.fetchMemoryLogs() }
         async let working = captureMemoryRefresh { try await activeTransport.fetchWorkingMemory() }
         let (factsResult, logsResult, workingResult) = await (facts, logs, working)
-        guard generation == sessionGeneration else { return }
+        guard generation == sessionGeneration, !Task.isCancelled else { return }
         let errors = [factsResult.failure, logsResult.failure, workingResult.failure].compactMap { $0 }
         if let authError = errors.first(where: { ($0 as? NoriAPIError)?.isAuthError == true }) {
             _ = await handleAuthFailureIfNeeded(authError)
@@ -16,7 +16,10 @@ extension NoriStore {
         }
         if case .success(let latest) = factsResult { coreMemories = latest }
         if case .success(let latest) = logsResult { memoryLogs = latest }
-        if case .success(let latest) = workingResult { workingMemory = latest }
+        if case .success(let latest) = workingResult {
+            workingMemory = latest
+            hasLoadedWorkingMemory = true
+        }
         memoryRefreshError = errors.first?.localizedDescription
     }
 

@@ -498,7 +498,7 @@ private struct ChatComposerView: View {
         let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasReadyAttachments = draftAttachments.contains { $0.uploaded != nil }
         let anyUploading = draftAttachments.contains { $0.isUploading }
-        return (hasText || hasReadyAttachments) && !anyUploading && !isSending
+        return (hasText || hasReadyAttachments) && !anyUploading && !isSending && !store.isLoading
     }
 
     var body: some View {

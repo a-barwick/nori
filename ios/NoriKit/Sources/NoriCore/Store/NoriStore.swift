@@ -148,10 +148,12 @@ public final class NoriStore {
     public var coreMemories: [MemoryFact]
     public var memoryLogs: [MemoryLog]
     public var workingMemory: WorkingMemory
+    public internal(set) var hasLoadedWorkingMemory = false
     public var automations: [Automation]
     public var goals: [Goal]
     public var permissions: [PermissionRule]
     public var preferences: Preferences
+    public private(set) var hasLoadedPreferences = false
     public var modelKeys: ModelKeysResponse
 
     public var isLoading: Bool = false
@@ -170,6 +172,13 @@ public final class NoriStore {
     var transport: any NoriTransport
     var sessionGeneration: UInt64 = 0
     private var eventTask: Task<Void, Never>?
+    private var chatContextTask: Task<Void, Never>?
+    private var interactionsRefreshID: UInt64 = 0
+    private var settledInteractionsRefreshID: UInt64 = 0
+    private var workRefreshID: UInt64 = 0
+    private var settledWorkRefreshID: UInt64 = 0
+    private var hasLoadedWorkItems = false
+    private var hasLoadedInteractions = false
     private var toastTask: Task<Void, Never>?
     @ObservationIgnored private var submitSpans: [String: (span: any NoriTelemetrySpan, timeout: Task<Void, Never>)] = [:]
     private var reportedFailedTaskIDs: Set<String> = []
@@ -222,8 +231,12 @@ public final class NoriStore {
         interactions.filter { $0.status == .pending }
     }
 
+    public var hasLoadedWorkOverview: Bool {
+        hasLoadedWorkItems && hasLoadedInteractions
+    }
+
     public var needsYouCount: Int {
-        assistantSummary?.needsYou ?? pendingInteractions.count
+        hasLoadedInteractions ? pendingInteractions.count : (assistantSummary?.needsYou ?? pendingInteractions.count)
     }
 
     private var computedAppsAttentionCount: Int {
@@ -298,17 +311,31 @@ public final class NoriStore {
         let generation = sessionGeneration
         let savedSession = await authProvider.loadSession()
         guard generation == sessionGeneration else { return }
-        if let saved = savedSession {
-            authState = .signedIn(email: saved.email)
-            modelSelection = loadStoredModelSelection()
-            await refreshAll()
-            if generation == sessionGeneration, authState.isSignedIn {
-                startEventStream()
-            }
-        } else {
+        guard let savedSession else {
             authState = .signedOut
             connectionState = .offline
+            return
         }
+
+        authState = .signedIn(email: savedSession.email)
+        modelSelection = loadStoredModelSelection()
+        isLoading = true
+        connectionState = .connecting
+        defer { if generation == sessionGeneration { isLoading = false } }
+
+        do {
+            let initialSession = try await transport.fetchSession(before: nil)
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
+            applySession(initialSession)
+            lastError = nil
+        } catch {
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
+            if await handleAuthFailureIfNeeded(error) { return }
+            guard generation == sessionGeneration else { return }
+            connectionState = .reconnecting
+            lastError = error.localizedDescription
+        }
+        startChatSession()
     }
 
     public func completeGoogleSignIn(callbackURL: URL, pkce: GoogleOAuthPKCE) async {
@@ -327,15 +354,15 @@ public final class NoriStore {
             guard generation == sessionGeneration else { return }
             await clearTransportIdentity()
             guard generation == sessionGeneration else { return }
-            let snapshot = try await transport.fetchFullSnapshot()
+            let initialSession = try await transport.fetchSession(before: nil)
             guard generation == sessionGeneration else { return }
-            applySnapshot(snapshot)
+            applySession(initialSession)
             authState = .signedIn(email: session.email)
             modelSelection = loadStoredModelSelection()
             connectionState = .connected
             lastError = nil
             NoriLogger.auth.info("auth.signed_in", breadcrumb: true)
-            startEventStream()
+            startChatSession()
         } catch let apiErr as NoriAPIError where apiErr.statusCode == 401 || apiErr.statusCode == 403 {
             guard generation == sessionGeneration else { return }
             await authProvider.clearSession()
@@ -371,6 +398,8 @@ public final class NoriStore {
 
     private func clearUserState() {
         stopEventStream()
+        chatContextTask?.cancel()
+        chatContextTask = nil
         toastTask?.cancel()
         for turnID in Array(submitSpans.keys) {
             finishSubmitSpan(turnID: turnID, outcome: "cancelled", status: .cancelled)
@@ -387,6 +416,8 @@ public final class NoriStore {
         workItems = []
         workDetails = [:]
         interactions = []
+        hasLoadedWorkItems = false
+        hasLoadedInteractions = false
         mcpServers = []
         mcpTools = [:]
         connections = []
@@ -395,10 +426,12 @@ public final class NoriStore {
         coreMemories = []
         memoryLogs = []
         workingMemory = WorkingMemory()
+        hasLoadedWorkingMemory = false
         automations = []
         goals = []
         permissions = []
         preferences = Preferences()
+        hasLoadedPreferences = false
         modelKeys = ModelKeysResponse()
         isThinking = false
         isLoading = false
@@ -451,10 +484,10 @@ public final class NoriStore {
         let generation = sessionGeneration
         do {
             let latest = try await transport.fetchAssistantSummary()
-            guard generation == sessionGeneration else { return }
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
             assistantSummary = latest
         } catch {
-            guard generation == sessionGeneration else { return }
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
             _ = await handleAuthFailureIfNeeded(error)
         }
     }
@@ -463,10 +496,8 @@ public final class NoriStore {
         let generation = sessionGeneration
         do {
             let freshSession = try await transport.fetchSession(before: nil)
-            guard generation == sessionGeneration else { return }
-            self.session = freshSession
-            self.isThinking = freshSession.conversation?.processing == true
-            finishObservedReplies(in: freshSession.messages)
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
+            applySession(freshSession)
         } catch {
             guard generation == sessionGeneration else { return }
             if !(await handleAuthFailureIfNeeded(error)) {
@@ -475,34 +506,53 @@ public final class NoriStore {
         }
     }
 
+    private func refreshInteractions() async {
+        let generation = sessionGeneration
+        interactionsRefreshID &+= 1
+        let refreshID = interactionsRefreshID
+        do {
+            let latest = try await transport.fetchInteractions()
+            guard generation == sessionGeneration, refreshID > settledInteractionsRefreshID, !Task.isCancelled else { return }
+            settledInteractionsRefreshID = refreshID
+            interactions = latest
+            hasLoadedInteractions = true
+        } catch {
+            guard generation == sessionGeneration, refreshID > settledInteractionsRefreshID, !Task.isCancelled else { return }
+            settledInteractionsRefreshID = refreshID
+            hasLoadedInteractions = false
+            if !(await handleAuthFailureIfNeeded(error)), generation == sessionGeneration {
+                await refreshSummary()
+            }
+        }
+    }
+
     public func refreshWorkAndInteractions() async {
         let generation = sessionGeneration
-        let activeTransport = transport
-        async let workResult: Result<[WorkItem], Error> = {
-            do { return .success(try await activeTransport.fetchWorkItems(bucket: nil)) }
-            catch { return .failure(error) }
-        }()
-        async let interactionsResult: Result<[Interaction], Error> = {
-            do { return .success(try await activeTransport.fetchInteractions()) }
-            catch { return .failure(error) }
-        }()
+        workRefreshID &+= 1
+        let refreshID = workRefreshID
+        async let interactionsTask: Void = refreshInteractions()
+        do {
+            let work = try await transport.fetchWorkItems(bucket: nil)
+            if generation == sessionGeneration, refreshID > settledWorkRefreshID, !Task.isCancelled {
+                settledWorkRefreshID = refreshID
+                workItems = work
+                hasLoadedWorkItems = true
+                reportFailedWorkItemsIfNeeded(work)
+                assistantSummary?.working = activeWorkItems.count
+            }
+        } catch {
+            if generation == sessionGeneration, refreshID > settledWorkRefreshID, !Task.isCancelled {
+                settledWorkRefreshID = refreshID
+                hasLoadedWorkItems = false
+                _ = await handleAuthFailureIfNeeded(error)
+            }
+        }
+        await interactionsTask
+    }
 
-        let (workRes, interRes) = await (workResult, interactionsResult)
-        guard generation == sessionGeneration else { return }
-        if case .failure(let err) = workRes, await handleAuthFailureIfNeeded(err) { return }
-        if case .failure(let err) = interRes, await handleAuthFailureIfNeeded(err) { return }
-
-        if case .success(let freshWork) = workRes {
-            self.workItems = freshWork
-            reportFailedWorkItemsIfNeeded(freshWork)
-        }
-        if case .success(let freshInteractions) = interRes {
-            self.interactions = freshInteractions
-        }
-        if assistantSummary != nil {
-            assistantSummary?.needsYou = pendingInteractions.count
-            assistantSummary?.working = activeWorkItems.count
-        }
+    private func markWorkChanged() {
+        workRefreshID &+= 1
+        settledWorkRefreshID = workRefreshID
     }
 
     public func refreshApps() async {
@@ -606,7 +656,7 @@ public final class NoriStore {
         }()
 
         let (permsRes, prefsRes) = await (permsResult, prefsResult)
-        guard generation == sessionGeneration else { return }
+        guard generation == sessionGeneration, !Task.isCancelled else { return }
         if case .failure(let err) = permsRes, await handleAuthFailureIfNeeded(err) { return }
         if case .failure(let err) = prefsRes, await handleAuthFailureIfNeeded(err) { return }
 
@@ -614,7 +664,8 @@ public final class NoriStore {
             self.permissions = perms
         }
         if case .success(let prefs) = prefsRes {
-            self.preferences = prefs
+            preferences = prefs
+            hasLoadedPreferences = true
         }
     }
 
@@ -643,24 +694,43 @@ public final class NoriStore {
     private func applySnapshot(_ snapshot: NoriFullSnapshot) {
         self.capabilities = snapshot.capabilities
         self.assistantSummary = nil
-        self.session = snapshot.session
-        self.workItems = snapshot.workItems
-        self.interactions = snapshot.interactions
+        applySession(snapshot.session)
+        hasLoadedWorkItems = snapshot.didLoadWorkItems
+        hasLoadedInteractions = snapshot.didLoadInteractions
+        if snapshot.didLoadWorkItems {
+            markWorkChanged()
+            workItems = snapshot.workItems
+        }
+        if snapshot.didLoadInteractions {
+            interactionsRefreshID &+= 1
+            settledInteractionsRefreshID = interactionsRefreshID
+            interactions = snapshot.interactions
+        }
         self.mcpServers = snapshot.mcpServers
         self.mcpTools = snapshot.mcpTools
         self.connections = snapshot.connections
         self.libraryItems = snapshot.libraryItems
         self.coreMemories = snapshot.coreMemories
         self.memoryLogs = snapshot.memoryLogs
-        self.workingMemory = snapshot.workingMemory
+        hasLoadedWorkingMemory = snapshot.didLoadWorkingMemory
+        if snapshot.didLoadWorkingMemory {
+            workingMemory = snapshot.workingMemory
+        }
         self.automations = snapshot.automations
         self.goals = snapshot.goals
         self.permissions = snapshot.permissions
-        self.preferences = snapshot.preferences
+        hasLoadedPreferences = snapshot.didLoadPreferences
+        if snapshot.didLoadPreferences {
+            preferences = snapshot.preferences
+        }
         self.modelKeys = snapshot.modelKeys
-        self.isThinking = snapshot.session.conversation?.processing == true
-        finishObservedReplies(in: snapshot.session.messages)
-        reportFailedWorkItemsIfNeeded(snapshot.workItems)
+        reportFailedWorkItemsIfNeeded(workItems)
+    }
+
+    private func applySession(_ snapshot: Session) {
+        session = snapshot
+        isThinking = snapshot.conversation?.processing == true
+        finishObservedReplies(in: snapshot.messages)
     }
 
     private func finishSubmitSpan(turnID: String, outcome: String, status: NoriSpanStatus) {
@@ -714,6 +784,25 @@ public final class NoriStore {
                 category: "task.failed",
                 tags: attrs
             )
+        }
+    }
+
+    private func startChatSession() {
+        startEventStream()
+        chatContextTask = Task { [weak self] in
+            guard let self, !Task.isCancelled else { return }
+            async let capabilitiesTask: Void = self.refreshCapabilities()
+            async let summaryTask: Void = self.refreshSummary()
+            async let interactionsTask: Void = self.refreshInteractions()
+            _ = await (capabilitiesTask, summaryTask, interactionsTask)
+        }
+    }
+
+    private func refreshCapabilities() async {
+        let generation = sessionGeneration
+        if let latest = try? await transport.fetchCapabilities(),
+           generation == sessionGeneration, !Task.isCancelled {
+            capabilities = latest
         }
     }
 
@@ -870,7 +959,7 @@ public final class NoriStore {
         NoriLogger.store.info("turn submitted", attributes: ["nori.turn.id": clientID], breadcrumb: true)
 
         do {
-            let activeSelection = effectiveModelSelection
+            let activeSelection = capabilities == nil ? modelSelection : effectiveModelSelection
             let attachmentIDs = attachments.map(\.id)
             var updated = try await NoriTelemetryRuntime.$parentSpan.withValue(submitSpan) {
                 do {
@@ -979,6 +1068,8 @@ public final class NoriStore {
             )
             guard generation == sessionGeneration else { return }
             if let idx = interactions.firstIndex(where: { $0.id == interaction.id }) {
+                interactionsRefreshID &+= 1
+                settledInteractionsRefreshID = interactionsRefreshID
                 interactions[idx] = receipt.resource
             }
             async let workAndInteractionsTask: Void = refreshWorkAndInteractions()
@@ -1052,7 +1143,9 @@ public final class NoriStore {
             let items = try? await transport.fetchWorkItems(bucket: nil)
             guard generation == sessionGeneration else { return }
             if let items {
+                markWorkChanged()
                 workItems = items
+                hasLoadedWorkItems = true
             }
             showToast("Steered task")
         } catch {
@@ -1068,6 +1161,7 @@ public final class NoriStore {
             let receipt = try await transport.stopWork(taskID: taskID, requestID: UUID().uuidString.lowercased())
             guard generation == sessionGeneration else { return }
             if let idx = workItems.firstIndex(where: { $0.taskID == taskID }) {
+                markWorkChanged()
                 workItems[idx] = receipt.resource
             }
             let detail = try? await transport.fetchWorkDetail(taskID: taskID)
@@ -1088,6 +1182,7 @@ public final class NoriStore {
         do {
             let receipt = try await transport.continueWork(taskID: taskID, budgetUSD: budgetUSD, requestID: UUID().uuidString.lowercased())
             guard generation == sessionGeneration else { return }
+            markWorkChanged()
             workItems.insert(receipt.resource, at: 0)
             let detail = try? await transport.fetchWorkDetail(taskID: receipt.resource.taskID)
             guard generation == sessionGeneration else { return }
@@ -1540,7 +1635,9 @@ public final class NoriStore {
             let items = try? await transport.fetchWorkItems(bucket: nil)
             guard generation == sessionGeneration else { return }
             if let items {
+                markWorkChanged()
                 workItems = items
+                hasLoadedWorkItems = true
             }
             showToast("Running \"\(auto.title)\" now")
         } catch {

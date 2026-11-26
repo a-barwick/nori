@@ -49,25 +49,27 @@ enum WorkStatusPresentation {
 public struct WorkView: View {
     @Bindable private var store: NoriStore
     private let externalSelection: Binding<WorkTabFilter>?
+    private let isLoadingOverview: Bool
     private let onOpenDocument: (NoriCore.LibraryItem) -> Void
     private let onOpenTask: ((String) -> Void)?
     private let onStartInChat: (String) -> Void
 
     @State private var internalTab: WorkTabFilter = .tasks
     @State private var selectedTaskDestination: String?
-    @State private var didApplyInitialDefaultTab: Bool = false
     @State private var showAllRecentTasks: Bool = false
     @State private var isResolvedExpanded: Bool = false
 
     public init(
         store: NoriStore,
         selectedTab: Binding<WorkTabFilter>? = nil,
+        isLoadingOverview: Bool = false,
         onOpenDocument: @escaping (NoriCore.LibraryItem) -> Void = { _ in },
         onOpenTask: ((String) -> Void)? = nil,
         onStartInChat: @escaping (String) -> Void = { _ in }
     ) {
         self.store = store
         self.externalSelection = selectedTab
+        self.isLoadingOverview = isLoadingOverview
         self.onOpenDocument = onOpenDocument
         self.onOpenTask = onOpenTask
         self.onStartInChat = onStartInChat
@@ -136,9 +138,6 @@ public struct WorkView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(NoriColors.canvas.ignoresSafeArea())
-        .onAppear {
-            applySmartDefaultTabIfNeeded()
-        }
         .navigationDestination(item: $selectedTaskDestination) { taskID in
             WorkDetailView(
                 store: store,
@@ -202,7 +201,17 @@ public struct WorkView: View {
                     .padding(.bottom, 6)
                 }
 
-                if isAllClear {
+                if isAllClear, isLoadingOverview, !store.hasLoadedWorkOverview {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                } else if isAllClear, !store.hasLoadedWorkOverview {
+                    Button("Refresh tasks") {
+                        Task { await store.refreshWorkAndInteractions() }
+                    }
+                    .buttonStyle(NoriButtonStyle(.neutral, fullWidth: true))
+                    .padding(.vertical, 8)
+                } else if isAllClear, store.needsYouCount == 0 {
                     allClearCard
                         .padding(.top, 4)
                         .padding(.bottom, 8)
@@ -435,19 +444,6 @@ public struct WorkView: View {
         }
     }
 
-
-    private func applySmartDefaultTabIfNeeded() {
-        guard !didApplyInitialDefaultTab else { return }
-        didApplyInitialDefaultTab = true
-        guard activeTab == .tasks else { return }
-
-        if store.pendingInteractions.isEmpty
-            && store.activeWorkItems.isEmpty
-            && store.finishedWorkItems.isEmpty
-            && !store.libraryItems.isEmpty {
-            activeTabBinding.wrappedValue = .artifacts
-        }
-    }
 
     private func navigateToTask(_ taskID: String) {
         if let onOpenTask {

@@ -38,7 +38,7 @@ public struct MoreHubView: View {
     }
 
     private var memoryRatioString: String? {
-        guard store.coreMemoryBudgetBytes > 0 else { return nil }
+        guard store.hasLoadedWorkingMemory else { return nil }
         let usedKB = Double(store.coreMemoryUsedBytes) / 1024.0
         let budgetKB = Double(store.coreMemoryBudgetBytes) / 1024.0
         return String(format: "%.1f / %.0f KB", usedKB, budgetKB)
@@ -52,6 +52,7 @@ public struct MoreHubView: View {
     }
 
     private var preferencesDetail: String? {
+        guard store.hasLoadedPreferences else { return nil }
         let tz = store.preferences.timezone.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !tz.isEmpty else { return nil }
         return "\(tz) · $\(String(format: "%.2f", store.preferences.budgets.taskUSD)) / task"

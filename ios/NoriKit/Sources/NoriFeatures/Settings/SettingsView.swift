@@ -184,13 +184,13 @@ public struct PreferencesBudgetsView: View {
                 NoriRows {
                     NoriRow(
                         title: "Time zone",
-                        detail: store.preferences.timezone,
+                        detail: store.hasLoadedPreferences ? store.preferences.timezone : nil,
                         showDivider: true
                     )
 
                     NoriRow(
                         title: "Task budget",
-                        detail: budgetDetailString,
+                        detail: store.hasLoadedPreferences ? budgetDetailString : nil,
                         showDivider: false
                     )
                 }
@@ -198,6 +198,11 @@ public struct PreferencesBudgetsView: View {
             .padding(.horizontal, 16)
             .padding(.top, 12)
             .padding(.bottom, 96)
+        }
+        .task {
+            if !store.hasLoadedPreferences {
+                await store.refreshPermissionsAndPreferences()
+            }
         }
         .refreshable {
             await store.refreshPermissionsAndPreferences()
@@ -213,6 +218,7 @@ public struct PreferencesBudgetsView: View {
                 Button("Edit") {
                     showingEditPreferences = true
                 }
+                .disabled(!store.hasLoadedPreferences)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(NoriColors.accent)
             }

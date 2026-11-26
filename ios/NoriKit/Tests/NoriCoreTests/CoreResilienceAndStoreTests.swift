@@ -745,6 +745,87 @@ struct AuthAndLiveTransportTests {
 @Suite("Memory Receipts & NoriStore Domain Logic")
 struct MemoryReceiptsAndStoreTests {
 
+    @Test("Chat restores its snapshot and opens the stream without waiting for other screens", .timeLimit(.minutes(1)))
+    @MainActor
+    func bootstrapUsesChatSnapshotAndCursor() async {
+        let mock = FullMockTransport()
+        let provider = AuthTokenProvider(keychain: KeychainStore(service: "com.nori.ios.tests.\(UUID().uuidString)"))
+        await provider.saveSession(AuthSession(
+            idToken: "test-token",
+            refreshToken: nil,
+            expiresAt: Date().addingTimeInterval(3600),
+            email: "alex@example.com"
+        ))
+        let store = NoriStore(transport: mock, authProvider: provider)
+        await mock.suspendNextSession()
+        let bootstrap = Task { await store.bootstrapIfNeeded() }
+        await mock.waitForSuspendedSession()
+        #expect(store.isLoading)
+        #expect(await mock.fetchFullSnapshotCallCount == 0)
+        #expect(await mock.fetchSummaryCallCount == 0)
+        await mock.finishSuspendedSession(Session(messages: [
+            Message(id: "welcome", role: .assistant, text: "Welcome back", createdAt: "2026-11-24T10:00:00Z"),
+        ], position: 42))
+        await bootstrap.value
+
+        var cursors = mock.streamOpens.makeAsyncIterator()
+        #expect(await cursors.next() == 42)
+        #expect(store.messages.map(\.id) == ["welcome"])
+        #expect(!store.isLoading)
+        #expect(await mock.fetchSessionCallCount == 1)
+        #expect(await mock.fetchFullSnapshotCallCount == 0)
+        #expect(await mock.fetchWorkItemsCallCount == 0)
+        #expect(await mock.fetchMCPServersCallCount == 0)
+        #expect(await mock.fetchConnectionsCallCount == 0)
+        await store.signOut()
+    }
+
+    @Test("Cancelling a newer Work refresh preserves pending approvals from the earlier read", .timeLimit(.minutes(1)))
+    @MainActor
+    func cancelledWorkRefreshPreservesPendingApprovals() async {
+        let mock = FullMockTransport()
+        let store = NoriStore(transport: mock)
+        let approval = Interaction(
+            id: "approval-1", kind: .approval, prompt: "Approve action",
+            payload: .approval(ApprovalPayload(
+                summary: "Approve action", effect: .unknown,
+                account: ApprovalAccount(connectionID: "conn", label: "Connection")
+            ))
+        )
+        await mock.suspendInteractionReads()
+        var started = mock.interactionReads.makeAsyncIterator()
+        let first = Task { await store.refreshWorkAndInteractions() }
+        #expect(await started.next() == 0)
+        #expect(!store.hasLoadedWorkOverview)
+        let second = Task { await store.refreshWorkAndInteractions() }
+        #expect(await started.next() == 1)
+        second.cancel()
+        await mock.finishInteractionRead(1, with: [])
+        await second.value
+        #expect(!store.hasLoadedWorkOverview)
+
+        await mock.finishInteractionRead(0, with: [approval])
+        await first.value
+        #expect(store.hasLoadedWorkOverview)
+        #expect(store.pendingInteractions == [approval])
+        await store.refreshSummary()
+        #expect(store.needsYouCount == 1)
+
+        let older = Task { await store.refreshWorkAndInteractions() }
+        #expect(await started.next() == 2)
+        await mock.failInteractionReads()
+        await store.refreshWorkAndInteractions()
+        await mock.finishInteractionRead(2, with: [])
+        await older.value
+        #expect(!store.hasLoadedWorkOverview)
+        #expect(store.pendingInteractions == [approval])
+        #expect(store.needsYouCount == 4)
+
+        await store.refreshAll()
+        #expect(!store.hasLoadedWorkOverview)
+        #expect(store.pendingInteractions == [approval])
+    }
+
     @Test("A delayed session response cannot restore a previous identity's state")
     @MainActor
     func ignoresSessionResponseAfterSignOut() async {
@@ -1256,6 +1337,19 @@ actor FullMockTransport: NoriTransport {
     private nonisolated(unsafe) var streamEvents: [NoriStreamEvent] = []
     private nonisolated(unsafe) var streamTerminalError: Error?
     private let streamLock = NSLock()
+    nonisolated let streamOpens: AsyncStream<Int>
+    private nonisolated let streamOpenContinuation: AsyncStream<Int>.Continuation
+    nonisolated let interactionReads: AsyncStream<Int>
+    private let interactionReadContinuation: AsyncStream<Int>.Continuation
+    private var delayInteractionReads = false
+    private var shouldFailInteractionReads = false
+    private var nextInteractionRead = 0
+    private var suspendedInteractionReads: [Int: CheckedContinuation<[Interaction], Never>] = [:]
+
+    init() {
+        (streamOpens, streamOpenContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
+        (interactionReads, interactionReadContinuation) = AsyncStream.makeStream()
+    }
 
     func setShouldFailSendTurn(_ fail: Bool) { shouldFailSendTurn = fail }
     func setShouldFailSnapshot(_ fail: Bool) { shouldFailSnapshot = fail }
@@ -1291,9 +1385,10 @@ actor FullMockTransport: NoriTransport {
         if shouldFailSnapshot {
             throw NoriAPIError(message: "Temporary snapshot failure", statusCode: 503, retryable: true)
         }
-        return NoriFullSnapshot()
+        return NoriFullSnapshot(didLoadInteractions: !shouldFailInteractionReads)
     }
     nonisolated func eventStream(after position: Int) -> AsyncThrowingStream<NoriStreamEvent, Error> {
+        streamOpenContinuation.yield(position)
         streamLock.lock()
         let events = streamEvents
         let terminalErr = streamTerminalError
@@ -1346,7 +1441,26 @@ actor FullMockTransport: NoriTransport {
     func fetchWorkDetail(taskID: String) async throws -> WorkDetail { throw NoriAPIError(message: "unimplemented") }
     func stopWork(taskID: String, requestID: String) async throws -> MutationReceipt<WorkItem> { throw NoriAPIError(message: "unimplemented") }
     func continueWork(taskID: String, budgetUSD: Double, requestID: String) async throws -> MutationReceipt<WorkItem> { throw NoriAPIError(message: "unimplemented") }
-    func fetchInteractions() async throws -> [Interaction] { [] }
+    func suspendInteractionReads() { delayInteractionReads = true }
+
+    func failInteractionReads() { shouldFailInteractionReads = true }
+
+    func finishInteractionRead(_ index: Int, with interactions: [Interaction]) {
+        suspendedInteractionReads.removeValue(forKey: index)?.resume(returning: interactions)
+    }
+
+    func fetchInteractions() async throws -> [Interaction] {
+        if shouldFailInteractionReads {
+            throw NoriAPIError(message: "Interactions unavailable", statusCode: 503)
+        }
+        guard delayInteractionReads else { return [] }
+        let index = nextInteractionRead
+        nextInteractionRead += 1
+        return await withCheckedContinuation {
+            suspendedInteractionReads[index] = $0
+            interactionReadContinuation.yield(index)
+        }
+    }
     func respondToInteraction(id: String, expectedRevision: Int, answer: InteractionAnswer, requestID: String) async throws -> MutationReceipt<Interaction> {
         throw NoriAPIError(message: "unimplemented")
     }

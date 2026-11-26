@@ -56,6 +56,9 @@ public struct ActivitySheetView: View {
                 let n = activeTasks.count
                 return "\(n) \(n == 1 ? "task" : "tasks") running"
             }
+            if !store.hasLoadedWorkOverview {
+                return isRefreshing ? "Loading activity…" : "Activity unavailable"
+            }
             return "All quiet"
         }
     }
@@ -96,7 +99,7 @@ public struct ActivitySheetView: View {
                         }
                     }
 
-                    if activeTasks.isEmpty {
+                    if activeTasks.isEmpty, store.hasLoadedWorkOverview {
                         NoriCard(padding: 13, backgroundColor: NoriColors.fill1, borderColor: NoriColors.hairline) {
                             Text(store.isThinking
                                  ? "Handling your latest message…"
@@ -105,7 +108,7 @@ public struct ActivitySheetView: View {
                                 .foregroundStyle(NoriColors.ink2)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                    } else {
+                    } else if !activeTasks.isEmpty {
                         NoriRows {
                             ForEach(Array(activeTasks.enumerated()), id: \.element.id) { idx, item in
                                 taskNavigationRow(
@@ -183,19 +186,22 @@ public struct ActivitySheetView: View {
                 }
             }
         }
+        .task { await refreshActivity(includeSession: false) }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .presentationBackground(NoriColors.sheetBackground)
         .presentationCornerRadius(NoriRadius.sheet)
     }
 
-    private func refreshActivity() async {
+    private func refreshActivity(includeSession: Bool = true) async {
         guard !isRefreshing else { return }
         isRefreshing = true
-        async let sessionTask: Void = store.refreshSession()
+        defer { isRefreshing = false }
         async let workTask: Void = store.refreshWorkAndInteractions()
-        _ = await (sessionTask, workTask)
-        isRefreshing = false
+        if includeSession {
+            await store.refreshSession()
+        }
+        await workTask
     }
 
     private func activeTaskDetail(for item: WorkItem) -> String {
