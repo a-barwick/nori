@@ -1,13 +1,13 @@
 "use client";
 
-import { useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy } from "lucide-react";
+import { useCopyToClipboard } from "@/lib/browser";
 import { cn } from "@/lib/utils";
 
 function CodeBlock({ children, text }: { children: React.ReactNode; text: string }) {
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyToClipboard();
   return (
     <div className="group/code relative my-3">
       <pre className="scrollbar-quiet overflow-x-auto rounded-card bg-surface p-4 font-mono text-code text-ink shadow-[inset_0_0_0_1px_var(--hairline-strong)]">
@@ -16,11 +16,7 @@ function CodeBlock({ children, text }: { children: React.ReactNode; text: string
       <button
         type="button"
         aria-label={copied ? "Copied" : "Copy code"}
-        onClick={() => {
-          void navigator.clipboard?.writeText(text);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1400);
-        }}
+        onClick={() => copy(text)}
         className="t-fast absolute top-2 right-2 grid size-8 place-items-center rounded-full bg-surface text-ink-2 opacity-0 shadow-pill transition-opacity group-hover/code:opacity-100 hover:text-ink focus-visible:opacity-100"
       >
         {copied ? <Check size={15} strokeWidth={1.5} /> : <Copy size={15} strokeWidth={1.5} />}

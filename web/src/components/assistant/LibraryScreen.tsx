@@ -2,23 +2,23 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Calendar, Download, FileText, Image as ImageIcon, Link2, Mail, Pencil, Search } from "lucide-react";
-import { Markdown } from "@/components/chat/Markdown";
 import { Button } from "@/components/ui/primitives";
-import { assistantURL, mutate, newRequestID } from "@/lib/assistant/api";
-import { useAssistant } from "@/lib/assistant/context";
-import { eventTime, plainText, relative, when } from "@/lib/assistant/format";
+import { fetchLibraryText, mutate, newRequestID } from "@/lib/assistant/api";
+import { useAssistantConfig } from "@/lib/assistant/context";
+import { plainText, relative, when } from "@/lib/assistant/format";
 import { useLibrary } from "@/lib/assistant/sources";
-import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant/useResource";
-import type { LibraryItem, LibraryItem as BaseItem, SearchHit, SearchResponse } from "@/lib/contracts/assistant";
-import { useBlobURL } from "@/lib/useBlobURL";
+import { useAction, useResource, useResourceInvalidation } from "@/lib/assistant/useResource";
+import { downloadBlob } from "@/lib/browser";
+import type { LibraryItem, SearchHit, SearchResponse } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
+import { LibraryPreview } from "./LibraryPreview";
 import { Confirm, Empty, Failure, inputClass, Loading, Notice, Pill, Row, Rows, Screen, Section, Tabs } from "./ui";
 
 type List<T> = { items: T[] };
 type Kind = "all" | "documents" | "files" | "events" | "messages";
-const GROUP: Record<BaseItem["kind"], Kind> = {
+const GROUP: Record<LibraryItem["kind"], Kind> = {
   answer: "documents",
   report: "documents",
   document: "documents",
@@ -29,7 +29,7 @@ const GROUP: Record<BaseItem["kind"], Kind> = {
   message: "messages",
 };
 
-function KindIcon({ item }: { item: Pick<BaseItem, "kind" | "media_type"> }) {
+function KindIcon({ item }: { item: Pick<LibraryItem, "kind" | "media_type"> }) {
   const Icon =
     item.kind === "event"
       ? Calendar
@@ -53,7 +53,24 @@ function KindIcon({ item }: { item: Pick<BaseItem, "kind" | "media_type"> }) {
   );
 }
 
-export function provenanceLabel(item: Pick<BaseItem, "provenance">) {
+function ArtifactRow({ item }: { item: LibraryItem }) {
+  return (
+    <Row
+      href={`/library/${encodeURIComponent(item.id)}`}
+      leading={<KindIcon item={item} />}
+      title={item.title}
+      detail={[
+        item.preview_text ? plainText(item.preview_text) : "",
+        `${provenanceLabel(item)} · ${relative(item.created_at)}`,
+      ]
+        .filter(Boolean)
+        .join(" · ")}
+      trailing={item.version > 1 ? <Pill>v{item.version}</Pill> : undefined}
+    />
+  );
+}
+
+export function provenanceLabel(item: Pick<LibraryItem, "provenance">) {
   const { content, connection_status } = item.provenance;
   const gone = connection_status && connection_status !== "connected";
   if (content === "live") return gone ? "Live link · account disconnected" : "Live from the source";
@@ -98,7 +115,7 @@ export function jumpHref(hit: SearchHit) {
 }
 
 export function LibraryContent({ syncURL = false }: { syncURL?: boolean }) {
-  const { has } = useAssistant();
+  const { has } = useAssistantConfig();
   const params = useSearchParams();
   const router = useRouter();
   const [query, setQuery] = useState(syncURL ? (params.get("q") ?? "") : "");
@@ -218,19 +235,7 @@ export function LibraryContent({ syncURL = false }: { syncURL?: boolean }) {
                     <Section key={collection ?? "_"} title={collection ?? "Saved"}>
                       <Rows>
                         {rows.map((item) => (
-                          <Row
-                            key={item.id}
-                            href={`/library/${encodeURIComponent(item.id)}`}
-                            leading={<KindIcon item={item} />}
-                            title={item.title}
-                            detail={[
-                              item.preview_text ? plainText(item.preview_text) : "",
-                              `${provenanceLabel(item)} · ${relative(item.created_at)}`,
-                            ]
-                              .filter(Boolean)
-                              .join(" · ")}
-                            trailing={item.version > 1 ? <Pill>v{item.version}</Pill> : undefined}
-                          />
+                          <ArtifactRow key={item.id} item={item} />
                         ))}
                       </Rows>
                     </Section>
@@ -240,19 +245,7 @@ export function LibraryContent({ syncURL = false }: { syncURL?: boolean }) {
             ) : (
               <Rows label="Saved artifacts">
                 {filtered.map((item) => (
-                  <Row
-                    key={item.id}
-                    href={`/library/${encodeURIComponent(item.id)}`}
-                    leading={<KindIcon item={item} />}
-                    title={item.title}
-                    detail={[
-                      item.preview_text ? plainText(item.preview_text) : "",
-                      `${provenanceLabel(item)} · ${relative(item.created_at)}`,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
-                    trailing={item.version > 1 ? <Pill>v{item.version}</Pill> : undefined}
-                  />
+                  <ArtifactRow key={item.id} item={item} />
                 ))}
               </Rows>
             )
@@ -277,7 +270,7 @@ export function LibraryScreen() {
 
 export function LibraryDetailScreen({ id }: { id: string }) {
   const invalidate = useResourceInvalidation();
-  const { has } = useAssistant();
+  const { has } = useAssistantConfig();
   const live = has("library");
   const remote = useResource<LibraryItem>(live ? `/library/${encodeURIComponent(id)}` : null, { poll: 30_000 });
   const versions = useResource<List<LibraryItem>>(live ? `/library/${encodeURIComponent(id)}/versions` : null, { poll: 0 });
@@ -292,19 +285,13 @@ export function LibraryDetailScreen({ id }: { id: string }) {
 
   useEffect(() => {
     if (!item || item.data || !["answer", "report", "document"].includes(item.kind)) return;
-    let cancelled = false;
-    const path = live ? assistantURL(`/library/${encodeURIComponent(item.id)}/file`) : `/api/v1/results/${encodeURIComponent(item.id)}`;
-    fetch(path, { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) return;
-        const type = response.headers.get("content-type") ?? "";
-        const body = type.includes("json") ? (await response.json())?.text : await response.text();
-        if (!cancelled && typeof body === "string") setText(body);
+    const controller = new AbortController();
+    void fetchLibraryText(item.id, live, controller.signal)
+      .then((body) => {
+        if (!controller.signal.aborted && body !== undefined) setText(body);
       })
       .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
+    return () => controller.abort();
   }, [item, live]);
 
   if (live ? remote.loading : legacy.loading) {
@@ -392,7 +379,7 @@ export function LibraryDetailScreen({ id }: { id: string }) {
           <Notice tone="danger">{action.error}</Notice>
         </div>
       )}
-      <Preview item={item} text={text} />
+      <LibraryPreview item={item} text={text} />
       <div className="mt-4 flex flex-wrap gap-2">
         {fileURL && item.kind !== "link" && (
           <a
@@ -417,16 +404,7 @@ export function LibraryDetailScreen({ id }: { id: string }) {
           </a>
         )}
         {text && (
-          <Button
-            onClick={() => {
-              const url = URL.createObjectURL(new Blob([text], { type: "text/markdown" }));
-              const link = document.createElement("a");
-              link.href = url;
-              link.download = `${item.title.slice(0, 80)}.md`;
-              link.click();
-              setTimeout(() => URL.revokeObjectURL(url), 1000);
-            }}
-          >
+          <Button onClick={() => downloadBlob(text, `${item.title.slice(0, 80)}.md`)}>
             <Download size={15} aria-hidden />
             Export
           </Button>
@@ -569,7 +547,7 @@ export function LibraryDetailScreen({ id }: { id: string }) {
             onConfirm={() => void act({ action: "delete", scope: "all_versions" }, "delete")}
             body={item.delete_effect ?? "Removes it and its versions from Nori."}
             trigger={
-              <Button variant="quiet" className="text-danger!" disabled={!!action.pending}>
+              <Button variant="danger-quiet" disabled={!!action.pending}>
                 Delete
               </Button>
             }
@@ -577,125 +555,5 @@ export function LibraryDetailScreen({ id }: { id: string }) {
         </Section>
       )}
     </Screen>
-  );
-}
-
-function Preview({ item, text }: { item: LibraryItem; text?: string }) {
-  if (item.data_kind === "calendar_event" && item.data) {
-    const event = item.data;
-    return (
-      <article className="rounded-card border border-hairline bg-surface p-4">
-        <p className="text-section font-semibold">{event.title}</p>
-        <p className="mt-1 text-body text-ink-2">
-          {eventTime(event.time)}
-          {event.location ? ` · ${event.location}` : ""}
-        </p>
-        {!!event.attendees?.length && (
-          <p className="mt-2 text-meta text-ink-2">
-            {event.attendees
-              .filter((attendee) => !attendee.self)
-              .map(
-                (attendee) =>
-                  `${attendee.name ?? attendee.email}${attendee.response === "needs_action" ? " (no reply)" : attendee.response === "declined" ? " (declined)" : ""}`,
-              )
-              .join(", ")}
-          </p>
-        )}
-        {event.source_url && /^https:\/\//.test(event.source_url) && (
-          <a
-            href={event.source_url}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="mt-3 inline-block text-meta font-medium text-accent-text hover:underline"
-          >
-            Open in calendar
-          </a>
-        )}
-      </article>
-    );
-  }
-  if (item.data_kind === "mail_draft" && item.data) {
-    const draft = item.data;
-    return (
-      <article className="rounded-card border border-hairline bg-surface p-4 text-body">
-        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-meta">
-          <dt className="text-ink-3">From</dt>
-          <dd>{draft.sender.email}</dd>
-          <dt className="text-ink-3">To</dt>
-          <dd>{draft.to.map((to) => to.email).join(", ")}</dd>
-          {draft.cc.length > 0 && (
-            <>
-              <dt className="text-ink-3">Cc</dt>
-              <dd>{draft.cc.map((cc) => cc.email).join(", ")}</dd>
-            </>
-          )}
-        </dl>
-        <p className="mt-3 font-semibold">{draft.subject}</p>
-        <p className="mt-2 whitespace-pre-wrap">{draft.body_text}</p>
-        <p className="mt-3">
-          <Pill tone={draft.state === "sent" ? "ok" : "neutral"}>{draft.state === "sent" ? "Sent" : "Draft, not sent"}</Pill>
-        </p>
-      </article>
-    );
-  }
-  if (item.data_kind === "mail_message" && item.data) {
-    const message = item.data;
-    return (
-      <article className="rounded-card border border-hairline bg-surface p-4 text-body">
-        <p className="text-meta text-ink-2">
-          {message.from.name ?? message.from.email} · {when(message.received_at)}
-        </p>
-        <p className="mt-1 font-semibold">{message.subject}</p>
-        <p className="mt-2 whitespace-pre-wrap">{message.content.text}</p>
-        {message.content.kind === "snippet" && <p className="mt-2 text-meta text-ink-3">Snippet only</p>}
-      </article>
-    );
-  }
-  if (item.data_kind === "availability" && item.data) {
-    return (
-      <article className="rounded-card border border-hairline bg-surface p-4">
-        <ul className="space-y-1 text-body">
-          {item.data.slots.map((slot) => (
-            <li key={slot.start} className="flex justify-between gap-3">
-              <span>{when(slot.start)}</span>
-              <Pill tone={slot.status === "free" ? "ok" : slot.status === "unknown" ? "warning" : "neutral"}>
-                {slot.status === "unknown" ? "Unknown" : slot.status}
-              </Pill>
-            </li>
-          ))}
-        </ul>
-      </article>
-    );
-  }
-  if (text) {
-    return (
-      <article className="nori-document">
-        <Markdown variant="page">{text}</Markdown>
-      </article>
-    );
-  }
-  if ((item.kind === "screenshot" || item.media_type?.startsWith("image/") || item.media_type === "application/pdf") && item.url) {
-    return <FilePreview url={item.url} mediaType={item.media_type} name={item.name ?? item.title} />;
-  }
-  return null;
-}
-
-function FilePreview({ url, mediaType, name }: { url: string; mediaType?: string; name: string }) {
-  const load = useCallback(
-    async (signal: AbortSignal) => {
-      const response = await fetch(url, { cache: "no-store", signal });
-      if (!response.ok) throw new Error("This file is no longer available.");
-      return new Blob([await response.arrayBuffer()], { type: mediaType });
-    },
-    [url, mediaType],
-  );
-  const file = useBlobURL(load);
-  if (file?.error !== undefined) return <Notice tone="danger">This file is no longer available.</Notice>;
-  if (!file?.url) return <Loading label="Loading preview…" />;
-  return mediaType === "application/pdf" ? (
-    <iframe src={file.url} title={name} className="h-[70vh] w-full rounded-card border border-hairline" />
-  ) : (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={file.url} alt={name} className="max-h-[70vh] max-w-full rounded-card border border-hairline object-contain" />
   );
 }

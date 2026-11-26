@@ -11,10 +11,22 @@ import {
 import { announce } from "@/lib/assistant/announce";
 import { useResourceInvalidation } from "@/lib/assistant/useResource";
 import type { DesktopBridge, DesktopHomeStatus } from "@/lib/desktop";
+import { useHydrated } from "@/lib/hooks";
 import { Confirm, Field, inputClass, Notice, Pill } from "./ui";
 
 type Stage = "models" | "background" | "pair" | "routes";
 type LocalModel = { name: string; capabilities?: string[] };
+
+const MAX_BACKGROUND_POLLS = 40;
+const MAX_ROUTE_POLLS = 20;
+
+function readSavedSetupModel(key: string): string {
+  try {
+    return localStorage.getItem(key) ?? "";
+  } catch {
+    return "";
+  }
+}
 
 export function DesktopHomeSharing({ desktop, status, onStatus, devices, available, scope }: {
   desktop: DesktopBridge;
@@ -24,15 +36,14 @@ export function DesktopHomeSharing({ desktop, status, onStatus, devices, availab
   available: boolean;
   scope: string;
 }) {
+  const hydrated = useHydrated();
   const invalidate = useResourceInvalidation();
   const setupKey = `nori.desktop.home-setup:${scope}`;
   const [stage, setStage] = useState<Stage>();
   const [models, setModels] = useState<LocalModel[]>([]);
   const [model, setModel] = useState("");
-  const [pendingModel, setPendingModel] = useState(() => {
-    try { return localStorage.getItem(setupKey) ?? ""; }
-    catch { return ""; }
-  });
+  const [pendingModelOverride, setPendingModelOverride] = useState<string>();
+  const pendingModel = pendingModelOverride ?? (hydrated ? readSavedSetupModel(setupKey) : "");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -42,7 +53,7 @@ export function DesktopHomeSharing({ desktop, status, onStatus, devices, availab
   const [routeAttempt, setRouteAttempt] = useState(0);
 
   const rememberModel = (name: string) => {
-    setPendingModel(name);
+    setPendingModelOverride(name);
     try {
       if (name) localStorage.setItem(setupKey, name);
       else localStorage.removeItem(setupKey);
@@ -59,7 +70,10 @@ export function DesktopHomeSharing({ desktop, status, onStatus, devices, availab
   useEffect(() => {
     if (stage !== "background") return;
     let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let attempts = 0;
     const check = async () => {
+      attempts += 1;
       try {
         const current = await desktop.homeStatus();
         if (!active) return;
@@ -67,19 +81,27 @@ export function DesktopHomeSharing({ desktop, status, onStatus, devices, availab
         if (current.background === "enabled") {
           invalidate("/settings/home-connectors", "/settings/models", "/capabilities");
           setStage(current.paired ? (pendingModel ? "routes" : undefined) : "pair");
+          return;
         }
       } catch { /* The user can retry from the dialog. */ }
+      if (active && attempts < MAX_BACKGROUND_POLLS) {
+        timer = setTimeout(() => void check(), 3000);
+      }
     };
     void check();
-    const timer = window.setInterval(() => void check(), 3000);
-    return () => { active = false; window.clearInterval(timer); };
+    return () => {
+      active = false;
+      if (timer !== undefined) clearTimeout(timer);
+    };
   }, [desktop, invalidate, onStatus, pendingModel, stage]);
 
   useEffect(() => {
     if (stage !== "routes") return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let attempts = 0;
     const load = async () => {
+      attempts += 1;
       try {
         const [settings, connectors] = await Promise.all([
           getJSON<ModelSettings>("/settings/models", controller.signal),
@@ -91,13 +113,18 @@ export function DesktopHomeSharing({ desktop, status, onStatus, devices, availab
           item.backend === "home" && item.home_device_id === device?.id && item.model === model,
         );
         setRouteData({ model, profile });
-        if (!profile) timer = setTimeout(() => void load(), 3000);
+        if (!profile && attempts < MAX_ROUTE_POLLS) {
+          timer = setTimeout(() => void load(), 3000);
+        }
       } catch (reason) {
         if (!controller.signal.aborted) setError(errorText(reason));
       }
     };
     void load();
-    return () => { controller.abort(); if (timer) clearTimeout(timer); };
+    return () => {
+      controller.abort();
+      if (timer !== undefined) clearTimeout(timer);
+    };
   }, [model, routeAttempt, stage]);
 
   const openSetup = async () => {

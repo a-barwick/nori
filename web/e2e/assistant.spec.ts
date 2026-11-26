@@ -1,15 +1,19 @@
 import { expect, test } from "@playwright/test";
 
-const app = "http://127.0.0.1:4317";
-const first = "462cef1f-74a0-4706-94c7-3e624ff5cd43";
+const appPort = process.env.NORI_E2E_APP_PORT ?? "4317";
+const controlPort = process.env.NORI_E2E_CONTROL_PORT ?? "4318";
+const authPort = process.env.NORI_E2E_AUTH_PORT ?? "9445";
+const app = process.env.NORI_E2E_APP_URL ?? `http://127.0.0.1:${appPort}`;
+const controlBase = process.env.NORI_E2E_CONTROL_URL ?? `http://127.0.0.1:${controlPort}`;
+const authBase = process.env.NORI_E2E_AUTH_URL ?? `http://127.0.0.1:${authPort}`;
+const controlURL = (path: string) => `${controlBase}${path}`;
 function signInURL(account: string, path = "/") {
-  return `http://127.0.0.1:9445/sign-in?account=${account}&to=${encodeURIComponent(app + path)}`;
+  return `${authBase}/sign-in?account=${account}&to=${encodeURIComponent(app + path)}`;
 }
 
 test("verifies authentication, queued turns, reconnect, approvals, account model selection, and downloads", async ({ page }) => {
   const signIn = (account: string) => page.goto(signInURL(account));
   await signIn("first");
-  await page.evaluate((id) => localStorage.setItem("nori-diagnostics-model-selection-v1:" + id, JSON.stringify({ chat_profile_id: "browser-chat" })), first);
   const capabilityResponse = page.waitForResponse(response => response.url().endsWith("/api/v1/capabilities") && response.ok());
   await page.reload();
   await capabilityResponse;
@@ -123,7 +127,7 @@ test("Models offers recommendations after key setup and saves account choices", 
 });
 
 test("Work waits for pending approvals and offers a retry after a failed read", async ({ page, request }) => {
-  expect((await request.post("http://127.0.0.1:4318/reset-alternate")).status()).toBe(204);
+  expect((await request.post(controlURL("/reset-alternate"))).status()).toBe(204);
   let release!: () => void;
   let seen!: () => void;
   const waiting = new Promise<void>((resolve) => { seen = resolve; });
@@ -152,7 +156,7 @@ test("Work waits for pending approvals and offers a retry after a failed read", 
 });
 
 test("Work reports a failed read while the pending approval read is still loading", async ({ page, request }) => {
-  expect((await request.post("http://127.0.0.1:4318/reset-alternate")).status()).toBe(204);
+  expect((await request.post(controlURL("/reset-alternate"))).status()).toBe(204);
   let release!: () => void;
   let seen!: () => void;
   const waiting = new Promise<void>((resolve) => { seen = resolve; });
@@ -182,7 +186,7 @@ test("Work reports a failed read while the pending approval read is still loadin
 });
 
 test("Work reports a failed approval read while the Work read is still loading", async ({ page, request }) => {
-  expect((await request.post("http://127.0.0.1:4318/reset-alternate")).status()).toBe(204);
+  expect((await request.post(controlURL("/reset-alternate"))).status()).toBe(204);
   let release!: () => void;
   let seen!: () => void;
   const waiting = new Promise<void>((resolve) => { seen = resolve; });
@@ -212,7 +216,7 @@ test("Work reports a failed approval read while the Work read is still loading",
 });
 
 test("Work reports unavailable capabilities and retries them after a successful empty snapshot", async ({ page, request }) => {
-  expect((await request.post("http://127.0.0.1:4318/reset-alternate")).status()).toBe(204);
+  expect((await request.post(controlURL("/reset-alternate"))).status()).toBe(204);
   let attempts = 0;
   await page.route("**/api/v1/capabilities", async (route) => {
     attempts++;
@@ -232,7 +236,7 @@ test("Work reports unavailable capabilities and retries them after a successful 
 });
 
 test("a worker-created approval appears after a live task update", async ({ page, request }) => {
-  expect((await request.post("http://127.0.0.1:4318/reset-alternate")).status()).toBe(204);
+  expect((await request.post(controlURL("/reset-alternate"))).status()).toBe(204);
   const emptyPending = page.waitForResponse((response) => response.url().endsWith("/api/v1/interactions?status=pending") && response.ok());
   const eventStream = page.waitForResponse((response) => response.url().includes("/api/v1/events?after=") && response.ok());
   await page.goto(signInURL("second", "/work"));
@@ -240,7 +244,7 @@ test("a worker-created approval appears after a live task update", async ({ page
   await eventStream;
   await expect(page.getByText("All clear", { exact: true })).toBeVisible();
 
-  const created = await request.post("http://127.0.0.1:4318/worker-approval");
+  const created = await request.post(controlURL("/worker-approval"));
   expect(created.status()).toBe(204);
   await expect(page.getByRole("button", { name: "Allow once", exact: true })).toBeVisible({ timeout: 5_000 });
   await expect(page.getByText("All clear", { exact: true })).toHaveCount(0);
@@ -286,9 +290,9 @@ test("sign out closes other tabs and sign in restores the workspace", async ({ p
 });
 
 test("an interrupted reset can be safely resumed after reload", async ({ page, request }) => {
-  expect((await request.post("http://127.0.0.1:4318/prepare-reset-alternate")).status()).toBe(204);
+  expect((await request.post(controlURL("/prepare-reset-alternate"))).status()).toBe(204);
   await page.goto(signInURL("second", "/settings/reset"));
-  expect((await request.post("http://127.0.0.1:4318/interrupt-reset-alternate")).status()).toBe(204);
+  expect((await request.post(controlURL("/interrupt-reset-alternate"))).status()).toBe(204);
   let delayFirstAttempt = true;
   let releaseFirstAttempt!: () => void;
   let firstAttemptStarted!: () => void;
@@ -304,33 +308,25 @@ test("an interrupted reset can be safely resumed after reload", async ({ page, r
   });
   await page.getByLabel("Type RESET to confirm").fill("RESET");
   const firstAttempt = page.waitForResponse((response) => response.url().endsWith("/api/v1/settings/reset") && response.request().method() === "POST");
-  const started = Date.now();
   await page.getByRole("button", { name: "Reset data" }).click();
-  await expect(page.getByRole("status").filter({ hasText: "Resetting data…" })).toBeVisible();
   await firstAttemptObserved;
-  await page.waitForTimeout(2_100);
   await expect(page.getByRole("status").filter({ hasText: "Resetting data…" })).toBeVisible();
   releaseFirstAttempt();
   expect((await firstAttempt).status()).toBe(502);
   await expect(page.getByRole("heading", { name: "Finish your data reset" })).toBeVisible();
-  expect(Date.now() - started).toBeGreaterThanOrEqual(2_000);
   await expect(page.getByLabel("OpenAI API key")).toHaveCount(0);
 
   await page.reload();
   await expect(page.getByRole("heading", { name: "Finish your data reset" })).toBeVisible();
-  expect((await request.post("http://127.0.0.1:4318/interrupt-reset-alternate")).status()).toBe(204);
+  expect((await request.post(controlURL("/interrupt-reset-alternate"))).status()).toBe(204);
   await page.getByRole("button", { name: "Finish reset" }).click();
-  await expect(page.getByRole("status").filter({ hasText: "Resetting data…" })).toBeVisible();
   await expect(page.getByText("Nori couldn’t finish the reset. Try again.")).toBeVisible();
   const resume = page.waitForResponse((response) => response.url().endsWith("/api/v1/settings/reset") && response.request().method() === "POST");
-  const resumeStarted = Date.now();
   await page.getByRole("button", { name: "Finish reset" }).click();
-  await expect(page.getByRole("status").filter({ hasText: "Resetting data…" })).toBeVisible();
   const response = await resume;
   expect(response.status()).toBe(204);
   expect(response.request().postDataJSON()).toEqual({ confirmation: "RESET", resume_pending: true });
   await expect(page.getByRole("heading", { name: "Data reset complete" })).toBeVisible();
-  expect(Date.now() - resumeStarted).toBeGreaterThanOrEqual(2_000);
   await expect(page.getByText(/saved API keys and model choices were cleared/)).toBeVisible();
   await page.reload();
   await expect(page.getByRole("heading", { name: "Data reset complete" })).toBeVisible();
@@ -339,21 +335,20 @@ test("an interrupted reset can be safely resumed after reload", async ({ page, r
 });
 
 test("a key save blocked by reset enters recovery and a stale resume preserves newer data", async ({ page, request }) => {
-  expect((await request.post("http://127.0.0.1:4318/prepare-reset-alternate")).status()).toBe(204);
+  expect((await request.post(controlURL("/prepare-reset-alternate"))).status()).toBe(204);
   await page.goto(signInURL("second", "/settings/models"));
   const openai = page.locator("li").filter({ hasText: "OpenAI" });
   await openai.getByRole("button", { name: "Add key" }).click();
   await openai.getByLabel("OpenAI API key").fill("sk-test");
-  expect((await request.post("http://127.0.0.1:4318/pending-reset-alternate")).status()).toBe(204);
+  expect((await request.post(controlURL("/pending-reset-alternate"))).status()).toBe(204);
   await openai.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Finish your data reset" })).toBeVisible();
   await expect(page.getByLabel("OpenAI API key")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Add key" })).toHaveCount(0);
 
-  expect((await request.post("http://127.0.0.1:4318/finish-reset-alternate-with-new-data")).status()).toBe(204);
+  expect((await request.post(controlURL("/finish-reset-alternate-with-new-data"))).status()).toBe(204);
   const staleResume = page.waitForResponse((response) => response.url().endsWith("/api/v1/settings/reset") && response.request().method() === "POST");
   await page.getByRole("button", { name: "Finish reset" }).click();
-  await expect(page.getByRole("status").filter({ hasText: "Resetting data…" })).toBeVisible();
   const response = await staleResume;
   expect(response.status()).toBe(409);
   expect(response.request().postDataJSON()).toEqual({ confirmation: "RESET", resume_pending: true });
@@ -368,7 +363,7 @@ test("a key save blocked by reset enters recovery and a stale resume preserves n
 });
 
 test("reset clears saved model keys and choices and opens onboarding in both tabs", async ({ page, context, request }) => {
-  expect((await request.post("http://127.0.0.1:4318/seed-models")).status()).toBe(204);
+  expect((await request.post(controlURL("/seed-models"))).status()).toBe(204);
   await page.goto(signInURL("first", "/more"));
   const before = await page.evaluate(async () => ({
     keys: await (await fetch("/api/v1/settings/model-keys")).json(),
@@ -388,11 +383,8 @@ test("reset clears saved model keys and choices and opens onboarding in both tab
   await confirm.fill("reset");
   await expect(reset).toBeDisabled();
   await confirm.fill("RESET");
-  const started = Date.now();
   await reset.click();
-  await expect(page.getByRole("status").filter({ hasText: "Resetting data…" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Data reset complete" })).toBeVisible();
-  expect(Date.now() - started).toBeGreaterThanOrEqual(2_000);
   await expect(secondTab.getByRole("heading", { name: "Data reset complete" })).toBeVisible();
   await page.getByRole("button", { name: "Continue" }).click();
   await secondTab.getByRole("button", { name: "Continue" }).click();

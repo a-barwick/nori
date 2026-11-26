@@ -6,6 +6,7 @@ import { SearchParamsContext } from "next/dist/shared/lib/hooks-client-context.s
 import { AssistantProvider } from "@/lib/assistant/context";
 import { ResourceCacheContext, createResourceCache } from "@/lib/assistant/useResource";
 import { installTestDOM, settleTestDOM } from "@/lib/assistant/test-dom";
+import { asFetch } from "@/lib/test-fetch";
 import type { Interaction } from "@/lib/contracts/assistant";
 import { GoogleConnection } from "./GoogleConnection";
 import { InteractionCard } from "./InteractionCard";
@@ -14,15 +15,14 @@ let restoreDOM: () => void;
 const originalFetch = globalThis.fetch;
 
 beforeEach(() => { restoreDOM = installTestDOM(); });
-afterEach(async () => {
-  await new Promise((resolve) => setTimeout(resolve, 60));
+afterEach(() => {
   globalThis.fetch = originalFetch;
   restoreDOM();
 });
 
 test("Google connection requests only the services the user selects", async () => {
   const calls: { url: string; method: string; body?: Record<string, unknown> }[] = [];
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = asFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
@@ -32,7 +32,7 @@ test("Google connection requests only the services the user selects", async () =
     if (url === "/api/v1/connections" && method === "POST") return Response.json({ resource: { id: "conn_google", revision: 1, capabilities: [] } });
     if (url === "/api/v1/connections/conn_google/actions") return Response.json({ auth: { authorize_url: "javascript:invalid" } });
     throw new Error(`Unexpected request ${method} ${url}`);
-  }) as typeof fetch;
+  });
   const target = document.createElement("div");
   document.body.append(target);
   const root = createRoot(target);
@@ -62,7 +62,7 @@ test("Google connection requests only the services the user selects", async () =
 
 test("Drive file selection starts through the server and lists authorized files", async () => {
   const calls: { url: string; method: string; body?: Record<string, unknown> }[] = [];
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = asFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
@@ -72,7 +72,7 @@ test("Drive file selection starts through the server and lists authorized files"
     if (url.endsWith("/resources")) return Response.json({ items: [{ kind: "drive_file", title: "Trip plan", ref: { provider_id: "file123" } }] });
     if (url.endsWith("/google-drive/picker")) return Response.json({ authorize_url: "javascript:invalid" });
     throw new Error(`Unexpected request ${method} ${url}`);
-  }) as typeof fetch;
+  });
   const target = document.createElement("div");
   document.body.append(target);
   const root = createRoot(target);
@@ -99,7 +99,7 @@ test("an expired Google task sign-in requests the missing and already granted ca
   const calls: { url: string; body?: Record<string, unknown> }[] = [];
   const driveScope = "https://www.googleapis.com/auth/drive.file";
   const mailScope = "https://www.googleapis.com/auth/gmail.send";
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = asFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
     calls.push({ url, body });
@@ -112,7 +112,7 @@ test("an expired Google task sign-in requests the missing and already granted ca
     if (url === "/api/v1/connections/conn_google") return Response.json({ id: "conn_google", revision: 2, integration_id: "google", account: { provider_id: "123", label: "person@example.com" }, status: "connected", capabilities: ["files.read", "files.write"], granted_scopes: [driveScope], health: {} });
     if (url.endsWith("/actions")) return Response.json({ auth: { authorize_url: "javascript:invalid" } });
     throw new Error(`Unexpected request ${url}`);
-  }) as typeof fetch;
+  });
   const interaction: Interaction = {
     id: "sign_in_1", revision: 1, task_id: "task_1", kind: "sign_in", status: "pending", prompt: "Connect Gmail",
     created_at: "2026-01-01T00:00:00Z", payload: {

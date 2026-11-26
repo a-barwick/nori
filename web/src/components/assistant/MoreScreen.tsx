@@ -9,7 +9,6 @@ import { money, plural } from "@/lib/assistant/format";
 import { useSummary } from "@/lib/assistant/sources";
 import { useResource } from "@/lib/assistant/useResource";
 import type { Connection, MCPServer, MemoryFact, PermissionRule, Preferences, WorkingMemory } from "@/lib/contracts/assistant";
-import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "@/lib/runtime/messages";
 import { needsByokSetup } from "./ApiKeysSettings";
 import { hasSelectedHomeChat } from "./ModelsSettings";
 import { coreBudgetStats, formatByteBudget } from "./MemoryScreen";
@@ -51,7 +50,7 @@ export function MoreScreen() {
   const rulesCount = permissions.data?.items.length ?? 0;
   const prefs = preferences.data;
 
-  const reconnecting = runtime.error === SERVICE_UNAVAILABLE || runtime.error === STREAM_RECONNECTING;
+  const reconnecting = runtime.reconnecting;
   const offline = !!runtime.error && !reconnecting;
   const degradedPill = reconnecting
     ? { tone: "warning" as const, label: "Reconnecting" }

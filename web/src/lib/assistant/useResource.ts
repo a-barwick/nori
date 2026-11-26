@@ -95,6 +95,20 @@ export function createResourceCache() {
     }
     const existing = resources.get(path);
     const resource: Resource = existing ?? { subscriptions: new Set(), refetch: false, versioned };
+    if (existing) {
+      resource.versioned = resource.versioned || versioned;
+      if (
+        resource.versioned &&
+        resource.snapshot &&
+        resource.snapshot.revision < 0 &&
+        resource.snapshot.data &&
+        typeof resource.snapshot.data === "object" &&
+        "revision" in resource.snapshot.data &&
+        typeof resource.snapshot.data.revision === "number"
+      ) {
+        resource.snapshot = { ...resource.snapshot, revision: resource.snapshot.data.revision };
+      }
+    }
     const subscription = { listener, poll };
     resource.subscriptions.add(subscription);
     resources.set(path, resource);
@@ -131,30 +145,54 @@ export function useResource<T>(path: string | null, { poll = 15_000, versioned =
   const entry = useSyncExternalStore(subscribe, () => path ? cache.snapshot(path) : undefined, () => undefined);
   const reload = useCallback(() => path ? cache.load(path, true) : Promise.resolve(), [cache, path]);
   const apply = useCallback((data: T) => { if (path) cache.store(path, data, undefined, versioned); }, [cache, path, versioned]);
-  return { data: entry?.data as T | undefined, error: entry?.error, loading: !entry || (entry.loading && entry.data === undefined), refreshing: !!entry?.loading, reload, apply };
+  return { data: entry?.data as T | undefined, error: entry?.error, loading: path === null ? false : !entry || (entry.loading && entry.data === undefined), refreshing: !!entry?.loading, reload, apply };
 }
 
 export function useAction() {
   const [state, setState] = useState<{ pending?: string; error?: string }>({});
   const mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const activeRun = useRef(0);
+  const restoreTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (restoreTimer.current !== undefined) {
+        clearTimeout(restoreTimer.current);
+        restoreTimer.current = undefined;
+      }
+    };
+  }, []);
   const run = useCallback(async <T,>(name: string, action: () => Promise<T>, done?: string): Promise<T | undefined> => {
+    const runID = ++activeRun.current;
+    if (restoreTimer.current !== undefined) {
+      clearTimeout(restoreTimer.current);
+      restoreTimer.current = undefined;
+    }
     const control = typeof document !== "undefined" && document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : undefined;
     const parent = control?.parentElement;
     const index = parent ? [...parent.children].indexOf(control!) : -1;
-    const restore = () => setTimeout(() => {
-      if (document.activeElement && document.activeElement !== document.body) return;
-      const target = control?.isConnected ? control : parent?.isConnected ? parent.children[index] : undefined;
-      if (target instanceof HTMLElement) target.focus({ preventScroll: true });
-    }, 50);
+    const restore = () => {
+      if (restoreTimer.current !== undefined) clearTimeout(restoreTimer.current);
+      restoreTimer.current = setTimeout(() => {
+        restoreTimer.current = undefined;
+        if (!mounted.current || activeRun.current !== runID) return;
+        if (document.activeElement && document.activeElement !== document.body) return;
+        const target = control?.isConnected ? control : parent?.isConnected ? parent.children[index] : undefined;
+        if (target instanceof HTMLElement) target.focus({ preventScroll: true });
+      }, 50);
+    };
     setState({ pending: name });
     try {
       const result = await action();
       if (done) announce(done);
-      if (mounted.current) { setState({}); restore(); }
+      if (mounted.current && activeRun.current === runID) { setState({}); restore(); }
       return result;
     } catch (error) {
-      if (mounted.current) { setState({ error: error instanceof Error ? error.message : "Something went wrong." }); restore(); }
+      if (mounted.current && activeRun.current === runID) {
+        setState({ error: error instanceof Error ? error.message : "Something went wrong." });
+        restore();
+      }
       return undefined;
     }
   }, []);

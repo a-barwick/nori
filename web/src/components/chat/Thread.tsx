@@ -8,6 +8,7 @@ import { DebugBlock } from "@/components/dev/DebugBlock";
 import { NoriMark } from "@/components/mark/NoriMark";
 import { Button } from "@/components/ui/primitives";
 import type { InlineInteractionEntry } from "@/lib/assistant/interactions";
+import { useCopyToClipboard } from "@/lib/browser";
 import { clock } from "@/lib/time";
 import { buildUnits, posOf, type Unit } from "@/lib/units";
 import type { ReadPosition, TextItem, Thread as Conversation } from "@/lib/types";
@@ -22,7 +23,7 @@ function PageBlock({ item, body, onOpenDocument }: { item: TextItem; body: strin
   const ref = useRef<HTMLDivElement>(null);
   const [tall, setTall] = useState(false);
   const [expanded, setExpanded] = useState(() => Date.now() - item.at < 15000);
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyToClipboard();
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -51,11 +52,7 @@ function PageBlock({ item, body, onOpenDocument }: { item: TextItem; body: strin
           <Button
             size="sm"
             variant="quiet"
-            onClick={() => {
-              void navigator.clipboard?.writeText(body);
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1400);
-            }}
+            onClick={() => copy(body)}
           >
             {copied ? <Check size={14} strokeWidth={1.8} /> : <Copy size={14} strokeWidth={1.8} />}
             {copied ? "Copied" : "Copy"}
@@ -294,7 +291,13 @@ export function Thread({
   const previousFirst = useRef(items[0]?.id);
   const prependAnchor = useRef<{ id: string; top: number } | null>(null);
   const touchStartY = useRef<number | null>(null);
+  const justSentTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [justSentIds, setJustSentIds] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    return () => {
+      if (justSentTimer.current) clearTimeout(justSentTimer.current);
+    };
+  }, []);
   const [unreadIDs, setUnreadIDs] = useState<string[]>([]);
   const readIndex = items.findIndex((item) => item.id === readPosition?.message_id);
   const unreadItems = unreadIDs.filter((id) => {
@@ -370,11 +373,13 @@ export function Thread({
     if (lastNori) setAnnouncement(`Nori: ${firstSentence(lastNori.text)}`);
     const mine = added.filter((i) => i.sender === "me");
     if (mine.length) {
-      setJustSentIds((prev) => {
-        const next = new Set(prev);
-        for (const m of mine) next.add(m.id);
-        return next;
-      });
+      const addedIds = mine.map((m) => m.id);
+      setJustSentIds((prev) => new Set([...[...prev].slice(-10), ...addedIds]));
+      if (justSentTimer.current) clearTimeout(justSentTimer.current);
+      justSentTimer.current = setTimeout(() => {
+        justSentTimer.current = null;
+        setJustSentIds(new Set());
+      }, 600);
     }
     if (atBottom.current || mine.length > 0) {
       requestAnimationFrame(() => scrollToBottom(true));

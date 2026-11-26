@@ -3,8 +3,10 @@ import { afterEach, beforeEach, describe, test } from "node:test";
 import { act, createElement } from "react";
 import { createResourceCache, ResourceCacheContext } from "@/lib/assistant/useResource";
 import { installTestDOM, mountTestHook, settleTestDOM } from "@/lib/assistant/test-dom";
+import { asFetch } from "@/lib/test-fetch";
 import type { Run, Session } from "@/lib/types";
 import { STREAM_RECONNECTING } from "./messages";
+import { STREAM_IDLE_MS } from "./runtimeHelpers";
 import { useRuntime } from "./useRuntime";
 
 class FakeEventSource {
@@ -36,6 +38,11 @@ class FakeEventSource {
 
   emitEvent(kind: string, data: unknown, lastEventId = "") {
     const event = { data: JSON.stringify(data), lastEventId } as MessageEvent<string>;
+    for (const fn of this.listeners.get(kind) ?? []) fn(event);
+  }
+
+  emitRaw(kind: string, rawData: string, lastEventId = "") {
+    const event = { data: rawData, lastEventId } as MessageEvent<string>;
     for (const fn of this.listeners.get(kind) ?? []) fn(event);
   }
 
@@ -92,7 +99,6 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
     g.clearTimeout = ((id: number) => {
       scheduledTimers.delete(id);
     }) as unknown as typeof clearTimeout;
-
   });
 
   afterEach(() => {
@@ -117,12 +123,12 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
     };
     const completedRun: Run = { ...run1, status: "completed", position: 2 };
 
-    g.fetch = (async (input: RequestInfo | URL) => {
+    g.fetch = asFetch(async (input: RequestInfo | URL) => {
       const url = String(input);
       fetched.push(url);
       if (url.startsWith("/api/v1/snapshot")) return Response.json(baseSession({ runs: [run1] }));
       return Response.json({ ok: true });
-    }) as unknown as typeof fetch;
+    });
 
     const hook = mountHook(() => useRuntime());
     try {
@@ -197,9 +203,50 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
     }
   });
 
+  test("malformed SSE JSON frame is ignored without breaking subsequent events", async () => {
+    g.fetch = asFetch(async (input: RequestInfo | URL) =>
+      String(input).startsWith("/api/v1/snapshot") ? Response.json(baseSession()) : Response.json({ ok: true }),
+    );
+    const hook = mountHook(() => useRuntime());
+    try {
+      await settleTestDOM();
+      await act(async () => {
+        FakeEventSource.instances[0].emitRaw("assistant_delta", "{not-valid-json");
+        FakeEventSource.instances[0].emitEvent("assistant_delta", { turn_id: "t-1", text: "Hello" }, "11");
+      });
+      assert.deepEqual(hook.current.streamingDelta, { turn_id: "t-1", text: "Hello" });
+    } finally {
+      hook.unmount();
+    }
+  });
+
+  test("idle stream timer sleeps once and does not re-arm after streamAwake becomes false", async () => {
+    g.fetch = asFetch(async (input: RequestInfo | URL) =>
+      String(input).startsWith("/api/v1/snapshot") ? Response.json(baseSession()) : Response.json({ ok: true }),
+    );
+    const hook = mountHook(() => useRuntime());
+    try {
+      await settleTestDOM();
+      const idleTimers = [...scheduledTimers.entries()].filter(([, t]) => t.delay === STREAM_IDLE_MS);
+      assert.equal(idleTimers.length, 1);
+      scheduledTimers.delete(idleTimers[0][0]);
+
+      await act(async () => {
+        idleTimers[0][1].fn();
+      });
+
+      assert.equal(FakeEventSource.instances[0].closed, true);
+      const afterSleep = [...scheduledTimers.entries()].filter(([, t]) => t.delay === STREAM_IDLE_MS);
+      assert.equal(afterSleep.length, 0);
+    } finally {
+      hook.unmount();
+    }
+  });
+
   test("a queued task refresh is cancelled when the stream is closed", async () => {
-    g.fetch = (async (input: RequestInfo | URL) => String(input).startsWith("/api/v1/snapshot")
-      ? Response.json(baseSession()) : Response.json({ ok: true })) as typeof fetch;
+    g.fetch = asFetch(async (input: RequestInfo | URL) =>
+      String(input).startsWith("/api/v1/snapshot") ? Response.json(baseSession()) : Response.json({ ok: true }),
+    );
     const hook = mountHook(() => useRuntime());
     await settleTestDOM();
     await act(async () => {
@@ -213,18 +260,19 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
 
   test("SSE error backoff escalates, shows STREAM_RECONNECTING on 3rd failure, and resyncs/invalidates on recovery open", async () => {
     const fetched: string[] = [];
-    g.fetch = (async (input: RequestInfo | URL) => {
+    g.fetch = asFetch(async (input: RequestInfo | URL) => {
       const url = String(input);
       fetched.push(url);
       if (url.startsWith("/api/v1/snapshot")) return Response.json(baseSession({ position: 10 }));
       return Response.json({ ok: true });
-    }) as unknown as typeof fetch;
+    });
 
     const hook = mountHook(() => useRuntime());
     try {
       await settleTestDOM();
       assert.equal(FakeEventSource.instances.length, 1);
       assert.equal(hook.current.error, "");
+      assert.equal(hook.current.reconnecting, false);
 
       const popReconnectTimer = () => {
         const entry = [...scheduledTimers.entries()].find(([, t]) => t.delay <= 30_000);
@@ -249,6 +297,7 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
 
       await act(async () => { FakeEventSource.instances[2].emitClosedError(); });
       assert.equal(hook.current.error, STREAM_RECONNECTING);
+      assert.equal(hook.current.reconnecting, true);
       const t3 = popReconnectTimer();
       assert.equal(t3.delay, 8000);
       await act(async () => { t3.fn(); });
@@ -257,6 +306,7 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
       fetched.length = 0;
       await act(async () => { FakeEventSource.instances[3].emitOpen(); });
       assert.equal(hook.current.error, "");
+      assert.equal(hook.current.reconnecting, false);
       assert.equal(fetched.includes("/api/v1/snapshot"), true);
       assert.equal(fetched.includes("/api/v1/assistant/summary"), true);
       assert.equal(fetched.includes("/api/v1/work"), true);
@@ -273,7 +323,7 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
     let snapshotRevision = 20;
     let snapshotPosition = 20;
 
-    g.fetch = (async (input: RequestInfo | URL) => {
+    g.fetch = asFetch(async (input: RequestInfo | URL) => {
       const url = String(input);
       fetched.push(url);
       if (url.startsWith("/api/v1/snapshot")) {
@@ -283,7 +333,7 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
         }));
       }
       return Response.json({ ok: true });
-    }) as unknown as typeof fetch;
+    });
 
     const hook = mountHook(() => useRuntime());
     try {
@@ -324,7 +374,7 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
       artifacts: [],
     };
 
-    g.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    g.fetch = asFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       fetched.push(url);
       if (url.startsWith("/api/v1/snapshot")) return Response.json(baseSession({ runs: [run1] }));
@@ -336,7 +386,7 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
         });
       }
       return Response.json({ ok: true });
-    }) as unknown as typeof fetch;
+    });
 
     const hook = mountHook(() => useRuntime());
     try {
@@ -371,7 +421,7 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
       created_at: "2026-11-25T07:01:18Z",
     };
 
-    g.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    g.fetch = asFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : undefined;
       calls.push({ url, body });
@@ -389,7 +439,7 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
         );
       }
       return Response.json({ ok: true });
-    }) as unknown as typeof fetch;
+    });
 
     const hook = mountHook(() => useRuntime());
     try {

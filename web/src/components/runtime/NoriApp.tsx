@@ -8,12 +8,11 @@ import { hasSelectedHomeChat } from "@/components/assistant/ModelsSettings";
 import { Notice } from "@/components/assistant/ui";
 import { Thread } from "@/components/chat/Thread";
 import type { ModelKeysResponse, ModelSettings } from "@/lib/assistant/api";
-import { useAssistant } from "@/lib/assistant/context";
+import { useAssistant, useChatLive } from "@/lib/assistant/context";
 import { mergeInlineInteractions, type InlineInteractionEntry } from "@/lib/assistant/interactions";
 import { usePendingInteractions } from "@/lib/assistant/sources";
 import { useResource } from "@/lib/assistant/useResource";
 import type { Interaction } from "@/lib/contracts/assistant";
-import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "@/lib/runtime/messages";
 import type { Message, Part, Thread as Conversation, TextItem } from "@/lib/types";
 import { DocumentViewer } from "./DocumentViewer";
 import { RuntimeComposer } from "./RuntimeComposer";
@@ -37,9 +36,10 @@ function partsOf(message: Pick<Message, "text" | "parts">) {
 
 export function ChatScreen() {
   const { runtime, debug, capabilities } = useAssistant();
+  const { draft, draftFiles, streamingDelta } = useChatLive();
   const accepted = capabilities?.upload_accept;
   const uploadAccept = accepted ? [...accepted.media_types, ...(accepted.extensions ?? [])].join(",") : undefined;
-  const { session, pending, activeTasks, selected, loading, error } = runtime;
+  const { session, pending, activeTasks, selected, loading, error, reconnecting } = runtime;
   const pendingInteractions = usePendingInteractions();
   const modelKeys = useResource<ModelKeysResponse>("/settings/model-keys", { poll: 60_000, versioned: false });
   const models = useResource<ModelSettings>("/settings/models", { poll: 60_000 });
@@ -163,7 +163,6 @@ export function ChatScreen() {
     />
   );
 
-  const reconnecting = error === SERVICE_UNAVAILABLE || error === STREAM_RECONNECTING;
   const hasVisibleFailedCard = conversation.items.some((item) => item.sender === "nori" && item.status === "failed");
   const notice = reconnecting
     ? "Can't reach Nori right now. Reconnecting on its own…"
@@ -190,7 +189,7 @@ export function ChatScreen() {
           onOpenDocument={(item, body) => setDocument({ body, at: item.at })}
           status={work}
           thinking={runtime.conversationBusy}
-          streamingText={runtime.streamingDelta?.text}
+          streamingText={streamingDelta?.text}
           interactions={inlineInteractions}
           onInteractionResolved={handleInteractionResolved}
           onRetryMessage={(item) => void runtime.retryTurn({ turn_id: item.turnId, message_id: item.id })}
@@ -283,11 +282,11 @@ export function ChatScreen() {
 
       <RuntimeComposer
         accept={uploadAccept}
-        draft={runtime.draft}
+        draft={draft}
         setDraft={runtime.setDraft}
         disabled={!session || loading || !!session.conversation?.introducing}
         onSend={() => void runtime.send()}
-        files={runtime.draftFiles}
+        files={draftFiles}
         onAttach={runtime.attachFiles}
         onRetryFile={(file) => void runtime.retryFile(file)}
         onRemoveFile={runtime.removeFile}

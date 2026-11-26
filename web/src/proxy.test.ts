@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { NextRequest } from "next/server";
+import { asFetch } from "@/lib/test-fetch";
 import { config, proxy } from "./proxy";
 
 const RUN_ID = crypto.randomUUID();
@@ -101,7 +102,7 @@ describe("proxy auth gate and header stripping", () => {
 
   async function mockResolve(handler: (email: string) => Response) {
     const { jwks } = await getKeys();
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = asFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url === `${ISSUER}/.well-known/openid-configuration`) {
         return Response.json({ issuer: ISSUER, jwks_uri: JWKS_URI });
@@ -112,7 +113,7 @@ describe("proxy auth gate and header stripping", () => {
         return handler(body.email ?? "");
       }
       throw new Error(`Unexpected fetch URL: ${url}`);
-    }) as unknown as typeof fetch;
+    });
   }
 
   test("returns plain-text 403 for unauthenticated document requests (never reconnecting page)", async () => {

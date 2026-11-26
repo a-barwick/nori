@@ -7,9 +7,9 @@ import { AlertDialog } from "radix-ui";
 import { ArrowLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { NoriMark } from "@/components/mark/NoriMark";
 import { Button, IconButton } from "@/components/ui/primitives";
-import { useAssistant } from "@/lib/assistant/context";
+import { isUnavailableError } from "@/lib/assistant/api";
+import { useAssistantConfig } from "@/lib/assistant/context";
 import { cn } from "@/lib/utils";
-import { SERVICE_UNAVAILABLE } from "@/lib/runtime/messages";
 
 export function Screen({
   title,
@@ -31,7 +31,6 @@ export function Screen({
   tabs?: ReactNode;
   hideHeaderTitle?: boolean;
   children: ReactNode;
-  wide?: boolean;
 }) {
   const router = useRouter();
   const showHeader = !hideHeaderTitle || !!tabs || !!back || !!actions || !!line;
@@ -50,7 +49,7 @@ export function Screen({
             {back && (
               <button
                 type="button"
-                onClick={() => (window.history.length > 1 ? router.back() : router.push(back))}
+                onClick={() => router.push(back)}
                 className="mb-3 inline-flex h-8 items-center gap-1.5 rounded-full bg-fill-1 px-3 text-meta font-semibold text-ink transition-colors hover:bg-fill-2"
               >
                 <ArrowLeft size={14} aria-hidden />
@@ -253,7 +252,7 @@ export function Loading({ label = "Loading…" }: { label?: string }) {
 
 export function Failure({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
   const message = error instanceof Error ? error.message : String(error ?? "");
-  if (message === SERVICE_UNAVAILABLE) {
+  if (isUnavailableError(error)) {
     return (
       <div role="status" className="flex items-center gap-3 rounded-card bg-fill-1 px-4 py-3 text-meta text-ink-2">
         <span className="min-w-0 flex-1">Can&apos;t reach Nori right now.</span>
@@ -300,7 +299,7 @@ export function Notice({
 }
 
 export function NotYet({ what }: { what: string }) {
-  const { ready } = useAssistant();
+  const { ready } = useAssistantConfig();
   if (!ready) return <Loading />;
   return <Empty>{what} isn’t available on this Nori yet.</Empty>;
 }

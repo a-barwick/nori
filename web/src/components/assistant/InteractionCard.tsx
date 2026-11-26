@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertTriangle, Check, ChevronRight, Clock, KeyRound, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { APIError, mutate, newRequestID } from "@/lib/assistant/api";
@@ -556,7 +556,16 @@ function SignIn({ interaction, payload, state }: { interaction: Interaction; pay
   );
   const connection = { data: named.data ?? (accounts.length === 1 ? accounts[0] : undefined) };
   const action = useAction();
-  const [expired] = useState(() => !!payload.expires_at && Date.parse(payload.expires_at) < Date.now());
+  const expiresAtMs = payload.expires_at ? Date.parse(payload.expires_at) : Number.NaN;
+  const [, setExpiryTick] = useState(0);
+  useEffect(() => {
+    if (!Number.isFinite(expiresAtMs)) return;
+    const delay = expiresAtMs - Date.now();
+    if (delay <= 0) return;
+    const timer = setTimeout(() => setExpiryTick((tick) => tick + 1), Math.min(delay + 50, 2_147_483_647));
+    return () => clearTimeout(timer);
+  }, [expiresAtMs]);
+  const isExpired = () => Number.isFinite(expiresAtMs) && expiresAtMs < Date.now();
   const url = payload.auth === "oauth" && payload.authorize_url ? safeAuthorizeURL(payload.authorize_url) : null;
   const returnTo = interaction.task_id
     ? `/work/${encodeURIComponent(interaction.task_id)}`
@@ -568,7 +577,7 @@ function SignIn({ interaction, payload, state }: { interaction: Interaction; pay
       void action.run("sign_in", () => window.noriDesktop!.openInBrowser());
       return;
     }
-    if (url && !expired && !browserContinuation) {
+    if (url && !isExpired() && !browserContinuation) {
       window.location.assign(url);
       return;
     }

@@ -138,14 +138,13 @@ export function ApiCosts() {
   const report = useResource<CostReport>(`/settings/api-costs?days=${range}`, { poll: 30_000, versioned: false });
   const settings = useResource<ModelSettings>("/settings/models", { poll: 60_000 });
   const data = report.data?.days === Number(range) ? report.data : undefined;
-
-  if (data && model !== null && !data.models.some((item) => item.model === model)) setModel(null);
+  const activeModel = data && model !== null && data.models.some((item) => item.model === model) ? model : null;
 
   return <>
     <Tabs<Range> label="Date range" value={range} onChange={setRange} items={RANGES} />
     {report.error ? <Failure error={report.error} onRetry={() => void report.reload()} />
       : !data ? <Loading label="Loading API costs…" />
-      : <CostDetails report={data} selectedModel={model} setSelectedModel={setModel} settings={settings.data} />}
+      : <CostDetails report={data} selectedModel={activeModel} setSelectedModel={setModel} settings={settings.data} />}
   </>;
 }
 

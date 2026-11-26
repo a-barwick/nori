@@ -247,7 +247,10 @@ const control = createServer((req, res) => {
   }
   res.writeHead(204).end();
 });
-await new Promise(resolve => control.listen(4318, "127.0.0.1", resolve));
+const controlPort = Number(process.env.NORI_E2E_CONTROL_PORT ?? "4318");
+const appPort = process.env.NORI_E2E_APP_PORT ?? "4317";
+const appOrigin = process.env.NORI_E2E_APP_URL ?? `http://127.0.0.1:${appPort}`;
+await new Promise(resolve => control.listen(controlPort, "127.0.0.1", resolve));
 const log = { stdio: "inherit" };
 const bridge = spawn(process.execPath, ["scripts/prod-check.mjs", `http://127.0.0.1:${upstream.address().port}`, "frontend@example.com", "second@example.com"], { ...log, env: { ...process.env, NORI_PROD_CHECK_DIR: fixture } });
 let web;
@@ -283,10 +286,10 @@ if (!serviceKey) {
 web = spawn(process.execPath, [".next/standalone/server.js"], {
   ...log,
   env: {
-    ...process.env, HOSTNAME: "127.0.0.1", PORT: "4317", NORI_CLOUD: "aws", NORI_AUTH_PROVIDER: "oidc",
+    ...process.env, HOSTNAME: "127.0.0.1", PORT: appPort, NORI_CLOUD: "aws", NORI_AUTH_PROVIDER: "oidc",
     NORI_OIDC_ISSUER: "https://127.0.0.1:9443", NORI_OIDC_AUDIENCE: "nori-prod-check", NORI_OIDC_COOKIE: "nori_prod_check",
     NORI_RUNTIME_URL: "https://127.0.0.1:9444", NORI_SERVICE_TOKEN_KEY: serviceKey,
-    NORI_APP_ORIGIN: "http://127.0.0.1:4317", NODE_EXTRA_CA_CERTS: join(fixture, "ca.pem"),
+    NORI_APP_ORIGIN: appOrigin, NODE_EXTRA_CA_CERTS: join(fixture, "ca.pem"),
   },
 });
 const [code] = await once(web, "exit");

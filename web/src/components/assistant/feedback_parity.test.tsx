@@ -6,6 +6,7 @@ import { Thread } from "@/components/chat/Thread";
 import { AssistantProvider } from "@/lib/assistant/context";
 import type { Automation, Interaction, OperationProjection } from "@/lib/contracts/assistant";
 import type { Part, TextItem } from "@/lib/types";
+import { asFetch } from "@/lib/test-fetch";
 import { buildUnits } from "@/lib/units";
 import { InteractionCard } from "./InteractionCard";
 import { cancelReminder, formatReminderTime, ReminderCard } from "./ReminderCard";
@@ -115,7 +116,7 @@ describe("Fix 1 & 3 (Web): Inline Reminder Confirmation Card and Schedule Confir
     };
 
 
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = asFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
       const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : undefined;
@@ -133,7 +134,7 @@ describe("Fix 1 & 3 (Web): Inline Reminder Confirmation Card and Schedule Confir
         });
       }
       return Response.json({ items: [] });
-    }) as unknown as typeof fetch;
+    });
 
     const invalidated: string[] = [];
     const result = await cancelReminder(id, (...prefixes) => invalidated.push(...prefixes));

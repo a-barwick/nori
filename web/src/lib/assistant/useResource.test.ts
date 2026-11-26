@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { act, createElement } from "react";
-import { createResourceCache, ResourceCacheContext, useResource } from "./useResource";
+import { asFetch } from "@/lib/test-fetch";
+import { createResourceCache, ResourceCacheContext, useAction, useResource } from "./useResource";
 import { installTestDOM, mountTestHook, settleTestDOM } from "./test-dom";
 
 function deferred<T>() {
@@ -28,12 +29,32 @@ describe("useResource", () => {
     restoreBrowser();
   });
 
+  test("useResource(null) returns loading: false without fetching", async () => {
+    let fetches = 0;
+    globalThis.fetch = asFetch(async () => {
+      fetches++;
+      return Response.json({ ok: true });
+    });
+
+    const hook = mountHook(() => useResource<{ ok: boolean }>(null, { poll: 0 }));
+    try {
+      await settleTestDOM();
+      assert.equal(hook.current.loading, false);
+      assert.equal(hook.current.refreshing, false);
+      assert.equal(hook.current.data, undefined);
+      assert.equal(hook.current.error, undefined);
+      assert.equal(fetches, 0);
+    } finally {
+      hook.unmount();
+    }
+  });
+
   test("versioned: true drops out-of-order lower revision responses while versioned: false accepts derived projections", async () => {
     const tag = crypto.randomUUID();
     const versionedPath = `/work/test-versioned-${tag}`;
     const summaryPath = `/assistant/summary-unversioned-${tag}`;
 
-    globalThis.fetch = (async () => Response.json({ revision: 100, attention: 1 })) as unknown as typeof fetch;
+    globalThis.fetch = asFetch(async () => Response.json({ revision: 100, attention: 1 }));
 
     const versioned = mountHook(() => useResource<{ revision: number; attention: number }>(versionedPath, { poll: 0 }));
     const unversioned = mountHook(() => useResource<{ revision: number; attention: number }>(summaryPath, { poll: 0, versioned: false }));
@@ -65,6 +86,92 @@ describe("useResource", () => {
     }
   });
 
+  test("subscribing with versioned: true upgrades an existing unversioned resource and protects its revision", async () => {
+    const path = `/work/upgrade-${crypto.randomUUID()}`;
+    let call = 0;
+    globalThis.fetch = asFetch(async () => {
+      call++;
+      if (call === 1) return Response.json({ revision: 100, value: "initial" });
+      if (call === 2) return Response.json({ revision: 42, value: "stale" });
+      return Response.json({ revision: 101, value: "newer" });
+    });
+
+    const first = mountHook(() => useResource<{ revision: number; value: string }>(path, { poll: 0, versioned: false }));
+    let second: ReturnType<typeof mountHook<{ data?: { revision: number; value: string } }>> | undefined;
+    try {
+      await settleTestDOM();
+      assert.deepEqual(first.current.data, { revision: 100, value: "initial" });
+
+      second = mountHook(() => useResource<{ revision: number; value: string }>(path, { poll: 0, versioned: true }));
+      await settleTestDOM();
+
+      await act(async () => {
+        await cache.load(path, true);
+      });
+      assert.deepEqual(first.current.data, { revision: 100, value: "initial" });
+      assert.deepEqual(second.current.data, { revision: 100, value: "initial" });
+
+      await act(async () => {
+        await cache.load(path, true);
+      });
+      assert.deepEqual(first.current.data, { revision: 101, value: "newer" });
+      assert.deepEqual(second.current.data, { revision: 101, value: "newer" });
+    } finally {
+      second?.unmount();
+      first.unmount();
+    }
+  });
+
+  test("useAction cancels its focus-restore timer on unmount and ignores stale concurrent completions", async () => {
+    const first = deferred<string>();
+    const second = deferred<string>();
+    const scheduled = new Map<number, () => void>();
+    let nextId = 1;
+    const origSetTimeout = globalThis.setTimeout;
+    const origClearTimeout = globalThis.clearTimeout;
+    const g = globalThis as Record<string, unknown>;
+    g.setTimeout = (fn: () => void) => {
+      const id = nextId++;
+      scheduled.set(id, fn);
+      return id;
+    };
+    g.clearTimeout = (id: number) => {
+      scheduled.delete(id);
+    };
+
+    const hook = mountHook(() => useAction());
+    try {
+      let p1!: Promise<string | undefined>;
+      let p2!: Promise<string | undefined>;
+      await act(async () => {
+        p1 = hook.current.run("first", () => first.promise);
+        p2 = hook.current.run("second", () => second.promise);
+      });
+      assert.equal(hook.current.pending, "second");
+
+      await act(async () => {
+        first.reject(new Error("stale failure"));
+        await p1;
+      });
+      assert.equal(hook.current.pending, "second");
+      assert.equal(hook.current.error, undefined);
+
+      await act(async () => {
+        second.resolve("ok");
+        await p2;
+      });
+      assert.equal(hook.current.pending, undefined);
+      assert.equal(hook.current.error, undefined);
+      assert.equal(scheduled.size, 1);
+
+      hook.unmount();
+      assert.equal(scheduled.size, 0);
+    } finally {
+      g.setTimeout = origSetTimeout;
+      g.clearTimeout = origClearTimeout;
+    }
+  });
+
   test("mid-flight invalidate triggers a follow-up refetch so stale summary badge counts clear", async () => {
     const tag = crypto.randomUUID();
     const path = `/assistant/summary-midflight-${tag}`;
@@ -72,12 +179,12 @@ describe("useResource", () => {
     const second = deferred<Response>();
     const calls: string[] = [];
 
-    globalThis.fetch = ((input: RequestInfo | URL) => {
+    globalThis.fetch = asFetch((input: RequestInfo | URL) => {
       calls.push(String(input));
       if (calls.length === 1) return first.promise;
       if (calls.length === 2) return second.promise;
       return Promise.resolve(Response.json({ revision: 99, attention: 0 }));
-    }) as unknown as typeof fetch;
+    });
 
     const hook = mountHook(() => useResource<{ revision: number; attention: number }>(path, { poll: 0, versioned: false }));
     try {
@@ -116,14 +223,14 @@ describe("useResource", () => {
     const fetched: string[] = [];
     let failWork = false;
 
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = asFetch(async (input: RequestInfo | URL) => {
       const url = String(input);
       fetched.push(url);
       if (url.includes(`work-prefix-${tag}`) && failWork) {
         return Response.json({ error: "Upstream unavailable" }, { status: 503 });
       }
       return Response.json({ revision: fetched.length, ok: true });
-    }) as unknown as typeof fetch;
+    });
 
     const work = mountHook(() => useResource<{ revision: number; ok: boolean }>(workPath, { poll: 0 }));
     const library = mountHook(() => useResource<{ revision: number; ok: boolean }>(libraryPath, { poll: 0 }));
@@ -153,7 +260,7 @@ describe("useResource", () => {
     const responses = [deferred<Response>(), deferred<Response>()];
     const path = "/work/stale";
     let requests = 0;
-    globalThis.fetch = (() => responses[requests++]?.promise ?? Promise.resolve(Response.json({ revision: 100 }))) as typeof fetch;
+    globalThis.fetch = asFetch(() => responses[requests++]?.promise ?? Promise.resolve(Response.json({ revision: 100 })));
     const hook = mountHook(() => useResource<{ revision: number }>(path, { poll: 0 }));
     try {
       await act(async () => {

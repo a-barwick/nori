@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { asFetch } from "@/lib/test-fetch";
 import { GET } from "./route";
 
 test("Mac readiness requires a valid identity map and reachable IAP policy", async () => {
@@ -19,7 +20,7 @@ test("Mac readiness requires a valid identity map and reachable IAP policy", asy
     assert.equal((await GET()).status, 503);
 
     process.env.NORI_OIDC_IAP_ALLOWED_IDENTITIES = '{"subject":"user@example.test"}';
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = asFetch(async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url.startsWith("http://metadata.google.internal/")) return Response.json({ access_token: "test-policy-token" });
       if (url === `https://iap.googleapis.com/v1/${resource}:getIamPolicy`) {
@@ -29,7 +30,7 @@ test("Mac readiness requires a valid identity map and reachable IAP policy", asy
         return Response.json({ bindings: [{ role: "roles/iap.httpsResourceAccessor", members: ["user:other@example.test"] }] });
       }
       throw new Error(`Unexpected fetch URL: ${url}`);
-    }) as unknown as typeof fetch;
+    });
     assert.equal((await GET()).status, 200);
 
     process.env.NORI_OIDC_IAP_POLICY_RESOURCE = unmatchedResource;

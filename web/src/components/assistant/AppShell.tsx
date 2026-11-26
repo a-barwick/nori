@@ -11,7 +11,8 @@ import { AppFrame } from "@/components/shell/AppFrame";
 import { Button } from "@/components/ui/primitives";
 import { useAppearance } from "@/lib/appearance";
 import { AssistantProvider, useAssistant } from "@/lib/assistant/context";
-import { APIError, getJSON, resetUserData } from "@/lib/assistant/api";
+import { ACCOUNT_DELETED_REDIRECT, APIError, deleteAccount, errorText, getJSON, resetUserData } from "@/lib/assistant/api";
+import { useHydrated } from "@/lib/hooks";
 import {
   acknowledgeResetCompletion,
   browserResetChanged,
@@ -168,21 +169,10 @@ function AccountStateGate({ scope, localMode, children }: { scope: string; local
     setFinishing(true);
     setResumeError("");
     try {
-      const response = await fetch("/api/v1/settings/account/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirmation, resume_pending: true }),
-      });
-      if (response.status === 204 || response.status === 200) {
-        try { window.localStorage.setItem(SIGNED_OUT_EVENT_KEY, String(Date.now())); } catch {}
-        window.location.replace("/signed-out?deleted=1");
-        return;
-      }
-      const data = await response.json().catch(() => ({})) as { error?: string };
-      setResumeError(data.error || "Nori could not finish deleting your account. Try again.");
-      setFinishing(false);
-    } catch {
-      setResumeError("Nori could not finish deleting your account. Try again.");
+      await deleteAccount(confirmation, true);
+      window.location.replace(ACCOUNT_DELETED_REDIRECT);
+    } catch (error) {
+      setResumeError(error instanceof APIError ? errorText(error) : "Nori could not finish deleting your account. Try again.");
       setFinishing(false);
     }
   };
@@ -238,13 +228,15 @@ function Frame({ scope, children }: { scope: string; children: ReactNode }) {
   const path = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const hydrated = useHydrated();
   const previous = useRef(path);
-  const [localCompletion, setLocalCompletion] = useState(() => readLocalOnboardingDone(scope));
+  const [localCompletionOverride, setLocalCompletionOverride] = useState<string | null | undefined>();
+  const localCompletion = localCompletionOverride !== undefined ? localCompletionOverride : (hydrated ? readLocalOnboardingDone(scope) : null);
   const forceReplay = searchParams.get("onboarding") === "1";
 
   const handleOnboardingComplete = useCallback(() => {
     const completion = preferences.data?.data_reset_at ?? "1";
-    setLocalCompletion(completion);
+    setLocalCompletionOverride(completion);
     try {
       window.localStorage.setItem(`${ONBOARDING_STORAGE_PREFIX}${scope}`, completion);
     } catch {

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { Check, Copy } from "lucide-react";
+import { useCopyToClipboard } from "@/lib/browser";
 import { corners, type GroupUnit, type Pos } from "@/lib/units";
 import type { MarkState, Sender } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -35,24 +36,19 @@ export function BubbleUnit({
     unit.item.parts.every((part) => part.type === "reminder" || part.type === "card");
 
   const copyText = (unit.item.text || unit.markdown || "").trim();
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyToClipboard();
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pressOrigin = useRef<{ x: number; y: number } | null>(null);
-  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => {
       if (pressTimer.current) clearTimeout(pressTimer.current);
-      if (copiedTimer.current) clearTimeout(copiedTimer.current);
     };
   }, []);
 
   const triggerCopy = () => {
     if (!copyText) return;
-    void navigator.clipboard?.writeText(copyText);
-    setCopied(true);
-    if (copiedTimer.current) clearTimeout(copiedTimer.current);
-    copiedTimer.current = setTimeout(() => setCopied(false), 1400);
+    copy(copyText);
   };
 
   const cancelLongPress = () => {
