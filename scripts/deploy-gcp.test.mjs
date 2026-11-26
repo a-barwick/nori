@@ -27,9 +27,9 @@ function runFixture(t, opts = {}) {
 printf "gcloud %s\\n" "$*" >> "$FIXTURE_LOG"
 if [ "$2" = revisions ] && [ "$3" = describe ]; then
   if [ "$WORKER_READY" = "true" ]; then
-    printf 'True\\n'
+    printf 'Ready\tTrue\n'
   else
-    printf 'False\\n'
+    printf 'Ready\tFalse\n'
   fi
 elif [ "$3" = describe ]; then
   case "$*" in

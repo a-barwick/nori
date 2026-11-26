@@ -213,7 +213,8 @@ check_revision_ready() {
   local revision="$1"
   local status
   status="$(gcloud run revisions describe "$revision" --project="$PROJECT" --region="$REGION" \
-    --format='value(status.conditions[?type="Ready"].status)')"
+    --flatten='status.conditions[]' --format='value(status.conditions.type,status.conditions.status)' |
+    awk -F '\t' '$1 == "Ready" { print $2 }')"
   [[ "$status" == "True" ]]
 }
 
