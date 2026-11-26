@@ -91,15 +91,41 @@ func TestRegistryProdAllowlistAndCatalog(t *testing.T) {
 		t.Fatalf("expected non-allowlisted user to be denied in prod")
 	}
 	cat := reg.Snapshot()
-	if len(cat.Profiles) != 4 {
-		t.Fatalf("expected 4 prod profiles (Opus, Haiku, Neon, Hydrogen), got %d", len(cat.Profiles))
+	if len(cat.Profiles) != 6 {
+		t.Fatalf("expected 6 prod profiles (Opus, Haiku, Neon, Hydrogen, Sol 6.2, Luna 6.1), got %d", len(cat.Profiles))
 	}
 	if cat.DefaultChatProfileID != "cloud-claude-opus-5-5" || cat.DefaultTaskProfileID != "cloud-claude-haiku-5-5" {
 		t.Fatalf("unexpected prod defaults: chat=%q task=%q", cat.DefaultChatProfileID, cat.DefaultTaskProfileID)
 	}
 	pub := cat.Public()
-	if len(pub.Profiles) != 4 {
-		t.Fatalf("expected 4 public profiles, got %d", len(pub.Profiles))
+	if len(pub.Profiles) != 6 {
+		t.Fatalf("expected 6 public profiles, got %d", len(pub.Profiles))
+	}
+}
+
+func TestRegistryDefaultFallbackOrderWhenUnconfigured(t *testing.T) {
+	cfg := settings.Settings{
+		Cloud:      "aws",
+		EnvProfile: "prod",
+		Models: settings.Models{
+			Provider:   "gateway",
+			GatewayURL: "https://ai-gateway.vercel.sh/v1",
+			GatewayKey: "vck_prod_test_token",
+		},
+	}
+	reg, err := NewRegistry(cfg)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	cat := reg.Snapshot()
+	if cat.DefaultChatProfileID != "cloud-gemini-4-neon" || cat.DefaultTaskProfileID != "cloud-gemini-4-hydrogen" {
+		t.Fatalf("expected neon/hydrogen default fallback, got chat=%q task=%q", cat.DefaultChatProfileID, cat.DefaultTaskProfileID)
+	}
+	if _, ok := cat.Get("cloud-gpt-6-2-sol"); !ok {
+		t.Fatalf("expected cloud-gpt-6-2-sol in prod catalog")
+	}
+	if _, ok := cat.Get("cloud-gpt-6-1-luna"); !ok {
+		t.Fatalf("expected cloud-gpt-6-1-luna in prod catalog")
 	}
 }
 
@@ -198,8 +224,8 @@ func TestRegistryBYOKRequiredAllowsEmptyDeploymentGatewayKey(t *testing.T) {
 		t.Fatalf("NewRegistry: %v", err)
 	}
 	cat := reg.Snapshot()
-	if len(cat.Profiles) != 4 {
-		t.Fatalf("expected 4 cloud gateway profiles in BYOK mode without deployment key, got %d", len(cat.Profiles))
+	if len(cat.Profiles) != 6 {
+		t.Fatalf("expected 6 cloud gateway profiles in BYOK mode without deployment key, got %d", len(cat.Profiles))
 	}
 
 	sel, err := reg.ValidateAndResolve(&state.ModelSelection{

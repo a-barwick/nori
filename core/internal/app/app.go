@@ -175,6 +175,12 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 		runner.ModelForTurn = func(sel *state.ModelSelection) conversation.ReplyModel {
 			p, reasoning, explicit, err := profilesReg.ResolveChat(sel)
 			if !explicit {
+				if profilesReg != nil {
+					cat := profilesReg.Snapshot()
+					if def, ok := cat.Get(cat.DefaultChatProfileID); ok && def.Backend == modelprofiles.BackendLocal {
+						return platform.ReplyModelForProfile(cfg.Models, user.ID, def, def.DefaultReasoning)
+					}
+				}
 				return nil
 			}
 			if err != nil {
@@ -217,6 +223,12 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 		result.TaskActivities.ModelForRun = func(sel *state.ModelSelection) agent.Model {
 			p, reasoning, explicit, err := profilesReg.ResolveTask(sel)
 			if !explicit {
+				if profilesReg != nil {
+					cat := profilesReg.Snapshot()
+					if def, ok := cat.Get(cat.DefaultTaskProfileID); ok && def.Backend == modelprofiles.BackendLocal {
+						return platform.TaskModelForProfile(cfg.Models, store, user.ID, def, def.DefaultReasoning)
+					}
+				}
 				return nil
 			}
 			if err != nil {

@@ -89,7 +89,7 @@ func (c *Client) direct() bool {
 	if c.ProviderName != "" {
 		return c.ProviderName == "openai"
 	}
-	return c.ModelName == directModel
+	return c.ModelName == directModel || c.ModelName == "gpt-6.1-terra"
 }
 
 func (c *Client) SupportsNativeWebSearch() bool { return c.direct() }

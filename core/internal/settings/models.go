@@ -14,12 +14,14 @@ import (
 )
 
 const (
-	DefaultOuterModel           = "gpt-6.1-sol"
-	DefaultInnerModel           = "gpt-6.1-terra"
-	DefaultOpenRouterOuterModel = "openai/gpt-6.1-sol"
-	DefaultOpenRouterInnerModel = "openai/gpt-6.1-terra"
-	DefaultAnthropicOuterModel  = "claude-sonnet-4-5"
-	DefaultAnthropicInnerModel  = "claude-sonnet-4-5"
+	DefaultOuterModel           = "gpt-6.2-sol"
+	DefaultInnerModel           = "gpt-6.1-luna"
+	DefaultOpenRouterOuterModel = "google/gemini-4-neon"
+	DefaultOpenRouterInnerModel = "google/gemini-4-hydrogen"
+	DefaultGatewayOuterModel    = "google/gemini-4-neon"
+	DefaultGatewayInnerModel    = "google/gemini-4-hydrogen"
+	DefaultAnthropicOuterModel  = "claude-opus-5.5"
+	DefaultAnthropicInnerModel  = "claude-haiku-5.5"
 )
 
 func ValidModelProvider(p string) bool {
@@ -180,6 +182,8 @@ func modelsFromEnvironment(profile, cloud string, simulation bool) Models {
 			models.Outer = DefaultAnthropicOuterModel
 		case "openrouter":
 			models.Outer = DefaultOpenRouterOuterModel
+		case "gateway":
+			models.Outer = DefaultGatewayOuterModel
 		}
 	}
 	if models.Inner == "" {
@@ -190,6 +194,8 @@ func modelsFromEnvironment(profile, cloud string, simulation bool) Models {
 			models.Inner = DefaultAnthropicInnerModel
 		case "openrouter":
 			models.Inner = DefaultOpenRouterInnerModel
+		case "gateway":
+			models.Inner = DefaultGatewayInnerModel
 		}
 	}
 	return models
@@ -206,7 +212,7 @@ func (m Models) EffectiveInnerProvider() string {
 	if m.Provider != "" {
 		return m.Provider
 	}
-	if m.Inner == DefaultInnerModel {
+	if m.Inner == DefaultInnerModel || m.Inner == "gpt-6.1-terra" {
 		return "openai"
 	}
 	return "openrouter"

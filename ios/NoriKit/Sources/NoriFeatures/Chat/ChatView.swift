@@ -21,6 +21,7 @@ public struct ChatView: View {
     @State private var cancellingReminderIDs: Set<String> = []
     @State private var editingReminder: ReminderEditTarget?
     @State private var visiblePendingInteractionIDs: Set<String> = []
+    @State private var isNearBottom: Bool = true
     @Namespace private var noriAvatarNamespace
 
     public init(
@@ -152,7 +153,6 @@ public struct ChatView: View {
     private var threadArea: some View {
         let units = threadUnits
         let latestNoriID = latestNoriMessageID(in: units)
-        let activeAvatarTargetID = store.isThinking ? "__thinking__" : (latestNoriID ?? "__none__")
         let primaryPendingInThread: Interaction? = units.compactMap { unit in
             if case .interaction(let item) = unit { return item }
             return nil
@@ -217,10 +217,23 @@ public struct ChatView: View {
                             .frame(height: 8)
                             .id("chat-bottom-anchor")
                     }
-                    .animation(.spring(response: 0.38, dampingFraction: 0.82), value: activeAvatarTargetID)
                     .padding(.horizontal, 14)
                     .padding(.top, 12)
                     .padding(.bottom, 12)
+                }
+                .defaultScrollAnchor(.bottom)
+                .onScrollGeometryChange(for: ChatScrollMetrics.self) { geo in
+                    ChatScrollMetrics(
+                        distanceFromBottom: max(0, geo.contentSize.height - geo.visibleRect.maxY),
+                        contentHeight: geo.contentSize.height
+                    )
+                } action: { oldValue, newValue in
+                    let contentChanged = abs(newValue.contentHeight - oldValue.contentHeight) > 1
+                    if !contentChanged {
+                        isNearBottom = newValue.distanceFromBottom <= 120
+                    } else if newValue.distanceFromBottom <= 24 {
+                        isNearBottom = true
+                    }
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .refreshable {
@@ -228,37 +241,36 @@ public struct ChatView: View {
                     async let summaryTask: Void = store.refreshSummary()
                     _ = await (sessionTask, summaryTask)
                 }
-                .onChange(of: store.messages.count) { _, _ in
-                    withAnimation(.easeOut(duration: 0.24)) {
+                .onChange(of: store.messages.last?.id) { oldID, newID in
+                    guard newID != nil, oldID != newID else { return }
+                    let isNewUserMessage = store.messages.last?.isFromUser == true
+                    guard isNearBottom || isNewUserMessage else { return }
+                    withAnimation(.easeOut(duration: 0.22)) {
                         proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
                     }
                 }
                 .onChange(of: store.pendingInteractions.map(\.id)) { oldIDs, newIDs in
                     let activeIDs = Set(newIDs)
                     visiblePendingInteractionIDs.formIntersection(activeIDs)
-                    if !activeIDs.subtracting(oldIDs).isEmpty {
-                        withAnimation(.easeOut(duration: 0.24)) {
+                    if !activeIDs.subtracting(oldIDs).isEmpty, isNearBottom {
+                        withAnimation(.easeOut(duration: 0.22)) {
                             proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
                         }
                     }
                 }
-                .onChange(of: store.isThinking) { _, _ in
-                    withAnimation(.easeOut(duration: 0.24)) {
+                .onChange(of: store.isThinking) { _, isThinking in
+                    guard isThinking, isNearBottom else { return }
+                    withAnimation(.easeOut(duration: 0.22)) {
                         proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
                     }
                 }
-                .onAppear {
+                .onChange(of: store.streamingAssistantText) { _, newText in
+                    guard let newText, !newText.isEmpty, isNearBottom else { return }
                     proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
                 }
                 .onChange(of: scrollToBottomTrigger) { _, _ in
-                    withAnimation(.easeOut(duration: 0.24)) {
+                    withAnimation(.easeOut(duration: 0.22)) {
                         proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
-                    }
-                    Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(60))
-                        withAnimation(.easeOut(duration: 0.24)) {
-                            proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
-                        }
                     }
                 }
 
@@ -954,6 +966,11 @@ private struct InlineNeedsYouBanner: View {
 }
 
 
+private struct ChatScrollMetrics: Equatable {
+    let distanceFromBottom: CGFloat
+    let contentHeight: CGFloat
+}
+
 private enum BubblePosition {
     case single
     case first
@@ -1035,7 +1052,7 @@ private enum ChatThreadUnit: Identifiable {
 
         func flushBuffer() {
             guard let first = buffer.first else { return }
-            result.append(.group(id: "grp-\(first.id)-\(buffer.count)", isUser: first.isFromUser, messages: buffer))
+            result.append(.group(id: "grp-\(first.id)", isUser: first.isFromUser, messages: buffer))
             buffer = []
         }
 

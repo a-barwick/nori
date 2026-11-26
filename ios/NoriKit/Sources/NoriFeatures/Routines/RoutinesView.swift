@@ -84,89 +84,94 @@ public struct RoutinesView: View {
         let isBusy = busyID == automation.id
 
         return VStack(spacing: 0) {
-            HStack(alignment: .center, spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(automation.title)
-                            .font(NoriTypography.rowTitle)
-                            .foregroundStyle(isEnabled ? NoriColors.ink : NoriColors.ink2)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 8) {
+                    Text(automation.title)
+                        .font(NoriTypography.rowTitle)
+                        .foregroundStyle(isEnabled ? NoriColors.ink : NoriColors.ink2)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                        NoriPill(
-                            isEnabled ? "Scheduled" : automation.status.displayLabel,
-                            tone: isEnabled ? .scheduled : .neutral
-                        )
-                    }
-
-                    Text(triggerSummary(for: automation.trigger))
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(NoriColors.ink2)
-                        .lineLimit(1)
-
-                    if isEnabled, let nextAt = automation.nextAt, !nextAt.isEmpty {
-                        Text("Next \(NoriDateFormatting.shortDateTime(nextAt))")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(NoriColors.scheduled)
-                            .lineLimit(1)
-                    }
+                    NoriPill(
+                        isEnabled ? "Scheduled" : automation.status.displayLabel,
+                        tone: isEnabled ? .scheduled : .neutral
+                    )
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
 
-                HStack(spacing: 6) {
-                    Button {
-                        busyID = automation.id
-                        Task {
-                            await store.runAutomationNow(automationID: automation.id)
-                            busyID = nil
+                HStack(alignment: .center, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(triggerSummary(for: automation.trigger))
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(NoriColors.ink2)
+                            .lineLimit(1)
+
+                        if isEnabled,
+                           automation.trigger.at == nil,
+                           let nextAt = automation.nextAt, !nextAt.isEmpty {
+                            Text("Next \(NoriDateFormatting.shortDateTime(nextAt))")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(NoriColors.scheduled)
+                                .lineLimit(1)
                         }
-                    } label: {
-                        HStack(spacing: 4) {
-                            if isBusy {
-                                ProgressView()
-                                    .controlSize(.mini)
-                                    .tint(NoriColors.accent)
-                            } else {
-                                Image(systemName: "play.fill")
-                                    .font(.system(size: 9.5, weight: .semibold))
-                            }
-                            Text("Run")
-                                .font(.system(size: 12, weight: .semibold))
-                        }
-                        .foregroundStyle(NoriColors.accent)
-                        .padding(.horizontal, 10)
-                        .frame(height: 28)
-                        .background(NoriColors.accentSubtle, in: Capsule())
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(NoriColors.accentBorder, lineWidth: 1)
-                        )
                     }
-                    .buttonStyle(.plain)
-                    .disabled(isBusy)
-                    .accessibilityLabel("Run \(automation.title) now")
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Button {
-                        busyID = automation.id
-                        Task {
-                            await store.toggleAutomation(automationID: automation.id)
-                            busyID = nil
-                        }
-                    } label: {
-                        Text(isEnabled ? "Pause" : "Resume")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(isEnabled ? NoriColors.ink2 : NoriColors.ink)
-                            .padding(.horizontal, 9)
+                    HStack(spacing: 6) {
+                        Button {
+                            busyID = automation.id
+                            Task {
+                                await store.runAutomationNow(automationID: automation.id)
+                                busyID = nil
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                if isBusy {
+                                    ProgressView()
+                                        .controlSize(.mini)
+                                        .tint(NoriColors.accent)
+                                } else {
+                                    Image(systemName: "play.fill")
+                                        .font(.system(size: 9.5, weight: .semibold))
+                                }
+                                Text("Run")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            .foregroundStyle(NoriColors.accent)
+                            .padding(.horizontal, 10)
                             .frame(height: 28)
-                            .background(NoriColors.fill1, in: Capsule())
+                            .background(NoriColors.accentSubtle, in: Capsule())
                             .overlay(
                                 Capsule()
-                                    .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                                    .strokeBorder(NoriColors.accentBorder, lineWidth: 1)
                             )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isBusy)
+                        .accessibilityLabel("Run \(automation.title) now")
+
+                        Button {
+                            busyID = automation.id
+                            Task {
+                                await store.toggleAutomation(automationID: automation.id)
+                                busyID = nil
+                            }
+                        } label: {
+                            Text(isEnabled ? "Pause" : "Resume")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(isEnabled ? NoriColors.ink2 : NoriColors.ink)
+                                .padding(.horizontal, 9)
+                                .frame(height: 28)
+                                .background(NoriColors.fill1, in: Capsule())
+                                .overlay(
+                                    Capsule()
+                                        .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isBusy)
+                        .accessibilityLabel("\(isEnabled ? "Pause" : "Resume") \(automation.title)")
                     }
-                    .buttonStyle(.plain)
-                    .disabled(isBusy)
-                    .accessibilityLabel("\(isEnabled ? "Pause" : "Resume") \(automation.title)")
                 }
             }
             .padding(.horizontal, 13)
@@ -190,7 +195,7 @@ public struct RoutinesView: View {
             return rrule
         }
         if let at = trigger.at, !at.isEmpty {
-            return "Once at \(NoriDateFormatting.shortDateTime(at))"
+            return "Once · \(NoriDateFormatting.shortDateTime(at))"
         }
         return trigger.summaryLabel
     }

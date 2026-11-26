@@ -492,7 +492,7 @@ public struct DiagnosticsSettingsView: View {
                 NoriCard {
                     VStack(alignment: .leading, spacing: 10) {
                         diagRow("Status", value: store.connectionState.rawValue.capitalized)
-                        diagRow("Server", value: NoriConfig.serverURL.host() ?? "nori-core")
+                        diagRow("Server", value: store.serverHost)
                         if let ping = store.lastPing {
                             let pingTime = NoriDateFormatting.shortTime(ISO8601DateFormatter().string(from: ping.checkedAt))
                             let pingSummary = ping.ok

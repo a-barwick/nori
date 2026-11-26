@@ -53,6 +53,7 @@ public actor LiveNoriTransport: NoriTransport {
     private let decoder: JSONDecoder
     private let sseInitialBackoffSeconds: Double
     private let sseRolloverDelayMilliseconds: Int
+    private let localEmail: String?
     private var resolvedUserID: String?
     private var identityGeneration: UInt64 = 0
 
@@ -61,9 +62,11 @@ public actor LiveNoriTransport: NoriTransport {
         authProvider: AuthTokenProvider = AuthTokenProvider(),
         urlSession: URLSession? = nil,
         sseInitialBackoffSeconds: Double = 1.0,
-        sseRolloverDelayMilliseconds: Int = 250
+        sseRolloverDelayMilliseconds: Int = 250,
+        localEmail: String? = nil
     ) {
         self.baseURL = baseURL
+        self.localEmail = localEmail
         self.router = NoriEndpointRouter(baseURL: baseURL)
         if let urlSession {
             self.session = urlSession
@@ -102,7 +105,8 @@ public actor LiveNoriTransport: NoriTransport {
             let url = try router.unscopedURL(path: "/api/users/resolve")
             var req = URLRequest(url: url)
             req.httpMethod = "POST"
-            req.httpBody = try encoder.encode([String: String]())
+            let resolvePayload: [String: String] = localEmail.map { ["email": $0] } ?? [:]
+            req.httpBody = try encoder.encode(resolvePayload)
             let data = try await authenticatedData(req, contentType: "application/json", span: span)
             struct ResolveResponse: Decodable { let id: String }
             let resolved = try decoder.decode(ResolveResponse.self, from: data)
@@ -168,18 +172,20 @@ public actor LiveNoriTransport: NoriTransport {
         traceContext: NoriTraceContext
     ) async throws -> (Data, URLResponse) {
         let generation = identityGeneration
-        let token = try await authProvider.validIDToken(forceRefresh: false)
-        guard generation == identityGeneration else { throw CancellationError() }
         var req = baseRequest
         req.setValue("no-store", forHTTPHeaderField: "Cache-Control")
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        if localEmail == nil {
+            let token = try await authProvider.validIDToken(forceRefresh: false)
+            guard generation == identityGeneration else { throw CancellationError() }
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         if let contentType {
             req.setValue(contentType, forHTTPHeaderField: "Content-Type")
         }
         applyTraceHeaders(to: &req, traceContext: traceContext)
         let (data, response) = try await session.data(for: req)
         guard generation == identityGeneration else { throw CancellationError() }
-        if let http = response as? HTTPURLResponse, http.statusCode == 401 {
+        if localEmail == nil, let http = response as? HTTPURLResponse, http.statusCode == 401 {
             NoriLogger.auth.warning("auth.token_refresh_retry", attributes: ["http.status_code": "401"], remote: false)
             let freshToken = try await authProvider.validIDToken(forceRefresh: true)
             guard generation == identityGeneration else { throw CancellationError() }
@@ -463,7 +469,12 @@ public actor LiveNoriTransport: NoriTransport {
                     var traceID: String?
                     do {
                         let userID = try await self.ensureUserID()
-                        let token = try await self.authProvider.validIDToken(forceRefresh: forceNextTokenRefresh)
+                        let token: String?
+                        if self.localEmail == nil {
+                            token = try await self.authProvider.validIDToken(forceRefresh: forceNextTokenRefresh)
+                        } else {
+                            token = nil
+                        }
                         forceNextTokenRefresh = false
 
                         let url = try self.router.scopedURL(
@@ -475,7 +486,9 @@ public actor LiveNoriTransport: NoriTransport {
                         req.httpMethod = "GET"
                         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                         req.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-                        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                        if let token {
+                            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                        }
                         let sseTrace = NoriTraceContext.random(sampled: false)
                         traceID = sseTrace.traceID
                         self.applyTraceHeaders(to: &req, traceContext: sseTrace, recordTrace: false)
