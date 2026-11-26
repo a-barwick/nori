@@ -53,8 +53,8 @@ jobs:
       - name: Run make check
         run: make check
 
-      - name: Test deployment and adapter scripts
-        run: node --test scripts/*.test.mjs integrations/embed/*.test.mjs
+      - name: Test deployment scripts
+        run: node --test scripts/*.test.mjs
 
       - name: Persona harness and bundle validation
         run: |

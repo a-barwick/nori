@@ -120,16 +120,8 @@ jobs:
             --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" --keychain "$keychain"
           NORI_MAC_RELEASE=1 NORI_MAC_NOTARY_PROFILE=nori-connector NORI_MAC_NOTARY_KEYCHAIN="$keychain" \
             macos/scripts/build.sh "$RUNNER_TEMP/nori-mac"
-          NORI_CONNECTOR_VERSION="$NORI_MAC_VERSION" NORI_CONNECTOR_DMG=1 \
-            NORI_MAC_NOTARY_PROFILE=nori-connector NORI_MAC_NOTARY_KEYCHAIN="$keychain" \
-            connector/macos/build.sh "$RUNNER_TEMP/connector-macos"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: nori-for-mac
           path: ${{ runner.temp }}/nori-mac/*.dmg
-          if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: nori-connector-macos
-          path: ${{ runner.temp }}/connector-macos/*.dmg
           if-no-files-found: error
