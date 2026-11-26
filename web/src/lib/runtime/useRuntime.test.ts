@@ -134,13 +134,35 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
       await act(async () => { FakeEventSource.instances[0].emitEvent("task", { run: completedRun }, "11"); });
 
       assert.equal(hook.current.session?.runs[0].status, "completed");
-      assert.equal(fetched.includes("/api/v1/assistant/summary"), true);
-      assert.equal(fetched.includes("/api/v1/work"), true);
-      assert.equal(fetched.includes("/api/v1/interactions"), true);
+      assert.equal(fetched.filter((url) => url === "/api/v1/interactions").length, 1);
+      assert.equal(fetched.includes("/api/v1/assistant/summary"), false);
+      assert.equal(fetched.includes("/api/v1/work"), false);
+      await act(async () => {
+        FakeEventSource.instances[0].emitEvent("task", { run: run1 }, "12");
+        FakeEventSource.instances[0].emitEvent("task", { run: completedRun }, "13");
+      });
+      assert.equal(hook.current.session?.runs[0].status, "completed");
+      assert.ok(fetched.filter((url) => url === "/api/v1/interactions").length > 1);
+      const firstTimers = [...scheduledTimers.entries()].filter(([, timer]) => timer.delay === 100);
+      assert.equal(firstTimers.length, 1);
+      scheduledTimers.delete(firstTimers[0][0]);
+      await act(async () => { firstTimers[0][1].fn(); });
+      assert.equal(fetched.filter((url) => url === "/api/v1/assistant/summary").length, 1);
+      assert.equal(fetched.filter((url) => url === "/api/v1/work").length, 1);
       assert.equal(fetched.includes("/api/v1/library"), false);
 
-      await act(async () => { FakeEventSource.instances[0].emitEvent("task", { run: run1 }, "12"); });
+      fetched.length = 0;
+      await act(async () => { FakeEventSource.instances[0].emitEvent("task", { run: run1 }, "14"); });
       assert.equal(hook.current.session?.runs[0].status, "completed");
+      assert.equal(fetched.filter((url) => url === "/api/v1/interactions").length, 1);
+      assert.equal(fetched.includes("/api/v1/assistant/summary"), false);
+      assert.equal(fetched.includes("/api/v1/work"), false);
+      const laterTimers = [...scheduledTimers.entries()].filter(([, timer]) => timer.delay === 100);
+      assert.equal(laterTimers.length, 1);
+      scheduledTimers.delete(laterTimers[0][0]);
+      await act(async () => { laterTimers[0][1].fn(); });
+      assert.equal(fetched.filter((url) => url === "/api/v1/assistant/summary").length, 1);
+      assert.equal(fetched.filter((url) => url === "/api/v1/work").length, 1);
 
       fetched.length = 0;
       await act(async () => {
@@ -157,7 +179,7 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
               created_at: "2026-06-15T10:01:00Z",
             },
           },
-          "13",
+          "15",
         );
       });
       assert.equal(hook.current.session?.results?.length, 1);
@@ -165,7 +187,7 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
       assert.equal(fetched.includes("/api/v1/memory"), false);
 
       fetched.length = 0;
-      await act(async () => { FakeEventSource.instances[0].emitEvent("memory", { revision: 4 }, "14"); });
+      await act(async () => { FakeEventSource.instances[0].emitEvent("memory", { revision: 4 }, "16"); });
       assert.equal(fetched.includes("/api/v1/memory"), true);
       assert.equal(fetched.includes("/api/v1/memory/working"), true);
       assert.equal(fetched.includes("/api/v1/library"), false);
@@ -173,6 +195,20 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
     } finally {
       hook.unmount();
     }
+  });
+
+  test("a queued task refresh is cancelled when the stream is closed", async () => {
+    g.fetch = (async (input: RequestInfo | URL) => String(input).startsWith("/api/v1/snapshot")
+      ? Response.json(baseSession()) : Response.json({ ok: true })) as typeof fetch;
+    const hook = mountHook(() => useRuntime());
+    await settleTestDOM();
+    await act(async () => {
+      FakeEventSource.instances[0].emitEvent("task", { run: { id: "run-1", position: 1, status: "running" } }, "11");
+    });
+    const queued = [...scheduledTimers.entries()].filter(([, timer]) => timer.delay === 100);
+    assert.equal(queued.length, 1);
+    hook.unmount();
+    assert.equal(scheduledTimers.has(queued[0][0]), false);
   });
 
   test("SSE error backoff escalates, shows STREAM_RECONNECTING on 3rd failure, and resyncs/invalidates on recovery open", async () => {

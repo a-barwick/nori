@@ -324,7 +324,7 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
 
     await mockUpstream({ [email]: userID }, (url, init) => {
       if (init?.method === "POST") return Response.json({ ok: true });
-      if (url.pathname.endsWith("/v1/assistant/summary")) {
+      if (url.pathname.endsWith("/v1/integrations")) {
         summaryCalls++;
         if (mode === "error500") return Response.json({ error: "db glitch" }, { status: 500 });
         if (mode === "error429") return new Response("<html>private rate limit</html>", { status: 429, headers: { "retry-after": "5", "content-type": "text/html" } });
@@ -334,35 +334,35 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
       return Response.json({ ok: true });
     });
 
-    const getSummary = async () =>
+    const getIntegrations = async () =>
       assistantRoute(
-        new Request(`${APP_ORIGIN}/api/v1/assistant/summary`, { headers: await authHeaders(email) }),
-        "assistant",
-        ["summary"],
+        new Request(`${APP_ORIGIN}/api/v1/integrations`, { headers: await authHeaders(email) }),
+        "integrations",
+        [],
       );
 
-    const r1 = await getSummary();
+    const r1 = await getIntegrations();
     assert.equal(r1.status, 500);
     assert.equal(summaryCalls, 1);
 
     mode = "error429";
-    const r2 = await getSummary();
+    const r2 = await getIntegrations();
     assert.equal(r2.status, 429);
     assert.equal(r2.headers.get("retry-after"), "5");
     assert.deepEqual(await r2.json(), { error: "Nori is busy. Try again shortly." });
     assert.equal(summaryCalls, 2);
 
     mode = "html";
-    const r3 = await getSummary();
+    const r3 = await getIntegrations();
     assert.equal(r3.status, 502);
     assert.equal(summaryCalls, 3);
 
     mode = "ok";
-    const r4 = await getSummary();
+    const r4 = await getIntegrations();
     assert.equal(r4.status, 200);
     assert.deepEqual(await r4.json(), { attention: 4 });
 
-    const r5 = await getSummary();
+    const r5 = await getIntegrations();
     assert.equal(r5.status, 200);
     assert.deepEqual(await r5.json(), { attention: 4 });
     assert.equal(summaryCalls, 4);
@@ -378,10 +378,35 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     );
     assert.equal(mutateRes.status, 200);
 
-    const r6 = await getSummary();
+    const r6 = await getIntegrations();
     assert.equal(r6.status, 200);
     assert.deepEqual(await r6.json(), { attention: 5 });
     assert.equal(summaryCalls, 5);
+  });
+
+  test("worker changes are visible on the next pending, work, and summary reads", async () => {
+    const email = "worker-refresh@example.test";
+    const userID = crypto.randomUUID();
+    let pending = false;
+    await mockUpstream({ [email]: userID }, (url) => {
+      if (url.pathname.endsWith("/v1/assistant/summary")) return Response.json({ needs_you: pending ? 1 : 0 });
+      return Response.json({ items: pending ? [{ id: "worker-created" }] : [] });
+    });
+    const headers = await authHeaders(email);
+    const read = async (path: string, family: string, segments: string[]) => {
+      const response = await assistantRoute(new Request(`${APP_ORIGIN}/api/v1/${path}`, { headers }), family, segments);
+      assert.equal(response.status, 200);
+      return response.json();
+    };
+
+    assert.deepEqual(await read("interactions?status=pending", "interactions", []), { items: [] });
+    assert.deepEqual(await read("work", "work", []), { items: [] });
+    assert.deepEqual(await read("assistant/summary", "assistant", ["summary"]), { needs_you: 0 });
+
+    pending = true;
+    assert.deepEqual(await read("interactions?status=pending", "interactions", []), { items: [{ id: "worker-created" }] });
+    assert.deepEqual(await read("work", "work", []), { items: [{ id: "worker-created" }] });
+    assert.deepEqual(await read("assistant/summary", "assistant", ["summary"]), { needs_you: 1 });
   });
 
   test("sharedRead unblocks concurrent waiters cleanly when an in-flight read fails", async () => {
@@ -410,10 +435,10 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     const warm = await assistantRoute(new Request(`${APP_ORIGIN}/api/v1/connections`, { headers }), "connections", []);
     assert.equal(warm.status, 200);
 
-    const first = assistantRoute(new Request(`${APP_ORIGIN}/api/v1/work`, { headers }), "work", []);
+    const first = assistantRoute(new Request(`${APP_ORIGIN}/api/v1/integrations`, { headers }), "integrations", []);
     await firstEntered;
 
-    const second = assistantRoute(new Request(`${APP_ORIGIN}/api/v1/work`, { headers }), "work", []);
+    const second = assistantRoute(new Request(`${APP_ORIGIN}/api/v1/integrations`, { headers }), "integrations", []);
     await new Promise((resolve) => setTimeout(resolve, 25));
     assert.equal(calls, 1);
 

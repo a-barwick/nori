@@ -112,9 +112,12 @@ export function WorkScreen() {
     >
       {tab === "tasks" && (
         <TasksHub
-          loading={work.loading}
+          loading={work.loading || pending.loading}
           error={work.error}
           onRetry={() => void work.reload()}
+          pendingError={pending.error}
+          pendingRefreshing={pending.refreshing}
+          onRetryPending={() => void pending.reload()}
           pendingInteractions={pendingInteractions}
           orphanPendingTasks={orphanPendingTasks}
           runningTasks={runningTasks}
@@ -132,6 +135,9 @@ function TasksHub({
   loading,
   error,
   onRetry,
+  pendingError,
+  pendingRefreshing,
+  onRetryPending,
   pendingInteractions,
   orphanPendingTasks,
   runningTasks,
@@ -140,6 +146,9 @@ function TasksHub({
   loading: boolean;
   error?: unknown;
   onRetry: () => void;
+  pendingError?: unknown;
+  pendingRefreshing: boolean;
+  onRetryPending: () => void;
   pendingInteractions: Interaction[];
   orphanPendingTasks: WorkItem[];
   runningTasks: WorkItem[];
@@ -149,13 +158,14 @@ function TasksHub({
   const pendingTotal = pendingInteractions.length + orphanPendingTasks.length;
   const visibleRecent = showAllRecent ? finishedTasks : finishedTasks.slice(0, 5);
 
-  if (loading && !pendingTotal && !runningTasks.length && !finishedTasks.length) {
+  if (loading && !error && !pendingError && !pendingTotal && !runningTasks.length && !finishedTasks.length) {
     return <Loading />;
   }
 
   return (
     <div className="space-y-6">
       {error ? <Failure error={error} onRetry={onRetry} /> : null}
+      {pendingError ? <Failure error={pendingError} onRetry={onRetryPending} /> : null}
 
       {pendingTotal > 0 ? (
         <Section title={`Action needed · ${pendingTotal}`}>
@@ -172,7 +182,7 @@ function TasksHub({
             )}
           </div>
         </Section>
-      ) : (
+      ) : !error && !pendingError && !loading && !pendingRefreshing ? (
         <div
           data-all-clear
           className="flex items-center gap-3 rounded-card border border-card-border bg-surface px-4 py-3"
@@ -182,7 +192,7 @@ function TasksHub({
           </span>
           <p className="text-[15px] font-semibold text-ink">All clear</p>
         </div>
-      )}
+      ) : null}
 
       {runningTasks.length > 0 && (
         <Section title={runningTasks.length > 1 ? `Running · ${runningTasks.length}` : "Running"}>

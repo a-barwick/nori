@@ -73,12 +73,14 @@ export function useWorkDetail(taskID: string) {
 }
 
 export function usePendingInteractions() {
-  const { has, runtime } = useAssistant();
+  const { capabilitiesError, refreshCapabilities, has, ready, runtime } = useAssistant();
   const live = has("interactions");
   const remote = useResource<List<Interaction>>(live ? "/interactions?status=pending" : null, { poll: 20_000 });
   const runs = runtime.session?.runs;
   const legacy = useMemo(() => (runs ?? []).map(legacyInteraction).filter((item): item is Interaction => !!item), [runs]);
-  return live ? { items: remote.data?.items, reload: remote.reload, live } : { items: runs ? legacy : undefined, reload: runtime.refreshHistory, live };
+  return live
+    ? { items: remote.data?.items, error: remote.error, loading: remote.loading, refreshing: remote.refreshing, reload: remote.reload, live }
+    : { items: runs ? legacy : undefined, error: capabilitiesError, loading: !ready || (runtime.loading && !runs), refreshing: false, reload: capabilitiesError ? refreshCapabilities : runtime.refreshHistory, live };
 }
 
 export function useLibrary(query = "") {

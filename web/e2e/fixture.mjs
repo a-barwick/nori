@@ -14,7 +14,7 @@ const sessions = new Map();
 const streams = new Map();
 const pendingApproval = JSON.parse(await readFile("../contracts/assistant/fixtures/permissions/interaction.approval.valid.json", "utf8"));
 pendingApproval.expires_at = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-let approval = pendingApproval;
+const approvals = new Map([[identity, pendingApproval]]);
 let allowModels = true;
 const routinePreview = JSON.parse(await readFile("../contracts/assistant/fixtures/automations/automation-preview.dst.valid.json", "utf8"));
 const routineFixture = JSON.parse(await readFile("../contracts/assistant/fixtures/automations/automation.recurring.valid.json", "utf8"));
@@ -54,15 +54,17 @@ const upstream = createServer(async (req, res) => {
     assistant_features: { work: true, interactions: true, library: true, automations: true },
     ...(id === identity && allowModels ? { model_profiles: { default_chat_profile_id: profile.id, profiles: [profile] } } : {}),
   });
-  if (path === "v1/interactions") return json({ revision: approval.revision, items: id === identity && approval.status === "pending" ? [approval] : [] });
-  if (id === identity && path === `v1/interactions/${approval.id}`) return json(approval);
-  if (id === identity && path === `v1/interactions/${approval.id}/responses`) {
+  const approval = approvals.get(id);
+  if (path === "v1/interactions") return json({ items: approval?.status === "pending" ? [approval] : [] });
+  if (approval && path === `v1/interactions/${approval.id}`) return json(approval);
+  if (approval && path === `v1/interactions/${approval.id}/responses`) {
     const answer = await input();
     if (approval.status !== "pending" || answer.expected_revision !== approval.revision || answer.value?.kind !== "approve" || answer.value?.remember_rule) {
       return json({ error: "Unexpected approval request" }, 409);
     }
-    approval = { ...approval, status: "resolved", revision: approval.revision + 1 };
-    return json({ request_id: answer.request_id, accepted: true, status: "applied", resource: approval });
+    const resolved = { ...approval, status: "resolved", revision: approval.revision + 1 };
+    approvals.set(id, resolved);
+    return json({ request_id: answer.request_id, accepted: true, status: "applied", resource: resolved });
   }
   if (path === "v1/automations/preview" && req.method === "POST") {
     await input();
@@ -119,6 +121,30 @@ const upstream = createServer(async (req, res) => {
 });
 
 await new Promise(resolve => upstream.listen(0, "127.0.0.1", resolve));
+const control = createServer((req, res) => {
+  if (req.method === "POST" && req.url === "/reset-alternate") {
+    approvals.delete(alternate);
+    sessions.delete(alternate);
+    res.writeHead(204).end();
+    return;
+  }
+  if (req.method !== "POST" || req.url !== "/worker-approval") {
+    res.writeHead(404).end();
+    return;
+  }
+  const state = snapshot(alternate);
+  approvals.set(alternate, { ...pendingApproval });
+  state.position++;
+  const run = {
+    id: pendingApproval.task_id, status: "running", cancel_requested: false, position: state.position,
+    started_at: new Date().toISOString(), events: [], artifacts: [],
+  };
+  for (const stream of streams.get(alternate) ?? []) {
+    stream.write(`id: ${state.position}\nevent: task\ndata: ${JSON.stringify({ run })}\n\n`);
+  }
+  res.writeHead(204).end();
+});
+await new Promise(resolve => control.listen(4318, "127.0.0.1", resolve));
 const log = { stdio: "inherit" };
 const bridge = spawn(process.execPath, ["scripts/prod-check.mjs", `http://127.0.0.1:${upstream.address().port}`, "frontend@example.com", "second@example.com"], { ...log, env: { ...process.env, NORI_PROD_CHECK_DIR: fixture } });
 let web;
@@ -127,6 +153,8 @@ async function shutdown() {
   bridge.kill();
   upstream.closeAllConnections();
   upstream.close();
+  control.closeAllConnections();
+  control.close();
   await rm(fixture, { recursive: true, force: true });
 }
 let stopping = false;

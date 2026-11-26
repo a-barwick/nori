@@ -52,6 +52,130 @@ test("verifies authentication, queued turns, reconnect, approvals, model access,
   expect(file).toEqual({ status: 200, disposition: 'attachment; filename="fixture.txt"', text: "fixture download" });
 });
 
+test("Work waits for pending approvals and offers a retry after a failed read", async ({ page, request }) => {
+  expect((await request.post("http://127.0.0.1:4318/reset-alternate")).status()).toBe(204);
+  let release!: () => void;
+  let seen!: () => void;
+  const waiting = new Promise<void>((resolve) => { seen = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let attempt = 0;
+  await page.route((url) => url.pathname === "/api/v1/interactions" && url.searchParams.get("status") === "pending", async (route) => {
+    attempt++;
+    if (attempt === 1) {
+      seen();
+      await gate;
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Approval status unavailable" }) });
+    } else {
+      await route.continue();
+    }
+  });
+
+  await page.goto(signInURL("second", "/work"));
+  await waiting;
+  await expect(page.getByRole("tab", { name: "Tasks" })).toBeVisible();
+  await expect(page.getByText("All clear", { exact: true })).toHaveCount(0);
+  release();
+  await expect(page.getByRole("alert").filter({ hasText: "Approval status unavailable" })).toBeVisible();
+  await expect(page.getByText("All clear", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByText("All clear", { exact: true })).toBeVisible();
+});
+
+test("Work reports a failed read while the pending approval read is still loading", async ({ page, request }) => {
+  expect((await request.post("http://127.0.0.1:4318/reset-alternate")).status()).toBe(204);
+  let release!: () => void;
+  let seen!: () => void;
+  const waiting = new Promise<void>((resolve) => { seen = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route((url) => url.pathname === "/api/v1/interactions" && url.searchParams.get("status") === "pending", async (route) => {
+    seen();
+    await gate;
+    await route.continue();
+  });
+  let attempts = 0;
+  await page.route("**/api/v1/work", async (route) => {
+    attempts++;
+    if (attempts === 1) {
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Work status unavailable" }) });
+    } else {
+      await route.continue();
+    }
+  });
+
+  await page.goto(signInURL("second", "/work"));
+  await waiting;
+  await expect(page.getByRole("alert").filter({ hasText: "Work status unavailable" })).toBeVisible();
+  await expect(page.getByText("All clear", { exact: true })).toHaveCount(0);
+  release();
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByText("All clear", { exact: true })).toBeVisible();
+});
+
+test("Work reports a failed approval read while the Work read is still loading", async ({ page, request }) => {
+  expect((await request.post("http://127.0.0.1:4318/reset-alternate")).status()).toBe(204);
+  let release!: () => void;
+  let seen!: () => void;
+  const waiting = new Promise<void>((resolve) => { seen = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/v1/work", async (route) => {
+    seen();
+    await gate;
+    await route.continue();
+  });
+  let attempts = 0;
+  await page.route((url) => url.pathname === "/api/v1/interactions" && url.searchParams.get("status") === "pending", async (route) => {
+    attempts++;
+    if (attempts === 1) {
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Approval status unavailable" }) });
+    } else {
+      await route.continue();
+    }
+  });
+
+  await page.goto(signInURL("second", "/work"));
+  await waiting;
+  await expect(page.getByRole("alert").filter({ hasText: "Approval status unavailable" })).toBeVisible();
+  await expect(page.getByText("All clear", { exact: true })).toHaveCount(0);
+  release();
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByText("All clear", { exact: true })).toBeVisible();
+});
+
+test("Work reports unavailable capabilities and retries them after a successful empty snapshot", async ({ page, request }) => {
+  expect((await request.post("http://127.0.0.1:4318/reset-alternate")).status()).toBe(204);
+  let attempts = 0;
+  await page.route("**/api/v1/capabilities", async (route) => {
+    attempts++;
+    if (attempts === 1) {
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Capabilities unavailable" }) });
+    } else {
+      await route.continue();
+    }
+  });
+  const snapshot = page.waitForResponse((response) => response.url().endsWith("/api/v1/snapshot") && response.ok());
+  await page.goto(signInURL("second", "/work"));
+  expect((await (await snapshot).json()).runs).toEqual([]);
+  await expect(page.getByRole("alert").filter({ hasText: "Capabilities unavailable" })).toBeVisible();
+  await expect(page.getByText("All clear", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByText("All clear", { exact: true })).toBeVisible();
+});
+
+test("a worker-created approval appears after a live task update", async ({ page, request }) => {
+  expect((await request.post("http://127.0.0.1:4318/reset-alternate")).status()).toBe(204);
+  const emptyPending = page.waitForResponse((response) => response.url().endsWith("/api/v1/interactions?status=pending") && response.ok());
+  const eventStream = page.waitForResponse((response) => response.url().includes("/api/v1/events?after=") && response.ok());
+  await page.goto(signInURL("second", "/work"));
+  expect((await (await emptyPending).json()).items).toEqual([]);
+  await eventStream;
+  await expect(page.getByText("All clear", { exact: true })).toBeVisible();
+
+  const created = await request.post("http://127.0.0.1:4318/worker-approval");
+  expect(created.status()).toBe(204);
+  await expect(page.getByRole("button", { name: "Allow once", exact: true })).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByText("All clear", { exact: true })).toHaveCount(0);
+});
+
 test.describe("routine scheduling", () => {
   test.use({ timezoneId: "UTC" });
 

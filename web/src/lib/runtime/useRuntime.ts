@@ -465,6 +465,7 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection, s
     const controller = new AbortController();
     let source: EventSource | undefined;
     let timer: ReturnType<typeof setTimeout>;
+    let taskRefreshTimer: ReturnType<typeof setTimeout> | undefined;
     let failures = 0;
     let stopped = false;
     const completedTurns = new Set<string>();
@@ -534,7 +535,13 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection, s
       listen<{ run: Run }>("task", ({ run }) => {
         setSession((current) => current && { ...current, runs: mergeRuns(current.runs, [run]) });
         updateTaskCommands((current) => current.filter((item) => !commandApplied(item, [run])));
-        invalidate("/assistant/summary", "/work", "/interactions");
+        invalidate("/interactions");
+        if (taskRefreshTimer === undefined) {
+          taskRefreshTimer = setTimeout(() => {
+            taskRefreshTimer = undefined;
+            invalidate("/assistant/summary", "/work");
+          }, 100);
+        }
       });
       listen<{ result: SavedResult }>("result", ({ result }) => {
         setSession((current) => current && { ...current, results: mergeById(current.results ?? [], [result]).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)) });
@@ -579,7 +586,7 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection, s
       };
     }
     open();
-    return () => { stopped = true; controller.abort(); source?.close(); clearTimeout(timer); };
+    return () => { stopped = true; controller.abort(); source?.close(); clearTimeout(timer); clearTimeout(taskRefreshTimer); };
   }, [started, visible, streamAwake, refresh, updatePending, updateTaskCommands, invalidateUploads, invalidate]);
 
   async function refreshHistory() {

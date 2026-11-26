@@ -59,7 +59,7 @@ async function relay(request: Request, { base, userID, mode }: ScopedRuntime, pa
   }
 }
 
-const SHARED_READS = new Set(["v1/capabilities", "v1/assistant/summary", "v1/interactions?status=pending", "v1/work", "v1/integrations", "v1/connections"]);
+const SHARED_READS = new Set(["v1/capabilities", "v1/integrations", "v1/connections"]);
 const SHARED_TTL_MS = 8_000;
 const sharedReads = new Map<string, { expires: number; text: Promise<string | null> }>();
 const SHARED_HEADERS = { "Content-Type": "application/json", "Cache-Control": "no-cache, no-transform", "X-Content-Type-Options": "nosniff" };
