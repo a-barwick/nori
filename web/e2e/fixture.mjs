@@ -24,12 +24,68 @@ const modelProviders = [
   { provider: "vercel_ai_gateway", label: "Vercel AI Gateway" },
   { provider: "openrouter", label: "OpenRouter" },
 ];
-const pendingApproval = JSON.parse(await readFile("../contracts/assistant/fixtures/permissions/interaction.approval.valid.json", "utf8"));
-pendingApproval.expires_at = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+const pendingApproval = {
+  id: "int_5",
+  revision: 1,
+  task_id: "task_9",
+  instruction_revision: 3,
+  kind: "approval",
+  status: "pending",
+  prompt: "Send the invite?",
+  action_digest: "sha256:act1",
+  payload: {
+    summary: "Invite alex@example.com to 'Dentist'",
+    effect: "sensitive_send",
+    account: { connection_id: "conn_google_personal", label: "personal@example.com" },
+    resources: [{ connection_id: "conn_google_personal", kind: "calendar", provider_id: "primary", provider_revision: "etag-7" }],
+    recipients: ["alex@example.com"],
+    material_effects: ["Alex receives an email invitation"],
+  },
+  expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+  created_at: "2026-11-09T09:00:00Z",
+};
 const approvals = new Map([[identity, pendingApproval]]);
 let allowModels = true;
-const routinePreview = JSON.parse(await readFile("../contracts/assistant/fixtures/automations/automation-preview.dst.valid.json", "utf8"));
-const routineFixture = JSON.parse(await readFile("../contracts/assistant/fixtures/automations/automation.recurring.valid.json", "utf8"));
+const routinePreview = {
+  next_runs: ["2026-10-26T15:00:00Z", "2026-11-02T16:00:00Z", "2026-11-09T16:00:00Z"],
+  timezone: "America/Los_Angeles",
+  proposed_rules: [{
+    effect: "allow",
+    tool_ids: ["nori.google/calendar/events.list"],
+    connection_ids: ["conn_google_personal"],
+    resource_ids: ["primary"],
+    action_classes: ["read"],
+  }],
+  authority_summary: "Read events on Personal (primary)",
+  missed_run_explanation: "If Nori is unavailable at 08:00, this run is skipped.",
+  warnings: [{
+    code: "dst_shift",
+    message: "Daylight saving time ends on Nov 1; the run stays at 08:00 local time.",
+  }],
+};
+const routineFixture = {
+  id: "auto_1",
+  revision: 3,
+  title: "Morning briefing",
+  instruction: "Summarize today's agenda, urgent mail and due tasks.",
+  status: "enabled",
+  trigger: {
+    kind: "recurring",
+    local_start: "2026-11-10T07:30",
+    timezone: "Europe/London",
+    rrule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR",
+  },
+  connection_ids: ["conn_google_personal"],
+  budget_usd: 0.5,
+  max_active_runs: 1,
+  missed_run: "latest",
+  execution_window_seconds: 3600,
+  destination_ids: ["dest_inapp", "dest_push"],
+  next_at: "2026-11-10T07:30:00Z",
+  created_at: "2026-11-09T09:00:00Z",
+  updated_at: "2026-11-09T09:00:00Z",
+  authority_rule_ids: ["rule_auto_1"],
+};
 let routine = routineFixture;
 const profile = { id: "browser-chat", version: "v1", label: "Browser chat", backend: "gateway", model: "fixture", lanes: ["chat"], supported_reasoning: ["high"], paid: false };
 

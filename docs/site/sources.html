@@ -9,12 +9,12 @@
 </head>
 <body>
 <h1>Sources</h1>
-<p class="lede">The architecture reference lives on this site. When prose disagrees with the code, the code and <code>contracts-check</code> decide what runs today.</p>
+<p class="lede">The architecture reference lives on this site. When prose disagrees with the code, the code and <code>api/openapi.yaml</code> decide what runs today.</p>
 <section><h2>How Dokyu stays truthful</h2>
 <ul class="pts">
 <li>Every page includes a repo-only <code>Sources</code> block pointing at the concrete Go, TypeScript, schema or integration files behind its claims.</li>
 <li><code>docs/publish.py</code> strips those repo-only source blocks and omits <code>code.html</code> and <code>sources.html</code> when building a clean static export.</li>
-<li><code>core/cmd/contracts-check -strict</code> verifies that JSON Schemas, Go decoders, generated TypeScript types and live HTTP scenarios match.</li>
+<li><code>make api-check</code> validates <code>api/openapi.yaml</code>, exercises live Go HTTP handlers via <code>kin-openapi</code>, and checks generated Web TypeScript types for drift.</li>
 </ul></section>
 <section><h2>Reconciled claims</h2>
 <div class="card"><table class="tall"><tr><th>Earlier claim</th><th>What the code implements</th></tr>
@@ -23,6 +23,6 @@
 <tr><td>Browser Sentry tunnel used a legacy route</td><td>Browser events post to <code>/sentry-tunnel</code> (<code>web/src/app/sentry-tunnel/route.ts</code>). See <a href="observability.html">Observability</a>.</td></tr>
 <tr><td>Completion needs a Jev score</td><td>Record checks and cited tool evidence control completion. Jev supplies advisory intent hints only. See <a href="completion.html">Finishing a task</a>.</td></tr>
 </table></div></section>
-<details class="sources"><summary>Sources</summary><p><code>docs/publish.py</code> · <code>core/cmd/contracts-check/main.go</code> · <code>core/internal/task/runner.go</code> · <code>core/internal/task/completion.go</code> · <code>core/internal/usage/openai.go</code> · <code>core/internal/conversation/jev.go</code> · <code>web/src/app/sentry-tunnel/route.ts</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>docs/publish.py</code> · <code>api/openapi.yaml</code> · <code>core/internal/api/openapi_test.go</code> · <code>core/internal/task/runner.go</code> · <code>core/internal/task/completion.go</code> · <code>core/internal/usage/openai.go</code> · <code>core/internal/conversation/jev.go</code> · <code>web/src/app/sentry-tunnel/route.ts</code></p></details>
 </body>
 </html>

@@ -4,32 +4,12 @@ import { useRef, useState, type KeyboardEvent } from "react";
 import { Check, ChevronLeft, ChevronRight, CircleHelp, X } from "lucide-react";
 import { Dialog } from "radix-ui";
 import { Button, IconButton } from "@/components/ui/primitives";
-import type { ModelSettings } from "@/lib/assistant/api";
+import type { CostAmount, CostReport, ModelSettings } from "@/lib/contracts/assistant";
 import { money, plural } from "@/lib/assistant/format";
 import { useResource } from "@/lib/assistant/useResource";
 import { cn } from "@/lib/utils";
 import { Failure, Loading, Notice, Rows, Section, Tabs } from "./ui";
 
-type CostAmount = {
-  cost_usd: number;
-  priced_calls: number;
-  unpriced_calls: number;
-  local_calls: number;
-  pending_calls: number;
-};
-
-type ModelCost = CostAmount & { model: string };
-type CostBucket = { start_at: string; end_at: string; totals: CostAmount; models: ModelCost[] };
-type CostReport = {
-  days: number;
-  timezone: string;
-  start_at: string;
-  end_at: string;
-  bucket_size: "hour" | "day";
-  totals: CostAmount;
-  models: ModelCost[];
-  buckets: CostBucket[];
-};
 type Range = "1" | "7" | "30";
 
 const NO_COST: CostAmount = { cost_usd: 0, priced_calls: 0, unpriced_calls: 0, local_calls: 0, pending_calls: 0 };

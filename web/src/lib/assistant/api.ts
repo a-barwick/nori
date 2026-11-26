@@ -1,6 +1,19 @@
 "use client";
 
-import type { APIError as APIErrorBody, AutomationEditable, AutomationPreview, MutationReceipt } from "@/lib/contracts/assistant";
+import type {
+  APIError as APIErrorBody,
+  AutomationEditable,
+  AutomationPreview,
+  HomeConnector,
+  HomeConnectors,
+  HomeConnectorTestResponse,
+  HomePairing,
+  ModelKeyProvider,
+  ModelKeysResponse,
+  ModelProfile,
+  ModelSettings,
+  MutationReceipt,
+} from "@/lib/contracts/assistant";
 import type { ModelSelection, Session } from "@/lib/types";
 import { SERVICE_UNAVAILABLE } from "@/lib/runtime/messages";
 import { SIGNED_OUT_EVENT_KEY } from "@/lib/runtime/session";
@@ -168,50 +181,15 @@ export function errorText(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong.";
 }
 
-export type ModelKeyProvider = {
-  provider: string;
-  label: string;
-  configured: boolean;
-  last4?: string;
-  updated_at?: string;
-  validated_at?: string;
+export type {
+  HomeConnector,
+  HomeConnectors,
+  HomePairing,
+  ModelKeyProvider,
+  ModelKeysResponse,
+  ModelProfile,
+  ModelSettings,
 };
-
-export type ModelKeysResponse = {
-  byok_required: boolean;
-  providers: ModelKeyProvider[];
-};
-
-export type ModelProfile = {
-  id: string;
-  version: string;
-  label: string;
-  backend: string;
-  model: string;
-  lanes: string[];
-  supported_reasoning?: string[];
-  default_reasoning?: string;
-  paid: boolean;
-  home_device_id?: string;
-  availability?: "online" | "offline" | "ollama_unavailable";
-};
-
-export type HomeConnector = {
-  id: string;
-  name: string;
-  status: "online" | "offline" | "ollama_unavailable";
-  last_seen_at?: string;
-  version?: string;
-  models: { name: string; digest?: string; capabilities?: string[] }[];
-};
-
-export type HomeConnectors = {
-  enabled: boolean;
-  devices: HomeConnector[];
-  downloads?: { macos?: string; linux_amd64?: string; linux_arm64?: string };
-};
-
-export type HomePairing = { name: string; user_code: string; expires_at: string };
 
 async function homeConnectorRequest<T>(path: string, method: string, body?: unknown): Promise<T> {
   const response = await fetch(assistantURL(path), {
@@ -229,16 +207,9 @@ export const lookupHomePairing = (userCode: string) =>
 export const approveHomePairing = (userCode: string) =>
   homeConnectorRequest<void>("/settings/home-connectors/pairing/approve", "POST", { user_code: userCode });
 export const testHomeConnector = (id: string) =>
-  homeConnectorRequest<{ status: string }>(`/settings/home-connectors/${encodeURIComponent(id)}/test`, "POST");
+  homeConnectorRequest<HomeConnectorTestResponse>(`/settings/home-connectors/${encodeURIComponent(id)}/test`, "POST");
 export const revokeHomeConnector = (id: string) =>
   homeConnectorRequest<void>(`/settings/home-connectors/${encodeURIComponent(id)}`, "DELETE");
-
-export type ModelSettings = {
-  model_profiles: { profiles: ModelProfile[] };
-  selection: ModelSelection;
-  revision: number;
-  recommendations: Record<string, ModelSelection>;
-};
 
 export async function saveModelSettings(selection: ModelSelection, expectedRevision: number): Promise<ModelSettings> {
   const response = await fetch(assistantURL("/settings/models"), {

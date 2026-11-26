@@ -1,4 +1,4 @@
-.PHONY: contracts contracts-check dev web web-build web-start core local-web local-core check sim-deep sim-pg sim-personas-validate sim-personas-smoke sim-personas-quick sim-personas-core sim-personas-memory sim-personas-full deps deps-stop deploy-gcp
+.PHONY: api-types api-check contracts contracts-check dev web web-build web-start core local-web local-core check sim-deep sim-pg sim-personas-validate sim-personas-smoke sim-personas-quick sim-personas-core sim-personas-memory sim-personas-full deps deps-stop deploy-gcp
 
 NORI_ENV_FILE ?= $(abspath .env)
 NORI_TASK_ENV_FILE ?= $(NORI_ENV_FILE)
@@ -27,18 +27,21 @@ web-start:
 core:
 	$(MAKE) -C core run
 
-contracts:
-	cd core && go run ./cmd/contracts-check -strict -emit-ts ../web/src/lib/contracts/fixtures.check.ts
-	cd web && node scripts/contract-types.mjs
+api-types:
+	bun -e 'import { readFileSync, writeFileSync } from "node:fs"; const doc = Bun.YAML.parse(readFileSync("api/openapi.yaml", "utf8")); writeFileSync("api/openapi.json", JSON.stringify(doc) + "\n");'
+	cd web && bun run api:types
 
-contracts-check:
-	@out=$$(mktemp); trap 'rm -f "$$out"' EXIT; \
-	  (cd core && go run ./cmd/contracts-check -strict -emit-ts "$$out") && \
-	  (cmp "$$out" web/src/lib/contracts/fixtures.check.ts || (echo "Run make contracts to update generated fixtures."; exit 1))
+api-check:
+	cd core && go test ./internal/api -run TestOpenAPI
+	cd web && bun run api:types:check
 
-check: contracts-check
+contracts: api-types
+
+contracts-check: api-check
+
+check: api-check
 	$(MAKE) -C core check
-	cd web && node scripts/contract-types.mjs --check && ./node_modules/.bin/next typegen && ./node_modules/.bin/tsc --noEmit -p . && ./node_modules/.bin/eslint src && bun test src
+	cd web && ./node_modules/.bin/next typegen && ./node_modules/.bin/tsc --noEmit -p . && ./node_modules/.bin/eslint src && bun test src
 	npm --prefix macos test
 	node --test scripts/*.test.mjs
 	python3 -m unittest discover -s scripts/persona-sim

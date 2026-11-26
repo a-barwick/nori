@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   check:
-    name: Check (Go, Contracts, Web, Scripts)
+    name: Check (Go, OpenAPI, Web, Scripts)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

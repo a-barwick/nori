@@ -1,4 +1,4 @@
 {
-  "entry": ["scripts/prod-check.mjs", "src/lib/contracts/fixtures.check.ts"],
-  "ignore": ["src/lib/contracts/assistant.ts"]
+  "entry": ["scripts/prod-check.mjs"],
+  "ignore": ["src/lib/contracts/openapi.d.ts", "src/lib/contracts/assistant.ts"]
 }

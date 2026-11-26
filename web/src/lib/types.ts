@@ -1,3 +1,7 @@
+import type { ModelSelection } from "@/lib/contracts/assistant";
+
+export type { ModelSelection };
+
 export type Sender = "nori" | "me";
 
 export type Part = { type: string; text?: string; display?: "page" | "bubble"; fallback?: string; id?: string; name?: string; media_type?: string; size?: number; url?: string; scheduled_at?: string;
@@ -45,15 +49,6 @@ export type TaskCommand = { id: string; run_id: string; kind: TaskControlKind; t
 type TaskCommandReceipt = TaskCommand & { position: number; revision: number };
 export type TaskCommandResponse = { command: TaskCommandReceipt; run: Run; accepted?: boolean; retryable?: boolean; error?: string };
 export type PendingTaskCommand = { command: TaskCommand; started: number; sending?: boolean; error?: string; accepted?: boolean; position?: number; rejected?: boolean; retryManually?: boolean };
-export type ModelSelection = {
-  home_only?: boolean;
-  chat_profile_id?: string;
-  chat_profile_version?: string;
-  chat_reasoning?: string;
-  task_profile_id?: string;
-  task_profile_version?: string;
-  task_reasoning?: string;
-};
 export type Artifact = { id: string; kind: "screenshot" };
 export type Run = {
   id: string;

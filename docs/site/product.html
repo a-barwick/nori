@@ -24,7 +24,7 @@
 <section><h2>How we measure progress</h2>
 <p>Progress is verified by automated contract checks, deterministic simulations, multi-day persona evaluations and live multi-user integration gates rather than ad-hoc manual runs.</p>
 <div class="card"><table class="tall"><tr><th>Check</th><th>What it proves</th></tr>
-<tr><td><code>go run ./cmd/contracts-check -strict</code></td><td>Validates every JSON Schema 2020-12 contract under <code>contracts/assistant/</code>, round-trips every fixture through strict Go decoders, checks generated TypeScript types and runs live HTTP scenarios.</td></tr>
+<tr><td><code>make api-check</code></td><td>Validates <code>api/openapi.yaml</code> (OpenAPI 3.1), verifies live Go HTTP handlers via <code>kin-openapi</code>, and checks generated TypeScript types for drift.</td></tr>
 <tr><td><code>make check</code></td><td>Runs <code>go vet</code>, <code>gofmt</code>, Go unit tests, strict contract validation, TypeScript typecheck and ESLint across <code>core/</code> and <code>web/</code>.</td></tr>
 <tr><td><code>make sim-deep</code> &amp; <code>make sim-pg</code></td><td>Runs the deterministic simulation test suite (<code>core/internal/sim/</code>) checking invariants under crashes, races, restarts and Postgres concurrency.</td></tr>
 <tr><td><code>make sim-personas-smoke</code> / <code>-memory</code> / <code>-full</code></td><td>Drives the 10-persona × 30-day real-LLM simulation and grading suite (<code>sim/personas/</code>, <code>scripts/persona-sim/</code>, <code>core/cmd/nori-sim/</code>) against virtual time.</td></tr>
@@ -43,6 +43,6 @@
 <tr><td>Scheduling and inbox delivery</td><td>IANA time zones, deterministic occurrence IDs, generation fencing, goals and deduplicated in-app inbox delivery.</td></tr>
 <tr><td>Artifact and result storage</td><td>Stable IDs, revisions, conflict preservation and private S3 or local object storage.</td></tr>
 <tr><td>Cost, latency and evidence controls</td><td>Metered model spending, task budget ceilings, record-checked completion and correlated OpenTelemetry traces.</td></tr></table></details>
-<details class="sources"><summary>Sources</summary><p><a href="roadmap.html">Roadmap</a></p><p><code>core/cmd/contracts-check/main.go</code> · <code>contracts/assistant/</code> · <code>core/internal/conversation/memory.go</code> · <code>core/internal/conversation/command_plan.go</code> · <code>core/internal/permissions/rules.go</code> · <code>Makefile</code></p></details>
+<details class="sources"><summary>Sources</summary><p><a href="roadmap.html">Roadmap</a></p><p><code>api/openapi.yaml</code> · <code>core/internal/api/openapi_test.go</code> · <code>core/internal/conversation/memory.go</code> · <code>core/internal/conversation/command_plan.go</code> · <code>core/internal/permissions/rules.go</code> · <code>Makefile</code></p></details>
 </body>
 </html>

@@ -1,5 +1,0 @@
-{
-  "result": "needs_interaction",
-  "reason": "sensitive_send to a new recipient requires approval",
-  "interaction_id": "int_5"
-}

@@ -8,8 +8,10 @@
     "start": "next start -H 127.0.0.1",
     "lint": "eslint",
     "test": "bun test src",
-    "contracts": "node scripts/contract-types.mjs",
-    "contracts:check": "node scripts/contract-types.mjs --check",
+    "api:types": "openapi-typescript ../api/openapi.yaml -o src/lib/contracts/openapi.d.ts",
+    "api:types:check": "bun -e 'import { execFileSync } from \"node:child_process\"; import { readFileSync } from \"node:fs\"; const generated = execFileSync(\"./node_modules/.bin/openapi-typescript\", [\"../api/openapi.yaml\"], { encoding: \"utf8\" }); const current = readFileSync(\"src/lib/contracts/openapi.d.ts\", \"utf8\"); if (generated !== current) { console.error(\"web/src/lib/contracts/openapi.d.ts is stale. Run: make api-types\"); process.exit(1); }'",
+    "contracts": "bun run api:types",
+    "contracts:check": "bun run api:types:check",
     "test:browser": "playwright test"
   },
   "dependencies": {

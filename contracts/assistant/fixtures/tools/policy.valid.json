@@ -1,9 +1,0 @@
-{
-  "effect": "reversible_write",
-  "retry": "provider_key",
-  "timeout_ms": 20000,
-  "location": "runtime",
-  "interrupted_cost_usd": 0,
-  "interrupted_cost_unknown": false,
-  "cancellation": "none"
-}
