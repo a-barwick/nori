@@ -1150,6 +1150,51 @@ class SuiteTests(unittest.TestCase):
         self.assertNotIn("temperature", body)
         self.assertEqual(body["reasoning_effort"], "low")
 
+    def test_responder_fails_closed_on_approval_errors_and_invalid_decisions(self) -> None:
+        from llm_client import AdaptivePersonaResponder
+
+        class FailingClient:
+            def chat_json(self, *args, **kwargs):
+                raise RuntimeError("network boom")
+
+        class BadDecisionClient:
+            def chat_json(self, *args, **kwargs):
+                return {"kind": "nonsense", "text": ""}
+
+        failing = AdaptivePersonaResponder(FailingClient(), "brief", "Maya")
+        with self.assertLogs("llm_client", level="WARNING") as logs:
+            dec = failing.decide_interaction({"kind": "approval", "prompt": "Send email?"}, 5, "10:00")
+        self.assertEqual(dec["kind"], "decline")
+        self.assertIn("network boom", dec.get("harness_error", ""))
+        self.assertTrue(any("decide_interaction failed" in line for line in logs.output))
+
+        with self.assertLogs("llm_client", level="WARNING") as logs2:
+            fu = failing.decide_chat_followup("hi", "Which file did you mean?", 5, "10:00")
+        self.assertIsNone(fu)
+        self.assertTrue(any("decide_chat_followup failed" in line for line in logs2.output))
+
+        bad = AdaptivePersonaResponder(BadDecisionClient(), "brief", "Maya")
+        with self.assertLogs("llm_client", level="WARNING"):
+            dec2 = bad.decide_interaction({"kind": "confirm", "prompt": "Delete?"}, 5, "10:00")
+        self.assertEqual(dec2["kind"], "decline")
+        self.assertEqual(dec2.get("harness_error"), "invalid_decision:nonsense")
+
+    def test_rejudge_errors_handles_missing_judge_and_valid_core_preset(self) -> None:
+        import runner
+
+        self.assertIn("core", validate.VALID_PRESETS)
+        self.assertEqual(suite.AREA_PERSONAS["core"], list(runner.CORE_PRESET_PERSONAS))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            run_dir.mkdir()
+            (run_dir / "scorecard.json").write_text(
+                json.dumps({"judge_model": "gpt-4.1", "personas": []}),
+                encoding="utf-8",
+            )
+            with mock.patch.object(suite.LLMClient, "from_env", return_value=None):
+                self.assertEqual(suite.rejudge_errors(run_dir), [])
+
 
 if __name__ == "__main__":
     unittest.main()

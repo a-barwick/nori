@@ -27,7 +27,7 @@ BYDAY_RE = re.compile(r"^(?:[+-]?[1-5])?(SU|MO|TU|WE|TH|FR|SA)$")
 EVERY_HOURS_RE = re.compile(r"^every\s+(\d+)\s+hours?$", re.IGNORECASE)
 CRON_DOW_NAMES = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"}
 
-VALID_PRESETS = {"smoke", "memory-pack", "full"}
+VALID_PRESETS = {"smoke", "core", "memory-pack", "full"}
 VALID_KINDS = {
     "chat",
     "settle",

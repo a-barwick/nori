@@ -2,9 +2,13 @@ name: nori-connector
 arch: ${NORI_PACKAGE_ARCH}
 platform: linux
 version: ${NORI_CONNECTOR_VERSION}
-maintainer: Nori
+maintainer: Nori <support@nori.bot>
 description: Nori Home AI Server connector
 license: MIT
+depends:
+  - systemd
+  - passwd
+  - util-linux
 contents:
   - src: LICENSE
     dst: /usr/share/doc/nori-connector/copyright
@@ -20,7 +24,7 @@ contents:
     file_info:
       mode: 0755
   - src: connector/linux/nori-connector.service
-    dst: /lib/systemd/system/nori-connector.service
+    dst: /usr/lib/systemd/system/nori-connector.service
     file_info:
       mode: 0644
 scripts:

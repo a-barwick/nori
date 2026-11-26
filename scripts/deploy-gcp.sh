@@ -2,10 +2,11 @@
 set -euo pipefail
 
 # Cloud Run production deployment script supporting both topologies:
-#   - combined (default, matches live prod today): nori-core (--role=all) + nori-web
-#   - split (NORI_DEPLOY_TOPOLOGY=split): mandatory migration job (nori-migrate),
-#     nori-api (NORI_ROLE=api), nori-worker (NORI_ROLE=worker, internal ingress,
-#     --no-cpu-throttling, min-instances >= 1, --metrics-addr=0.0.0.0:8080), and nori-web.
+#   - split (default): mandatory migration job (nori-migrate),
+#     nori-core (NORI_ROLE=api, configurable via NORI_GCP_API_SERVICE),
+#     nori-worker (NORI_ROLE=worker, internal ingress, --no-cpu-throttling,
+#     min-instances >= 1, --metrics-addr=0.0.0.0:8080), and nori-web.
+#   - combined (NORI_DEPLOY_TOPOLOGY=combined): nori-core (--role=all) + nori-web.
 #
 # Postgres connection budget (split topology):
 #   total_conns = (NORI_API_MAX_INSTANCES * NORI_API_POSTGRES_MAX_CONNS)
@@ -16,10 +17,9 @@ set -euo pipefail
 #   NORI_POSTGRES_LISTEN_URL_SECRET (e.g. "nori-postgres-listen-url:latest") so the
 #   direct session-mode Postgres URL is mounted as a Secret Manager secret (never plain env).
 
-PROJECT="${GCP_PROJECT:-bot-111549}"
+PROJECT="${GCP_PROJECT:-}"
 REGION="${GCP_REGION:-us-central1}"
-REPO="${GCP_AR_REPO:-nori-poc}"
-REGISTRY="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}"
+REPO="${GCP_AR_REPO:-}"
 CLOUD="${NORI_CLOUD:-gcp}"
 TOPOLOGY="${NORI_DEPLOY_TOPOLOGY:-split}"
 
@@ -62,11 +62,14 @@ Test and deploy Nori Core and Nori Web to GCP Cloud Run.
 Usage: ./scripts/deploy-gcp.sh [--skip-tests] [--core-only | --web-only] [--allow-branch] [--dry-run]
 
 Environment variables:
-  NORI_DEPLOY_TOPOLOGY        combined (default: nori-core + nori-web) or split (nori-api + nori-worker + nori-web)
+  GCP_PROJECT                 Target GCP project ID (required)
+  GCP_AR_REPO                 Artifact Registry repository name (required)
+  GCP_REGION                  GCP region (default: us-central1)
+  NORI_DEPLOY_TOPOLOGY        split (default: nori-core API + nori-worker + nori-web) or combined (nori-core + nori-web)
   NORI_CLOUD                  Cloud adapter: gcp (default) or aws
   NORI_GCP_MIGRATION_JOB      Cloud Run Job name for --migrate-only (mandatory in split mode, optional in combined mode)
   NORI_GCP_CORE_SERVICE       Cloud Run combined core service name (default: nori-core)
-  NORI_GCP_API_SERVICE        Cloud Run API service name for split mode (default: nori-api)
+  NORI_GCP_API_SERVICE        Cloud Run API service name for split mode (default: nori-core)
   NORI_GCP_WORKER_SERVICE     Cloud Run Worker service name for split mode (default: nori-worker)
   NORI_GCP_WEB_SERVICE        Cloud Run Web service name (default: nori-web)
   NORI_API_MIN_INSTANCES      nori-api min instances (default: 1)
@@ -96,6 +99,10 @@ USAGE
       ;;
   esac
 done
+
+: "${PROJECT:?Set GCP_PROJECT to the target GCP project ID}"
+: "${REPO:?Set GCP_AR_REPO to the target Artifact Registry repository name}"
+REGISTRY="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}"
 
 if [[ "$CLOUD" != "gcp" && "$CLOUD" != "aws" ]]; then
   echo "NORI_CLOUD must be 'gcp' or 'aws' (got '$CLOUD')." >&2

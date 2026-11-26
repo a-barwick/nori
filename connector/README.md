@@ -4,13 +4,11 @@ Nori Connector pairs a computer running Ollama with a Nori account. The connecto
 
 ## macOS
 
-Download the signed Nori Connector disk image, move the app to Applications, and open it. Select **Get pairing code**, then enter that code in Nori under **More → Models → Home AI Server**. Allow the background item in System Settings if macOS asks. The helper runs after the user logs in.
-
-The app needs macOS 13 or later. Install Ollama and at least one local model. Keep the Mac awake for scheduled work.
+macOS Home AI sharing is built into **Nori for Mac** (`macos/`). Download and install the signed Nori for Mac disk image, open **More → Models → Use this Mac as a Home AI Server**, select an installed Ollama model, and allow the background item in System Settings if macOS asks. See [`macos/README.md`](../macos/README.md) for setup, signing, and build instructions.
 
 ## Debian and Ubuntu
 
-Install the package that matches the server's processor, then run:
+Install the `.deb` package that matches the server's processor (`amd64` or `arm64`), then pair and verify the host:
 
 ~~~sh
 sudo nori-connector-control pair
@@ -18,23 +16,20 @@ sudo nori-connector-control status
 sudo nori-connector-control doctor
 ~~~
 
-The package creates an unprivileged service account and starts the systemd service. Pairing restarts that service. The service and its credentials use `/var/lib/nori-connector`, accessible to the service account. Disconnect with `sudo nori-connector-control unpair`. To override the default relay or Ollama loopback port for a local setup, place `NORI_CONNECTOR_RELAY_URL` or `NORI_CONNECTOR_OLLAMA_URL` in the root-owned file `/etc/nori-connector/connector.env`, then restart the service.
+The package creates an unprivileged `nori-connector` service account, installs `/usr/lib/systemd/system/nori-connector.service`, and enables the unit without starting it before pairing. Running `sudo nori-connector-control pair` pairs the host and starts or restarts the systemd service. State and credentials live under `/var/lib/nori-connector` (`0700`, owned by `nori-connector`). Disconnect and stop the service with `sudo nori-connector-control unpair`.
+
+To override the default relay or Ollama loopback URL for a local setup, create a root-owned regular file `/etc/nori-connector/connector.env` with mode `0600` containing `NORI_CONNECTOR_RELAY_URL` or `NORI_CONNECTOR_OLLAMA_URL`, then restart `nori-connector.service`.
 
 ## Builds
 
-The release URL is set with `NORI_CONNECTOR_RELAY_URL` at build time. Use `NORI_CONNECTOR_VERSION` for the package version. The scripts build artifacts to the path supplied as their first argument.
+The relay origin is embedded via `NORI_CONNECTOR_RELAY_URL` (origin-only HTTPS URL, or loopback HTTP for local testing) and the package version via `NORI_CONNECTOR_VERSION`. The Linux build script writes artifacts to the path supplied as its first argument:
 
 ~~~sh
-NORI_CONNECTOR_RELAY_URL=https://relay.example \
-  NORI_CONNECTOR_VERSION=1.0.0 \
-  NORI_MAC_SIGNING_IDENTITY="Developer ID Application: <name> (<team-id>)" \
-  connector/macos/build.sh /tmp/nori-macos
-
 NORI_CONNECTOR_RELAY_URL=https://relay.example \
   NORI_CONNECTOR_VERSION=1.0.0 \
   connector/linux/build.sh /tmp/nori-linux
 ~~~
 
-The Linux build requires Go and nFPM v2.49.0. The macOS build requires Xcode command-line tools and Go. For a distributable macOS build, set `NORI_MAC_SIGNING_IDENTITY` to a Developer ID Application identity, set `NORI_CONNECTOR_DMG=1`, and provide a notarytool keychain profile as `NORI_MAC_NOTARY_PROFILE`. The script submits and staples the disk image. Ad hoc signing is available for a local HTTP loopback relay.
+The Linux build requires Go and `nfpm` v2.49.0. For macOS builds, use `macos/scripts/build.sh` (documented in [`macos/README.md`](../macos/README.md)).
 
-The Go CLI accepts `--url`, `--state-dir`, and `--ollama-url` after the command. The relay URL must use HTTPS, with HTTP permitted only on loopback for local tests. The Ollama URL must use a numeric loopback address. `NORI_CONNECTOR_STATE_DIR`, `NORI_CONNECTOR_RELAY_URL`, and `NORI_CONNECTOR_OLLAMA_URL` provide corresponding environment defaults. Pairing uses the built-in relay URL when no override is provided.
+The underlying Go CLI (`core/cmd/nori-connector`) accepts `--url`, `--state-dir`, and `--ollama-url` after the subcommand (`nori-connector-control` pins `--state-dir` to `/var/lib/nori-connector`). The relay URL must be an origin-only HTTPS URL (with loopback HTTP permitted for local tests), and the Ollama URL must use a numeric loopback address. `NORI_CONNECTOR_STATE_DIR`, `NORI_CONNECTOR_RELAY_URL`, and `NORI_CONNECTOR_OLLAMA_URL` provide corresponding environment defaults.

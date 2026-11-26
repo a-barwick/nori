@@ -26,7 +26,7 @@
 - **Ask before acting.** Every external write or sensitive send is bound to an explicit approval card with exact details before a single byte leaves your workspace.
 - **Memory you can actually see.** Pin preferences, browse daily episodic logs, and watch working memory stay fresh automatically — no mystery black-box recall.
 - **Plug in your tools.** Connect MCP servers, set recurring automations and goals, and keep every brief, table, and artifact saved in your library.
-- **Everywhere you are.** Native SwiftUI iOS app, crisp web client, and a drop-in headless adapter for embedding inside your own app.
+- **Everywhere you are.** Native SwiftUI iOS app, crisp Next.js web client, and Nori for Mac with local Home AI Server support.
 
 ### Design System
 

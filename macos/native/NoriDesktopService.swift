@@ -19,8 +19,8 @@ func backgroundStatus() -> String {
     }
 }
 
-func writeResult() {
-    let data = try! JSONSerialization.data(withJSONObject: ["background": backgroundStatus()])
+func writeResult() throws {
+    let data = try JSONSerialization.data(withJSONObject: ["background": backgroundStatus()])
     FileHandle.standardOutput.write(data)
     FileHandle.standardOutput.write(Data("\n".utf8))
 }
@@ -45,8 +45,9 @@ do {
     default:
         throw NSError(domain: "NoriService", code: 2, userInfo: [NSLocalizedDescriptionKey: "Unknown service action."])
     }
-    writeResult()
+    try writeResult()
 } catch {
-    FileHandle.standardError.write(Data("Unable to change background access.\n".utf8))
+    let message = "Unable to change background access: \(error.localizedDescription)\n"
+    FileHandle.standardError.write(Data(message.utf8))
     exit(1)
 }

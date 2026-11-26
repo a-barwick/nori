@@ -13,23 +13,64 @@ case "$1" in
   pair|status|doctor|unpair) ;;
   *) printf '%s\n' "Unknown command." >&2; exit 1 ;;
 esac
-if [ -f /etc/nori-connector/connector.env ]; then
-  while IFS='=' read -r key value || [ -n "$key" ]; do
+
+for arg in "${@:2}"; do
+  case "$arg" in
+    --state-dir|-state-dir|--state-dir=*|-state-dir=*)
+      printf '%s\n' "--state-dir cannot be overridden in nori-connector-control." >&2
+      exit 1
+      ;;
+  esac
+done
+
+trim() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s' "$s"
+}
+
+env_file="/etc/nori-connector/connector.env"
+if [ -e "$env_file" ] || [ -L "$env_file" ]; then
+  if [ -L "$env_file" ] || [ ! -f "$env_file" ]; then
+    printf '%s\n' "$env_file must be a regular file owned by root with mode 0600." >&2
+    exit 1
+  fi
+  owner="$(stat -c '%u' "$env_file")"
+  mode="$(stat -c '%a' "$env_file")"
+  if [ "$owner" != "0" ] || [ $(( 8#$mode & 8#077 )) -ne 0 ]; then
+    printf '%s\n' "$env_file must be owned by root with no group or world permissions (chmod 0600)." >&2
+    exit 1
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    trimmed="$(trim "$line")"
+    case "$trimmed" in
+      ''|'#'*) continue ;;
+      *'='*) ;;
+      *) continue ;;
+    esac
+    key="$(trim "${trimmed%%=*}")"
+    value="$(trim "${trimmed#*=}")"
     case "$value" in
-      '"'*'"'|"'"*"'" ) value="${value:1:${#value}-2}" ;;
+      '"'*'"'|"'"*"'") value="${value:1:${#value}-2}" ;;
     esac
     case "$key" in
       NORI_CONNECTOR_RELAY_URL) NORI_CONNECTOR_RELAY_URL="$value" ;;
       NORI_CONNECTOR_OLLAMA_URL) NORI_CONNECTOR_OLLAMA_URL="$value" ;;
     esac
-  done < /etc/nori-connector/connector.env
+  done < "$env_file"
 fi
+
 operation="$1"
 runuser -u nori-connector -- env NORI_CONNECTOR_STATE_DIR=/var/lib/nori-connector \
   NORI_CONNECTOR_RELAY_URL="${NORI_CONNECTOR_RELAY_URL:-}" \
   NORI_CONNECTOR_OLLAMA_URL="${NORI_CONNECTOR_OLLAMA_URL:-}" \
   /usr/bin/nori-connector "$@"
 
-if [ "$operation" = "pair" ] && [ -d /run/systemd/system ]; then
-  systemctl restart nori-connector.service
+if [ -d /run/systemd/system ]; then
+  case "$operation" in
+    pair) systemctl restart nori-connector.service ;;
+    unpair) systemctl stop nori-connector.service ;;
+  esac
 fi

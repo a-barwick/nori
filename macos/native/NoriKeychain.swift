@@ -38,13 +38,8 @@ func verifiedCaller(for account: String) -> Bool {
         return info
     }
 
-    #if NORI_STANDALONE
-    let keychainIdentifier = "com.nori.connector.keychain"
-    let connectorIdentifier = "com.nori.connector.engine"
-    #else
     let keychainIdentifier = "com.nori.mac.keychain"
     let connectorIdentifier = "com.nori.mac.connector"
-    #endif
     guard let ownInfo = signingInformation(ownStatic),
           let parentInfo = signingInformation(parentStatic),
           ownInfo[kSecCodeInfoIdentifier as String] as? String == keychainIdentifier else { return false }
@@ -73,21 +68,13 @@ func verifiedCaller(for account: String) -> Bool {
     let stateDir = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/Nori/Home AI").path
     if expectedParent == connector {
-        #if NORI_STANDALONE
-        return parentInfo[kSecCodeInfoIdentifier as String] as? String == connectorIdentifier &&
-            account.hasPrefix("/") &&
-            ![stateDir, stateDir + ".pairing", stateDir + ".pending-revocation"].contains(account)
-        #else
         return parentInfo[kSecCodeInfoIdentifier as String] as? String == connectorIdentifier &&
             [stateDir, stateDir + ".pairing", stateDir + ".pending-revocation"].contains(account)
-        #endif
     }
-    #if !NORI_STANDALONE
     if expectedParent == app {
         return parentInfo[kSecCodeInfoIdentifier as String] as? String == "com.nori.mac" &&
             account.hasPrefix("com.nori.mac.google-session.v1:") && account.count <= 512
     }
-    #endif
     return false
 }
 

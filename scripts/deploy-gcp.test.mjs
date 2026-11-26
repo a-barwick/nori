@@ -58,6 +58,8 @@ esac`);
     encoding: "utf8",
     env: {
       PATH: dir + ":" + process.env.PATH,
+      GCP_PROJECT: "fixture-project",
+      GCP_AR_REPO: "fixture-repo",
       FIXTURE_LOG: log,
       CORE_READY_EXIT: coreReady ? "0" : "22",
       API_READY_EXIT: apiReady ? "0" : "22",
@@ -74,7 +76,7 @@ test("combined rollout deploys nori-core and nori-web with NORI_CLOUD=gcp", (t) 
   assert.equal(result.status, 0, result.stderr);
   assert.match(
     log,
-    /deploy nori-core.*--update-env-vars=NORI_CLOUD=gcp[\s\S]+nori-core\.example\/readyz[\s\S]+deploy nori-web.*--update-env-vars=NORI_CLOUD=gcp[\s\S]+\/api\/health/,
+    /deploy nori-core.*--update-env-vars=\^\|\^NORI_CLOUD=gcp[\s\S]+nori-core\.example\/readyz[\s\S]+deploy nori-web.*--update-env-vars=NORI_CLOUD=gcp[\s\S]+\/api\/health/,
   );
   assert.doesNotMatch(log, /jobs update|deploy nori-worker/);
 });
@@ -86,10 +88,10 @@ test("default split rollout runs mandatory migration job, nori-core (api), nori-
     log,
     /jobs update nori-migrate.*--args=--migrate-only.*NORI_CLOUD=gcp[\s\S]+jobs execute nori-migrate[\s\S]+deploy nori-core[\s\S]+nori-core\.example\/readyz[\s\S]+deploy nori-worker[\s\S]+revisions describe nori-worker-fixture[\s\S]+deploy nori-web[\s\S]+\/api\/health/,
   );
-  assert.match(log, /deploy nori-core.*--update-env-vars=NORI_ROLE=api,NORI_CLOUD=gcp,NORI_POSTGRES_MAX_CONNS=8/);
+  assert.match(log, /deploy nori-core.*--update-env-vars=\^\|\^NORI_CLOUD=gcp\|NORI_ROLE=api\|NORI_POSTGRES_MAX_CONNS=8/);
   assert.match(
     log,
-    /deploy nori-worker.*--args=--metrics-addr=0\.0\.0\.0:8080.*--ingress=internal.*--no-cpu-throttling.*--min-instances=1.*--update-env-vars=NORI_ROLE=worker,NORI_CLOUD=gcp,NORI_POSTGRES_MAX_CONNS=10/,
+    /deploy nori-worker.*--args=--metrics-addr=0\.0\.0\.0:8080.*--ingress=internal.*--no-cpu-throttling.*--min-instances=1.*--update-env-vars=\^\|\^NORI_CLOUD=gcp\|NORI_ROLE=worker\|NORI_POSTGRES_MAX_CONNS=10/,
   );
   assert.doesNotMatch(log, /curl.*nori-worker\.example\/readyz/);
 });
@@ -156,6 +158,8 @@ test("Mac rollout requires a version-pinned pilot identity secret", () => {
     encoding: "utf8",
     env: {
       ...process.env,
+      GCP_PROJECT: "fixture-project",
+      GCP_AR_REPO: "fixture-repo",
       NORI_MAC_GOOGLE_CLIENT_ID: "desktop-fixture.apps.googleusercontent.com",
       NORI_MAC_GOOGLE_IDENTITIES_SECRET: secret,
     },
@@ -171,4 +175,14 @@ test("Mac rollout requires a version-pinned pilot identity secret", () => {
   const pinned = dryRun("nori-mac-pilot:2");
   assert.equal(pinned.status, 0, pinned.stderr);
   assert.match(pinned.stdout, /identity allowlist secret/);
+});
+
+test("deploy scripts require explicit GCP_PROJECT and GCP_AR_REPO", (t) => {
+  const missingProject = runFixture(t, { extraEnv: { GCP_PROJECT: "" } });
+  assert.notEqual(missingProject.result.status, 0);
+  assert.match(missingProject.result.stderr, /GCP_PROJECT/);
+
+  const missingRepo = runFixture(t, { extraEnv: { GCP_AR_REPO: "" } });
+  assert.notEqual(missingRepo.result.status, 0);
+  assert.match(missingRepo.result.stderr, /GCP_AR_REPO/);
 });

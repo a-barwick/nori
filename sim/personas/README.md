@@ -29,18 +29,18 @@ python3 scripts/persona-sim/validate.py
 python3 scripts/persona-sim/runner.py --preset smoke --stub-models --max-events 12
 ```
 
-### 3. Run real-LLM simulations after a feature launch
+### 3. Run model-backed simulations
 
-Configure model keys in `.env` (or export `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, and optionally `SIM_RESPONDER_API_KEY` / `SIM_JUDGE_API_KEY`, which default to `OPENAI_API_KEY` or `OPENROUTER_API_KEY`):
+Per project policy (`AGENTS.md` Rule 2), use local **Inkling Mini 2** (`NORI_LOCAL_MODEL_URL=http://127.0.0.1:11434`, `NORI_LOCAL_MODEL_TAG=inkling-mini-2`) for routine model-backed local development and tests. Use cloud LLMs (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, and optionally `SIM_RESPONDER_API_KEY` / `SIM_JUDGE_API_KEY`) only when explicitly running a cloud-model evaluation or baseline comparison:
 
 ```bash
 # Fast 1-persona sanity check (~2-4 min)
 python3 scripts/persona-sim/runner.py --preset smoke
 
-# Quick 1-week check across the 5 highest-signal core personas (low reasoning, ~$1-2)
+# Quick 1-week check across the 5 highest-signal core personas (low reasoning, ~$1-2 on cloud)
 make sim-personas-quick
 
-# Full-month 5-persona high-signal core suite (~$5-8)
+# Full-month 5-persona high-signal core suite (~$5-8 on cloud)
 make sim-personas-core
 
 # 3 memory/compaction-heavy personas (~8-10 min)
@@ -59,11 +59,7 @@ python3 scripts/persona-sim/suite.py --collect-only .sim-runs/<a>/01-maya-lin .s
 python3 scripts/persona-sim/grader.py .sim-runs/<run-dir> --compare .sim-runs/<baseline-dir>/scorecard.json
 ```
 
-Don't use `runner.py --concurrency N` for real runs. It shares one ephemeral DB, and every
-persona's `nori-sim` worker then executes the other personas' work with its own virtual clock (see
-`docs/vst-findings.md`, H-1). `suite.py` also staggers starts (`--stagger`, default 45 s) so
-concurrent schema migrations don't exhaust Postgres's lock table (`out of shared memory`). It also
-re-runs the judge for items that hit network errors.
+Each persona in `runner.py` and `suite.py` receives its own isolated ephemeral Postgres database (`nori_sim_<random>`). Prefer `suite.py` for multi-persona runs: it staggers starts (`--stagger`, default 45 s) so concurrent schema migrations don't exhaust Postgres's lock table (`out of shared memory`), enforces spend/call caps (`--max-usd`, `--max-calls`), and re-runs the judge for retryable errors.
 
 **Before you run:**
 

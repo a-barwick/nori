@@ -11,7 +11,7 @@
 <h1>Words we use</h1>
 <p class="lede">The same words mean the same things on every page.</p>
 <div class="card"><table class="tall"><tr><th>Word</th><th>What it means</th></tr>
-<tr><td>host app</td><td>The internal enterprise agent front-door that embeds Nori headlessly via <code>integrations/embed/adapter.mjs</code>.</td></tr>
+<tr><td>web BFF</td><td>The authenticated Next.js front-end and proxy (<code>web/src/lib/runtime/</code>) that verifies user identity and forwards <code>/api/v1/*</code> requests to Go Core.</td></tr>
 <tr><td>Outer loop</td><td>The part of Nori (<code>core/internal/conversation</code>) that holds one persistent thread per user and runs one short turn at a time.</td></tr>
 <tr><td>Inner loop</td><td>The Postgres-native task runner (<code>task.Runner</code>) that executes one task: call the model, run tools, save results and repeat.</td></tr>
 <tr><td>Runtime</td><td>Go code around the loops that validates calls, enforces permissions, saves records in Postgres and delivers commands. It is not a model.</td></tr>

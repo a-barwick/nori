@@ -43,7 +43,10 @@ jobs:
           : "${SIGNING_KEY:?Set NORI_LINUX_GPG_PRIVATE_KEY}"
           : "${SIGNING_PASSPHRASE:?Set NORI_LINUX_GPG_PASSPHRASE}"
           : "${SIGNING_FINGERPRINT:?Set NORI_LINUX_GPG_FINGERPRINT}"
-          [[ "$SIGNING_FINGERPRINT" =~ ^[A-Fa-f0-9]{40,64}$ ]]
+          [[ "$SIGNING_FINGERPRINT" =~ ^[A-Fa-f0-9]{40,64}$ ]] || {
+            echo "NORI_LINUX_GPG_FINGERPRINT must be a 40-64 character hexadecimal GPG fingerprint." >&2
+            exit 1
+          }
           GNUPGHOME="$(mktemp -d)"
           export GNUPGHOME
           trap 'rm -rf "$GNUPGHOME"' EXIT
@@ -103,11 +106,27 @@ jobs:
           : "${ASC_KEY_ID:?Set ASC_KEY_ID}"
           : "${ASC_ISSUER_ID:?Set ASC_ISSUER_ID}"
           : "${ASC_PRIVATE_KEY:?Set ASC_PRIVATE_KEY}"
-          [[ "$NORI_MAC_SIGNING_IDENTITY" == "Developer ID Application: "* ]]
+          [[ "$NORI_MAC_SIGNING_IDENTITY" == "Developer ID Application: "* ]] || {
+            echo "NORI_MAC_SIGNING_IDENTITY must start with 'Developer ID Application: '." >&2
+            exit 1
+          }
           umask 077
           signing_dir="$(mktemp -d "$RUNNER_TEMP/connector-signing.XXXXXX")"
           keychain="$signing_dir/signing.keychain-db"
-          trap 'security delete-keychain "$keychain" 2>/dev/null || true; rm -rf "$signing_dir"' EXIT
+          existing_keychains=()
+          while IFS= read -r kc; do
+            kc="${kc#\"}"
+            kc="${kc%\"}"
+            [[ -n "$kc" ]] && existing_keychains+=("$kc")
+          done < <(security list-keychains -d user | sed 's/^[[:space:]]*//')
+          cleanup() {
+            if [[ "${#existing_keychains[@]}" -gt 0 ]]; then
+              security list-keychains -d user -s "${existing_keychains[@]}" 2>/dev/null || true
+            fi
+            security delete-keychain "$keychain" 2>/dev/null || true
+            rm -rf "$signing_dir"
+          }
+          trap cleanup EXIT
           printf '%s' "$SIGNING_P12" | base64 -D > "$signing_dir/identity.p12"
           printf '%s\n' "$ASC_PRIVATE_KEY" > "$signing_dir/AuthKey.p8"
           keychain_password="$(openssl rand -hex 24)"
@@ -115,7 +134,7 @@ jobs:
           security unlock-keychain -p "$keychain_password" "$keychain"
           security import "$signing_dir/identity.p12" -k "$keychain" -P "$SIGNING_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
-          security list-keychains -d user -s "$keychain"
+          security list-keychains -d user -s "$keychain" "${existing_keychains[@]}"
           xcrun notarytool store-credentials nori-connector --key "$signing_dir/AuthKey.p8" \
             --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" --keychain "$keychain"
           NORI_MAC_RELEASE=1 NORI_MAC_NOTARY_PROFILE=nori-connector NORI_MAC_NOTARY_KEYCHAIN="$keychain" \

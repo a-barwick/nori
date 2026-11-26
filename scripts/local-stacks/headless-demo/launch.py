@@ -169,9 +169,6 @@ def launch(work):
             "OPENAI_API_KEY": "demo-placeholder",
             "MODEL_NAME": "gpt-6.1-terra",
             "NORI_MODEL_TEST_URL": model_url,
-            "HTTP_PROXY": model_url,
-            "HTTPS_PROXY": model_url,
-            "NO_PROXY": "127.0.0.1,localhost",
         }
 
         print("Provisioning the demo user and registering the local MCP server...", flush=True)

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [ "${1:-}" != "configure" ]; then
+  exit 0
+fi
+
 if ! getent group nori-connector >/dev/null; then
   groupadd --system nori-connector
 fi
@@ -10,5 +14,8 @@ fi
 install -d -m 0700 -o nori-connector -g nori-connector /var/lib/nori-connector
 if [ -d /run/systemd/system ]; then
   systemctl daemon-reload
-  systemctl enable --now nori-connector.service
+  systemctl enable nori-connector.service
+  if systemctl is-active --quiet nori-connector.service; then
+    systemctl restart nori-connector.service
+  fi
 fi

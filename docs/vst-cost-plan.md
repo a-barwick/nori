@@ -26,7 +26,7 @@ Separately, the OpenRouter **workspace** has a $50/month budget. It was exhauste
 
 ## Plan, in order of savings per effort
 
-### 1. Fix outer prompt caching (product) — DONE (2026-11-24, uncommitted)
+### 1. Fix outer prompt caching (product) — DONE (2026-11-24)
 
 **What changed:**
 

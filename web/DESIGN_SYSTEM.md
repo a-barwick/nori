@@ -83,7 +83,7 @@ Never pair `bg-ink` with `text-surface` for selected pills, tabs, or tooltips (i
   - `"light"` sets `data-appearance="light"` on `<html>`.
   - `"dark"` sets `data-appearance="dark"` on `<html>`.
 - **Zero-flash boot:** `web/src/app/layout.tsx` runs `APPEARANCE_BOOT_SCRIPT` synchronously in `<head>` (with `suppressHydrationWarning` on `<html>`) so Dark Mode resolves before first paint.
-- **Settings UI:** Exposed at **More → Controls → Appearance** (`/settings/appearance`), featuring a live interactive chat preview and a `System | Light | Dark` segmented radio group.
+- **Settings UI:** Exposed at **More → Settings → Appearance** (`/settings/appearance`), featuring a live interactive chat preview and a `System | Light | Dark` segmented radio group.
 
 ---
 
@@ -99,7 +99,7 @@ Never pair `bg-ink` with `text-surface` for selected pills, tabs, or tooltips (i
 - **Work → Tasks:** Full-width single-column vertical stack: `Action needed` (or a slim single-row `All clear` bar when idle) → `Running` → `Recent`. Never squeeze `Recent` task lists into narrow multi-column tracks where long titles overflow or clip.
 - **Work → Artifacts:** Starts directly with Search + Kind filter chips + clean chronological list (no oversized hero banner pulling the newest item out of flow).
 - **Work → Goals:** Concise explanation of multi-step outcomes + 2-column quick-start example cards that pre-fill the Chat composer (`/?compose=1`) so users can kick off goals conversationally.
-- **More:** Flat grouped rows under **Workspace** (`Apps & MCP`, `Memory`), **Controls** (`Standing Permissions`, `Preferences & Budgets`, `Appearance`), and **Account** (`Account`, `Action History`, `Diagnostics`)—no top hero card or oversized 2-up workspace tiles.
+- **More:** Flat grouped rows under **Workspace** (`Apps & MCP`, `Memory`), **Settings** (`Models`, `Standing Permissions`, `Preferences & Budgets`, `Appearance`), and **Account** (`Account`, `Action History`, `Diagnostics`)—no top hero card or oversized 2-up workspace tiles.
 
 ### Chat Chrome & Mascot
 - Assistant replies sit directly on `bg-canvas` (`--bg-bubble-nori: transparent`); user replies use `bg-accent text-on-accent`.

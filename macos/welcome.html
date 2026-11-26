@@ -7,16 +7,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Nori</title>
   <style>
-    :root { font-family: -apple-system, system-ui, sans-serif; color-scheme: light dark; --canvas: #fff; --ink: #190936; --ink-secondary: #726d82; --accent: #5000ff; --error: #cc1f33; }
+    :root { font-family: -apple-system, system-ui, sans-serif; color-scheme: light dark; --canvas: #fff; --ink: #190936; --ink-secondary: #726d82; --brand-primary: #5000ff; --brand-accent: #5000ff; --disabled-bg: #f7f5fb; --disabled-fg: #a29cb0; --error: #cc1f33; }
     @media (prefers-color-scheme: dark) {
-      :root { --canvas: #000; --ink: #f2eff8; --ink-secondary: #a9a2b8; --accent: #7a3df6; --error: #ff9ba7; }
+      :root { --canvas: #000; --ink: #f2eff8; --ink-secondary: #a9a2b8; --brand-primary: #7a3df6; --brand-accent: #a98aff; --disabled-bg: #14141a; --disabled-fg: #6b6578; --error: #ff9ba7; }
     }
     body { min-height: 100vh; margin: 0; display: grid; place-items: center; background: var(--canvas); color: var(--ink); }
     main { max-width: 28rem; padding: 24px; text-align: center; }
     h1 { margin: 0 0 24px; font-size: 32px; letter-spacing: -.035em; }
-    button { min-height: 42px; padding: 0 18px; border: 0; border-radius: 9999px; font: inherit; font-weight: 600; background: var(--accent); color: #fff; }
-    button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
-    button:disabled { opacity: .62; }
+    button { min-height: 42px; padding: 0 18px; border: 0; border-radius: 9999px; font: inherit; font-weight: 600; background: var(--brand-primary); color: #fff; }
+    button:focus-visible { outline: 2px solid var(--brand-accent); outline-offset: 4px; }
+    button:disabled { background: var(--disabled-bg); color: var(--disabled-fg); cursor: default; }
     p { margin: 16px 0 0; min-height: 1.375rem; color: var(--ink-secondary); font-size: 14px; }
     p[data-error="true"] { color: var(--error); }
   </style>

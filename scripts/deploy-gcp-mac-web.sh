@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-project="${GCP_PROJECT:-bot-111549}"
-region="${GCP_REGION:-us-central1}"
-registry="$region-docker.pkg.dev/$project/${GCP_AR_REPO:-nori-poc}"
 service="nori-web-mac"
 
 usage() {
-  echo "Usage: NORI_MAC_GOOGLE_CLIENT_ID=... NORI_MAC_GOOGLE_IDENTITIES_SECRET=name:version $0 [--dry-run]"
+  echo "Usage: GCP_PROJECT=... GCP_AR_REPO=... NORI_MAC_GOOGLE_CLIENT_ID=... NORI_MAC_GOOGLE_IDENTITIES_SECRET=name:version $0 [--dry-run]"
 }
 case "${1:-}" in
   "") dry_run=0 ;;
@@ -16,6 +13,12 @@ case "${1:-}" in
   *) usage >&2; exit 2 ;;
 esac
 [[ "$#" -le 1 ]] || { usage >&2; exit 2; }
+
+: "${GCP_PROJECT:?Set GCP_PROJECT to the target GCP project ID}"
+: "${GCP_AR_REPO:?Set GCP_AR_REPO to the target Artifact Registry repository name}"
+project="$GCP_PROJECT"
+region="${GCP_REGION:-us-central1}"
+registry="$region-docker.pkg.dev/$project/$GCP_AR_REPO"
 
 : "${NORI_MAC_GOOGLE_CLIENT_ID:?Set the dedicated Google Desktop OAuth client ID}"
 [[ "$NORI_MAC_GOOGLE_CLIENT_ID" =~ ^[a-zA-Z0-9_-]+\.apps\.googleusercontent\.com$ ]] || exit 2

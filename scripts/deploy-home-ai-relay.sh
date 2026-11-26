@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo "Set NORI_HOME_AI_RELAY_ACCOUNT, NORI_HOME_AI_RELAY_DB_SECRET, NORI_HOME_AI_KEY_SECRET,"
+  echo "Set GCP_PROJECT, GCP_AR_REPO, NORI_HOME_AI_RELAY_ACCOUNT, NORI_HOME_AI_RELAY_DB_SECRET, NORI_HOME_AI_KEY_SECRET,"
   echo "NORI_HOME_AI_VERIFY_URL, NORI_HOME_AI_RELAY_PUBLIC_ORIGIN and NORI_HOME_AI_RELAY_EDGE_BACKEND."
   echo "Usage: $0 [--dry-run]"
 }
@@ -29,9 +29,11 @@ if ! [[ "$public_origin" =~ ^https://[A-Za-z0-9-]+([.][A-Za-z0-9-]+)+$ ]] || [[ 
 fi
 
 cd "$(dirname "$0")/.."
-project="${GCP_PROJECT:-bot-111549}"
+: "${GCP_PROJECT:?Set GCP_PROJECT to the target GCP project ID}"
+: "${GCP_AR_REPO:?Set GCP_AR_REPO to the target Artifact Registry repository name}"
+project="$GCP_PROJECT"
 region="${GCP_REGION:-us-central1}"
-repo="${GCP_AR_REPO:-nori-poc}"
+repo="$GCP_AR_REPO"
 service="${NORI_HOME_AI_RELAY_SERVICE:-nori-connector-relay}"
 max_instances="${NORI_HOME_AI_RELAY_MAX_INSTANCES:-1}"
 if ! [[ "$max_instances" =~ ^[1-9][0-9]*$ ]]; then
@@ -95,7 +97,7 @@ args=(
   --ingress=internal-and-cloud-load-balancing --no-default-url
   --service-account="$NORI_HOME_AI_RELAY_ACCOUNT"
   --timeout=3600 --concurrency="${NORI_HOME_AI_RELAY_CONCURRENCY:-40}"
-  --max="$max_instances" --max-instances="$max_instances"
+  --max-instances="$max_instances"
   --startup-probe=httpGet.path=/readyz,periodSeconds=3,timeoutSeconds=3,failureThreshold=40
   --update-secrets="$relay_secrets"
   --update-env-vars="NORI_HOME_AI_VERIFY_URL=$NORI_HOME_AI_VERIFY_URL,NORI_HOME_AI_MAX_CONNS=${NORI_HOME_AI_RELAY_PG_MAX_CONNS:-4}"

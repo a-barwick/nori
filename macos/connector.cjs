@@ -4,15 +4,18 @@ const { spawn } = require("node:child_process");
 const { join } = require("node:path");
 
 const maxOutput = 64 * 1024;
+const maxStderr = 16 * 1024;
 
 function startCommand(executable, args, { input, timeout = 20_000, onOutput, acceptOutputOnFailure } = {}) {
   const env = { ...process.env };
   for (const key of Object.keys(env)) {
     if (key.startsWith("NORI_CONNECTOR_") || key === "NODE_OPTIONS") delete env[key];
   }
-  const child = spawn(executable, args, { env, stdio: ["pipe", "pipe", "ignore"] });
+  const child = spawn(executable, args, { env, stdio: ["pipe", "pipe", "pipe"] });
   const output = [];
+  const stderrChunks = [];
   let size = 0;
+  let stderrSize = 0;
   const result = new Promise((resolve, reject) => {
     const timer = setTimeout(() => child.kill("SIGKILL"), timeout);
     child.stdout.on("data", (chunk) => {
@@ -24,13 +27,31 @@ function startCommand(executable, args, { input, timeout = 20_000, onOutput, acc
       output.push(chunk);
       onOutput?.(Buffer.concat(output).toString("utf8"));
     });
+    child.stderr.on("data", (chunk) => {
+      if (stderrSize >= maxStderr) return;
+      const remaining = maxStderr - stderrSize;
+      const slice = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
+      stderrChunks.push(slice);
+      stderrSize += slice.length;
+    });
     child.stdin.on("error", () => {});
     child.stdin.end(input);
-    child.once("error", reject);
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
     child.once("close", (code) => {
       clearTimeout(timer);
-      if (code === 0 || (acceptOutputOnFailure && size > 0 && size <= maxOutput)) resolve(Buffer.concat(output).toString("utf8"));
-      else reject(new Error("The Mac helper couldn’t complete the request."));
+      if (code === 0 || (acceptOutputOnFailure && size > 0 && size <= maxOutput)) {
+        resolve(Buffer.concat(output).toString("utf8"));
+        return;
+      }
+      const stderr = Buffer.concat(stderrChunks).toString("utf8").trim();
+      const error = new Error(stderr
+        ? `The Mac helper couldn’t complete the request: ${stderr}`
+        : "The Mac helper couldn’t complete the request.");
+      error.stderr = stderr;
+      reject(error);
     });
   });
   result.catch(() => {});
@@ -71,12 +92,14 @@ class HomeConnector {
   #commands;
   #pairing;
   #action;
+  #pairingStartTimeoutMs;
 
-  constructor(commands) {
+  constructor(commands, { pairingStartTimeoutMs = 25_000 } = {}) {
     this.#commands = commands;
+    this.#pairingStartTimeoutMs = pairingStartTimeoutMs;
   }
 
-  async status() {
+  async #readStatus() {
     const [service, output] = await Promise.all([
       this.#commands.service("status"),
       this.#commands.connector("status").result,
@@ -91,6 +114,10 @@ class HomeConnector {
     };
   }
 
+  async status() {
+    return this.#exclusive(() => this.#readStatus(), true);
+  }
+
   async models() {
     const output = await this.#commands.connector("doctor", { acceptOutputOnFailure: true }).result;
     const status = readResult(output);
@@ -99,7 +126,7 @@ class HomeConnector {
 
   async register() {
     return this.#exclusive(async () => {
-      if ((await this.status()).revocationPending) throw new Error("Finish disconnecting this Mac before enabling Home AI.");
+      if ((await this.#readStatus()).revocationPending) throw new Error("Finish disconnecting this Mac before enabling Home AI.");
       const service = await this.#commands.service("register");
       return { background: service.background, paired: false };
     });
@@ -112,7 +139,7 @@ class HomeConnector {
   async beginPairing() {
     return this.#exclusive(async () => {
       if (this.#pairing) throw new Error("A pairing is already in progress.");
-      const status = await this.status();
+      const status = await this.#readStatus();
       if (status.background !== "enabled" || status.paired || status.revocationPending) {
         throw new Error("Approve background access and finish any previous disconnect before pairing.");
       }
@@ -122,34 +149,37 @@ class HomeConnector {
       let failed;
       const grant = new Promise((resolve, reject) => { ready = resolve; failed = reject; });
       grant.catch(() => {});
-      const command = this.#commands.connector("pair", {
-        timeout: 11 * 60_000,
-        onOutput(output) {
-          const newline = output.indexOf("\n");
-          if (newline === -1) return;
-          try {
-            const first = readResult(output.slice(0, newline));
-            if (first.type === "pairing" && typeof first.user_code === "string" && /^[A-Z0-9-]{6,32}$/.test(first.user_code)) {
-              ready({ user_code: first.user_code });
-            } else {
-              failed(new Error("The relay did not return a pairing code."));
-            }
-          } catch (error) {
-            failed(error);
-          }
-        },
-      });
-      const completion = command.result.then((output) => {
-        const last = output.trim().split("\n").at(-1);
-        if (readResult(last).type !== "paired") throw new Error("The Mac did not finish pairing.");
-      });
-      completion.catch(failed);
-      this.#pairing = { command, completion };
-      const timeout = setTimeout(() => failed(new Error("Nori couldn’t start pairing. Try again.")), 25_000);
+      let command;
+      let timeout;
       try {
+        command = this.#commands.connector("pair", {
+          timeout: 11 * 60_000,
+          onOutput(output) {
+            const newline = output.indexOf("\n");
+            if (newline === -1) return;
+            try {
+              const first = readResult(output.slice(0, newline));
+              if (first.type === "pairing" && typeof first.user_code === "string" && /^[A-Z0-9-]{6,32}$/.test(first.user_code)) {
+                ready({ user_code: first.user_code });
+              } else {
+                failed(new Error("The relay did not return a pairing code."));
+              }
+            } catch (error) {
+              failed(error);
+            }
+          },
+        });
+        const completion = command.result.then((output) => {
+          const last = output.trim().split("\n").at(-1);
+          if (readResult(last).type !== "paired") throw new Error("The Mac did not finish pairing.");
+        });
+        completion.catch(failed);
+        this.#pairing = { command, completion };
+        timeout = setTimeout(() => failed(new Error("Nori couldn’t start pairing. Try again.")), this.#pairingStartTimeoutMs);
         return await grant;
       } catch (error) {
         await this.#stopPairing();
+        await this.#commands.connector("desktop-disable").result.catch(() => {});
         throw error;
       } finally {
         clearTimeout(timeout);
@@ -158,14 +188,16 @@ class HomeConnector {
   }
 
   async finishPairing() {
-    const pairing = this.#pairing;
-    if (!pairing) throw new Error("Start pairing this Mac again.");
-    try {
-      await pairing.completion;
-      if (this.#pairing !== pairing) throw new Error("Pairing was cancelled.");
-    } finally {
-      if (this.#pairing === pairing) this.#pairing = undefined;
-    }
+    return this.#exclusive(async () => {
+      const pairing = this.#pairing;
+      if (!pairing) throw new Error("Start pairing this Mac again.");
+      try {
+        await pairing.completion;
+        if (this.#pairing !== pairing) throw new Error("Pairing was cancelled.");
+      } finally {
+        if (this.#pairing === pairing) this.#pairing = undefined;
+      }
+    });
   }
 
   get pairingInProgress() {
@@ -181,6 +213,9 @@ class HomeConnector {
   }
 
   async disconnect() {
+    // Signal any in-flight pairing subprocess to stop so an active finishPairing()
+    // releases #exclusive promptly instead of blocking disconnect.
+    this.#pairing?.command.stop();
     return this.#exclusive(async () => {
       await this.#stopPairing();
       return this.#disable();
@@ -190,7 +225,7 @@ class HomeConnector {
   async retryRevocation() {
     return this.#exclusive(async () => {
       if (this.#pairing) return { revocationPending: false };
-      const status = await this.status();
+      const status = await this.#readStatus();
       if (status.revocationPending && !status.paired) return this.#disable();
       const result = readResult(await this.#commands.connector("desktop-revoke-pending").result);
       return { revocationPending: result.revocation_pending === true };
@@ -220,4 +255,4 @@ class HomeConnector {
   }
 }
 
-module.exports = { HomeConnector, nativeCommands };
+module.exports = { HomeConnector, nativeCommands, startCommand };

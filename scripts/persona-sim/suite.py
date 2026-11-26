@@ -48,7 +48,7 @@ from llm_client import (  # noqa: E402
     resolve_dotenv_path,
     strip_raw_provider_keys,
 )
-from runner import resolve_max_days, select_personas  # noqa: E402
+from runner import CORE_PRESET_PERSONAS, resolve_max_days, select_personas  # noqa: E402
 
 _start_lock = threading.Lock()
 _last_start = [0.0]
@@ -69,13 +69,7 @@ FATAL_PROVIDER_MARKERS = (
 
 AREA_PERSONAS: dict[str, list[str]] = {
     "smoke": ["01-maya-lin"],
-    "core": [
-        "02-devon-brooks",
-        "03-priya-subramanian",
-        "04-carlos-mendoza",
-        "08-tariq-al-mansoor",
-        "09-sora-takahashi",
-    ],
+    "core": list(CORE_PRESET_PERSONAS),
     "memory": ["01-maya-lin", "03-priya-subramanian", "05-hannah-okafor", "09-sora-takahashi"],
     "permissions": ["02-devon-brooks", "04-carlos-mendoza", "08-tariq-al-mansoor"],
     "approvals": ["02-devon-brooks", "04-carlos-mendoza", "08-tariq-al-mansoor"],
@@ -803,6 +797,8 @@ def rejudge_errors(run_dir: Path) -> list[tuple[str, str, str]]:
     if not sc.get("judge_model"):
         return []
     judge = LLMClient.from_env("judge", load_dotenv(resolve_dotenv_path(ROOT)))
+    if judge is None:
+        return []
     redone: list[tuple[str, str, str]] = []
     for p in sc["personas"]:
         pdir = run_dir / p["slug"]
@@ -815,17 +811,19 @@ def rejudge_errors(run_dir: Path) -> list[tuple[str, str, str]]:
         for i, item in enumerate(p["tier_b_items"]):
             if item["verdict"] != "ERROR":
                 continue
-            for attempt in range(4):
-                try:
-                    if item["category"] == "end_of_month_audit":
-                        new = grader._judge_eom_audit(judge, p["slug"], summary, final_snap, mcp_audit, approval_log)
-                    else:
-                        new = grader._judge_probe(judge, p["slug"], probes[item["id"]], mcp_audit, approval_log)
-                    p["tier_b_items"][i] = new
-                    redone.append((p["slug"], item["id"], new["verdict"]))
-                    break
-                except Exception:
-                    time.sleep(5 * (attempt + 1))
+            try:
+                if item["category"] == "end_of_month_audit":
+                    new = grader._judge_with_retry(
+                        grader._judge_eom_audit, judge, p["slug"], summary, final_snap, mcp_audit, approval_log,
+                    )
+                else:
+                    new = grader._judge_with_retry(
+                        grader._judge_probe, judge, p["slug"], probes[item["id"]], mcp_audit, approval_log,
+                    )
+                p["tier_b_items"][i] = new
+                redone.append((p["slug"], item["id"], new["verdict"]))
+            except Exception:
+                pass
         items = p["tier_b_items"]
         p["tier_b_score"] = grader.compute_tier_b_score(items)
         scored_cnt, err_cnt, incl_cnt, tb_status = grader.tier_b_counts_and_status(items)

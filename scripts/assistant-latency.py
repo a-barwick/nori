@@ -15,10 +15,11 @@ and aggregates every usage record linked to the turn, task run, and terminal eve
 
 Reads only: GET /users/{id}/v1/snapshot on core (`cmd/nori` or `cmd/nori-local`).
 Usage:
-  scripts/assistant-latency.py --core http://127.0.0.1:8080 --user <uuid> [--runs id,id] [--all]
+  scripts/assistant-latency.py --core http://127.0.0.1:8080 --user <uuid> [--runs id,id] [--include-running] [--json] [--token <token>]
 """
 import argparse
 import json
+import os
 import sys
 import urllib.request
 from datetime import datetime
@@ -86,10 +87,14 @@ def main():
     p.add_argument("--runs", default="", help="comma-separated run ids (default: all terminal runs)")
     p.add_argument("--include-running", action="store_true", help="include running tasks")
     p.add_argument("--json", action="store_true", help="emit JSON report instead of markdown table")
+    p.add_argument("--token", default=os.environ.get("NORI_AUTH_TOKEN", ""), help="optional bearer token (or set NORI_AUTH_TOKEN)")
+    p.add_argument("--timeout", type=float, default=30.0, help="HTTP request timeout in seconds (default: 30)")
     a = p.parse_args()
 
     core = a.core.rstrip("/")
-    with urllib.request.urlopen(f"{core}/users/{a.user}/v1/snapshot") as r:
+    headers = {"Authorization": f"Bearer {a.token}"} if a.token else {}
+    req = urllib.request.Request(f"{core}/users/{a.user}/v1/snapshot", headers=headers)
+    with urllib.request.urlopen(req, timeout=a.timeout) as r:
         snap = json.load(r)
     messages = sorted(snap.get("messages") or [], key=lambda m: m.get("created_at") or "")
     msg_by_id = {m["id"]: m for m in messages if m.get("id")}

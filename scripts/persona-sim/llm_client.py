@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 RAW_PROVIDER_KEY_VARS: tuple[str, ...] = (
     "OPENAI_API_KEY",
@@ -290,7 +293,13 @@ class AdaptivePersonaResponder:
             res = self.client.chat_json(system, user, temperature=0.3)
             if res.get("needs_reply") and str(res.get("reply", "")).strip():
                 return str(res["reply"]).strip()
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "AdaptivePersonaResponder.decide_chat_followup failed for %s (day=%s): %s",
+                self.persona_name,
+                day,
+                exc,
+            )
             return None
         return None
 
@@ -323,9 +332,43 @@ class AdaptivePersonaResponder:
         )
         try:
             res = self.client.chat_json(system, user, temperature=0.1)
-            decision = str(res.get("kind", "")).lower()
-            if decision in ("approve", "decline", "answer"):
-                return {"kind": decision, "text": str(res.get("text", "")).strip()}
-        except Exception:
-            pass
-        return {"kind": "approve" if kind in ("approval", "confirm") else "answer", "text": "Proceed as discussed."}
+        except Exception as exc:
+            logger.warning(
+                "AdaptivePersonaResponder.decide_interaction failed for %s (day=%s, kind=%s): %s",
+                self.persona_name,
+                day,
+                kind,
+                exc,
+            )
+            if kind in ("approval", "confirm"):
+                return {
+                    "kind": "decline",
+                    "text": "Declined automatically because the persona responder failed.",
+                    "harness_error": str(exc),
+                }
+            return {
+                "kind": "answer",
+                "text": "Unable to answer right now due to responder error.",
+                "harness_error": str(exc),
+            }
+        decision = str(res.get("kind", "")).lower()
+        if decision in ("approve", "decline", "answer"):
+            return {"kind": decision, "text": str(res.get("text", "")).strip()}
+        logger.warning(
+            "AdaptivePersonaResponder.decide_interaction returned invalid decision %r for %s (day=%s, kind=%s)",
+            decision,
+            self.persona_name,
+            day,
+            kind,
+        )
+        if kind in ("approval", "confirm"):
+            return {
+                "kind": "decline",
+                "text": "Declined automatically because the persona responder returned an invalid decision.",
+                "harness_error": f"invalid_decision:{decision}",
+            }
+        return {
+            "kind": "answer",
+            "text": "Unable to answer right now due to invalid responder decision.",
+            "harness_error": f"invalid_decision:{decision}",
+        }

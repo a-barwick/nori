@@ -19,16 +19,16 @@
 <div class="arrow">↓ <span class="lbl">snapshot, mutation receipt or numbered SSE frame</span></div>
 <div class="node"><b>Client / the host app UI</b><small>Merges saved state by ID and tracks the event cursor <code>position</code>.</small></div>
 </div></div>
-<section><h2>The host app adapter routes</h2>
-<p><code>integrations/embed/adapter.mjs</code> mounts under <code>/api/nori/*</code> and maps directly onto Nori's per-user <code>/v1/*</code> endpoints (each prefixed with <code>/users/{mappedUser}</code>):</p>
-<div class="card"><table class="tall"><tr><th>The host app route</th><th>Nori route</th><th>Purpose</th></tr>
-<tr><td><code>GET /api/nori/conversation</code></td><td><code>GET /v1/conversations/assistant</code></td><td>Persistent thread snapshot and current SSE event <code>position</code>.</td></tr>
-<tr><td><code>POST /api/nori/messages</code></td><td><code>POST /v1/conversations/assistant/messages</code></td><td>Send <code>{ id, text }</code>. Returns HTTP 202 with acceptance state (<code>accepted</code> or <code>queued</code>).</td></tr>
-<tr><td><code>GET /api/nori/events?after=N</code></td><td><code>GET /v1/conversations/assistant/events?after=N</code></td><td>Stream SSE frames (<code>Last-Event-ID</code> takes precedence).</td></tr>
-<tr><td><code>GET /api/nori/work</code>, <code>/work/{taskId}</code></td><td><code>GET /v1/work</code>, <code>GET /v1/work/{task_id}</code></td><td>List Work items (<code>task_id</code>, <code>bucket</code>, <code>status</code>, <code>result_ids</code>) or inspect operation outcomes and provider refs.</td></tr>
-<tr><td><code>GET /api/nori/interactions</code>, <code>/{id}</code></td><td><code>GET /v1/interactions?status=pending</code>, <code>/{id}</code></td><td>Read pending questions and typed approval cards (paginated with <code>?cursor=…</code>).</td></tr>
-<tr><td><code>POST /api/nori/interactions/{id}/responses</code></td><td><code>POST /v1/interactions/{id}/responses</code></td><td>Submit an approval or decline bound to <code>expected_revision</code> and <code>action_digest</code>.</td></tr>
-<tr><td><code>GET /api/nori/mutations/{requestId}</code>, <code>/results/{id}</code>, <code>/results/{id}/file</code></td><td><code>GET /v1/mutations/{request_id}</code>, <code>GET /v1/results/{id}</code>, <code>GET /v1/results/{id}/file</code></td><td>Read idempotent mutation receipts, saved result metadata, or download result file bytes.</td></tr>
+<section><h2>Web BFF proxy routes</h2>
+<p>The Next.js BFF (<code>web/src/app/api/</code>) verifies user identity and forwards <code>/api/v1/*</code> requests onto Nori Core's per-user <code>/users/{mappedUser}/v1/*</code> endpoints:</p>
+<div class="card"><table class="tall"><tr><th>Web BFF route</th><th>Nori Core route</th><th>Purpose</th></tr>
+<tr><td><code>GET /api/v1/conversations/assistant</code></td><td><code>GET /v1/conversations/assistant</code></td><td>Persistent thread snapshot and current SSE event <code>position</code>.</td></tr>
+<tr><td><code>POST /api/v1/conversations/assistant/messages</code></td><td><code>POST /v1/conversations/assistant/messages</code></td><td>Send <code>{ id, text }</code>. Returns HTTP 202 with acceptance state (<code>accepted</code> or <code>queued</code>).</td></tr>
+<tr><td><code>GET /api/v1/conversations/assistant/events?after=N</code></td><td><code>GET /v1/conversations/assistant/events?after=N</code></td><td>Stream SSE frames (<code>Last-Event-ID</code> takes precedence).</td></tr>
+<tr><td><code>GET /api/v1/work</code>, <code>/work/{taskId}</code></td><td><code>GET /v1/work</code>, <code>GET /v1/work/{task_id}</code></td><td>List Work items (<code>task_id</code>, <code>bucket</code>, <code>status</code>, <code>result_ids</code>) or inspect operation outcomes and provider refs.</td></tr>
+<tr><td><code>GET /api/v1/interactions</code>, <code>/{id}</code></td><td><code>GET /v1/interactions?status=pending</code>, <code>/{id}</code></td><td>Read pending questions and typed approval cards (paginated with <code>?cursor=…</code>).</td></tr>
+<tr><td><code>POST /api/v1/interactions/{id}/responses</code></td><td><code>POST /v1/interactions/{id}/responses</code></td><td>Submit an approval or decline bound to <code>expected_revision</code> and <code>action_digest</code>.</td></tr>
+<tr><td><code>GET /api/v1/mutations/{requestId}</code>, <code>/results/{id}</code>, <code>/results/{id}/file</code></td><td><code>GET /v1/mutations/{request_id}</code>, <code>GET /v1/results/{id}</code>, <code>GET /v1/results/{id}/file</code></td><td>Read idempotent mutation receipts, saved result metadata, or download result file bytes.</td></tr>
 </table></div>
 </section>
 <section><h2>Complete <code>/v1/*</code> route families</h2>
@@ -68,6 +68,6 @@
 <li>Other open sessions for the same user receive the updated read mark over the SSE stream.</li>
 </ul>
 </section>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/api/http.go</code> · <code>core/internal/api/assistant.go</code> · <code>core/internal/api/features.go</code> · <code>core/internal/api/conversation.go</code> · <code>core/internal/api/conversation_contract.go</code> · <code>core/internal/api/conversation_events.go</code> · <code>core/internal/api/events.go</code> · <code>core/internal/api/mcp.go</code> · <code>core/internal/api/scheduling.go</code> · <code>core/internal/api/work.go</code> · <code>core/internal/api/library.go</code> · <code>core/internal/api/uploads.go</code> · <code>core/internal/app/features.go</code> · <code>core/internal/settings/settings.go</code> · <code>integrations/embed/README.md</code> · <code>integrations/embed/adapter.mjs</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/api/http.go</code> · <code>core/internal/api/assistant.go</code> · <code>core/internal/api/features.go</code> · <code>core/internal/api/conversation.go</code> · <code>core/internal/api/conversation_contract.go</code> · <code>core/internal/api/conversation_events.go</code> · <code>core/internal/api/events.go</code> · <code>core/internal/api/mcp.go</code> · <code>core/internal/api/scheduling.go</code> · <code>core/internal/api/work.go</code> · <code>core/internal/api/library.go</code> · <code>core/internal/api/uploads.go</code> · <code>core/internal/app/features.go</code> · <code>core/internal/settings/settings.go</code> · <code>web/src/lib/runtime/forward.ts</code></p></details>
 </body>
 </html>

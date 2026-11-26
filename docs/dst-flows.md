@@ -305,7 +305,7 @@ Every flow below is driven through real production code under seeded fault injec
 ## F12 — Edge Surfaces: Embed Adapter & Web Workbench
 
 ### Flow
-1. A host app embeds `integrations/embed/adapter.mjs` under `/api/nori/*`, authenticating users via `verifyIdentity`, minting HS256 service tokens, forwarding chat/work/interactions/results/SSE to Go core.
+1. The Next.js BFF (`web/src/lib/runtime/`) handles `/api/v1/*`, authenticating users via IAP/OIDC/local dev identity, minting HS256 service tokens, and forwarding chat/work/interactions/results/SSE to Go core.
 2. Local workbench (`web/`) authenticates users via OIDC or loopback email, proxies `/api/v1/*` and `/api/nori/*`, and renders Assistant, Work, Apps (MCP), Automations, Goals, Library, and Settings screens.
 
 ### Safety Invariants

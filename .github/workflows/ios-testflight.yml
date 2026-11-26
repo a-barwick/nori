@@ -65,12 +65,15 @@ jobs:
             -disableAutomaticPackageResolution CODE_SIGNING_ALLOWED=NO \
             "CURRENT_PROJECT_VERSION=$build_number" "SENTRY_DSN=$SENTRY_DSN" archive
 
-      - name: Verify archive symbols
+      - name: Verify and upload archive symbols
         if: steps.freshness.outputs.current == 'true'
         uses: ./.github/actions/ios-symbols
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT_IOS: ${{ vars.SENTRY_PROJECT_IOS }}
         with:
           archive-path: ${{ runner.temp }}/Nori.xcarchive
-          verify-only: "true"
 
       - name: Sign and upload the archive
         if: steps.freshness.outputs.current == 'true'

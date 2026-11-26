@@ -12,7 +12,7 @@
   - Line numbers below are as of `04a961d`.
 - **Second attempt, after a top-up (20:26):** blocked again at 20:34. The OpenRouter **workspace monthly budget of $50** was exceeded ($50.19), so every inner-model call returns **403** until it resets on **2026-12-01**, or until an org admin raises the budget. `/api/v1/credits` can't see this; `suite.py`'s preflight now makes a 1-token live call and aborts on 401/402/403. All runs from that attempt were stopped and deleted.
 - **New cost finding, P1-7: the outer model never hits the prompt cache.** All measured `gpt-6.1-sol` calls report 0 cached tokens, so ~1M input tokens per persona-month are billed at the uncached $2/M instead of $0.10/M. `openai.go:200` sends `prompt_cache_options: {"mode": "explicit"}`, but no cache breakpoint is set anywhere in `core/`. This costs production too. Plan and numbers: [`docs/vst-cost-plan.md`](./vst-cost-plan.md).
-  - **Fixed in this worktree (uncommitted):** explicit breakpoints, a stable reply schema with server-side ID validation, and cache-aware cost accounting. Verified live: steady-state turns went from ~$0.016 to $0.0025.
+  - **Fixed:** explicit breakpoints, a stable reply schema with server-side ID validation, and cache-aware cost accounting. Verified live: steady-state turns went from ~$0.016 to $0.0025.
 - **First attempt (2026-11-24 20:05): blocked because the OpenRouter account ran out of credits.**
   - The inner/flush/dream model (`openrouter/openai/gpt-6.1-terra`) started returning **HTTP 402** at 20:10:37 on 2026-11-24, on every persona at once. `/api/v1/credits` reports $79.99 used of $80.00.
   - Those runs were stopped and deleted.

@@ -1,17 +1,22 @@
 # Nori core
 
-The Go backend owns durable conversation handling, background task admission and execution, permission enforcement, scheduling, and MCP tool execution on top of Postgres. `cmd/nori` runs the HTTP API, the unified Postgres-native worker pool, or both (`--role=all|api|worker`, default `all`), and `cmd/nori-local` runs the loopback development equivalent. Production uses OpenAI directly (or a deployment-owned OpenAI-compatible model gateway) for replies, task reasoning, image inspection, and conversation summaries, with optional OpenRouter and advisory Jev classification. Hosted AWS deployments use S3 for artifacts, AWS Secrets Manager for secrets, OIDC user sign-in at the web tier, and HS256 service tokens between trusted services.
+The Go backend owns durable conversation handling, background task admission and execution, permission enforcement, scheduling, and MCP tool execution on top of Postgres. `cmd/nori` runs the HTTP API, the unified Postgres-native worker pool, or both (`--role=all|api|worker`, default `all`), and `cmd/nori-local` runs the loopback development equivalent. Production uses BYOK user-owned model keys (OpenAI, Anthropic, Google, Vercel AI Gateway, OpenRouter) or paired Home AI connectors for replies, task reasoning, image inspection, and conversation summaries, with optional advisory Jev classification. Hosted deployments support GCP (`NORI_CLOUD=gcp`, Cloud Storage via ADC + Secret Manager) and AWS (`NORI_CLOUD=aws`, S3 + AWS Secrets Manager), with OIDC/IAP user sign-in at the web tier and HS256 service tokens between trusted services.
 
-Storage sits behind contracts. `internal/state` defines records, `ConversationStore`, `TaskControl`, and write rules; `internal/state/records` applies them over `internal/state/postgres` serializable transactions with numbered migrations, transactional wake rows (`nori_task_leases`, `nori_user_wakes`), and post-commit `LISTEN/NOTIFY`. File and upload bytes live in `internal/state/s3` (`NORI_CLOUD=aws`) or `internal/state/localfs` (`NORI_CLOUD=local`). `internal/usage` computes reported model costs. Only `internal/platform` wires concrete backends: `platform.OpenStore(ctx, settings, user)` returns an immutable user-scoped `state.ConversationStore`, and every data operation keeps that scope. The operator pause remains global.
+Storage sits behind contracts. `internal/state` defines records, `ConversationStore`, `TaskControl`, and write rules; `internal/state/records` applies them over `internal/state/postgres` serializable transactions with numbered migrations, transactional wake rows (`nori_task_leases`, `nori_user_wakes`), and post-commit `LISTEN/NOTIFY`. File and upload bytes live in `internal/state/gcs` (`NORI_CLOUD=gcp`), `internal/state/s3` (`NORI_CLOUD=aws`), or `internal/state/localfs` (`NORI_CLOUD=local`). `internal/usage` computes reported model costs. Only `internal/platform` wires concrete backends: `platform.OpenStore(ctx, settings, user)` returns an immutable user-scoped `state.ConversationStore`, and every data operation keeps that scope. The operator pause remains global.
 
 ## Binaries
 
 | Binary | Entrypoint | Role |
 | --- | --- | --- |
-| `nori` | `cmd/nori` | Unified hosted runtime (`NORI_CLOUD=aws` default, `--role=all\|api\|worker` / `NORI_ROLE`). Runs the HTTP API (`api`), the Postgres-native worker pool (`worker`), or both (`all`). |
+| `nori` | `cmd/nori` | Unified hosted runtime (`NORI_CLOUD=gcp\|aws`, `--role=all\|api\|worker` / `NORI_ROLE`, `--migrate-only`). Runs the HTTP API (`api`), the Postgres-native worker pool (`worker`), or both (`all`). |
 | `nori-local` | `cmd/nori-local` | Loopback development runtime (`NORI_CLOUD=local` default, binds `127.0.0.1`). Runs both the HTTP API and the unified Postgres-native worker pool in-process. |
 | `nori-user` | `cmd/nori-user` | Provisions users, manages invites, and binds an existing user to a verified sign-in identity. |
 | `contracts-check` | `cmd/contracts-check` | Validates `contracts/assistant` JSON Schema 2020-12 definitions, fixtures (with strict Go round-trips), and scenarios. |
+| `nori-sim` | `cmd/nori-sim` | Local-only virtual-clock simulation server (`/_sim/*` control, drain, snapshot, invariant checks) used by the persona simulation suite. |
+| `nori-gateway` | `cmd/nori-gateway` | Local loopback guarded LLM proxy with hard spend/call caps for isolated test and simulation runs. |
+| `nori-connector` | `cmd/nori-connector` | Home AI connector daemon and CLI (`pair`, `serve`, `status`, `doctor`, `unpair`) bridging local Ollama to the relay. |
+| `nori-connector-relay` | `cmd/nori-connector-relay` | Dedicated HTTPS/WebSocket relay forwarding encrypted Home AI model requests between Nori Core and paired connectors. |
+| `nori-storage-audit` | `cmd/nori-storage-audit` | Read-only audit utility for inspecting artifact storage integrity and orphaned uploads. |
 
 ## Local development
 
@@ -34,7 +39,7 @@ go run ./cmd/nori --role=all
 go run ./cmd/contracts-check -strict
 ```
 
-`make -C core run` starts `cmd/nori` (hosted mode), `make -C core build` builds `bin/nori`, and `make -C core check` runs `go vet` and `gofmt` checks.
+`make -C core run` starts `cmd/nori` (hosted mode), `make -C core build` builds `bin/nori`, and `make -C core check` runs `go vet ./...`, `gofmt`, and `go test ./...`.
 
 Commands load the monorepo-root `.env` without overriding existing environment variables. Keep `.env` gitignored and mode `600`. `NORI_ENV_FILE` selects an explicit env file; `NORI_TASK_ENV_FILE` optionally layers task-specific settings. Every setting is documented in [`.env.example`](../.env.example).
 
@@ -136,13 +141,14 @@ Application input budgets remain conservative byte caps (`40 KiB` assistant, `12
 
 ## Pricing and task budgets
 
-`internal/usage/openai.go` calculates standard-tier direct OpenAI tariffs (with implicit cache writes disabled). Cached prompt tokens are billed at **1/20th of the input token price**:
+`internal/usage/openai.go` calculates standard-tier direct OpenAI tariffs. Cached prompt reads are billed at **1/20th** of the input token price (or **1/10th** on `gpt-6*-luna`), explicit cache writes are billed at **1.25×** the input token price (`*WithWrites`), and each built-in OpenAI web search call adds **$0.01**:
 
-| Model | Input | Cached input (`1/20th`) | Output (incl. reasoning) | Notes |
-| --- | --- | --- | --- | --- |
-| `gpt-6.1-sol` | `$2.00 / 1M` | `$0.10 / 1M` | `$10.00 / 1M` | Standard context up to 272,000 input tokens; above threshold stays unknown. |
-| `gpt-6.1-terra` | `$1.00 / 1M` | `$0.05 / 1M` | `$5.00 / 1M` | Up to 272,000 input tokens. |
-| `gpt-6.1-terra` (long context) | `$2.00 / 1M` | `$0.10 / 1M` | `$7.50 / 1M` | Applies to the entire request when input exceeds 272,000 tokens (up to 1,050,000). |
+| Model | Input | Cached read | Cache write (`1.25×`) | Output (incl. reasoning) | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `gpt-6.1-sol` / `gpt-6.2-sol` | `$2.00 / 1M` | `$0.10 / 1M` | `$2.50 / 1M` | `$10.00 / 1M` | Standard context up to 272,000 input tokens; above threshold stays unknown. |
+| `gpt-6.1-terra` | `$1.00 / 1M` | `$0.05 / 1M` | `$1.25 / 1M` | `$5.00 / 1M` | Up to 272,000 input tokens. |
+| `gpt-6.1-terra` (long context) | `$2.00 / 1M` | `$0.10 / 1M` | `$2.50 / 1M` | `$7.50 / 1M` | Applies to the entire request when input exceeds 272,000 tokens (up to 1,050,000). |
+| `gpt-6-luna` / `gpt-6.1-luna` / `gpt-6.2-luna` | `$0.10 / 1M` | `$0.01 / 1M` | `$0.125 / 1M` | `$0.50 / 1M` | Doubles input/cache rates above 272,000 input tokens (up to 1,050,000). |
 
 New background tasks record `NORI_TASK_BUDGET_USD` (default `$1`) at acceptance, shared across the task and its subtasks. When cumulative family spend reaches or exceeds the recorded budget (`Spent + Others >= Budget`), the workflow **stops and fails incomplete** (`status: "failed"`, `expected_incomplete: true`) without issuing another model call and without opening a `continue` budget question. Outer conversation and Jev calls are metered separately and do not consume a task's budget. Missing or unmatched provider usage remains unknown cost without failing successful work.
 
@@ -160,9 +166,9 @@ Postgres records migrations by filename and checksum. Applied migrations keep th
 
 | Configuration | Purpose |
 | --- | --- |
-| `NORI_CLOUD`, `NORI_ROLE`, `AWS_REGION` | `aws` (default for `cmd/nori`) or `local` (default for `nori-local`); `NORI_ROLE` (`all`\|`api`\|`worker`); see [AWS adapters](infrastructure/aws/README.md). |
+| `NORI_CLOUD`, `NORI_ROLE`, `AWS_REGION` | `gcp` (Cloud Storage via ADC + Secret Manager), `aws` (S3 + AWS Secrets Manager; default for `cmd/nori`), or `local` (default for `nori-local`); `NORI_ROLE` (`all`\|`api`\|`worker`); see [AWS adapters](infrastructure/aws/README.md). |
 | `NORI_STORE_BACKEND`, `NORI_POSTGRES_URL` | Postgres (`postgres`) is the sole database backend; numbered migrations run automatically on startup. |
-| `ARTIFACT_BUCKET`, `NORI_LOCAL_ARTIFACT_DIR` | Private S3 bucket (`aws`) or local private directory (`local`, requires loopback Postgres). |
+| `ARTIFACT_BUCKET`, `NORI_LOCAL_ARTIFACT_DIR` | Private GCS (`gcp`) or S3 (`aws`) bucket, or local private directory (`local`, requires loopback Postgres). |
 | `NORI_SERVICE_TOKEN_KEY`, `NORI_SERVICE_AUDIENCE` | Shared HS256 secret (>= 32 bytes) and audience (default `nori`) authenticating hosted web/API calls. |
 | `JEV_API_KEY`, `EXA_API_KEY` | Deployment credentials for Jev classification and Exa search. |
 | `NORI_BACKGROUND_TASKS_ENABLED`, `NORI_JEV_ENABLED`, `NORI_TASK_BUDGET_USD` | Feature toggles and per-task USD spending ceiling (default `1`). |
@@ -199,6 +205,6 @@ Sentry and Arize export are optional and fail open (`SENTRY_DSN`, `ARIZE_SPACE_I
 ## Container images
 
 - Core image: [`infrastructure/Dockerfile`](infrastructure/Dockerfile) (built from `core/`, runs `cmd/nori --role=all|api|worker`).
-- Web image: [`../web/Dockerfile`](../web/Dockerfile) (built from `web/`).
+- Web image: [`../web/Dockerfile`](../web/Dockerfile) (built from the repository root `.`, e.g. `docker build -f web/Dockerfile .`).
 
 Go `core` and Next.js `web` share this monorepo and deploy with independent images and releases.

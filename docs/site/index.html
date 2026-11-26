@@ -44,7 +44,7 @@
 <li>Tools connect through built-in runtime capabilities (web search, saved results, memory, uploaded images) and the <a href="apps.html">MCP tool bus &amp; provider-agnostic connections port</a>.</li>
 <li><a href="schedules.html">Automations and goals</a> run scheduled work and deliver results to the in-app inbox.</li>
 <li><a href="results.html">Results</a>, uploads, subtasks, <a href="memory.html">memories and summaries</a> persist in Postgres and S3 (or local disk). The SSE event stream resumes after reconnects.</li>
-<li><a href="clients.html">The host app embeds Nori headlessly</a> via <code>integrations/embed/adapter.mjs</code>; the slim Next.js <a href="web-client.html">test workbench</a> exercises the full assistant locally.</li>
+<li><a href="clients.html">Web, iOS, and Mac clients</a> connect through authenticated per-user BFF routes and resumable SSE streams.</li>
 </ul></section>
 <section><h2>Where to go next</h2>
 <div class="grid2">
@@ -53,6 +53,6 @@
 <a class="card tight go" href="contract.html"><b>How the loops talk</b><span>The tools, commands and events between the loops.</span></a>
 <a class="card tight go" href="system.html"><b>Service overview</b><span>Every service box, and what it is responsible for.</span></a>
 </div></section>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/conversation/runner.go</code> · <code>core/internal/conversation/model.go</code> · <code>core/internal/conversation/compact.go</code> · <code>core/internal/task/runner.go</code> · <code>core/internal/task/completion.go</code> · <code>core/internal/task/subtasks.go</code> · <code>core/internal/worker/pool.go</code> · <code>core/internal/agent/steps.go</code> · <code>core/internal/connectors/mcp/mcp.go</code> · <code>core/internal/permissions/rules.go</code> · <code>core/internal/scheduler/service.go</code> · <code>core/internal/state/results.go</code> · <code>core/internal/state/memory.go</code> · <code>core/internal/api/events.go</code> · <code>core/internal/api/uploads.go</code> · <code>integrations/embed/adapter.mjs</code> · <code>web/src/components/runtime/NoriApp.tsx</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/conversation/runner.go</code> · <code>core/internal/conversation/model.go</code> · <code>core/internal/conversation/compact.go</code> · <code>core/internal/task/runner.go</code> · <code>core/internal/task/completion.go</code> · <code>core/internal/task/subtasks.go</code> · <code>core/internal/worker/pool.go</code> · <code>core/internal/agent/steps.go</code> · <code>core/internal/connectors/mcp/mcp.go</code> · <code>core/internal/permissions/rules.go</code> · <code>core/internal/scheduler/service.go</code> · <code>core/internal/state/results.go</code> · <code>core/internal/state/memory.go</code> · <code>core/internal/api/events.go</code> · <code>core/internal/api/uploads.go</code> · <code>web/src/components/runtime/NoriApp.tsx</code></p></details>
 </body>
 </html>

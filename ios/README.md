@@ -1,6 +1,6 @@
 # Nori for iOS
 
-Native SwiftUI iOS client for Nori (iOS 18+, Swift 6, zero external dependencies).
+Native SwiftUI iOS client for Nori (iOS 18+, Swift 6; `NoriKit` has zero external dependencies and `NoriApp` optionally integrates `sentry-cocoa`).
 
 ## Structure
 
