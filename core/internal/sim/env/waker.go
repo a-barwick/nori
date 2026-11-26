@@ -22,17 +22,14 @@ type WakeKind string
 
 const (
 	WakeConversation WakeKind = "conversation"
-	WakeWorker       WakeKind = "worker"
 	WakeDelayed      WakeKind = "delayed"
 )
 
 type WakeEvent struct {
-	Seq         int64
-	Kind        WakeKind
-	UserID      string
-	Build       string
-	WorkflowIDs []string
-	DueAt       time.Time
+	Seq    int64
+	Kind   WakeKind
+	UserID string
+	DueAt  time.Time
 }
 
 type WakerFaults struct {
@@ -47,7 +44,6 @@ type WakerFaults struct {
 
 type WakerStats struct {
 	ConversationCalls int64
-	WorkerCalls       int64
 	DelayedCalls      int64
 	Enqueued          int64
 	Delivered         int64
@@ -58,13 +54,12 @@ type WakerStats struct {
 }
 
 type Waker struct {
-	mu              sync.Mutex
-	clock           *Clock
-	workersNeedWake bool
-	faultsEnabled   bool
-	faults          WakerFaults
-	stats           WakerStats
-	rng             *rand.Rand
+	mu            sync.Mutex
+	clock         *Clock
+	faultsEnabled bool
+	faults        WakerFaults
+	stats         WakerStats
+	rng           *rand.Rand
 
 	nextSeq int64
 	queue   []WakeEvent
@@ -75,7 +70,7 @@ var (
 	_ wake.DelayedWaker = (*Waker)(nil)
 )
 
-func NewWaker(clock *Clock, workersNeedWake bool, faults WakerFaults, rng *rand.Rand) *Waker {
+func NewWaker(clock *Clock, faults WakerFaults, rng *rand.Rand) *Waker {
 	if clock == nil {
 		clock = NewClock(time.Time{})
 	}
@@ -83,28 +78,15 @@ func NewWaker(clock *Clock, workersNeedWake bool, faults WakerFaults, rng *rand.
 		rng = rand.New(rand.NewPCG(1, 1))
 	}
 	return &Waker{
-		clock:           clock,
-		workersNeedWake: workersNeedWake,
-		faultsEnabled:   true,
-		faults:          faults,
-		rng:             rng,
+		clock:         clock,
+		faultsEnabled: true,
+		faults:        faults,
+		rng:           rng,
 	}
 }
 
 func (w *Waker) ForUser(userID string) wake.Waker {
 	return wake.ForUser(w, userID)
-}
-
-func (w *Waker) WorkersNeedWake() bool {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.workersNeedWake
-}
-
-func (w *Waker) SetWorkersNeedWake(need bool) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.workersNeedWake = need
 }
 
 func (w *Waker) SetFaultsEnabled(enabled bool) {
@@ -132,17 +114,7 @@ func (w *Waker) WakeConversation(ctx context.Context) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.stats.ConversationCalls++
-	return w.enqueueLocked(WakeConversation, users.ID(ctx), "", nil, w.clock.Now())
-}
-
-func (w *Waker) WakeWorker(ctx context.Context, build string, workflowIDs ...string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.stats.WorkerCalls++
-	return w.enqueueLocked(WakeWorker, users.ID(ctx), build, workflowIDs, w.clock.Now())
+	return w.enqueueLocked(WakeConversation, users.ID(ctx), w.clock.Now())
 }
 
 func (w *Waker) WakeConversationAt(ctx context.Context, at time.Time) error {
@@ -156,10 +128,10 @@ func (w *Waker) WakeConversationAt(ctx context.Context, at time.Time) error {
 	if base.IsZero() {
 		base = w.clock.Now()
 	}
-	return w.enqueueLocked(WakeDelayed, users.ID(ctx), "", nil, base)
+	return w.enqueueLocked(WakeDelayed, users.ID(ctx), base)
 }
 
-func (w *Waker) enqueueLocked(kind WakeKind, userID, build string, workflowIDs []string, baseDueAt time.Time) error {
+func (w *Waker) enqueueLocked(kind WakeKind, userID string, baseDueAt time.Time) error {
 	if w.hitFaultLocked(w.faults.EnqueueErrProb) {
 		w.stats.EnqueueErrors++
 		return fmt.Errorf("%w: %s", ErrInjectedWakeFault, kind)
@@ -186,12 +158,10 @@ func (w *Waker) enqueueLocked(kind WakeKind, userID, build string, workflowIDs [
 		}
 		w.nextSeq++
 		w.queue = append(w.queue, WakeEvent{
-			Seq:         w.nextSeq,
-			Kind:        kind,
-			UserID:      userID,
-			Build:       build,
-			WorkflowIDs: slices.Clone(workflowIDs),
-			DueAt:       dueAt,
+			Seq:    w.nextSeq,
+			Kind:   kind,
+			UserID: userID,
+			DueAt:  dueAt,
 		})
 		w.stats.Enqueued++
 	}
@@ -211,7 +181,7 @@ func (w *Waker) PopDue(now time.Time) []WakeEvent {
 	var remaining []WakeEvent
 	for _, ev := range w.queue {
 		if !ev.DueAt.After(cutoff) {
-			due = append(due, cloneWakeEvent(ev))
+			due = append(due, ev)
 		} else {
 			remaining = append(remaining, ev)
 		}
@@ -227,11 +197,7 @@ func (w *Waker) Peek() []WakeEvent {
 	if len(w.queue) == 0 {
 		return nil
 	}
-	out := make([]WakeEvent, len(w.queue))
-	for i, ev := range w.queue {
-		out[i] = cloneWakeEvent(ev)
-	}
-	return out
+	return slices.Clone(w.queue)
 }
 
 func (w *Waker) NextDue() (time.Time, bool) {
@@ -266,18 +232,12 @@ func (w *Waker) Digest() string {
 	defer w.mu.Unlock()
 
 	h := sha256.New()
-	writeTag(h, "sim.env.waker.v1")
-	writeBool(h, w.workersNeedWake)
+	writeTag(h, "sim.env.waker.v2")
 	writeUint64(h, uint64(len(w.queue)))
 	for _, ev := range w.queue {
 		writeString(h, string(ev.Kind))
 		writeString(h, ev.UserID)
-		writeString(h, ev.Build)
 		writeTime(h, ev.DueAt)
-		writeUint64(h, uint64(len(ev.WorkflowIDs)))
-		for _, id := range ev.WorkflowIDs {
-			writeString(h, id)
-		}
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
@@ -296,11 +256,6 @@ func (w *Waker) hitFaultLocked(prob float64) bool {
 	return w.rngLocked().Float64() < prob
 }
 
-func cloneWakeEvent(ev WakeEvent) WakeEvent {
-	ev.WorkflowIDs = slices.Clone(ev.WorkflowIDs)
-	return ev
-}
-
 func compareWakeEvents(a, b WakeEvent) int {
 	if a.DueAt.Before(b.DueAt) {
 		return -1
@@ -312,12 +267,6 @@ func compareWakeEvents(a, b WakeEvent) int {
 		return c
 	}
 	if c := cmp.Compare(a.UserID, b.UserID); c != 0 {
-		return c
-	}
-	if c := cmp.Compare(a.Build, b.Build); c != 0 {
-		return c
-	}
-	if c := slices.Compare(a.WorkflowIDs, b.WorkflowIDs); c != 0 {
 		return c
 	}
 	return cmp.Compare(a.Seq, b.Seq)

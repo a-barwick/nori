@@ -559,9 +559,6 @@ func (w *stubRepairWaker) WakeConversation(ctx context.Context) error {
 	return nil
 }
 
-func (w *stubRepairWaker) WakeWorker(context.Context, string, ...string) error { return nil }
-func (w *stubRepairWaker) WorkersNeedWake() bool                               { return false }
-
 func TestWakeRepairDoesNotHoldLockAcrossWake(t *testing.T) {
 	ctx := context.Background()
 	gate := make(chan struct{})

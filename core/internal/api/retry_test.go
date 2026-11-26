@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -54,7 +53,7 @@ func TestRetryEndpointsAndMessageViewErrorContract(t *testing.T) {
 		fn: func(context.Context, conversation.ReplyRequest) (conversation.Reply, error) {
 			return conversation.Reply{
 				Usage: state.Usage{ID: "u-fail", Model: "stub-model"},
-			}, errors.New("model request interrupted or unavailable")
+			}, conversation.ErrProviderUnavailable
 		},
 	}
 	runner := conversation.New(model, nil, nil, tasks)

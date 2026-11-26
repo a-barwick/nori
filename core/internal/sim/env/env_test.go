@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -137,10 +136,7 @@ func TestWakerFaultsDelaysAndDelayedWaker(t *testing.T) {
 	ctx := context.Background()
 	clk := NewClock(time.Time{})
 
-	wErr := NewWaker(clk, true, WakerFaults{EnqueueErrProb: 1.0}, rand.New(rand.NewPCG(10, 20)))
-	if !wErr.WorkersNeedWake() {
-		t.Fatalf("WorkersNeedWake() = false, want true")
-	}
+	wErr := NewWaker(clk, WakerFaults{EnqueueErrProb: 1.0}, rand.New(rand.NewPCG(10, 20)))
 	if err := wErr.ForUser("u1").WakeConversation(ctx); !errors.Is(err, ErrInjectedWakeFault) {
 		t.Fatalf("WakeConversation with EnqueueErrProb=1 = %v, want ErrInjectedWakeFault", err)
 	}
@@ -148,32 +144,29 @@ func TestWakerFaultsDelaysAndDelayedWaker(t *testing.T) {
 		t.Fatalf("pending=%d stats=%+v", wErr.PendingCount(), wErr.Stats())
 	}
 
-	wDrop := NewWaker(clk, false, WakerFaults{DropProb: 1.0}, rand.New(rand.NewPCG(10, 20)))
-	if wDrop.WorkersNeedWake() {
-		t.Fatalf("WorkersNeedWake() = true, want false")
-	}
-	if err := wDrop.ForUser("u1").WakeWorker(ctx, "b1", "wf-1"); err != nil {
-		t.Fatalf("WakeWorker with DropProb=1 returned error: %v", err)
+	wDrop := NewWaker(clk, WakerFaults{DropProb: 1.0}, rand.New(rand.NewPCG(10, 20)))
+	if err := wDrop.ForUser("u1").WakeConversation(ctx); err != nil {
+		t.Fatalf("WakeConversation with DropProb=1 returned error: %v", err)
 	}
 	if wDrop.PendingCount() != 0 || wDrop.Stats().Dropped != 1 {
 		t.Fatalf("pending=%d stats=%+v", wDrop.PendingCount(), wDrop.Stats())
 	}
 
-	wDup := NewWaker(clk, true, WakerFaults{
+	wDup := NewWaker(clk, WakerFaults{
 		DuplicateProb: 1.0,
 		MaxDelay:      10 * time.Second,
 	}, rand.New(rand.NewPCG(99, 100)))
 
 	uWaker := wDup.ForUser("u1")
 	t0 := clk.Now()
-	if err := uWaker.WakeWorker(ctx, "build-1", "wf-a", "wf-b"); err != nil {
-		t.Fatalf("WakeWorker = %v", err)
+	if err := uWaker.WakeConversation(ctx); err != nil {
+		t.Fatalf("WakeConversation = %v", err)
 	}
 	if wDup.PendingCount() != 2 || wDup.Stats().Duplicated != 1 || wDup.Stats().Enqueued != 2 {
 		t.Fatalf("after dup: pending=%d stats=%+v", wDup.PendingCount(), wDup.Stats())
 	}
 	for _, ev := range wDup.Peek() {
-		if ev.Kind != WakeWorker || ev.UserID != "u1" || ev.Build != "build-1" || !slices.Equal(ev.WorkflowIDs, []string{"wf-a", "wf-b"}) {
+		if ev.Kind != WakeConversation || ev.UserID != "u1" {
 			t.Fatalf("unexpected WakeEvent: %+v", ev)
 		}
 		if ev.DueAt.Before(t0) || ev.DueAt.After(t0.Add(10*time.Second)) {
@@ -221,7 +214,7 @@ func TestWakerFaultsDelaysAndDelayedWaker(t *testing.T) {
 func TestWakerWithRepairerSmoke(t *testing.T) {
 	ctx := context.Background()
 	clk := NewClock(time.Time{})
-	w := NewWaker(clk, true, WakerFaults{EnqueueErrProb: 1.0}, rand.New(rand.NewPCG(3, 4)))
+	w := NewWaker(clk, WakerFaults{EnqueueErrProb: 1.0}, rand.New(rand.NewPCG(3, 4)))
 
 	repairer := &wake.Repairer{
 		Waker:   w.ForUser("u1"),
@@ -264,7 +257,7 @@ func TestDeterministicReplayDigests(t *testing.T) {
 		clk := NewClock(time.Time{})
 		ids := NewIDGenFromSeed(seed)
 		trace := NewTrace(128)
-		w := NewWaker(clk, true, WakerFaults{
+		w := NewWaker(clk, WakerFaults{
 			EnqueueErrProb: 0.15,
 			DropProb:       0.15,
 			DuplicateProb:  0.25,
@@ -279,16 +272,13 @@ func TestDeterministicReplayDigests(t *testing.T) {
 			uid := userIDs[stepRNG.IntN(len(userIDs))]
 			uw := w.ForUser(uid)
 
-			switch stepRNG.IntN(3) {
+			switch stepRNG.IntN(2) {
 			case 0:
 				err := uw.WakeConversation(ctx)
 				trace.Record(step, clk.Now(), uid, "waker", "wake_conv", fmt.Sprintf("err=%v", err))
 			case 1:
 				err := wake.At(ctx, uw, clk.Now().Add(3*time.Second))
 				trace.Record(step, clk.Now(), uid, "waker", "wake_at", fmt.Sprintf("err=%v", err))
-			case 2:
-				err := uw.WakeWorker(ctx, "b1", ids.Next())
-				trace.Record(step, clk.Now(), uid, "waker", "wake_worker", fmt.Sprintf("err=%v", err))
 			}
 
 			due := w.PopDue(clk.Now())
@@ -318,13 +308,13 @@ func TestDigestOrderIndependence(t *testing.T) {
 	clkA := NewClock(time.Time{})
 	clkB := NewClock(time.Time{})
 
-	wA := NewWaker(clkA, true, WakerFaults{}, nil)
-	wB := NewWaker(clkB, true, WakerFaults{}, nil)
+	wA := NewWaker(clkA, WakerFaults{}, nil)
+	wB := NewWaker(clkB, WakerFaults{}, nil)
 
 	_ = wA.ForUser("u1").WakeConversation(ctx)
-	_ = wA.ForUser("u2").WakeWorker(ctx, "b1", "wf-2")
+	_ = wake.At(ctx, wA.ForUser("u2"), clkA.Now().Add(time.Minute))
 
-	_ = wB.ForUser("u2").WakeWorker(ctx, "b1", "wf-2")
+	_ = wake.At(ctx, wB.ForUser("u2"), clkB.Now().Add(time.Minute))
 	_ = wB.ForUser("u1").WakeConversation(ctx)
 
 	if wA.Digest() != wB.Digest() {

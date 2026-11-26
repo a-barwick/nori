@@ -212,8 +212,6 @@ func (w *countingWaker) WakeConversation(context.Context) error {
 	w.convWakes.Add(1)
 	return nil
 }
-func (w *countingWaker) WakeWorker(context.Context, string, ...string) error { return nil }
-func (w *countingWaker) WorkersNeedWake() bool                               { return false }
 
 type countingOps struct {
 	repairCalls atomic.Int32

@@ -40,9 +40,6 @@ func (w leaseWaker) WakeConversationAt(ctx context.Context, at time.Time) error 
 	return w.leases.WakeUser(ctx, userID, docstore.LaneScheduler, at)
 }
 
-func (leaseWaker) WakeWorker(context.Context, string, ...string) error { return nil }
-func (leaseWaker) WorkersNeedWake() bool                               { return false }
-
 func Secrets(s settings.Settings) secret.Lookup {
 	if s.Cloud == "aws" {
 		return awssecrets.Lookup{Region: s.AWS.Region}
