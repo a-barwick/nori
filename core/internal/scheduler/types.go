@@ -85,24 +85,24 @@ type Automation struct {
 	Title                  string           `json:"title"`
 	Instruction            string           `json:"instruction"`
 	Status                 AutomationStatus `json:"status"`
-	Trigger                Trigger     `json:"trigger"`
-	ConnectionIDs          []string    `json:"connection_ids"`
-	AuthorityRuleIDs       []string    `json:"authority_rule_ids"`
-	BudgetUSD              float64     `json:"budget_usd"`
-	MaxActiveRuns          int         `json:"max_active_runs"`
-	MissedRun              string      `json:"missed_run"`
-	ExecutionWindowSeconds int64       `json:"execution_window_seconds"`
-	DestinationIDs         []string    `json:"destination_ids"`
-	NextAt                 *time.Time  `json:"next_at,omitempty"`
-	EndAt                  *time.Time  `json:"end_at,omitempty"`
-	MaxOccurrences         int         `json:"max_occurrences,omitempty"`
-	GoalID                 string      `json:"goal_id,omitempty"`
-	LastOccurrenceID       string      `json:"last_occurrence_id,omitempty"`
-	SnoozedUntil           *time.Time  `json:"snoozed_until,omitempty"`
-	LastOccurrence         *Occurrence `json:"last_occurrence,omitempty"`
-	AuthoritySummary       string      `json:"authority_summary,omitempty"`
-	CreatedAt              *time.Time  `json:"created_at,omitempty"`
-	UpdatedAt              *time.Time  `json:"updated_at,omitempty"`
+	Trigger                Trigger          `json:"trigger"`
+	ConnectionIDs          []string         `json:"connection_ids"`
+	AuthorityRuleIDs       []string         `json:"authority_rule_ids"`
+	BudgetUSD              float64          `json:"budget_usd"`
+	MaxActiveRuns          int              `json:"max_active_runs"`
+	MissedRun              string           `json:"missed_run"`
+	ExecutionWindowSeconds int64            `json:"execution_window_seconds"`
+	DestinationIDs         []string         `json:"destination_ids"`
+	NextAt                 *time.Time       `json:"next_at,omitempty"`
+	EndAt                  *time.Time       `json:"end_at,omitempty"`
+	MaxOccurrences         int              `json:"max_occurrences,omitempty"`
+	GoalID                 string           `json:"goal_id,omitempty"`
+	LastOccurrenceID       string           `json:"last_occurrence_id,omitempty"`
+	SnoozedUntil           *time.Time       `json:"snoozed_until,omitempty"`
+	LastOccurrence         *Occurrence      `json:"last_occurrence,omitempty"`
+	AuthoritySummary       string           `json:"authority_summary,omitempty"`
+	CreatedAt              *time.Time       `json:"created_at,omitempty"`
+	UpdatedAt              *time.Time       `json:"updated_at,omitempty"`
 }
 
 type stored struct {
@@ -141,22 +141,22 @@ type ErrorDetail struct {
 }
 
 type Occurrence struct {
-	ID                 string       `json:"id"`
-	AutomationID       string       `json:"automation_id"`
-	AutomationRevision int64        `json:"automation_revision"`
-	Generation         int64        `json:"generation"`
-	ScheduledAt        time.Time    `json:"scheduled_at"`
+	ID                 string           `json:"id"`
+	AutomationID       string           `json:"automation_id"`
+	AutomationRevision int64            `json:"automation_revision"`
+	Generation         int64            `json:"generation"`
+	ScheduledAt        time.Time        `json:"scheduled_at"`
 	SourceRevision     string           `json:"source_revision,omitempty"`
 	Status             OccurrenceStatus `json:"status"`
-	TaskIDs            []string     `json:"task_ids"`
-	DeliveryIDs        []string     `json:"delivery_ids"`
-	StartedAt          *time.Time   `json:"started_at,omitempty"`
-	FinishedAt         *time.Time   `json:"finished_at,omitempty"`
-	Summary            string       `json:"summary,omitempty"`
-	Error              *ErrorDetail `json:"error,omitempty"`
-	Reason             string       `json:"reason,omitempty"`
-	Deliveries         []Delivery   `json:"deliveries,omitempty"`
-	Instruction        string       `json:"-"`
+	TaskIDs            []string         `json:"task_ids"`
+	DeliveryIDs        []string         `json:"delivery_ids"`
+	StartedAt          *time.Time       `json:"started_at,omitempty"`
+	FinishedAt         *time.Time       `json:"finished_at,omitempty"`
+	Summary            string           `json:"summary,omitempty"`
+	Error              *ErrorDetail     `json:"error,omitempty"`
+	Reason             string           `json:"reason,omitempty"`
+	Deliveries         []Delivery       `json:"deliveries,omitempty"`
+	Instruction        string           `json:"-"`
 }
 
 type occurrenceDoc struct {

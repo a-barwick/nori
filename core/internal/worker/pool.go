@@ -518,16 +518,16 @@ func (p *Pool) waitNext(ctx context.Context, wakeCh <-chan struct{}, tickCh <-ch
 }
 
 type claimLoopSpec[T any] struct {
-	lane          string
-	claimErrMsg   string
-	concurrency   int
-	wakeCh        <-chan struct{}
-	active        *atomic.Int64
-	limitPerUser  bool
-	userID        func(T) string
-	claim         func(context.Context) (T, bool, error)
-	deferClaim    func(context.Context, T)
-	handle        func(context.Context, T)
+	lane         string
+	claimErrMsg  string
+	concurrency  int
+	wakeCh       <-chan struct{}
+	active       *atomic.Int64
+	limitPerUser bool
+	userID       func(T) string
+	claim        func(context.Context) (T, bool, error)
+	deferClaim   func(context.Context, T)
+	handle       func(context.Context, T)
 }
 
 func runClaimLoop[T any](p *Pool, claimCtx, workCtx context.Context, workWG *sync.WaitGroup, spec claimLoopSpec[T]) {

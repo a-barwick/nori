@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	defaultSkipGrace                = time.Minute
-	maxAutomationUpdateRetries      = 4
+	defaultSkipGrace                 = time.Minute
+	maxAutomationUpdateRetries       = 4
 	maxConsecutiveAutomationFailures = 3
 )
 

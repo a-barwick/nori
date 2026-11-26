@@ -142,9 +142,15 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 	mux.HandleFunc("/api/users/redeem", router.handleUserResolveOrRedeem)
 	mux.HandleFunc("/api/oauth/google-workspace/callback", router.handleGoogleOAuthCallback)
 	mux.HandleFunc("/api/resume", router.handleResume)
-	mux.HandleFunc("/users/", router.handlePrefixedUser)
 	mux.HandleFunc("/", router.handleForbiddenUser)
-	return localOriginGuard(local, mux)
+	dispatch := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/users/") {
+			router.handlePrefixedUser(w, r)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+	return localOriginGuard(local, dispatch)
 }
 
 func (u *userRouter) handleUserResolveOrRedeem(w http.ResponseWriter, r *http.Request) {
