@@ -6,62 +6,90 @@
 	objectVersion = 60;
 	objects = {
 
-		A10000010000000000000001  = {isa = PBXBuildFile; fileRef = A20000010000000000000001 ; };
-		A10000020000000000000001  = {isa = PBXBuildFile; fileRef = A20000020000000000000001 ; };
-		A10000030000000000000001  = {isa = PBXBuildFile; productRef = A90000010000000000000001 ; };
-		A10000040000000000000001  = {isa = PBXBuildFile; productRef = A90000020000000000000001 ; };
-		A10000050000000000000001  = {isa = PBXBuildFile; productRef = A90000030000000000000001 ; };
+/* Begin PBXBuildFile section */
+		A10000010000000000000001 /* NoriApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000001 /* NoriApp.swift */; };
+		A10000020000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000020000000000000001 /* Assets.xcassets */; };
+		A10000030000000000000001 /* NoriFeatures in Frameworks */ = {isa = PBXBuildFile; productRef = A90000010000000000000001 /* NoriFeatures */; };
+		A10000040000000000000001 /* NoriCore in Frameworks */ = {isa = PBXBuildFile; productRef = A90000020000000000000001 /* NoriCore */; };
+		A10000050000000000000001 /* NoriDesign in Frameworks */ = {isa = PBXBuildFile; productRef = A90000030000000000000001 /* NoriDesign */; };
+		A10000060000000000000001 /* SentryNoriTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000050000000000000001 /* SentryNoriTelemetry.swift */; };
+		A10000070000000000000001 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = A90000040000000000000001 /* Sentry */; };
+/* End PBXBuildFile section */
 
-		A20000010000000000000001  = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoriApp.swift; sourceTree = "<group>"; };
-		A20000020000000000000001  = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		A20000030000000000000001  = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		A20000040000000000000001  = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Nori.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* Begin PBXFileReference section */
+		A20000010000000000000001 /* NoriApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoriApp.swift; sourceTree = "<group>"; };
+		A20000020000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A20000030000000000000001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A20000040000000000000001 /* Nori.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Nori.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000050000000000000001 /* SentryNoriTelemetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentryNoriTelemetry.swift; sourceTree = "<group>"; };
+		A20000060000000000000001 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		A20000070000000000000001 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+		A20000080000000000000001 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
+/* End PBXFileReference section */
 
-		A30000010000000000000001  = {
+/* Begin PBXFrameworksBuildPhase section */
+		A30000010000000000000001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A10000030000000000000001 ,
-				A10000040000000000000001 ,
-				A10000050000000000000001 ,
+				A10000030000000000000001 /* NoriFeatures in Frameworks */,
+				A10000040000000000000001 /* NoriCore in Frameworks */,
+				A10000050000000000000001 /* NoriDesign in Frameworks */,
+				A10000070000000000000001 /* Sentry in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+/* End PBXFrameworksBuildPhase section */
 
+/* Begin PBXGroup section */
 		A40000010000000000000001 = {
 			isa = PBXGroup;
 			children = (
-				A40000020000000000000001 ,
-				A40000030000000000000001 ,
+				A40000040000000000000001 /* Config */,
+				A40000020000000000000001 /* NoriApp */,
+				A40000030000000000000001 /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		A40000020000000000000001  = {
+		A40000020000000000000001 /* NoriApp */ = {
 			isa = PBXGroup;
 			children = (
-				A20000010000000000000001 ,
-				A20000020000000000000001 ,
-				A20000030000000000000001 ,
+				A20000010000000000000001 /* NoriApp.swift */,
+				A20000050000000000000001 /* SentryNoriTelemetry.swift */,
+				A20000020000000000000001 /* Assets.xcassets */,
+				A20000030000000000000001 /* Info.plist */,
 			);
 			path = NoriApp;
 			sourceTree = "<group>";
 		};
-		A40000030000000000000001  = {
+		A40000030000000000000001 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				A20000040000000000000001 ,
+				A20000040000000000000001 /* Nori.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
+		A40000040000000000000001 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				A20000060000000000000001 /* Base.xcconfig */,
+				A20000070000000000000001 /* Debug.xcconfig */,
+				A20000080000000000000001 /* Release.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
 
-		A50000010000000000000001  = {
+/* Begin PBXNativeTarget section */
+		A50000010000000000000001 /* Nori */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = A60000020000000000000001 ;
+			buildConfigurationList = A60000020000000000000001 /* Build configuration list for PBXNativeTarget "Nori" */;
 			buildPhases = (
-				A70000010000000000000001 ,
-				A30000010000000000000001 ,
-				A70000020000000000000001 ,
+				A70000010000000000000001 /* Sources */,
+				A30000010000000000000001 /* Frameworks */,
+				A70000020000000000000001 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -69,16 +97,19 @@
 			);
 			name = Nori;
 			packageProductDependencies = (
-				A90000010000000000000001 ,
-				A90000020000000000000001 ,
-				A90000030000000000000001 ,
+				A90000010000000000000001 /* NoriFeatures */,
+				A90000020000000000000001 /* NoriCore */,
+				A90000030000000000000001 /* NoriDesign */,
+				A90000040000000000000001 /* Sentry */,
 			);
 			productName = Nori;
-			productReference = A20000040000000000000001 ;
+			productReference = A20000040000000000000001 /* Nori.app */;
 			productType = "com.apple.product-type.application";
 		};
+/* End PBXNativeTarget section */
 
-		A80000010000000000000001  = {
+/* Begin PBXProject section */
+		A80000010000000000000001 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
@@ -90,7 +121,7 @@
 					};
 				};
 			};
-			buildConfigurationList = A60000010000000000000001 ;
+			buildConfigurationList = A60000010000000000000001 /* Build configuration list for PBXProject "Nori" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -100,35 +131,43 @@
 			);
 			mainGroup = A40000010000000000000001;
 			packageReferences = (
-				AA0000010000000000000001 ,
+				AA0000010000000000000001 /* XCLocalSwiftPackageReference "NoriKit" */,
+				AA0000020000000000000001 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
 			);
-			productRefGroup = A40000030000000000000001 ;
+			productRefGroup = A40000030000000000000001 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				A50000010000000000000001 ,
+				A50000010000000000000001 /* Nori */,
 			);
 		};
+/* End PBXProject section */
 
-		A70000020000000000000001  = {
+/* Begin PBXResourcesBuildPhase section */
+		A70000020000000000000001 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A10000020000000000000001 ,
+				A10000020000000000000001 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+/* End PBXResourcesBuildPhase section */
 
-		A70000010000000000000001  = {
+/* Begin PBXSourcesBuildPhase section */
+		A70000010000000000000001 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A10000010000000000000001 ,
+				A10000010000000000000001 /* NoriApp.swift in Sources */,
+				A10000060000000000000001 /* SentryNoriTelemetry.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+/* End PBXSourcesBuildPhase section */
 
-		AB0000010000000000000001  = {
+/* Begin XCBuildConfiguration section */
+		AB0000010000000000000001 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -192,7 +231,7 @@
 			};
 			name = Debug;
 		};
-		AB0000020000000000000001  = {
+		AB0000020000000000000001 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -248,8 +287,9 @@
 			};
 			name = Release;
 		};
-		AB0000030000000000000001  = {
+		AB0000030000000000000001 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A20000070000000000000001 /* Debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -276,8 +316,9 @@
 			};
 			name = Debug;
 		};
-		AB0000040000000000000001  = {
+		AB0000040000000000000001 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A20000080000000000000001 /* Release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -304,46 +345,69 @@
 			};
 			name = Release;
 		};
+/* End XCBuildConfiguration section */
 
-		A60000010000000000000001  = {
+/* Begin XCConfigurationList section */
+		A60000010000000000000001 /* Build configuration list for PBXProject "Nori" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				AB0000010000000000000001 ,
-				AB0000020000000000000001 ,
+				AB0000010000000000000001 /* Debug */,
+				AB0000020000000000000001 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		A60000020000000000000001  = {
+		A60000020000000000000001 /* Build configuration list for PBXNativeTarget "Nori" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				AB0000030000000000000001 ,
-				AB0000040000000000000001 ,
+				AB0000030000000000000001 /* Debug */,
+				AB0000040000000000000001 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+/* End XCConfigurationList section */
 
-		AA0000010000000000000001  = {
+/* Begin XCLocalSwiftPackageReference section */
+		AA0000010000000000000001 /* XCLocalSwiftPackageReference "NoriKit" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = NoriKit;
 		};
+/* End XCLocalSwiftPackageReference section */
 
-		A90000010000000000000001  = {
+/* Begin XCRemoteSwiftPackageReference section */
+		AA0000020000000000000001 /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/getsentry/sentry-cocoa";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 8.53.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A90000010000000000000001 /* NoriFeatures */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = AA0000010000000000000001 ;
+			package = AA0000010000000000000001 /* XCLocalSwiftPackageReference "NoriKit" */;
 			productName = NoriFeatures;
 		};
-		A90000020000000000000001  = {
+		A90000020000000000000001 /* NoriCore */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = AA0000010000000000000001 ;
+			package = AA0000010000000000000001 /* XCLocalSwiftPackageReference "NoriKit" */;
 			productName = NoriCore;
 		};
-		A90000030000000000000001  = {
+		A90000030000000000000001 /* NoriDesign */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = AA0000010000000000000001 ;
+			package = AA0000010000000000000001 /* XCLocalSwiftPackageReference "NoriKit" */;
 			productName = NoriDesign;
 		};
+		A90000040000000000000001 /* Sentry */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA0000020000000000000001 /* XCRemoteSwiftPackageReference "sentry-cocoa" */;
+			productName = Sentry;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
-	rootObject = A80000010000000000000001 ;
+	rootObject = A80000010000000000000001 /* Project object */;
 }

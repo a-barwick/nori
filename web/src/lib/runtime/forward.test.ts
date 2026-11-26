@@ -146,6 +146,7 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
 
     await mockUpstream({ [email]: userID }, async (_url, init) => {
       runtimeCalled = true;
+      assert.equal(new Headers(init?.headers).get("x-nori-client"), "web");
       const buf = init?.body as ArrayBuffer;
       return Response.json({ id: "u1", size: buf.byteLength });
     });
@@ -170,7 +171,7 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     });
     const streamReq = new Request(`${APP_ORIGIN}/api/v1/uploads?id=u2&filename=stream.bin`, {
       method: "POST",
-      headers: await authHeaders(email, { "content-type": "application/octet-stream" }),
+      headers: await authHeaders(email, { "content-type": "application/octet-stream", "x-nori-client": "ios" }),
       body: hugeStream,
     });
     const streamRes = await uploadRoute(streamReq);

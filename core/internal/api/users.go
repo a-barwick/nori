@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"nori/internal/httpjson"
+	"nori/internal/observability"
 	"nori/internal/serviceauth"
 	"nori/internal/users"
 )
@@ -95,6 +96,7 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 				writeJSON(w, 403, map[string]string{"error": "No user for this sign-in."})
 				return
 			}
+			observability.BindHTTPUser(r.Context(), row.ID)
 			writeJSON(w, 200, map[string]string{"id": row.ID})
 			return
 		}
@@ -155,13 +157,14 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "Access denied."})
 			return
 		}
-		routes, release, err := open(r.Context(), row)
+		ctx := observability.BindHTTPUser(r.Context(), row.ID)
+		routes, release, err := open(ctx, row)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
 		defer release()
-		routes.Handler.ServeHTTP(w, r.WithContext(users.WithID(r.Context(), row.ID)))
+		routes.Handler.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

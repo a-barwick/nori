@@ -10,10 +10,13 @@ struct NoriApp: App {
 
     init() {
         #if DEBUG
-        let initialStore: NoriStore = CommandLine.arguments.contains("-nori-preview")
+        let isPreview = CommandLine.arguments.contains("-nori-preview")
+        SentryNoriTelemetry.bootstrap(isPreviewMode: isPreview)
+        let initialStore: NoriStore = isPreview
             ? NoriStore.makePreviewStore()
             : NoriStore()
         #else
+        SentryNoriTelemetry.bootstrap(isPreviewMode: false)
         let initialStore = NoriStore()
         #endif
         if let initialURL = Self.resolveInitialURL() {

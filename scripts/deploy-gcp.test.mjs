@@ -15,7 +15,16 @@ function runFixture(t, ready, smoke = false) {
   command("git", 'case "$2" in --abbrev-ref) echo main;; --short) echo fixture;; esac');
   command("docker", 'printf "image %s\\n" "$*" >> "$FIXTURE_LOG"');
   command("gcloud", 'printf "gcloud %s\\n" "$*" >> "$FIXTURE_LOG"; if [ "$3" = describe ]; then printf "https://%s.example\\n" "$4"; fi');
-  command("curl", 'printf "curl %s\\n" "$*" >> "$FIXTURE_LOG"; case "$*" in */readyz) exit "$READY_EXIT";; esac');
+  command("curl", `
+printf "curl %s\\n" "$*" >> "$FIXTURE_LOG"
+case " $* " in
+  *" -H @- "*)
+    expected="$(printf '%s\\n' 'Authorization: Bearer fixture-identity-token' 'Sec-Fetch-Site: same-origin')"
+    [ "$(cat)" = "$expected" ] || exit 1 ;;
+esac
+case "$*" in
+  */readyz) exit "$READY_EXIT" ;;
+esac`);
   const token = join(dir, "smoke-token");
   if (smoke) writeFileSync(token, "fixture-identity-token\n", { mode: 0o600 });
   const result = spawnSync("bash", [deploy, "--skip-tests"], {

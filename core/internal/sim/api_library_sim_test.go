@@ -416,7 +416,8 @@ func TestAPIMultiTenantIsolationAndAuthMiddleware(t *testing.T) {
 	}
 
 	authResume := w.do(t, "POST", "/users/"+aliceID+"/api/resume", tok, "application/json", []byte(`{}`), map[string]string{
-		"traceparent": traceHeader,
+		"traceparent":   traceHeader,
+		"X-Nori-Client": "ios",
 	})
 	if authResume.Code != http.StatusOK {
 		t.Fatalf("authenticated resume expected 200, got %d: %s", authResume.Code, authResume.Body.String())
@@ -451,6 +452,13 @@ func TestAPIMultiTenantIsolationAndAuthMiddleware(t *testing.T) {
 	}
 	if !foundRoute {
 		t.Fatalf("expected http.route attribute on span")
+	}
+	tags := make(map[string]string)
+	for _, attr := range matchedSpan.Attributes() {
+		tags[string(attr.Key)] = attr.Value.AsString()
+	}
+	if tags["nori.user.id"] != aliceID || tags["nori.client.platform"] != "ios" {
+		t.Fatalf("expected authorized iOS correlation on HTTP span, got %v", tags)
 	}
 }
 

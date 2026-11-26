@@ -1,0 +1,6 @@
+#include "Base.xcconfig"
+
+SENTRY_ENVIRONMENT = development
+SENTRY_TRACES_SAMPLE_RATE = 1.0
+
+#include? "Local.xcconfig"

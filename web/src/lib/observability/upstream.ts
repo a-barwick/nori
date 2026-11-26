@@ -55,15 +55,22 @@ export function reportUpstreamRejection(operation: string, request: Request, sen
 
 let lastPollFailure = 0;
 
-export function reportUpstreamFailure(operation: string, mode: "local" | "hosted", status?: number) {
+export function reportUpstreamFailure(operation: string, mode: "local" | "hosted", userID: string, status?: number) {
   if (operation === "v1/snapshot" || operation === "v1/events") {
     if (Date.now() - lastPollFailure < 60_000) return;
     lastPollFailure = Date.now();
   }
-  const attributes = { operation, mode, ...(status === undefined ? {} : { status }) };
+  const attributes = {
+    operation,
+    mode,
+    "nori.user.id": userID,
+    "nori.client.platform": "web",
+    ...(status === undefined ? {} : { status }),
+  };
   try {
     Sentry.logger.error(status === undefined ? "nori.runtime.unavailable" : "nori.runtime.server_error", attributes);
     Sentry.withScope((scope) => {
+      scope.setUser({ id: userID });
       scope.setTags(attributes);
       Sentry.captureException(new Error(status === undefined ? "Runtime connection failed" : "Runtime returned a server error"));
     });

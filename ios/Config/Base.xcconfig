@@ -1,0 +1,7 @@
+// Base build configuration shared across Debug and Release.
+// Note: in .xcconfig files, `//` starts a comment, so write DSNs as:
+//   SENTRY_DSN = https:/$()/<public-key>@<host>/<project-id>
+
+SENTRY_DSN =
+SENTRY_ENVIRONMENT = development
+SENTRY_TRACES_SAMPLE_RATE = 0.2

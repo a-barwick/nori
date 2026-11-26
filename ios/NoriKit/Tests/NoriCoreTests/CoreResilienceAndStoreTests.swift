@@ -1222,7 +1222,7 @@ private final class LockedDict<Key: Hashable & Sendable, Value: Sendable>: @unch
 }
 
 
-private actor FullMockTransport: NoriTransport {
+actor FullMockTransport: NoriTransport {
     var fetchFullSnapshotCallCount = 0
     var fetchSummaryCallCount = 0
     var fetchSessionCallCount = 0

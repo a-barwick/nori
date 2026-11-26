@@ -48,6 +48,7 @@ var metricNames = map[string]bool{
 }
 
 func Event(ctx context.Context, name string, attrs ...attribute.KeyValue) {
+	attrs = append(attrs, correlationAttributes(ctx)...)
 	if !eventNames[name] {
 		return
 	}

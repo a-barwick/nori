@@ -1,0 +1,29 @@
+name: Nori iOS symbols
+description: Verify or upload the dSYMs from an Xcode archive
+inputs:
+  archive-path:
+    description: Path to the Nori .xcarchive on this runner
+    required: true
+  verify-only:
+    description: Compare the app and dSYM UUIDs without using Sentry
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Process Nori iOS symbols
+      shell: bash
+      env:
+        NORI_IOS_ARCHIVE_PATH: ${{ inputs.archive-path }}
+        NORI_VERIFY_IOS_SYMBOLS: ${{ inputs.verify-only }}
+      run: |
+        uploader="$GITHUB_ACTION_PATH/../../../scripts/upload-ios-dsyms.sh"
+        case "$NORI_VERIFY_IOS_SYMBOLS" in
+          true) "$uploader" --verify-only "$NORI_IOS_ARCHIVE_PATH" ;;
+          false)
+            : "${SENTRY_AUTH_TOKEN:?Set SENTRY_AUTH_TOKEN for the upload step}"
+            "$uploader" "$NORI_IOS_ARCHIVE_PATH"
+            ;;
+          *) echo "verify-only must be true or false" >&2; exit 1 ;;
+        esac
