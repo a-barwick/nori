@@ -9,6 +9,8 @@ import { useAssistant } from "@/lib/assistant/context";
 import { plural, relative } from "@/lib/assistant/format";
 import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant/useResource";
 import type { AuthAttempt, Connection, HealthCode, MCPCredentialInput, MCPServer, MCPServerTool as MCPTool } from "@/lib/contracts/assistant";
+import { useHydrated } from "@/lib/hooks";
+import "@/lib/desktop";
 import { cn } from "@/lib/utils";
 import { safeAuthorizeURL } from "./InteractionCard";
 import { Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, RefreshButton, Row, Rows, Screen, Section, type Tone } from "./ui";
@@ -36,6 +38,10 @@ export function connectionState(connection: Connection): { tone: Tone; label: st
 }
 
 export async function startSignIn(connection: Pick<Connection, "id" | "revision">, action: "connect" | "repair", returnTo: string, capabilities?: string[]) {
+  if (window.noriDesktop) {
+    await window.noriDesktop.openInBrowser();
+    return;
+  }
   const receipt = await mutate<Connection>(`/connections/${encodeURIComponent(connection.id)}/actions`, {
     request_id: newRequestID(), expected_revision: connection.revision, value: { action, return_to: returnTo, ...(capabilities?.length ? { capabilities } : {}) },
   }) as { auth?: AuthAttempt };
@@ -175,6 +181,8 @@ function MCPStatus({ server }: { server: MCPServer }) {
 }
 
 export function MCPDetailScreen({ id }: { id: string }) {
+  const hydrated = useHydrated();
+  const desktop = hydrated && !!window.noriDesktop;
   const invalidate = useResourceInvalidation();
   const server = useResource<MCPServer>(`/mcp/${encodeURIComponent(id)}`, { poll: 5_000 });
   const tools = useResource<List<MCPTool>>(`/mcp/${encodeURIComponent(id)}/tools`, { poll: 0 });
@@ -188,6 +196,10 @@ export function MCPDetailScreen({ id }: { id: string }) {
     server.apply(receipt.resource as MCPServer); invalidate(`/mcp/${encodeURIComponent(id)}/tools`);
   });
   const signIn = () => action.run("sign_in", async () => {
+    if (window.noriDesktop) {
+      await window.noriDesktop.openInBrowser();
+      return;
+    }
     const receipt = await mutate<MCPServer>(`/mcp/${encodeURIComponent(id)}/actions`, { request_id: newRequestID(), expected_revision: item.revision, value: { action: "sign_in" } }) as { auth?: AuthAttempt };
     const url = receipt.auth && safeAuthorizeURL(receipt.auth.authorize_url);
     if (!url) throw new Error("Nori didn’t return a sign-in link. Try again.");
@@ -205,12 +217,13 @@ export function MCPDetailScreen({ id }: { id: string }) {
       {observed.protocol_version && <><dt className="text-ink-3">Protocol</dt><dd>{observed.protocol_version}</dd></>}
       {!!observed.capabilities?.length && <><dt className="text-ink-3">Supports</dt><dd>{observed.capabilities.join(", ")}</dd></>}
     </dl>
+      {desktop && (observed.status === "needs_sign_in" || item.auth === "oauth" && observed.status !== "connected") && <p className="mt-3 text-meta text-ink-2">Sign in to Nori with the same account in your browser, then continue the connection there.</p>}
       <div className="mt-4 flex flex-wrap gap-2">
         {item.transport === "stdio" ? <>
           <Button size="sm" variant="primary" disabled={!!action.pending} onClick={() => void act({ action: observed.status === "connected" ? "restart" : "start" }, "start")}>{observed.status === "connected" ? "Restart" : "Start"}</Button>
           {observed.status === "connected" && <Button size="sm" disabled={!!action.pending} onClick={() => void act({ action: "stop" }, "stop")}>Stop</Button>}
         </> : <Button size="sm" variant="primary" disabled={!!action.pending} onClick={() => void act({ action: "reconnect" }, "reconnect")}>Reconnect</Button>}
-        {(observed.status === "needs_sign_in" || item.auth === "oauth" && observed.status !== "connected") && <Button size="sm" disabled={!!action.pending} onClick={() => void signIn()}>{action.pending === "sign_in" ? "Opening sign-in…" : "Sign in"}</Button>}
+        {(observed.status === "needs_sign_in" || item.auth === "oauth" && observed.status !== "connected") && <Button size="sm" disabled={!!action.pending} onClick={() => void signIn()}>{action.pending === "sign_in" ? "Opening…" : desktop ? "Continue in browser" : "Sign in"}</Button>}
       </div></Section>
     {item.auth === "configured" && <Section title="Access token"><Credential server={item} onSaved={(next) => server.apply(next)} /></Section>}
     <Section title="Tools">

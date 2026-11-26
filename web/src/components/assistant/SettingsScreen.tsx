@@ -27,6 +27,7 @@ import type { Connection, MCPServer, OperationProjection as Operation, Permissio
 import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "@/lib/runtime/messages";
 import { cn } from "@/lib/utils";
 import { ModelsSettings } from "./ModelsSettings";
+import { SignOutForm } from "./SignOutForm";
 import { OperationRows, shownOperations } from "./WorkScreen";
 import { Confirm, Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, Row, Rows, Screen, Section, Tabs } from "./ui";
 
@@ -350,7 +351,7 @@ function AccountSettings() {
         <Row href="/terms" title="Terms of Service" />
       </Rows>
     </Section>
-    {!localMode && <Section><form action="/api/auth/sign-out" method="post"><Button type="submit" variant="quiet">Sign out</Button></form></Section>}
+    {!localMode && <Section><SignOutForm /></Section>}
     {!localMode && <DeleteAccountSection />}
     </>
   );

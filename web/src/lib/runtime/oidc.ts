@@ -1,4 +1,5 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { macAccessPolicy } from "./macAccess";
 
 let discovery: { issuer: string; expires: number; keys: ReturnType<typeof createRemoteJWKSet> } | undefined;
 
@@ -47,6 +48,9 @@ export async function oidcIdentity(headers: Headers): Promise<{ email: string } 
         (payload.token_use !== undefined && payload.token_use !== "id") ||
         (Array.isArray(payload.aud) && payload.aud.length > 1 && payload.azp !== audience) ||
         (payload.azp !== undefined && payload.azp !== audience)) return null;
-    return { email: payload.email.trim().toLowerCase() };
+    const email = payload.email.trim().toLowerCase();
+    const source = process.env.NORI_OIDC_IAP_POLICY_RESOURCE;
+    if (!email || (source !== undefined && !(await macAccessPolicy(source))?.has(email))) return null;
+    return { email };
   } catch { return null; }
 }

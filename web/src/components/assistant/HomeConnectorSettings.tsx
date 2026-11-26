@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Dialog } from "radix-ui";
 import { Server } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
@@ -10,7 +10,11 @@ import {
 } from "@/lib/assistant/api";
 import { announce } from "@/lib/assistant/announce";
 import { relative } from "@/lib/assistant/format";
+import { useAssistant } from "@/lib/assistant/context";
 import { useResource, useResourceInvalidation } from "@/lib/assistant/useResource";
+import { useHydrated } from "@/lib/hooks";
+import type { DesktopBridge, DesktopHomeStatus } from "@/lib/desktop";
+import { DesktopHomeSharing } from "./DesktopHomeSharing";
 import { Confirm, Failure, Field, inputClass, Notice, Pill, Section } from "./ui";
 
 const statusLabels: Record<HomeConnector["status"], string> = {
@@ -23,18 +27,40 @@ export function HomeConnectorSettings() {
   const connectors = useResource<HomeConnectors>("/settings/home-connectors", { poll: 10_000, versioned: false });
   const [pairingOpen, setPairingOpen] = useState(false);
   const [downloadOpen, setDownloadOpen] = useState(false);
+  const hydrated = useHydrated();
+  const desktop = hydrated ? window.noriDesktop : undefined;
+  const [desktopStatus, setDesktopStatus] = useState<DesktopHomeStatus>();
 
-  if (connectors.error instanceof APIError && connectors.error.status === 404) return null;
+  useEffect(() => {
+    const bridge = desktop;
+    if (!bridge) return;
+    let active = true;
+    const check = () => {
+      void bridge.homeStatus().then((status) => { if (active) setDesktopStatus(status); }).catch(() => undefined);
+    };
+    check();
+    const timer = window.setInterval(check, 10_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [desktop]);
+
+  if (connectors.error instanceof APIError && connectors.error.status === 404 && !desktop) return null;
   if (!connectors.data) {
     if (!connectors.error) return null;
-    return <Section title="Home AI Server"><Failure error={connectors.error} onRetry={() => void connectors.reload()} /></Section>;
+    return <Section title="Home AI Server">
+      <div className="space-y-3">
+        {desktop && <DesktopHomeSettings desktop={desktop} status={desktopStatus} onStatus={setDesktopStatus} devices={[]} available={false} />}
+        <Failure error={connectors.error} onRetry={() => void connectors.reload()} />
+      </div>
+    </Section>;
   }
-  if (!connectors.data.enabled) return null;
+  if (!connectors.data.enabled && !desktop) return null;
 
   return (
     <Section title="Home AI Server">
       <div className="space-y-3">
         {connectors.error && <Failure error={connectors.error} onRetry={() => void connectors.reload()} />}
+        {desktop && <DesktopHomeSettings desktop={desktop} status={desktopStatus} onStatus={setDesktopStatus} devices={connectors.data.devices} available={connectors.data.enabled} />}
+        {connectors.data.enabled && <>
         <div className="rounded-card border border-card-border bg-surface p-4">
           <div className="flex flex-wrap items-center gap-3">
             <span className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-accent-subtle text-accent-text"><Server size={18} aria-hidden /></span>
@@ -43,7 +69,8 @@ export function HomeConnectorSettings() {
             <Button size="sm" onClick={() => setPairingOpen(true)}>Enter code</Button>
           </div>
         </div>
-        {connectors.data.devices.map((device) => <HomeDevice key={device.id} device={device} />)}
+        {!desktopStatus?.paired && connectors.data.devices.map((device) => <HomeDevice key={device.id} device={device} />)}
+        </>}
       </div>
       <Dialog.Root open={downloadOpen} onOpenChange={setDownloadOpen}>
         <Dialog.Portal>
@@ -68,6 +95,17 @@ export function HomeConnectorSettings() {
       </Dialog.Root>
     </Section>
   );
+}
+
+function DesktopHomeSettings(props: {
+  desktop: DesktopBridge;
+  status?: DesktopHomeStatus;
+  onStatus: (status: DesktopHomeStatus) => void;
+  devices: HomeConnector[];
+  available: boolean;
+}) {
+  const { scope } = useAssistant();
+  return <DesktopHomeSharing {...props} scope={scope} />;
 }
 
 function DownloadLinks({ downloads }: { downloads?: HomeConnectors["downloads"] }) {

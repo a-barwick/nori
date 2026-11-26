@@ -32,6 +32,7 @@ import { SIGNED_OUT_EVENT_KEY } from "@/lib/runtime/session";
 import type { Preferences } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
 import { OnboardingFlow, shouldShowOnboarding } from "./OnboardingFlow";
+import { SignOutForm } from "./SignOutForm";
 import { Badge, Failure, Loading, Notice } from "./ui";
 
 type NavItem = {
@@ -143,7 +144,7 @@ function AccountStateGate({ scope, localMode, children }: { scope: string; local
 
   if (state.status === "error") return <main className="mx-auto max-w-xl space-y-4 p-6">
     <Failure error={state.error} onRetry={() => beginCheck(lastCheck.current)} />
-    {!localMode && <form action="/api/auth/sign-out" method="post"><Button type="submit" variant="quiet">Sign out</Button></form>}
+    {!localMode && <SignOutForm />}
   </main>;
   if (state.status === "checking") return <main className="mx-auto max-w-xl p-6"><Loading /></main>;
   if (state.status === "resetting") return <main className="mx-auto max-w-xl p-6">

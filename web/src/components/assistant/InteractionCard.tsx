@@ -30,6 +30,8 @@ import type {
   SignInPayload,
 } from "@/lib/contracts/assistant";
 import { MAX_MESSAGE_BYTES } from "@/lib/submission";
+import { useHydrated } from "@/lib/hooks";
+import "@/lib/desktop";
 import { cn } from "@/lib/utils";
 import { startSignIn } from "./AppsScreen";
 import { inputClass, Notice, Pill } from "./ui";
@@ -531,6 +533,9 @@ function AccountChoice({ payload, state }: { payload: AccountSelectionPayload; s
 }
 
 function SignIn({ interaction, payload, state }: { interaction: Interaction; payload: SignInPayload; state: State }) {
+  const hydrated = useHydrated();
+  const desktop = hydrated && !!window.noriDesktop;
+  const browserContinuation = hydrated && new URLSearchParams(window.location.search).get("nori_desktop_continue") === "1";
   const mcp = payload.integration_id === "mcp";
   const integration = useResource<Integration>(mcp ? null : `/integrations/${encodeURIComponent(payload.integration_id)}`, {
     poll: 0,
@@ -556,7 +561,11 @@ function SignIn({ interaction, payload, state }: { interaction: Interaction; pay
       ? `/apps/mcp/${encodeURIComponent(payload.connection_id)}`
       : "/apps";
   const signIn = () => {
-    if (url && !expired) {
+    if (desktop) {
+      void action.run("sign_in", () => window.noriDesktop!.openInBrowser());
+      return;
+    }
+    if (url && !expired && !browserContinuation) {
       window.location.assign(url);
       return;
     }
@@ -575,22 +584,25 @@ function SignIn({ interaction, payload, state }: { interaction: Interaction; pay
       void action.run("sign_in", () => startSignIn(connection.data!, "repair", returnTo));
     } else {
       void action.run("sign_in", async () => {
-        throw new Error("This sign-in link expired. Sign in again from Apps; the task continues once the account works.");
+        throw new Error(browserContinuation
+          ? "Open Apps to connect this account, then return to this task."
+          : "This sign-in link expired. Sign in again from Apps; the task continues once the account works.");
       });
     }
   };
-  const blocked = !!payload.authorize_url && !url;
+  const blocked = !desktop && !browserContinuation && !!payload.authorize_url && !url;
   const title = mcp ? server.data?.name ?? "MCP server" : integration.data?.title ?? payload.integration_id;
   const wanted = askedFor(payload.requested_scopes, integration.data);
   return (
     <div className="space-y-3">
       <p className="text-meta text-ink-2">{[title, connection.data?.account?.label].filter(Boolean).join(" · ")}</p>
+      {desktop && <p className="text-meta text-ink-2">Sign in to Nori with the same account in your browser, then continue the connection there.</p>}
       {wanted.length > 0 && (
         <p className="text-meta text-ink-2">
           {title} will ask you to allow: {wanted.join("; ")}.
         </p>
       )}
-      {payload.authorize_url && !url && (
+      {blocked && (
         <Notice tone="danger">This sign-in link isn’t one Nori issued, so it won’t open.</Notice>
       )}
       {action.error && <Notice tone="danger">{action.error}</Notice>}
@@ -601,7 +613,7 @@ function SignIn({ interaction, payload, state }: { interaction: Interaction; pay
           onClick={signIn}
         >
           <KeyRound size={15} aria-hidden />
-          {action.pending ? "Opening sign-in…" : "Sign in"}
+          {action.pending ? "Opening sign-in…" : desktop ? "Continue in browser" : "Sign in"}
         </Button>
         <Button disabled={!!state.pending} onClick={() => void state.respond({ kind: "decline" }, "decline")}>
           {state.pending === "decline" ? "Declining…" : "Not now"}
