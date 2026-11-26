@@ -42,6 +42,61 @@ export default function PrivacyPage() {
           ),
         },
         {
+          heading: "Google user data",
+          body: (
+            <>
+              <p>When you connect Google, Nori asks only for the access needed by the services you turn on:</p>
+              <ul className="list-disc space-y-1 pl-5">
+                <li>
+                  <strong className="font-semibold text-ink">Drive:</strong> the files you choose in the Google file
+                  picker and files Nori creates for you. Nori can&apos;t see the rest of your Drive.
+                </li>
+                <li>
+                  <strong className="font-semibold text-ink">Calendar:</strong> reading your calendars and events, and
+                  creating or changing events when you ask.
+                </li>
+                <li>
+                  <strong className="font-semibold text-ink">Gmail:</strong> sending email you approve. Nori can&apos;t
+                  read your inbox, and each send needs your approval of its recipients, body, and attachments.
+                </li>
+                <li>
+                  <strong className="font-semibold text-ink">Account:</strong> your Google email address and account
+                  identifier, so Nori can show which account is connected.
+                </li>
+              </ul>
+              <p>
+                Nori stores your Google access token encrypted in its database, along with the names and IDs of the files
+                you choose. File contents and event details that Nori reads for a request become part of that
+                conversation or task, and are sent to the AI model provider you selected so it can answer.
+              </p>
+              <p>
+                Nori uses Google user data only to provide the features you request. Nori doesn&apos;t sell it, use it
+                for advertising, or use it to train AI models. People at Nori don&apos;t view it unless the law
+                requires it.
+              </p>
+              <p>
+                You can disconnect Google from <strong className="font-semibold text-ink">More → Apps &amp; MCP</strong>.
+                Nori then revokes its access with Google and deletes the stored token. You can also remove Nori&apos;s
+                access from your{" "}
+                <a href="https://myaccount.google.com/permissions" className="text-accent-text hover:underline">
+                  Google Account permissions
+                </a>
+                .
+              </p>
+              <p>
+                Nori&apos;s use and transfer of information received from Google APIs to any other app will adhere to the{" "}
+                <a
+                  href="https://developers.google.com/terms/api-services-user-data-policy"
+                  className="text-accent-text hover:underline"
+                >
+                  Google API Services User Data Policy
+                </a>
+                , including the Limited Use requirements.
+              </p>
+            </>
+          ),
+        },
+        {
           heading: "Telemetry and diagnostics",
           body: (
             <p>

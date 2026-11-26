@@ -26,7 +26,7 @@ Migrations may only add schema, and `TestMigrationsOnlyAddSchema` fails on a dro
 | `scripts/release.sh --force-unverified` | Skips the CI check. |
 | `scripts/release.sh --core` or `--web` | Releases that group even if its code is unchanged. |
 | `scripts/release.sh rollback core\|web\|all` | Moves each service in the group back to its previous revision. |
-| `scripts/configure-core.sh` | Changes optional Core settings: the Google Workspace beta, Home AI and the LISTEN URL secret. Releases keep existing settings. |
+| `scripts/configure-core.sh` | Changes optional Core settings: the Google connection, Home AI and the LISTEN URL secret. Releases keep existing settings. |
 | Repository variable `NORI_AUTO_RELEASE=false` | Stops the scheduled releases. **Run workflow** still releases. |
 
 For the release that introduces issuer-and-subject account binding, Web must ship first. Merge and release the Web change with `scripts/release.sh --web`, then merge the Core change. Keep the gap short, because the Web services bypass their account-resolution caches until Core confirms the binding. After the Core migration, bind existing users that require operator verification using [`nori-user bind-identity`](../README.md#users). Verify sign-in with a provisioned account on each deployed client.

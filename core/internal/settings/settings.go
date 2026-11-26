@@ -53,17 +53,25 @@ type GoogleWorkspace struct {
 	TestUsers                           []string
 }
 
+func (g GoogleWorkspace) configured() bool {
+	return g.ClientID != "" || g.ClientSecret != "" || g.RedirectURL != "" || len(g.TestUsers) > 0
+}
+
+// EnabledFor reports whether the Google connection is offered to this user. An empty
+// TestUsers list offers it to everyone; a non-empty list limits it to those emails.
 func (g GoogleWorkspace) EnabledFor(email string) bool {
-	return g.ClientID != "" && g.ClientSecret != "" && g.RedirectURL != "" &&
-		slices.Contains(g.TestUsers, strings.ToLower(strings.TrimSpace(email)))
+	if g.ClientID == "" || g.ClientSecret == "" || g.RedirectURL == "" {
+		return false
+	}
+	return len(g.TestUsers) == 0 || slices.Contains(g.TestUsers, strings.ToLower(strings.TrimSpace(email)))
 }
 
 func (g GoogleWorkspace) validate() error {
-	if g.ClientID == "" && g.ClientSecret == "" && g.RedirectURL == "" && len(g.TestUsers) == 0 {
+	if !g.configured() {
 		return nil
 	}
-	if g.ClientID == "" || g.ClientSecret == "" || g.RedirectURL == "" || len(g.TestUsers) == 0 {
-		return fmt.Errorf("Google Workspace beta requires NORI_GOOGLE_WORKSPACE_CLIENT_ID, NORI_GOOGLE_WORKSPACE_CLIENT_SECRET, NORI_GOOGLE_WORKSPACE_REDIRECT_URL and NORI_GOOGLE_WORKSPACE_TEST_USERS")
+	if g.ClientID == "" || g.ClientSecret == "" || g.RedirectURL == "" {
+		return fmt.Errorf("Google Workspace requires NORI_GOOGLE_WORKSPACE_CLIENT_ID, NORI_GOOGLE_WORKSPACE_CLIENT_SECRET and NORI_GOOGLE_WORKSPACE_REDIRECT_URL")
 	}
 	u, err := url.Parse(g.RedirectURL)
 	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" ||
@@ -190,8 +198,8 @@ func load(defaultCloud string, simulation bool) (Settings, error) {
 	if err := s.Connections.GoogleWorkspace.validate(); err != nil {
 		return Settings{}, err
 	}
-	if len(s.Connections.GoogleWorkspace.TestUsers) > 0 && s.Connections.CredentialStore != "database" {
-		return Settings{}, fmt.Errorf("Google Workspace beta needs NORI_CREDENTIAL_STORE=database")
+	if s.Connections.GoogleWorkspace.configured() && s.Connections.CredentialStore != "database" {
+		return Settings{}, fmt.Errorf("Google Workspace needs NORI_CREDENTIAL_STORE=database")
 	}
 	if simulation {
 		if s.Cloud != "local" {
