@@ -257,4 +257,33 @@ describe("proxy auth gate and header stripping", () => {
     assert.equal(devHttps.headers.get("strict-transport-security"), null);
     assert.match(devHttps.headers.get("content-security-policy") ?? "", /'unsafe-eval'/);
   });
+
+  test("redirects invite_required document requests to /invite and allows /invite to render", async () => {
+    await mockResolve((email) => {
+      if (email === "needs-invite@example.test") {
+        return Response.json({ error: "An invite code is required.", code: "invite_required" }, { status: 403 });
+      }
+      return Response.json({ id: "44444444-4444-4444-8444-444444444444" });
+    });
+
+    const inviteToken = await bearerFor("needs-invite@example.test");
+    const docRedirect = await proxy(new NextRequest("https://app.nori.example/work", {
+      headers: { authorization: `Bearer ${inviteToken}`, "sec-fetch-dest": "document" },
+    }));
+    assert.equal(docRedirect.status, 307);
+    assert.equal(docRedirect.headers.get("location"), "https://app.nori.example/invite");
+
+    const invitePage = await proxy(new NextRequest("https://app.nori.example/invite", {
+      headers: { authorization: `Bearer ${inviteToken}`, "sec-fetch-dest": "document" },
+    }));
+    assert.equal(invitePage.headers.get("x-middleware-next"), "1");
+    assertBaselineHeaders(invitePage, { expectHsts: true });
+
+    const activeToken = await bearerFor("active@example.test");
+    const activeOnInvite = await proxy(new NextRequest("https://app.nori.example/invite", {
+      headers: { authorization: `Bearer ${activeToken}`, "sec-fetch-dest": "document" },
+    }));
+    assert.equal(activeOnInvite.status, 307);
+    assert.equal(activeOnInvite.headers.get("location"), "https://app.nori.example/");
+  });
 });
