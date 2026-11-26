@@ -1,4 +1,4 @@
-package s3
+package gcs
 
 import (
 	"context"
@@ -9,14 +9,9 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
-	"golang.org/x/oauth2/google"
 	"golang.org/x/sync/errgroup"
-)
-
-const (
-	gcsObjectAPI  = "https://storage.googleapis.com/storage/v1"
-	gcsWriteScope = "https://www.googleapis.com/auth/devstorage.read_write"
 )
 
 type gcsObjectVersion struct {
@@ -24,17 +19,20 @@ type gcsObjectVersion struct {
 	Generation string `json:"generation"`
 }
 
-func (s *Store) purgeGoogleStorage(ctx context.Context) error {
-	client, err := google.DefaultClient(ctx, gcsWriteScope)
-	if err != nil {
-		return fmt.Errorf("authenticate Cloud Storage reset: %w", err)
+func (s *Store) purgeObjectAllowed(key string) (bool, error) {
+	if !strings.HasPrefix(key, s.prefix) {
+		return false, errors.New("object listing returned a key outside the user's prefix")
 	}
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return s.purgeGCS(ctx, client, gcsObjectAPI)
+	return !s.legacy || !strings.HasPrefix(key, s.prefix+"users/"), nil
 }
 
-func (s *Store) purgeGCS(ctx context.Context, client *http.Client, apiURL string) error {
-	objectsURL := apiURL + "/b/" + url.PathEscape(s.bucket) + "/o"
+// Purge deletes all live and archived object generations under the user's prefix.
+// For the legacy owner prefix ("artifacts/"), objects under "artifacts/users/" are never touched.
+func (s *Store) Purge(ctx context.Context) error {
+	if s.bucket == "" {
+		return errors.New("ARTIFACT_BUCKET must be configured")
+	}
+	objectsURL := s.client.apiURL + "/b/" + url.PathEscape(s.bucket) + "/o"
 	query := url.Values{
 		"prefix":     {s.prefix},
 		"versions":   {"true"},
@@ -43,7 +41,7 @@ func (s *Store) purgeGCS(ctx context.Context, client *http.Client, apiURL string
 	}
 	var versions []gcsObjectVersion
 	for {
-		page, token, err := listGCSVersions(ctx, client, objectsURL+"?"+query.Encode())
+		page, token, err := listGCSVersions(ctx, s.client.http, objectsURL+"?"+query.Encode())
 		if err != nil {
 			return err
 		}
@@ -76,7 +74,7 @@ func (s *Store) purgeGCS(ctx context.Context, client *http.Client, apiURL string
 			break
 		}
 		group.Go(func() error {
-			return deleteGCSVersion(deleteCtx, client, objectsURL, version)
+			return deleteGCSVersion(deleteCtx, s.client.http, objectsURL, version)
 		})
 	}
 	if err := group.Wait(); err != nil {
@@ -96,6 +94,7 @@ func listGCSVersions(ctx context.Context, client *http.Client, endpoint string) 
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 4096))
 		return nil, "", fmt.Errorf("list Cloud Storage object versions: HTTP %d", res.StatusCode)
 	}
 	var page struct {
@@ -119,6 +118,7 @@ func deleteGCSVersion(ctx context.Context, client *http.Client, objectsURL strin
 		return fmt.Errorf("delete Cloud Storage object generation: %w", err)
 	}
 	defer res.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 4096))
 	switch res.StatusCode {
 	case http.StatusNoContent, http.StatusNotFound:
 		return nil

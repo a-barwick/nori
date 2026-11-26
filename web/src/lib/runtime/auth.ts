@@ -92,7 +92,7 @@ export function sameOriginRead(request: Request): boolean {
 
 async function providerIdentity(headers: Headers): Promise<Identity | null> {
   const cloud = process.env.NORI_CLOUD || "aws";
-  if (!["aws", "local"].includes(cloud)) return null;
+  if (!["aws", "gcp", "local"].includes(cloud)) return null;
   const provider = process.env.NORI_AUTH_PROVIDER || "oidc";
   if (provider === "oidc") return oidcIdentity(headers);
   if (provider === "iap") return iapIdentity(headers);

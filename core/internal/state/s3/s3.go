@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -110,10 +109,6 @@ func (s *Store) purgeObjectAllowed(key string) (bool, error) {
 func (s *Store) Purge(ctx context.Context) error {
 	if s.bucket == "" {
 		return errors.New("ARTIFACT_BUCKET must be configured")
-	}
-	endpoint, err := url.Parse(aws.ToString(s.api.Options().BaseEndpoint))
-	if err == nil && (endpoint.Hostname() == "storage.googleapis.com" || strings.HasSuffix(endpoint.Hostname(), ".storage.googleapis.com")) {
-		return s.purgeGoogleStorage(ctx)
 	}
 	pages := sdk.NewListObjectVersionsPaginator(s.api, &sdk.ListObjectVersionsInput{
 		Bucket: aws.String(s.bucket),
