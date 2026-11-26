@@ -107,18 +107,18 @@ public enum NoriColors {
     public static let markActivity = brandPrimary
 
     public static let chipSelectedBg = Color.adaptive(light: 0xEEE8FA, dark: 0x261F38)
-    public static let chipSelectedFg = Color.adaptive(light: 0x5000FF, dark: 0xF2EFF8)
-    public static let chipSelectedBorder = Color.adaptive(light: 0xCFC3E9, dark: 0x000000, darkAlpha: 0.0)
+    public static let chipSelectedFg = Color.adaptive(light: 0x5000FF, dark: 0xA98AFF)
+    public static let chipSelectedBorder = Color.adaptive(light: 0xDFD4F6, dark: 0xA98AFF, darkAlpha: 0.20)
 
     public static let glass = Color.adaptive(light: 0xFFFFFF, lightAlpha: 0.92, dark: 0x14141A, darkAlpha: 0.88)
     public static let shadowColor = Color.adaptive(light: 0x302818, lightAlpha: 0.08, dark: 0x000000, darkAlpha: 0.0)
     public static let cardShadow = Color.adaptive(light: 0x190936, lightAlpha: 0.04, dark: 0x000000, darkAlpha: 0.0)
     public static let accentShadow = Color.adaptive(light: 0x5000FF, lightAlpha: 0.06, dark: 0x000000, darkAlpha: 0.0)
-    public static let toastBg = Color.adaptive(light: 0x190936, dark: 0x181720)
+    public static let toastBg = Color.adaptive(light: 0x190936, dark: 0x1E1B29)
     public static let toastFg = Color.adaptive(light: 0xFFFFFF, dark: 0xF2EFF8)
     public static let heroStart = Color.adaptive(light: 0xFBF9FF, dark: 0x12101A)
     public static let heroEnd = Color.adaptive(light: 0xF1EBFF, dark: 0x0B0B0F)
-    public static let topWashStart = Color.adaptive(light: 0xFAF8FE, dark: 0x050508)
+    public static let topWashStart = Color.adaptive(light: 0xFAF8FE, dark: 0x100E18)
     public static let topWashEnd = Color.adaptive(light: 0xFFFFFF, dark: 0x000000)
 
     public enum Background {
@@ -192,16 +192,16 @@ public enum NoriRadius {
 }
 
 public enum NoriTypography {
-    public static let display = Font.system(size: 30, weight: .bold, design: .default)
-    public static let title = Font.system(size: 22, weight: .bold, design: .default)
-    public static let section = Font.system(size: 16, weight: .semibold, design: .default)
-    public static let cardHeading = Font.system(size: 17, weight: .semibold, design: .default)
-    public static let body = Font.system(size: 15, weight: .regular, design: .default)
-    public static let bodyMedium = Font.system(size: 15, weight: .medium, design: .default)
-    public static let rowTitle = Font.system(size: 14.5, weight: .semibold, design: .default)
-    public static let meta = Font.system(size: 13, weight: .regular, design: .default)
-    public static let metaSemibold = Font.system(size: 13, weight: .semibold, design: .default)
-    public static let caption = Font.system(size: 12, weight: .medium, design: .default)
-    public static let mono = Font.system(size: 12.5, weight: .medium, design: .monospaced)
-    public static let monoSmall = Font.system(size: 11.5, weight: .medium, design: .monospaced)
+    public static let display = Font.system(.largeTitle, design: .default, weight: .bold)
+    public static let title = Font.system(.title2, design: .default, weight: .bold)
+    public static let section = Font.system(.callout, design: .default, weight: .semibold)
+    public static let cardHeading = Font.system(.headline, design: .default, weight: .semibold)
+    public static let body = Font.system(.subheadline, design: .default, weight: .regular)
+    public static let bodyMedium = Font.system(.subheadline, design: .default, weight: .medium)
+    public static let rowTitle = Font.system(.subheadline, design: .default, weight: .semibold)
+    public static let meta = Font.system(.footnote, design: .default, weight: .regular)
+    public static let metaSemibold = Font.system(.footnote, design: .default, weight: .semibold)
+    public static let caption = Font.system(.caption, design: .default, weight: .medium)
+    public static let mono = Font.system(.caption, design: .monospaced, weight: .medium)
+    public static let monoSmall = Font.system(.caption2, design: .monospaced, weight: .medium)
 }

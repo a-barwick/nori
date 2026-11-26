@@ -8,11 +8,42 @@ public enum MemoryLayerTab: String, CaseIterable, Hashable, Sendable {
     case working
 }
 
+private enum MemorySearchLayerFilter: String, CaseIterable, Hashable, Sendable {
+    case all
+    case logs
+    case core
+
+    var label: String {
+        switch self {
+        case .all: return "All"
+        case .logs: return "Logs"
+        case .core: return "Core"
+        }
+    }
+
+    var apiLayer: String? {
+        switch self {
+        case .all: return nil
+        case .logs: return "logs"
+        case .core: return "core"
+        }
+    }
+}
+
+private struct MemorySearchKey: Equatable, Sendable {
+    let query: String
+    let layer: MemorySearchLayerFilter
+}
+
 public struct MemoryView: View {
     @Bindable private var store: NoriStore
 
     @State private var selectedTab: MemoryLayerTab = .core
-    @State private var coreFilter = ""
+    @State private var searchQuery = ""
+    @State private var searchLayer: MemorySearchLayerFilter = .all
+    @State private var isSearching = false
+    @State private var searchError: String?
+    @State private var searchHits: [MemorySearchHit] = []
     @State private var showingAddSheet = false
     @State private var pendingForgetFact: MemoryFact?
     @State private var pendingPromoteEntry: PromoteCandidate?
@@ -21,19 +52,16 @@ public struct MemoryView: View {
         self.store = store
     }
 
-    private var filteredCoreMemories: [MemoryFact] {
-        let needle = coreFilter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !needle.isEmpty else { return store.coreMemories }
-        return store.coreMemories.filter { fact in
-            let parts = [
-                fact.text,
-                fact.section ?? "",
-                fact.about ?? "",
-                fact.provenance?.displayLabel ?? "",
-                fact.sourceText ?? ""
-            ]
-            return parts.joined(separator: " ").lowercased().contains(needle)
-        }
+    private var trimmedSearchQuery: String {
+        searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isSearchActive: Bool {
+        !trimmedSearchQuery.isEmpty
+    }
+
+    private var searchKey: MemorySearchKey {
+        MemorySearchKey(query: trimmedSearchQuery, layer: searchLayer)
     }
 
     private var budgetBarColor: Color {
@@ -57,34 +85,46 @@ public struct MemoryView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                NoriUnderlineTabs(
-                    options: [
-                        NoriSegmentOption(value: MemoryLayerTab.core, label: "Core", count: store.coreMemories.count),
-                        NoriSegmentOption(value: MemoryLayerTab.logs, label: "Daily Logs", count: totalLogEntries),
-                        NoriSegmentOption(value: MemoryLayerTab.working, label: "Working", count: store.workingMemory.items.count)
-                    ],
-                    selection: $selectedTab
-                )
+                memorySearchControls
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .padding(.bottom, isSearchActive ? 8 : 4)
 
-                VStack(alignment: .leading, spacing: 14) {
-                    if let error = store.memoryRefreshError {
-                        Text("Couldn’t refresh all memory. \(error)")
-                            .font(.footnote)
-                            .foregroundStyle(NoriColors.warning)
-                            .accessibilityAddTraits(.updatesFrequently)
+                if isSearchActive {
+                    memorySearchResultsSection
+                        .padding(.horizontal, 16)
+                        .padding(.top, 6)
+                        .padding(.bottom, 96)
+                } else {
+                    NoriUnderlineTabs(
+                        options: [
+                            NoriSegmentOption(value: MemoryLayerTab.core, label: "Core", count: store.coreMemories.count),
+                            NoriSegmentOption(value: MemoryLayerTab.logs, label: "Daily Logs", count: totalLogEntries),
+                            NoriSegmentOption(value: MemoryLayerTab.working, label: "Working", count: store.workingMemory.items.count)
+                        ],
+                        selection: $selectedTab
+                    )
+
+                    VStack(alignment: .leading, spacing: 14) {
+                        if let error = store.memoryRefreshError {
+                            Text("Couldn’t refresh all memory. \(error)")
+                                .font(.footnote)
+                                .foregroundStyle(NoriColors.warning)
+                                .accessibilityAddTraits(.updatesFrequently)
+                        }
+                        switch selectedTab {
+                        case .core:
+                            coreMemorySection
+                        case .logs:
+                            dailyLogsSection
+                        case .working:
+                            workingMemorySection
+                        }
                     }
-                    switch selectedTab {
-                    case .core:
-                        coreMemorySection
-                    case .logs:
-                        dailyLogsSection
-                    case .working:
-                        workingMemorySection
-                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+                    .padding(.bottom, 96)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
-                .padding(.bottom, 96)
             }
         }
         .background(NoriColors.canvas)
@@ -111,8 +151,14 @@ public struct MemoryView: View {
         .task {
             await store.refreshMemory()
         }
+        .task(id: searchKey) {
+            await runMemorySearch(for: searchKey)
+        }
         .refreshable {
             await store.refreshMemory()
+            if isSearchActive {
+                await runMemorySearch(for: searchKey, debounce: false)
+            }
         }
         .sheet(isPresented: $showingAddSheet) {
             AddMemorySheet(store: store)
@@ -147,6 +193,188 @@ public struct MemoryView: View {
 
     private var totalLogEntries: Int {
         store.memoryLogs.reduce(0) { $0 + $1.entries.count }
+    }
+
+    private var memorySearchControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(NoriColors.ink3)
+                TextField("Search all memory…", text: $searchQuery)
+                    .textFieldStyle(.plain)
+                    .font(NoriTypography.body)
+                    .foregroundStyle(NoriColors.ink)
+                    .tint(NoriColors.accent)
+                if isSearching {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(NoriColors.accent)
+                } else if !searchQuery.isEmpty {
+                    Button {
+                        searchQuery = ""
+                        searchHits = []
+                        searchError = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(NoriColors.ink3)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear search")
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 40)
+            .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+                    .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
+            )
+
+            if isSearchActive {
+                HStack(spacing: 8) {
+                    ForEach(MemorySearchLayerFilter.allCases, id: \.self) { option in
+                        let isSelected = searchLayer == option
+                        Button {
+                            searchLayer = option
+                        } label: {
+                            Text(option.label)
+                                .font(NoriTypography.caption)
+                                .foregroundStyle(isSelected ? NoriColors.chipSelectedFg : NoriColors.ink2)
+                                .padding(.horizontal, 12)
+                                .frame(height: 28)
+                                .background(
+                                    isSelected ? NoriColors.chipSelectedBg : NoriColors.fill1,
+                                    in: Capsule()
+                                )
+                                .overlay(
+                                    Capsule()
+                                        .strokeBorder(
+                                            isSelected ? NoriColors.chipSelectedBorder : NoriColors.cardBorder,
+                                            lineWidth: 1
+                                        )
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var memorySearchResultsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let searchError {
+                NoriNotice(title: "Could not search memory", detail: searchError, tone: .danger) {
+                    Button("Retry") {
+                        Task { await runMemorySearch(for: searchKey, debounce: false) }
+                    }
+                    .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                }
+            } else if isSearching && searchHits.isEmpty {
+                NoriCard {
+                    HStack(spacing: 10) {
+                        ProgressView().tint(NoriColors.accent)
+                        Text("Searching memory…")
+                            .font(NoriTypography.meta)
+                            .foregroundStyle(NoriColors.ink2)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else if searchHits.isEmpty {
+                NoriEmptyState(
+                    title: "No matching memories",
+                    message: "Try a different keyword or switch the layer filter."
+                ) {
+                    Button("Clear search") {
+                        searchQuery = ""
+                        searchHits = []
+                        searchError = nil
+                    }
+                    .buttonStyle(NoriButtonStyle(.neutral, compact: true))
+                }
+            } else {
+                NoriRows {
+                    ForEach(Array(searchHits.enumerated()), id: \.element.id) { index, hit in
+                        let isLast = index == searchHits.count - 1
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(alignment: .top, spacing: 8) {
+                                Text(hit.snippet)
+                                    .font(NoriTypography.body)
+                                    .foregroundStyle(NoriColors.ink)
+                                    .lineSpacing(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                                NoriPill(hit.layer == "core" ? "Core" : "Daily Log", tone: hit.layer == "core" ? .working : .neutral)
+                            }
+
+                            let meta = searchHitMetadata(for: hit)
+                            if !meta.isEmpty {
+                                Text(meta)
+                                    .font(NoriTypography.caption)
+                                    .foregroundStyle(NoriColors.ink2)
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+
+                        if !isLast {
+                            Rectangle()
+                                .fill(NoriColors.hairline)
+                                .frame(height: 1)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func searchHitMetadata(for hit: MemorySearchHit) -> String {
+        var parts: [String] = []
+        if let section = hit.section, !section.isEmpty {
+            parts.append(section)
+        }
+        parts.append(hit.provenance.displayLabel)
+        if let date = hit.logDate, !date.isEmpty {
+            parts.append(NoriDateFormatting.shortDate(date))
+        } else if !hit.createdAt.isEmpty {
+            parts.append(NoriDateFormatting.relative(hit.createdAt))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func runMemorySearch(for key: MemorySearchKey, debounce: Bool = true) async {
+        guard !key.query.isEmpty else {
+            isSearching = false
+            searchError = nil
+            searchHits = []
+            return
+        }
+        isSearching = true
+        searchError = nil
+        if debounce {
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+            } catch {
+                return
+            }
+        }
+        guard !Task.isCancelled else { return }
+        do {
+            let response = try await store.searchMemory(query: key.query, layer: key.layer.apiLayer)
+            guard !Task.isCancelled else { return }
+            searchHits = response.items
+            searchError = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            guard !Task.isCancelled else { return }
+            searchError = error.localizedDescription
+        }
+        isSearching = false
     }
 
 
@@ -185,59 +413,25 @@ public struct MemoryView: View {
         .background(NoriColors.surfaceTinted, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
         )
 
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(NoriColors.ink3)
-            TextField("Filter core memories…", text: $coreFilter)
-                .textFieldStyle(.plain)
-                .font(NoriTypography.body)
-                .foregroundStyle(NoriColors.ink)
-                .tint(NoriColors.accent)
-            if !coreFilter.isEmpty {
-                Button {
-                    coreFilter = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(NoriColors.ink3)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 40)
-        .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                .strokeBorder(NoriColors.hairline, lineWidth: 1)
-        )
-
-        if filteredCoreMemories.isEmpty {
+        if store.coreMemories.isEmpty {
             NoriEmptyState(
-                title: coreFilter.isEmpty ? "Nothing in Core Memory yet" : "No matching memories",
-                message: coreFilter.isEmpty
-                    ? "Save durable preferences, decisions, and context you want Nori to always keep in mind."
-                    : "Try a shorter filter or clear your search."
+                title: "Nothing in Core Memory yet",
+                message: "Save durable preferences, decisions, and context you want Nori to always keep in mind."
             ) {
-                if !coreFilter.isEmpty {
-                    Button("Clear filter") { coreFilter = "" }
-                        .buttonStyle(NoriButtonStyle(.neutral, compact: true))
-                } else {
-                    Button {
-                        showingAddSheet = true
-                    } label: {
-                        Label("Add memory", systemImage: "plus")
-                    }
-                    .buttonStyle(NoriButtonStyle(.primary, compact: true))
+                Button {
+                    showingAddSheet = true
+                } label: {
+                    Label("Add memory", systemImage: "plus")
                 }
+                .buttonStyle(NoriButtonStyle(.primary, compact: true))
             }
         } else {
             NoriRows {
-                ForEach(Array(filteredCoreMemories.enumerated()), id: \.element.id) { index, fact in
-                    let isLast = index == filteredCoreMemories.count - 1
+                ForEach(Array(store.coreMemories.enumerated()), id: \.element.id) { index, fact in
+                    let isLast = index == store.coreMemories.count - 1
                     HStack(alignment: .top, spacing: 10) {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(fact.text)
@@ -342,7 +536,7 @@ public struct MemoryView: View {
     @ViewBuilder
     private var workingMemorySection: some View {
         if !store.workingMemory.gist.isEmpty {
-            NoriCard(backgroundColor: NoriColors.surfaceTinted, borderColor: NoriColors.hairline) {
+            NoriCard(backgroundColor: NoriColors.surfaceTinted, borderColor: NoriColors.cardBorder) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Active session gist")
                         .font(.system(size: 12, weight: .semibold))
@@ -687,7 +881,7 @@ private struct AddMemorySheet: View {
                     .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                            .strokeBorder(byteCount > maxBytes ? NoriColors.danger : NoriColors.hairline, lineWidth: 1)
+                            .strokeBorder(byteCount > maxBytes ? NoriColors.danger : NoriColors.cardBorder, lineWidth: 1)
                     )
 
                     Button {

@@ -110,8 +110,8 @@ struct ModelKeysTests {
         #expect(decoded.selection.isEmpty)
         #expect(decoded.recommendations.isEmpty)
 
-        let mock = MockModelKeysTransport()
-        let store = NoriStore(transport: mock)
+        let mock = MockNoriTransport()
+        let store = NoriStore(transport: mock, authProvider: AuthTokenProvider(tokenStore: InMemoryTokenStore()))
         try await store.refreshModelSettings()
         let selection = ModelSelection(chatProfileID: "anthropic-opus", chatReasoning: "low", taskProfileID: "anthropic-haiku", taskReasoning: "low")
         try await store.saveModelSettings(selection)
@@ -139,26 +139,38 @@ struct ModelKeysTests {
     @Test("Home model selection keeps an explicit policy choice and satisfies Chat setup")
     @MainActor
     func homeModelSelection() async throws {
-        let mock = MockModelKeysTransport()
-        let store = NoriStore(transport: mock)
+        let mock = MockNoriTransport()
+        let store = NoriStore(transport: mock, authProvider: AuthTokenProvider(tokenStore: InMemoryTokenStore()))
         await mock.changeModelsElsewhere(ModelSelection(chatProfileID: "home-123", homeOnly: true))
         await store.refreshModelKeys()
         #expect(store.hasSelectedHomeChat)
         #expect(!store.needsModelKeySetup)
 
-        let selection = ModelSelection(chatProfileID: "openai-sol", homeOnly: false)
-        let data = try JSONEncoder().encode(SaveModelSettingsRequest(selection: selection, expectedRevision: 1))
+        let homeOnlyPolicy = ModelSelection(homeOnly: true)
+        #expect(!homeOnlyPolicy.isEmpty)
+
+        let versionedSelection = ModelSelection(
+            chatProfileID: "openai-sol",
+            chatProfileVersion: "v2",
+            taskProfileID: "openai-mini",
+            taskProfileVersion: "v3",
+            homeOnly: false
+        )
+        let data = try JSONEncoder().encode(SaveModelSettingsRequest(selection: versionedSelection, expectedRevision: 1))
         let body = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let savedSelection = try #require(body["selection"] as? [String: Any])
         #expect(savedSelection["home_only"] as? Bool == false)
-        #expect(try JSONDecoder().decode(SaveModelSettingsRequest.self, from: data).selection.homeOnly == false)
+        #expect(savedSelection["chat_profile_version"] as? String == "v2")
+        #expect(savedSelection["task_profile_version"] as? String == "v3")
+        let roundTripped = try JSONDecoder().decode(SaveModelSettingsRequest.self, from: data)
+        #expect(roundTripped.selection == versionedSelection)
     }
 
     @Test("NoriStore tracks BYOK setup state across refresh, save, error, and delete")
     @MainActor
     func storeModelKeyLifecycle() async throws {
-        let mock = MockModelKeysTransport()
-        let store = NoriStore(transport: mock)
+        let mock = MockNoriTransport()
+        let store = NoriStore(transport: mock, authProvider: AuthTokenProvider(tokenStore: InMemoryTokenStore()))
 
         await store.refreshModelKeys()
         #expect(store.modelKeys.byokRequired == true)
@@ -166,7 +178,6 @@ struct ModelKeysTests {
         #expect(store.needsModelKeySetup == true)
         #expect(store.modelKeys.providers.count == 1)
 
-        // Upstream rejection (422) propagates error and leaves provider unconfigured.
         await mock.setNextSaveError(NoriAPIError(message: "Invalid API key rejected by provider.", statusCode: 422))
         do {
             _ = try await store.saveModelKey(provider: "vercel_ai_gateway", apiKey: "bad_key")
@@ -177,7 +188,6 @@ struct ModelKeysTests {
         }
         #expect(store.needsModelKeySetup == true)
 
-        // Valid key save updates state and clears needsModelKeySetup.
         await mock.setNextSaveError(nil)
         let saved = try await store.saveModelKey(provider: "vercel_ai_gateway", apiKey: "vck_live_a1b2")
         #expect(saved.configured == true)
@@ -186,7 +196,6 @@ struct ModelKeysTests {
         #expect(store.needsModelKeySetup == false)
         #expect(store.modelKeys.providers.first?.maskedKeyDisplay == "••••a1b2")
 
-        // Delete reverts provider to unconfigured and restores needsModelKeySetup.
         let deleted = try await store.deleteModelKey(provider: "vercel_ai_gateway")
         #expect(deleted.configured == false)
         #expect(deleted.last4 == nil)
@@ -197,8 +206,12 @@ struct ModelKeysTests {
     @Test("Reset clears model state and ignores model reads that began earlier")
     @MainActor
     func resetClearsModelState() async throws {
-        let mock = MockModelKeysTransport()
-        let store = NoriStore(transport: mock, resetMinimumDuration: .zero)
+        let mock = MockNoriTransport()
+        let store = NoriStore(
+            transport: mock,
+            authProvider: AuthTokenProvider(tokenStore: InMemoryTokenStore()),
+            resetMinimumDuration: .zero
+        )
         let email = "model-reset-\(UUID().uuidString)@example.com"
         let legacySelectionKey = "nori.diagnostics.modelSelection.v1." + email.lowercased()
         defer { UserDefaults.standard.removeObject(forKey: legacySelectionKey) }
@@ -238,8 +251,12 @@ struct ModelKeysTests {
     @Test("A key save blocked by an interrupted reset opens recovery")
     @MainActor
     func keySaveDetectsPendingReset() async throws {
-        let mock = MockModelKeysTransport()
-        let store = NoriStore(transport: mock, resetMinimumDuration: .zero)
+        let mock = MockNoriTransport()
+        let store = NoriStore(
+            transport: mock,
+            authProvider: AuthTokenProvider(tokenStore: InMemoryTokenStore()),
+            resetMinimumDuration: .zero
+        )
         let email = "key-reset-\(UUID().uuidString)@example.com"
         let markerKey = "nori.data-reset.observed." + email.lowercased()
         defer { UserDefaults.standard.removeObject(forKey: markerKey) }
@@ -252,216 +269,5 @@ struct ModelKeysTests {
         #expect(store.dataResetRecoveryRequired)
         #expect(!store.hasConfiguredModelKey)
         await store.signOut()
-    }
-}
-
-private actor MockModelKeysTransport: NoriTransport {
-    private var response = ModelKeysResponse(
-        byokRequired: true,
-        providers: [
-            ModelKeyProvider(
-                provider: "vercel_ai_gateway",
-                label: "Vercel AI Gateway",
-                configured: false
-            )
-        ]
-    )
-    private var nextSaveError: Error?
-    private var mockPreferences = Preferences()
-    private var models = ModelSettingsResponse(
-        modelProfiles: ModelProfileCatalog(), selection: ModelSelection(), revision: 0, recommendations: [:]
-    )
-    private var suspendSettingsRead = false
-    private var suspendKeysRead = false
-    private var blockedSettings: CheckedContinuation<Void, Never>?
-    private var blockedKeys: CheckedContinuation<Void, Never>?
-    private var readsStarted: CheckedContinuation<Void, Never>?
-
-    func fetchModelSettings() async throws -> ModelSettingsResponse {
-        let snapshot = models
-        if suspendSettingsRead {
-            suspendSettingsRead = false
-            await withCheckedContinuation { continuation in
-                blockedSettings = continuation
-                signalModelReadsStarted()
-            }
-        }
-        return snapshot
-    }
-
-    func suspendNextModelReads() {
-        suspendSettingsRead = true
-        suspendKeysRead = true
-    }
-
-    func waitForSuspendedModelReads() async {
-        if blockedSettings != nil && blockedKeys != nil { return }
-        await withCheckedContinuation { readsStarted = $0 }
-    }
-
-    private func signalModelReadsStarted() {
-        if blockedSettings != nil && blockedKeys != nil {
-            readsStarted?.resume()
-            readsStarted = nil
-        }
-    }
-
-    func resumeModelReads() {
-        blockedSettings?.resume()
-        blockedKeys?.resume()
-        blockedSettings = nil
-        blockedKeys = nil
-    }
-
-    func resetUserData(confirmation: String) async throws {
-        guard confirmation == "RESET" else { throw NoriAPIError(message: "Confirmation required.") }
-        response.providers = response.providers.map { ModelKeyProvider(provider: $0.provider, label: $0.label) }
-        models = ModelSettingsResponse(
-            modelProfiles: ModelProfileCatalog(), selection: ModelSelection(), revision: 0, recommendations: [:]
-        )
-    }
-
-    func saveModelSettings(_ request: SaveModelSettingsRequest) async throws -> ModelSettingsResponse {
-        guard request.expectedRevision == models.revision else {
-            throw NoriAPIError(message: "Models changed elsewhere.", statusCode: 409)
-        }
-        models.selection = request.selection
-        models.revision += 1
-        return models
-    }
-
-    func changeModelsElsewhere(_ selection: ModelSelection) {
-        models.selection = selection
-        models.revision += 1
-    }
-
-    func setNextSaveError(_ error: Error?) {
-        nextSaveError = error
-    }
-
-    func setPreferences(_ preferences: Preferences) {
-        mockPreferences = preferences
-    }
-
-    func fetchModelKeys() async throws -> ModelKeysResponse {
-        let snapshot = response
-        if suspendKeysRead {
-            suspendKeysRead = false
-            await withCheckedContinuation { continuation in
-                blockedKeys = continuation
-                signalModelReadsStarted()
-            }
-        }
-        return snapshot
-    }
-
-    func saveModelKey(provider: String, apiKey: String) async throws -> ModelKeyProvider {
-        if let nextSaveError {
-            throw nextSaveError
-        }
-        let updated = ModelKeyProvider(
-            provider: provider,
-            label: "Vercel AI Gateway",
-            configured: true,
-            last4: String(apiKey.suffix(4)),
-            updatedAt: "2026-11-25T17:00:00Z",
-            validatedAt: "2026-11-25T17:00:00Z"
-        )
-        response.providers = [updated]
-        return updated
-    }
-
-    func deleteModelKey(provider: String) async throws -> ModelKeyProvider {
-        let updated = ModelKeyProvider(
-            provider: provider,
-            label: "Vercel AI Gateway",
-            configured: false,
-            last4: nil,
-            updatedAt: nil,
-            validatedAt: nil
-        )
-        response.providers = [updated]
-        return updated
-    }
-
-    func ping() async -> HealthCheckResult { HealthCheckResult(ok: true, status: "ok", latencyMs: 1) }
-    func fetchCapabilities() async throws -> Capabilities { Capabilities() }
-    func fetchAssistantSummary() async throws -> AssistantSummary { AssistantSummary() }
-    func fetchSession(before cursor: String?) async throws -> Session { Session() }
-    func fetchFullSnapshot() async throws -> NoriFullSnapshot { NoriFullSnapshot(modelKeys: response) }
-    nonisolated func eventStream(after position: Int) -> AsyncThrowingStream<NoriStreamEvent, Error> {
-        AsyncThrowingStream { $0.finish() }
-    }
-    func sendTurn(id: String, message: String, attachmentIDs: [String], modelSelection: ModelSelection?) async throws -> Session { Session() }
-    func retryTurn(turnID: String?, messageID: String?) async throws -> Session { Session() }
-    func sendTaskCommand(_ command: TaskCommand) async throws -> TaskCommandResponse { TaskCommandResponse(accepted: true) }
-    func uploadFile(id: String, filename: String, mediaType: String, data: Data) async throws -> NoriCore.Attachment {
-        NoriCore.Attachment(id: id, name: filename, mediaType: mediaType, size: data.count)
-    }
-    func fetchWorkItems(bucket: WorkBucket?) async throws -> [WorkItem] { [] }
-    func fetchWorkDetail(taskID: String) async throws -> WorkDetail { throw NoriAPIError(message: "unimplemented") }
-    func stopWork(taskID: String, requestID: String) async throws -> MutationReceipt<WorkItem> { throw NoriAPIError(message: "unimplemented") }
-    func continueWork(taskID: String, budgetUSD: Double, requestID: String) async throws -> MutationReceipt<WorkItem> { throw NoriAPIError(message: "unimplemented") }
-    func fetchInteractions() async throws -> [Interaction] { [] }
-    func respondToInteraction(id: String, expectedRevision: Int, answer: InteractionAnswer, requestID: String) async throws -> MutationReceipt<Interaction> {
-        throw NoriAPIError(message: "unimplemented")
-    }
-    func fetchMCPServers() async throws -> [MCPServer] { [] }
-    func fetchMCPTools(serverID: String) async throws -> [MCPServerTool] { [] }
-    func createMCPServer(input: MCPServerInput, requestID: String) async throws -> MutationReceipt<MCPServer> { throw NoriAPIError(message: "unimplemented") }
-    func performMCPAction(serverID: String, expectedRevision: Int, action: String, returnTo: String?, requestID: String) async throws -> MutationReceipt<MCPServer> {
-        throw NoriAPIError(message: "unimplemented")
-    }
-    func setMCPCredential(serverID: String, expectedRevision: Int, secret: String, requestID: String) async throws -> MutationReceipt<MCPServer> {
-        throw NoriAPIError(message: "unimplemented")
-    }
-    func setMCPToolExposure(serverID: String, expectedRevision: Int, toolName: String, exposure: MCPToolExposure, requestID: String) async throws -> MutationReceipt<MCPServer> {
-        throw NoriAPIError(message: "unimplemented")
-    }
-    func fetchConnections() async throws -> [Connection] { [] }
-    func performConnectionAction(connectionID: String, expectedRevision: Int, action: String, returnTo: String?, requestID: String) async throws -> MutationReceipt<Connection> {
-        throw NoriAPIError(message: "unimplemented")
-    }
-    func fetchLibrary() async throws -> [LibraryItem] { [] }
-    func fetchLibraryItem(id: String) async throws -> LibraryItem { throw NoriAPIError(message: "unimplemented") }
-    func fetchLibraryItemFile(id: String, format: String?) async throws -> LibraryFilePayload { throw NoriAPIError(message: "unimplemented") }
-    func search(query: String) async throws -> SearchResponse { SearchResponse(items: []) }
-    func reviseLibraryItem(id: String, expectedRevision: Int, instruction: String, requestID: String) async throws -> MutationReceipt<LibraryItem> {
-        throw NoriAPIError(message: "unimplemented")
-    }
-    func fetchCoreMemories() async throws -> [MemoryFact] { [] }
-    func fetchMemoryLogs() async throws -> [MemoryLog] { [] }
-    func fetchWorkingMemory() async throws -> WorkingMemory { WorkingMemory() }
-    func createMemory(text: String, section: String?, about: String?, pinned: Bool, requestID: String) async throws -> MutationReceipt<MemoryFact> {
-        throw NoriAPIError(message: "unimplemented")
-    }
-    func performMemoryAction(id: String, expectedRevision: Int, action: String, requestID: String) async throws -> MutationReceipt<MemoryActionResource> {
-        throw NoriAPIError(message: "unimplemented")
-    }
-    func performMemoryLogEntryAction(date: String, entryID: String, expectedRevision: Int, action: String, pinned: Bool, requestID: String) async throws -> MutationReceipt<MemoryLogEntryActionResource> {
-        throw NoriAPIError(message: "unimplemented")
-    }
-    func performWorkingMemoryAction(itemID: String, expectedRevision: Int, action: String, requestID: String) async throws -> MutationReceipt<WorkingMemoryActionResource> {
-        throw NoriAPIError(message: "unimplemented")
-    }
-    func fetchAutomations() async throws -> [Automation] { [] }
-    func fetchAutomation(id: String) async throws -> Automation { throw NoriAPIError(message: "unimplemented") }
-    func updateAutomation(id: String, expectedRevision: Int, value: AutomationEditable, requestID: String) async throws -> MutationReceipt<Automation> {
-        throw NoriAPIError(message: "unimplemented")
-    }
-    func performAutomationAction(id: String, expectedRevision: Int, action: String, requestID: String) async throws -> MutationReceipt<Automation> {
-        throw NoriAPIError(message: "unimplemented")
-    }
-    func fetchGoals() async throws -> [Goal] { [] }
-    func fetchPermissions() async throws -> [PermissionRule] { [] }
-    func createPermissionRule(_ rule: PermissionRuleEditable, requestID: String) async throws -> MutationReceipt<PermissionRule> {
-        throw NoriAPIError(message: "unimplemented")
-    }
-    func revokePermissionRule(id: String, expectedRevision: Int, requestID: String) async throws -> MutationReceipt<PermissionRule> {
-        throw NoriAPIError(message: "unimplemented")
-    }
-    func fetchPreferences() async throws -> Preferences { mockPreferences }
-    func savePreferences(_ preferences: Preferences, requestID: String) async throws -> MutationReceipt<Preferences> {
-        MutationReceipt(requestID: requestID, resource: preferences)
     }
 }

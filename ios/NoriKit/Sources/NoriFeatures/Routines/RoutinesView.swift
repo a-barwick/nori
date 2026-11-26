@@ -165,7 +165,7 @@ public struct RoutinesView: View {
                                 .background(NoriColors.fill1, in: Capsule())
                                 .overlay(
                                     Capsule()
-                                        .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                                        .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
                                 )
                         }
                         .buttonStyle(.plain)
@@ -188,9 +188,6 @@ public struct RoutinesView: View {
 
 
     private func triggerSummary(for trigger: AutomationTrigger) -> String {
-        if let displayCadence = trigger.displayCadence, !displayCadence.isEmpty {
-            return displayCadence
-        }
         if let rrule = trigger.rrule, !rrule.isEmpty {
             return rrule
         }

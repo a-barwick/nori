@@ -286,6 +286,7 @@ public struct NoriAPIError: Error, LocalizedError, Sendable, Hashable {
     public var retryable: Bool
     public var accepted: Bool
     public var requestID: String?
+    public var current: AnyJSON?
 
     public var isRevisionConflict: Bool {
         statusCode == 409 || code == "revision_conflict" || code == "interaction_stale"
@@ -297,13 +298,20 @@ public struct NoriAPIError: Error, LocalizedError, Sendable, Hashable {
 
     public var errorDescription: String? { message }
 
+    public func decodedCurrent<T: Decodable>(as type: T.Type, decoder: JSONDecoder = JSONDecoder()) -> T? {
+        guard let current, current != .null else { return nil }
+        guard let data = try? JSONEncoder().encode(current) else { return nil }
+        return try? decoder.decode(type, from: data)
+    }
+
     public init(
         message: String,
         statusCode: Int = 0,
         code: String? = nil,
         retryable: Bool = false,
         accepted: Bool = false,
-        requestID: String? = nil
+        requestID: String? = nil,
+        current: AnyJSON? = nil
     ) {
         self.message = message
         self.statusCode = statusCode
@@ -311,6 +319,7 @@ public struct NoriAPIError: Error, LocalizedError, Sendable, Hashable {
         self.retryable = retryable
         self.accepted = accepted
         self.requestID = requestID
+        self.current = current
     }
 }
 
@@ -434,15 +443,19 @@ public struct ModelProfileCatalog: Sendable, Codable, Hashable {
 
 public struct ModelSelection: Sendable, Codable, Hashable {
     public var chatProfileID: String?
+    public var chatProfileVersion: String?
     public var chatReasoning: String?
     public var taskProfileID: String?
+    public var taskProfileVersion: String?
     public var taskReasoning: String?
     public var homeOnly: Bool?
 
     enum CodingKeys: String, CodingKey {
         case chatProfileID = "chat_profile_id"
+        case chatProfileVersion = "chat_profile_version"
         case chatReasoning = "chat_reasoning"
         case taskProfileID = "task_profile_id"
+        case taskProfileVersion = "task_profile_version"
         case taskReasoning = "task_reasoning"
         case homeOnly = "home_only"
     }
@@ -457,6 +470,7 @@ public struct ModelSelection: Sendable, Codable, Hashable {
         if let cid = chatProfileID,
            catalog.profiles.contains(where: { $0.lanes.contains("chat") && $0.id == cid }) {
             out.chatProfileID = cid
+            out.chatProfileVersion = chatProfileVersion
         }
         if let cr = chatReasoning,
            chatProfile?.supportedReasoning?.contains(cr) == true {
@@ -467,6 +481,7 @@ public struct ModelSelection: Sendable, Codable, Hashable {
         if let tid = taskProfileID,
            catalog.profiles.contains(where: { $0.lanes.contains("task") && $0.id == tid }) {
             out.taskProfileID = tid
+            out.taskProfileVersion = taskProfileVersion
         }
         if let tr = taskReasoning,
            taskProfile?.supportedReasoning?.contains(tr) == true {
@@ -477,21 +492,28 @@ public struct ModelSelection: Sendable, Codable, Hashable {
 
     public var isEmpty: Bool {
         (chatProfileID ?? "").isEmpty &&
+            (chatProfileVersion ?? "").isEmpty &&
             (chatReasoning ?? "").isEmpty &&
             (taskProfileID ?? "").isEmpty &&
-            (taskReasoning ?? "").isEmpty
+            (taskProfileVersion ?? "").isEmpty &&
+            (taskReasoning ?? "").isEmpty &&
+            homeOnly == nil
     }
 
     public init(
         chatProfileID: String? = nil,
+        chatProfileVersion: String? = nil,
         chatReasoning: String? = nil,
         taskProfileID: String? = nil,
+        taskProfileVersion: String? = nil,
         taskReasoning: String? = nil,
         homeOnly: Bool? = nil
     ) {
         self.chatProfileID = chatProfileID
+        self.chatProfileVersion = chatProfileVersion
         self.chatReasoning = chatReasoning
         self.taskProfileID = taskProfileID
+        self.taskProfileVersion = taskProfileVersion
         self.taskReasoning = taskReasoning
         self.homeOnly = homeOnly
     }

@@ -74,6 +74,48 @@ public struct ApprovalAccount: Sendable, Codable, Hashable {
     }
 }
 
+public struct CardPart: Sendable, Codable, Hashable {
+    public var type: String
+    public var schemaVersion: Int
+    public var kind: String
+    public var resource: CardResourceRef
+    public var actions: [String]?
+    public var fallback: String
+    public var display: String?
+    public var id: String?
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case schemaVersion = "schema_version"
+        case kind
+        case resource
+        case actions
+        case fallback
+        case display
+        case id
+    }
+
+    public init(
+        type: String = "card",
+        schemaVersion: Int = 1,
+        kind: String,
+        resource: CardResourceRef,
+        actions: [String]? = nil,
+        fallback: String,
+        display: String? = nil,
+        id: String? = nil
+    ) {
+        self.type = type
+        self.schemaVersion = schemaVersion
+        self.kind = kind
+        self.resource = resource
+        self.actions = actions
+        self.fallback = fallback
+        self.display = display
+        self.id = id
+    }
+}
+
 public struct ApprovalPayload: Sendable, Codable, Hashable {
     public var summary: String
     public var toolID: String?
@@ -83,8 +125,8 @@ public struct ApprovalPayload: Sendable, Codable, Hashable {
     public var resources: [ResourceRef]
     public var recipients: [String]?
     public var materialEffects: [String]?
-    public var summaryHead: String?
     public var approvalOnce: Bool?
+    public var card: CardPart?
 
     enum CodingKeys: String, CodingKey {
         case summary
@@ -95,8 +137,8 @@ public struct ApprovalPayload: Sendable, Codable, Hashable {
         case resources
         case recipients
         case materialEffects = "material_effects"
-        case summaryHead = "summary_head"
         case approvalOnce = "approval_once"
+        case card
     }
 
     public init(
@@ -108,8 +150,8 @@ public struct ApprovalPayload: Sendable, Codable, Hashable {
         resources: [ResourceRef] = [],
         recipients: [String]? = nil,
         materialEffects: [String]? = nil,
-        summaryHead: String? = nil,
-        approvalOnce: Bool? = nil
+        approvalOnce: Bool? = nil,
+        card: CardPart? = nil
     ) {
         self.summary = summary
         self.toolID = toolID
@@ -119,8 +161,8 @@ public struct ApprovalPayload: Sendable, Codable, Hashable {
         self.resources = resources
         self.recipients = recipients
         self.materialEffects = materialEffects
-        self.summaryHead = summaryHead
         self.approvalOnce = approvalOnce
+        self.card = card
     }
 
     public var hasAccountLabel: Bool {

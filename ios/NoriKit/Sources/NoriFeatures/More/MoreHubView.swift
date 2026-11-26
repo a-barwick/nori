@@ -12,6 +12,7 @@ public enum MoreRoute: Hashable, Sendable {
     case models
     case appearance
     case account
+    case history
     case diagnostics
 }
 
@@ -62,13 +63,8 @@ public struct MoreHubView: View {
 
     private var modelsDetail: String? {
         let configuredCount = store.modelKeys.providers.filter(\.configured).count
-        if configuredCount > 0 {
-            return "\(configuredCount) configured"
-        }
-        if store.modelKeys.byokRequired || !store.modelKeys.providers.isEmpty {
-            return "Not configured"
-        }
-        return nil
+        guard configuredCount > 0 else { return nil }
+        return "\(configuredCount) configured"
     }
 
     private var diagnosticsDetail: String? {
@@ -82,6 +78,18 @@ public struct MoreHubView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
+                if store.needsModelKeySetup {
+                    NoriNotice(
+                        title: "Choose a model to use Nori.",
+                        tone: .warning,
+                        systemImage: "sparkles"
+                    ) {
+                        NavigationLink("Choose model", value: MoreRoute.models)
+                            .buttonStyle(NoriButtonStyle(.primary, compact: true))
+                    }
+                    .padding(.bottom, 12)
+                }
+
                 NoriSectionHeader("Workspace")
                 workspaceRows
 
@@ -188,22 +196,6 @@ public struct MoreHubView: View {
             }
             .buttonStyle(.plain)
 
-            NavigationLink(value: MoreRoute.models) {
-                NoriRow(
-                    title: "Models",
-                    detail: modelsDetail,
-                    systemImage: "sparkles",
-                    iconTone: store.needsModelKeySetup ? .warning : .neutral,
-                    showChevron: true,
-                    showDivider: true
-                ) {
-                    if store.needsModelKeySetup {
-                        NoriPill("Required", tone: .warning)
-                    }
-                }
-            }
-            .buttonStyle(.plain)
-
             NavigationLink(value: MoreRoute.appearance) {
                 NoriRow(
                     title: "Appearance",
@@ -213,6 +205,22 @@ public struct MoreHubView: View {
                     showChevron: true,
                     showDivider: true
                 )
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink(value: MoreRoute.models) {
+                NoriRow(
+                    title: "Models",
+                    detail: modelsDetail,
+                    systemImage: "sparkles",
+                    iconTone: .neutral,
+                    showChevron: true,
+                    showDivider: true
+                ) {
+                    if store.needsModelKeySetup {
+                        NoriPill("Required", tone: .warning)
+                    }
+                }
             }
             .buttonStyle(.plain)
 
@@ -249,6 +257,17 @@ public struct MoreHubView: View {
                         NoriPill("Offline", tone: .danger)
                     }
                 }
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink(value: MoreRoute.history) {
+                NoriRow(
+                    title: "Action History",
+                    systemImage: "clock.arrow.circlepath",
+                    iconTone: .neutral,
+                    showChevron: true,
+                    showDivider: true
+                )
             }
             .buttonStyle(.plain)
 

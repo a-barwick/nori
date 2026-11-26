@@ -437,21 +437,21 @@ public extension NoriStore {
                 id: "auto-1",
                 title: "Check supernino updates",
                 status: .enabled,
-                trigger: AutomationTrigger(displayCadence: "Daily at 12:00 PM"),
+                trigger: AutomationTrigger(kind: "recurring", rrule: "FREQ=DAILY;BYHOUR=12;BYMINUTE=0"),
                 nextAt: tTomorrowNoon
             ),
             Automation(
                 id: "auto-2",
                 title: "Morning calendar briefing",
                 status: .enabled,
-                trigger: AutomationTrigger(displayCadence: "Weekdays at 8:00 AM"),
+                trigger: AutomationTrigger(kind: "recurring", rrule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=8;BYMINUTE=0"),
                 nextAt: tTomorrowNoon
             ),
             Automation(
                 id: "auto-3",
                 title: "Friday vendor spend rollup",
                 status: .paused,
-                trigger: AutomationTrigger(displayCadence: "Fridays at 4:00 PM")
+                trigger: AutomationTrigger(kind: "recurring", rrule: "FREQ=WEEKLY;BYDAY=FR;BYHOUR=16;BYMINUTE=0")
             )
         ]
 

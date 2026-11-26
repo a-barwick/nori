@@ -17,20 +17,51 @@ public struct ConnectionResource: Sendable, Codable, Hashable, Identifiable {
         public var connectionID: String
         public var kind: String
         public var providerID: String
+        public var providerRevision: String?
 
         enum CodingKeys: String, CodingKey {
             case connectionID = "connection_id"
             case kind
             case providerID = "provider_id"
+            case providerRevision = "provider_revision"
+        }
+
+        public init(
+            connectionID: String,
+            kind: String,
+            providerID: String,
+            providerRevision: String? = nil
+        ) {
+            self.connectionID = connectionID
+            self.kind = kind
+            self.providerID = providerID
+            self.providerRevision = providerRevision
         }
     }
 
     public var ref: Reference
     public var title: String
     public var kind: String
-    public var selected: Bool
-    public var writable: Bool
+    public var selected: Bool?
+    public var writable: Bool?
     public var id: String { "\(ref.connectionID):\(ref.kind):\(ref.providerID)" }
+
+    public var isSelected: Bool { selected ?? false }
+    public var isWritable: Bool { writable ?? false }
+
+    public init(
+        ref: Reference,
+        title: String,
+        kind: String,
+        selected: Bool? = nil,
+        writable: Bool? = nil
+    ) {
+        self.ref = ref
+        self.title = title
+        self.kind = kind
+        self.selected = selected
+        self.writable = writable
+    }
 }
 
 

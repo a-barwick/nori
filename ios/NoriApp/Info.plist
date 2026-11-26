@@ -34,6 +34,10 @@
 	</array>
 	<key>GOOGLE_OAUTH_CLIENT_ID</key>
 	<string>8273801370-im0dvqnf5v60e9djiba88uuvo5n52g9g.apps.googleusercontent.com</string>
+	<key>NORI_SERVER_URL</key>
+	<string>$(NORI_SERVER_URL)</string>
+	<key>NORI_WEB_URL</key>
+	<string>$(NORI_WEB_URL)</string>
 	<key>SENTRY_DSN</key>
 	<string>$(SENTRY_DSN)</string>
 	<key>SENTRY_ENVIRONMENT</key>

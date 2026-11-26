@@ -3,9 +3,9 @@ import NoriCore
 import NoriDesign
 
 public struct InviteRedeemView: View {
+    @Bindable private var store: NoriStore
     private let session: AuthSession
-    private let client: NoriProvisioningClient
-    private let onRedeemed: () async -> Void
+    private let onRedeemed: () -> Void
     private let onCancel: () -> Void
 
     @State private var inviteCode = ""
@@ -13,13 +13,13 @@ public struct InviteRedeemView: View {
     @State private var errorMessage: String?
 
     public init(
+        store: NoriStore,
         session: AuthSession,
-        client: NoriProvisioningClient = NoriProvisioningClient(),
-        onRedeemed: @escaping () async -> Void,
+        onRedeemed: @escaping () -> Void,
         onCancel: @escaping () -> Void
     ) {
+        self.store = store
         self.session = session
-        self.client = client
         self.onRedeemed = onRedeemed
         self.onCancel = onCancel
     }
@@ -31,7 +31,7 @@ public struct InviteRedeemView: View {
             VStack(spacing: 14) {
                 NoriMark(size: 52, state: isSubmitting ? .thinking : .idle)
                 Text("Enter your invite code")
-                    .font(.system(size: 26, weight: .bold))
+                    .font(NoriTypography.title)
                     .foregroundStyle(NoriColors.ink)
                     .multilineTextAlignment(.center)
                 if !session.email.isEmpty {
@@ -57,12 +57,11 @@ public struct InviteRedeemView: View {
                     .disabled(isSubmitting)
                     .padding(.horizontal, 14)
                     .frame(height: 48)
-                    .background(NoriColors.surface)
+                    .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(NoriColors.hairline, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+                            .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
                     )
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
 
                 Button {
                     submit()
@@ -73,7 +72,7 @@ public struct InviteRedeemView: View {
                                 .tint(.white)
                         }
                         Text(isSubmitting ? "Checking…" : "Continue")
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(NoriTypography.section)
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: 48)
@@ -97,7 +96,7 @@ public struct InviteRedeemView: View {
                 Link("Privacy Policy", destination: NoriConfig.legalURL(path: "/privacy"))
                 Link("Terms of Service", destination: NoriConfig.legalURL(path: "/terms"))
             }
-            .font(.system(size: 13))
+            .font(NoriTypography.meta)
             .foregroundStyle(NoriColors.ink3)
             .padding(.bottom, 20)
         }
@@ -126,14 +125,8 @@ public struct InviteRedeemView: View {
         Task {
             defer { isSubmitting = false }
             do {
-                let name = GoogleOAuthPKCE.extractNameFromJWT(session.idToken)
-                _ = try await client.redeemInvite(
-                    idToken: session.idToken,
-                    inviteCode: trimmed,
-                    email: session.email,
-                    name: name
-                )
-                await onRedeemed()
+                try await store.redeemInvite(code: trimmed, for: session)
+                onRedeemed()
             } catch {
                 errorMessage = error.localizedDescription
             }

@@ -69,6 +69,11 @@ struct NoriDesignTests {
         #expect(hexString(for: NoriColors.Mascot.seaweed, dark: true) == "#171522")
         #expect(hexString(for: NoriColors.Mascot.edge, dark: true) == "#D1CFD8")
         #expect(hexString(for: NoriColors.Mascot.activity, dark: true) == "#7A3DF6")
+
+        #expect(hexString(for: NoriColors.chipSelectedFg, dark: true) == "#A98AFF")
+        #expect(hexString(for: NoriColors.chipSelectedBorder, dark: true) == "#A98AFF")
+        #expect(hexString(for: NoriColors.toastBg, dark: true) == "#1E1B29")
+        #expect(hexString(for: NoriColors.topWashStart, dark: true) == "#100E18")
     }
 
     @Test("Dark mode semantic status tones match specification table")

@@ -93,7 +93,6 @@ public struct LibraryItem: Sendable, Codable, Hashable, Identifiable {
     public var previewText: String?
     public var deleteEffect: String?
     public var revision: Int
-    public var bodyText: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -122,7 +121,6 @@ public struct LibraryItem: Sendable, Codable, Hashable, Identifiable {
         case previewText = "preview_text"
         case deleteEffect = "delete_effect"
         case revision
-        case bodyText = "body_text"
     }
 
     public init(
@@ -151,8 +149,7 @@ public struct LibraryItem: Sendable, Codable, Hashable, Identifiable {
         collection: String? = nil,
         previewText: String? = nil,
         deleteEffect: String? = nil,
-        revision: Int = 1,
-        bodyText: String? = nil
+        revision: Int = 1
     ) {
         self.id = id
         self.rootID = rootID ?? id
@@ -180,7 +177,6 @@ public struct LibraryItem: Sendable, Codable, Hashable, Identifiable {
         self.previewText = previewText
         self.deleteEffect = deleteEffect
         self.revision = revision
-        self.bodyText = bodyText
     }
 }
 
@@ -254,7 +250,7 @@ public struct SearchHit: Sendable, Codable, Hashable, Identifiable {
             case .message: return "Chat"
             case .task: return "Task"
             case .goal: return "Goal"
-            case .automation: return "Automation"
+            case .automation: return "Routine"
             case .file: return "File"
             case .memory: return "Memory"
             }
@@ -357,10 +353,108 @@ public enum MemoryProvenance: String, Sendable, Codable, Hashable {
         switch self {
         case .userExplicit: return "Explicit"
         case .preCompactFlush: return "Auto-saved"
-        case .summaryEvicted: return "Auto-saved"
+        case .summaryEvicted: return "Archived"
         case .taskOutcome: return "Task outcome"
         case .dreamCurated: return "Curated"
         }
+    }
+}
+
+public struct MemorySearchHit: Sendable, Codable, Hashable, Identifiable {
+    public var id: String { chunkID }
+    public var chunkID: String
+    public var layer: String
+    public var memoryID: String?
+    public var logDate: String?
+    public var entryID: String?
+    public var section: String?
+    public var about: String?
+    public var snippet: String
+    public var provenance: MemoryProvenance
+    public var pinned: Bool
+    public var score: Double
+    public var createdAt: String
+    public var updatedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case chunkID = "chunk_id"
+        case layer
+        case memoryID = "memory_id"
+        case logDate = "log_date"
+        case entryID = "entry_id"
+        case section
+        case about
+        case snippet
+        case provenance
+        case pinned
+        case score
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+
+    public init(
+        chunkID: String,
+        layer: String,
+        memoryID: String? = nil,
+        logDate: String? = nil,
+        entryID: String? = nil,
+        section: String? = nil,
+        about: String? = nil,
+        snippet: String,
+        provenance: MemoryProvenance = .userExplicit,
+        pinned: Bool = false,
+        score: Double = 0,
+        createdAt: String = "",
+        updatedAt: String? = nil
+    ) {
+        self.chunkID = chunkID
+        self.layer = layer
+        self.memoryID = memoryID
+        self.logDate = logDate
+        self.entryID = entryID
+        self.section = section
+        self.about = about
+        self.snippet = snippet
+        self.provenance = provenance
+        self.pinned = pinned
+        self.score = score
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.chunkID = try c.decode(String.self, forKey: .chunkID)
+        self.layer = try c.decode(String.self, forKey: .layer)
+        self.memoryID = try c.decodeIfPresent(String.self, forKey: .memoryID)
+        self.logDate = try c.decodeIfPresent(String.self, forKey: .logDate)
+        self.entryID = try c.decodeIfPresent(String.self, forKey: .entryID)
+        self.section = try c.decodeIfPresent(String.self, forKey: .section)
+        self.about = try c.decodeIfPresent(String.self, forKey: .about)
+        self.snippet = try c.decodeIfPresent(String.self, forKey: .snippet) ?? ""
+        self.provenance = try c.decodeIfPresent(MemoryProvenance.self, forKey: .provenance) ?? .userExplicit
+        self.pinned = try c.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
+        self.score = try c.decodeIfPresent(Double.self, forKey: .score) ?? 0
+        self.createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt) ?? ""
+        self.updatedAt = try c.decodeIfPresent(String.self, forKey: .updatedAt)
+    }
+}
+
+public struct MemorySearchResponse: Sendable, Codable, Hashable {
+    public var items: [MemorySearchHit]
+    public var nextCursor: String?
+    public var query: String?
+
+    enum CodingKeys: String, CodingKey {
+        case items
+        case nextCursor = "next_cursor"
+        case query
+    }
+
+    public init(items: [MemorySearchHit] = [], nextCursor: String? = nil, query: String? = nil) {
+        self.items = items
+        self.nextCursor = nextCursor
+        self.query = query
     }
 }
 

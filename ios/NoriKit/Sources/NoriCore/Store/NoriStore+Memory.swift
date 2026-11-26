@@ -10,9 +10,10 @@ extension NoriStore {
         let (factsResult, logsResult, workingResult) = await (facts, logs, working)
         guard generation == sessionGeneration, !Task.isCancelled else { return }
         let errors = [factsResult.failure, logsResult.failure, workingResult.failure].compactMap { $0 }
-        if let authError = errors.first(where: { ($0 as? NoriAPIError)?.isAuthError == true }) {
-            _ = await handleAuthFailureIfNeeded(authError)
-            return
+        for err in errors {
+            if await handleAuthFailureIfNeeded(err) {
+                return
+            }
         }
         if case .success(let latest) = factsResult { coreMemories = latest }
         if case .success(let latest) = logsResult { memoryLogs = latest }
@@ -21,6 +22,25 @@ extension NoriStore {
             hasLoadedWorkingMemory = true
         }
         memoryRefreshError = errors.first?.localizedDescription
+    }
+
+    public func searchMemory(query: String, layer: String? = nil, limit: Int = 20) async throws -> MemorySearchResponse {
+        let generation = sessionGeneration
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            memorySearchHits = []
+            return MemorySearchResponse(items: [], query: "")
+        }
+        do {
+            let response = try await transport.searchMemory(query: trimmed, layer: layer, limit: limit)
+            guard generation == sessionGeneration, !Task.isCancelled else { throw CancellationError() }
+            memorySearchHits = response.items
+            return response
+        } catch {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            _ = await handleAuthFailureIfNeeded(error)
+            throw error
+        }
     }
 
     public func addMemory(text: String, section: String? = nil, about: String? = nil, pinned: Bool = false) async {
@@ -45,8 +65,7 @@ extension NoriStore {
             showToast("Saved to Core Memory")
         } catch {
             guard generation == sessionGeneration else { return }
-            lastError = error.localizedDescription
-            showToast(error.localizedDescription)
+            _ = await handleOperationError(error)
         }
     }
 
@@ -84,8 +103,7 @@ extension NoriStore {
             }
         } catch {
             guard generation == sessionGeneration else { return }
-            lastError = error.localizedDescription
-            showToast(error.localizedDescription)
+            _ = await handleOperationError(error)
         }
     }
 
@@ -116,8 +134,7 @@ extension NoriStore {
             showToast("Moved to Daily Log")
         } catch {
             guard generation == sessionGeneration else { return }
-            lastError = error.localizedDescription
-            showToast(error.localizedDescription)
+            _ = await handleOperationError(error)
         }
     }
 
@@ -141,8 +158,7 @@ extension NoriStore {
             showToast("Memory forgotten")
         } catch {
             guard generation == sessionGeneration else { return }
-            lastError = error.localizedDescription
-            showToast(error.localizedDescription)
+            _ = await handleOperationError(error)
         }
     }
 
@@ -188,8 +204,7 @@ extension NoriStore {
             showToast("Promoted to Core Memory")
         } catch {
             guard generation == sessionGeneration else { return }
-            lastError = error.localizedDescription
-            showToast(error.localizedDescription)
+            _ = await handleOperationError(error)
         }
     }
 
@@ -227,8 +242,7 @@ extension NoriStore {
             showToast("Removed log entry")
         } catch {
             guard generation == sessionGeneration else { return }
-            lastError = error.localizedDescription
-            showToast(error.localizedDescription)
+            _ = await handleOperationError(error)
         }
     }
 
@@ -266,8 +280,7 @@ extension NoriStore {
             showToast("Saved to Core Memory")
         } catch {
             guard generation == sessionGeneration else { return }
-            lastError = error.localizedDescription
-            showToast(error.localizedDescription)
+            _ = await handleOperationError(error)
         }
     }
 
@@ -297,8 +310,7 @@ extension NoriStore {
             showToast("Dismissed working note")
         } catch {
             guard generation == sessionGeneration else { return }
-            lastError = error.localizedDescription
-            showToast(error.localizedDescription)
+            _ = await handleOperationError(error)
         }
     }
 }

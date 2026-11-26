@@ -1,11 +1,16 @@
 import Foundation
 
-
 public struct NoriEndpointRouter: Sendable, Hashable {
     public let baseURL: URL
 
+    private static let pathSegmentAllowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+
     public init(baseURL: URL = NoriConfig.serverURL) {
         self.baseURL = baseURL
+    }
+
+    public static func encodePathSegment(_ raw: String) -> String {
+        raw.addingPercentEncoding(withAllowedCharacters: pathSegmentAllowed) ?? raw
     }
 
     public func unscopedURL(path: String, queryItems: [URLQueryItem] = []) throws -> URL {
@@ -18,7 +23,7 @@ public struct NoriEndpointRouter: Sendable, Hashable {
             throw NoriAPIError(message: "User ID has not been resolved.", statusCode: 401)
         }
         let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
-        let encodedUser = userID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? userID
+        let encodedUser = Self.encodePathSegment(userID)
         return try buildURL(path: "/users/\(encodedUser)\(normalizedPath)", queryItems: queryItems)
     }
 
@@ -26,11 +31,11 @@ public struct NoriEndpointRouter: Sendable, Hashable {
         guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: true) else {
             throw NoriAPIError(message: "Could not construct URL from \(baseURL.absoluteString)")
         }
-        let existing = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let existing = components.percentEncodedPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         if existing.isEmpty {
-            components.path = path
+            components.percentEncodedPath = path
         } else {
-            components.path = "/\(existing)\(path)"
+            components.percentEncodedPath = "/\(existing)\(path)"
         }
         if !queryItems.isEmpty {
             components.queryItems = queryItems
@@ -42,6 +47,13 @@ public struct NoriEndpointRouter: Sendable, Hashable {
     }
 }
 
+private struct MutationEnvelope<Value: Encodable>: Encodable {
+    let request_id: String
+    let expected_revision: Int
+    let value: Value
+}
+
+private struct EmptyBody: Encodable {}
 
 public actor LiveNoriTransport: NoriTransport {
     public let baseURL: URL
@@ -56,6 +68,7 @@ public actor LiveNoriTransport: NoriTransport {
     private let localEmail: String?
     private var resolvedUserID: String?
     private var identityGeneration: UInt64 = 0
+    private var inFlightUserResolve: (generation: UInt64, task: Task<String, Error>)?
 
     public init(
         baseURL: URL = NoriConfig.serverURL,
@@ -93,15 +106,123 @@ public actor LiveNoriTransport: NoriTransport {
 
     public func clearCachedIdentity() {
         identityGeneration &+= 1
+        inFlightUserResolve?.task.cancel()
+        inFlightUserResolve = nil
         resolvedUserID = nil
         NoriTelemetryRuntime.shared.setUser(id: nil)
     }
 
+    private func currentIdentityGeneration() -> UInt64 {
+        identityGeneration
+    }
+
+    private func encodeSegment(_ raw: String) -> String {
+        NoriEndpointRouter.encodePathSegment(raw)
+    }
+
+    public func resolveUser(
+        idToken: String,
+        email: String? = nil,
+        name: String? = nil
+    ) async throws -> UserResolveOutcome {
+        let url = try router.unscopedURL(path: "/api/users/resolve")
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        if !idToken.isEmpty {
+            req.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
+        }
+        var payload: [String: String] = [:]
+        if let email, !email.isEmpty { payload["email"] = email }
+        if let name, !name.isEmpty { payload["name"] = name }
+        req.httpBody = try encoder.encode(payload)
+
+        let (data, response) = try await session.data(for: req)
+        guard let http = response as? HTTPURLResponse else {
+            throw NoriAPIError(message: "Invalid response from server.", statusCode: 0, code: "invalid_response", retryable: true)
+        }
+        if (200..<300).contains(http.statusCode) {
+            struct ResolveResponse: Decodable { let id: String }
+            let decoded = try decoder.decode(ResolveResponse.self, from: data)
+            return .resolved(userID: decoded.id)
+        }
+        let errorPayload = try? decoder.decode(APIErrorPayload.self, from: data)
+        if http.statusCode == 403 {
+            if errorPayload?.code == "invite_required" {
+                return .inviteRequired(message: errorPayload?.error ?? "An invite code is required to access Nori.")
+            }
+            return .forbidden(message: errorPayload?.error ?? "This Google account is not authorized to access Nori.")
+        }
+        throw NoriAPIError(
+            message: errorPayload?.error ?? "Nori could not check your account. Try again shortly.",
+            statusCode: http.statusCode,
+            code: errorPayload?.code,
+            retryable: http.statusCode == 429 || http.statusCode >= 500
+        )
+    }
+
+    public func redeemInvite(
+        idToken: String,
+        inviteCode: String,
+        email: String? = nil,
+        name: String? = nil
+    ) async throws -> String {
+        let trimmed = inviteCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw NoriAPIError(message: "Enter an invite code.", statusCode: 400, code: "invite_code_required", retryable: false)
+        }
+        let url = try router.unscopedURL(path: "/api/users/redeem")
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        if !idToken.isEmpty {
+            req.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
+        }
+        var payload: [String: String] = ["invite_code": trimmed]
+        if let email, !email.isEmpty { payload["email"] = email }
+        if let name, !name.isEmpty { payload["name"] = name }
+        req.httpBody = try encoder.encode(payload)
+
+        let (data, response) = try await session.data(for: req)
+        guard let http = response as? HTTPURLResponse else {
+            throw NoriAPIError(message: "Invalid response from server.", statusCode: 0, code: "invalid_response", retryable: true)
+        }
+        if (200..<300).contains(http.statusCode) {
+            struct RedeemResponse: Decodable { let id: String }
+            let decoded = try decoder.decode(RedeemResponse.self, from: data)
+            return decoded.id
+        }
+        let errorPayload = try? decoder.decode(APIErrorPayload.self, from: data)
+        throw NoriAPIError(
+            message: errorPayload?.error ?? "Invalid invite code.",
+            statusCode: http.statusCode,
+            code: errorPayload?.code,
+            retryable: http.statusCode == 429 || http.statusCode >= 500
+        )
+    }
 
     private func ensureUserID() async throws -> String {
         if let resolvedUserID { return resolvedUserID }
+        if let existing = inFlightUserResolve, existing.generation == identityGeneration {
+            return try await existing.task.value
+        }
         let generation = identityGeneration
-        return try await withRequestSpan(route: "/api/users/resolve", method: "POST") { span in
+        let task = Task<String, Error> {
+            try await self.performEnsureUserID(generation: generation)
+        }
+        inFlightUserResolve = (generation: generation, task: task)
+        defer {
+            if inFlightUserResolve?.generation == generation {
+                inFlightUserResolve = nil
+            }
+        }
+        return try await task.value
+    }
+
+    private func performEnsureUserID(generation: UInt64) async throws -> String {
+        try await withRequestSpan(route: "/api/users/resolve", method: "POST") { span in
             let url = try router.unscopedURL(path: "/api/users/resolve")
             var req = URLRequest(url: url)
             req.httpMethod = "POST"
@@ -231,6 +352,12 @@ public actor LiveNoriTransport: NoriTransport {
             }
         case "memory" where parts[2] == "working":
             if parts.count > 3 { parts[3] = ":id" }
+        case "memory" where parts[2] == "search":
+            break
+        case "settings" where parts.count > 3 && (parts[2] == "model-keys" || parts[2] == "home-connectors"):
+            if parts[3] != "pairing" {
+                parts[3] = ":id"
+            }
         case "work", "interactions", "library", "memory", "automations", "permissions", "mutations", "mcp", "connections":
             parts[2] = ":id"
         default:
@@ -251,7 +378,8 @@ public actor LiveNoriTransport: NoriTransport {
                     code: payload.code,
                     retryable: payload.retryable ?? (http.statusCode >= 500 || http.statusCode == 429),
                     accepted: payload.accepted ?? false,
-                    requestID: payload.requestID
+                    requestID: payload.requestID,
+                    current: payload.current
                 )
             }
             let fallback: String
@@ -319,8 +447,8 @@ public actor LiveNoriTransport: NoriTransport {
         } catch let apiErr as NoriAPIError {
             throw apiErr
         } catch {
-            if let encodedID = requestID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
-               let receipt: MutationReceipt<Resource> = try? await getJSON("/v1/mutations/\(encodedID)") {
+            let encodedID = encodeSegment(requestID)
+            if let receipt: MutationReceipt<Resource> = try? await getJSON("/v1/mutations/\(encodedID)") {
                 return receipt
             }
             throw NoriAPIError(
@@ -332,6 +460,20 @@ public actor LiveNoriTransport: NoriTransport {
         }
     }
 
+    private func mutateEnvelope<Value: Encodable, Resource: Sendable & Codable & Hashable>(
+        _ path: String,
+        method: String = "POST",
+        requestID: String,
+        expectedRevision: Int = 0,
+        value: Value
+    ) async throws -> MutationReceipt<Resource> {
+        try await mutate(
+            path,
+            method: method,
+            requestID: requestID,
+            body: MutationEnvelope(request_id: requestID, expected_revision: expectedRevision, value: value)
+        )
+    }
 
     public func ping() async -> HealthCheckResult {
         let start = ContinuousClock.now
@@ -375,75 +517,168 @@ public actor LiveNoriTransport: NoriTransport {
         return try await getJSON("/v1/snapshot", queryItems: query)
     }
 
-    public func fetchFullSnapshot() async throws -> NoriFullSnapshot {
-        let caps = try? await fetchCapabilities()
-        let session = try await fetchSession(before: nil)
-
-        async let workTask = try? await fetchWorkItems(bucket: nil)
-        async let interactionsTask = try? await fetchInteractions()
-        async let mcpTask = (try? await fetchMCPServers()) ?? []
-        async let connectionsTask = (try? await fetchConnections()) ?? []
-        async let libraryTask = (try? await fetchLibrary()) ?? []
-        async let memoriesTask = (try? await fetchCoreMemories()) ?? []
-        async let logsTask = (try? await fetchMemoryLogs()) ?? []
-        async let workingTask = try? await fetchWorkingMemory()
-        async let automationsTask = (try? await fetchAutomations()) ?? []
-        async let goalsTask = (try? await fetchGoals()) ?? []
-        async let permissionsTask = (try? await fetchPermissions()) ?? []
-        async let preferencesTask = try? await fetchPreferences()
-        async let modelKeysTask = (try? await fetchModelKeys()) ?? ModelKeysResponse()
-
-        let servers = await mcpTask
-        let toolsByServer = await withTaskGroup(
-            of: (String, [MCPServerTool]?).self,
-            returning: [String: [MCPServerTool]].self
-        ) { group in
-            for server in servers {
-                let serverID = server.id
-                group.addTask {
-                    let tools = try? await self.fetchMCPTools(serverID: serverID)
-                    return (serverID, tools)
-                }
-            }
-            var result: [String: [MCPServerTool]] = [:]
-            for await (serverID, tools) in group {
-                if let tools {
-                    result[serverID] = tools
-                }
-            }
-            return result
+    private func captureSnapshotDomain<T: Sendable>(
+        _ operation: () async throws -> T
+    ) async -> Result<T, Error> {
+        do {
+            return .success(try await operation())
+        } catch {
+            return .failure(error)
         }
-
-        let (workItems, interactions, workingMemory, preferences) = await (workTask, interactionsTask, workingTask, preferencesTask)
-        return await NoriFullSnapshot(
-            capabilities: caps,
-            session: session,
-            workItems: workItems ?? [],
-            interactions: interactions ?? [],
-            mcpServers: servers,
-            mcpTools: toolsByServer,
-            connections: connectionsTask,
-            libraryItems: libraryTask,
-            coreMemories: memoriesTask,
-            memoryLogs: logsTask,
-            workingMemory: workingMemory ?? WorkingMemory(),
-            automations: automationsTask,
-            goals: goalsTask,
-            permissions: permissionsTask,
-            preferences: preferences ?? Preferences(),
-            modelKeys: modelKeysTask,
-            didLoadWorkItems: workItems != nil,
-            didLoadInteractions: interactions != nil,
-            didLoadWorkingMemory: workingMemory != nil,
-            didLoadPreferences: preferences != nil
-        )
     }
 
+    private func isFatalSnapshotError(_ error: Error) -> Bool {
+        guard let apiErr = error as? NoriAPIError else { return false }
+        return apiErr.isAuthError || apiErr.code == "data_reset_pending" || apiErr.code == "account_delete_pending"
+    }
+
+    public func fetchFullSnapshot() async throws -> NoriFullSnapshot {
+        let session = try await fetchSession(before: nil)
+
+        async let capsResult = captureSnapshotDomain { try await self.fetchCapabilities() }
+        async let workResult = captureSnapshotDomain { try await self.fetchWorkItems(bucket: nil) }
+        async let interactionsResult = captureSnapshotDomain { try await self.fetchInteractions() }
+        async let mcpResult = captureSnapshotDomain { try await self.fetchMCPServers() }
+        async let connectionsResult = captureSnapshotDomain { try await self.fetchConnections() }
+        async let libraryResult = captureSnapshotDomain { try await self.fetchLibrary() }
+        async let memoriesResult = captureSnapshotDomain { try await self.fetchCoreMemories() }
+        async let logsResult = captureSnapshotDomain { try await self.fetchMemoryLogs() }
+        async let workingResult = captureSnapshotDomain { try await self.fetchWorkingMemory() }
+        async let automationsResult = captureSnapshotDomain { try await self.fetchAutomations() }
+        async let goalsResult = captureSnapshotDomain { try await self.fetchGoals() }
+        async let permissionsResult = captureSnapshotDomain { try await self.fetchPermissions() }
+        async let preferencesResult = captureSnapshotDomain { try await self.fetchPreferences() }
+        async let modelKeysResult = captureSnapshotDomain { try await self.fetchModelKeys() }
+
+        let (
+            capsRes,
+            workRes,
+            interactionsRes,
+            mcpRes,
+            connectionsRes,
+            libraryRes,
+            memoriesRes
+        ) = await (
+            capsResult,
+            workResult,
+            interactionsResult,
+            mcpResult,
+            connectionsResult,
+            libraryResult,
+            memoriesResult
+        )
+        let (
+            logsRes,
+            workingRes,
+            automationsRes,
+            goalsRes,
+            permissionsRes,
+            preferencesRes,
+            modelKeysRes
+        ) = await (
+            logsResult,
+            workingResult,
+            automationsResult,
+            goalsResult,
+            permissionsResult,
+            preferencesResult,
+            modelKeysResult
+        )
+
+        var partialErrors: [String: String] = [:]
+        func unwrap<T>(_ result: Result<T, Error>, domain: String, fallback: T) throws -> (value: T, loaded: Bool) {
+            switch result {
+            case .success(let value):
+                return (value, true)
+            case .failure(let error):
+                if isFatalSnapshotError(error) {
+                    throw error
+                }
+                partialErrors[domain] = error.localizedDescription
+                return (fallback, false)
+            }
+        }
+
+        let caps = try unwrap(capsRes.map(Optional.some), domain: "capabilities", fallback: nil)
+        let work = try unwrap(workRes, domain: "work", fallback: [])
+        let interactions = try unwrap(interactionsRes, domain: "interactions", fallback: [])
+        let mcp = try unwrap(mcpRes, domain: "mcp", fallback: [])
+        let connections = try unwrap(connectionsRes, domain: "connections", fallback: [])
+        let library = try unwrap(libraryRes, domain: "library", fallback: [])
+        let memories = try unwrap(memoriesRes, domain: "core_memories", fallback: [])
+        let logs = try unwrap(logsRes, domain: "memory_logs", fallback: [])
+        let working = try unwrap(workingRes, domain: "working_memory", fallback: WorkingMemory())
+        let automations = try unwrap(automationsRes, domain: "automations", fallback: [])
+        let goals = try unwrap(goalsRes, domain: "goals", fallback: [])
+        let permissions = try unwrap(permissionsRes, domain: "permissions", fallback: [])
+        let preferences = try unwrap(preferencesRes, domain: "preferences", fallback: Preferences())
+        let modelKeys = try unwrap(modelKeysRes, domain: "model_keys", fallback: ModelKeysResponse())
+
+        let toolsByServer: [String: [MCPServerTool]]
+        if mcp.loaded {
+            toolsByServer = await withTaskGroup(
+                of: (String, [MCPServerTool]?).self,
+                returning: [String: [MCPServerTool]].self
+            ) { group in
+                for server in mcp.value {
+                    let serverID = server.id
+                    group.addTask {
+                        let tools = try? await self.fetchMCPTools(serverID: serverID)
+                        return (serverID, tools)
+                    }
+                }
+                var result: [String: [MCPServerTool]] = [:]
+                for await (serverID, tools) in group {
+                    if let tools {
+                        result[serverID] = tools
+                    }
+                }
+                return result
+            }
+        } else {
+            toolsByServer = [:]
+        }
+
+        return NoriFullSnapshot(
+            capabilities: caps.value,
+            session: session,
+            workItems: work.value,
+            interactions: interactions.value,
+            mcpServers: mcp.value,
+            mcpTools: toolsByServer,
+            connections: connections.value,
+            libraryItems: library.value,
+            coreMemories: memories.value,
+            memoryLogs: logs.value,
+            workingMemory: working.value,
+            automations: automations.value,
+            goals: goals.value,
+            permissions: permissions.value,
+            preferences: preferences.value,
+            modelKeys: modelKeys.value,
+            didLoadCapabilities: caps.loaded,
+            didLoadWorkItems: work.loaded,
+            didLoadInteractions: interactions.loaded,
+            didLoadMCPServers: mcp.loaded,
+            didLoadConnections: connections.loaded,
+            didLoadLibraryItems: library.loaded,
+            didLoadCoreMemories: memories.loaded,
+            didLoadMemoryLogs: logs.loaded,
+            didLoadWorkingMemory: working.loaded,
+            didLoadAutomations: automations.loaded,
+            didLoadGoals: goals.loaded,
+            didLoadPermissions: permissions.loaded,
+            didLoadPreferences: preferences.loaded,
+            didLoadModelKeys: modelKeys.loaded,
+            partialErrors: partialErrors
+        )
+    }
 
     public nonisolated func eventStream(after position: Int) -> AsyncThrowingStream<NoriStreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 var cursor = max(0, position)
+                let streamGeneration = await self.currentIdentityGeneration()
                 let initialBackoff = self.sseInitialBackoffSeconds
                 let rolloverDelayMs = self.sseRolloverDelayMilliseconds
                 var backoffSeconds = initialBackoff
@@ -461,6 +696,7 @@ public actor LiveNoriTransport: NoriTransport {
                 }
 
                 while !Task.isCancelled {
+                    guard await self.currentIdentityGeneration() == streamGeneration else { break }
                     if !hasEmittedInitialConnecting {
                         hasEmittedInitialConnecting = true
                         continuation.yield(.connectionState(.connecting))
@@ -469,12 +705,14 @@ public actor LiveNoriTransport: NoriTransport {
                     var traceID: String?
                     do {
                         let userID = try await self.ensureUserID()
+                        guard await self.currentIdentityGeneration() == streamGeneration else { break }
                         let token: String?
                         if self.localEmail == nil {
                             token = try await self.authProvider.validIDToken(forceRefresh: forceNextTokenRefresh)
                         } else {
                             token = nil
                         }
+                        guard await self.currentIdentityGeneration() == streamGeneration else { break }
                         forceNextTokenRefresh = false
 
                         let url = try self.router.scopedURL(
@@ -494,6 +732,7 @@ public actor LiveNoriTransport: NoriTransport {
                         self.applyTraceHeaders(to: &req, traceContext: sseTrace, recordTrace: false)
 
                         let (bytes, response) = try await self.streamSession.bytes(for: req)
+                        guard await self.currentIdentityGeneration() == streamGeneration else { break }
                         guard let http = response as? HTTPURLResponse else {
                             throw NoriAPIError(message: "Invalid event stream response.", statusCode: 0, retryable: true)
                         }
@@ -549,6 +788,7 @@ public actor LiveNoriTransport: NoriTransport {
                         for try await byte in bytes {
                             if Task.isCancelled { break }
                             if byte == 0x0A {
+                                guard await self.currentIdentityGeneration() == streamGeneration else { break }
                                 let line = String(decoding: lineBuffer, as: UTF8.self)
                                 lineBuffer.removeAll(keepingCapacity: true)
                                 if let frame = parser.feedLine(line),
@@ -560,6 +800,8 @@ public actor LiveNoriTransport: NoriTransport {
                                 lineBuffer.append(byte)
                             }
                         }
+
+                        guard await self.currentIdentityGeneration() == streamGeneration else { break }
 
                         if !lineBuffer.isEmpty {
                             let line = String(decoding: lineBuffer, as: UTF8.self)
@@ -582,10 +824,12 @@ public actor LiveNoriTransport: NoriTransport {
                     } catch is CancellationError {
                         break
                     } catch let apiErr as NoriAPIError where apiErr.statusCode == 401 || apiErr.statusCode == 403 {
+                        guard await self.currentIdentityGeneration() == streamGeneration else { break }
                         continuation.finish(throwing: apiErr)
                         return
                     } catch {
                         if Task.isCancelled { break }
+                        guard await self.currentIdentityGeneration() == streamGeneration else { break }
                         let transientState: ConnectionState
                         if let urlErr = error as? URLError,
                            [.notConnectedToInternet, .cannotFindHost, .dnsLookupFailed, .networkConnectionLost, .internationalRoamingOff, .dataNotAllowed].contains(urlErr.code) {
@@ -620,7 +864,6 @@ public actor LiveNoriTransport: NoriTransport {
             }
         }
     }
-
 
     public func sendTurn(id: String, message: String, attachmentIDs: [String]) async throws -> Session {
         try await sendTurn(id: id, message: message, attachmentIDs: attachmentIDs, modelSelection: nil)
@@ -677,7 +920,6 @@ public actor LiveNoriTransport: NoriTransport {
         }
     }
 
-
     public func fetchWorkItems(bucket: WorkBucket?) async throws -> [WorkItem] {
         var query: [URLQueryItem] = []
         if let bucket {
@@ -688,19 +930,23 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func fetchWorkDetail(taskID: String) async throws -> WorkDetail {
-        try await getJSON("/v1/work/\(taskID)")
+        try await getJSON("/v1/work/\(encodeSegment(taskID))")
+    }
+
+    public func fetchOperations(connectionID: String? = nil) async throws -> [OperationProjection] {
+        var query: [URLQueryItem] = []
+        if let connectionID, !connectionID.isEmpty {
+            query.append(URLQueryItem(name: "connection_id", value: connectionID))
+        }
+        let resp: ListResponse<OperationProjection> = try await getJSON("/v1/operations", queryItems: query)
+        return resp.items
     }
 
     public func stopWork(taskID: String, requestID: String) async throws -> MutationReceipt<WorkItem> {
-        struct StopReq: Encodable {
-            let request_id: String
-            let expected_revision: Int
-            let value: [String: String]
-        }
-        return try await mutate(
-            "/v1/work/\(taskID)/actions",
+        try await mutateEnvelope(
+            "/v1/work/\(encodeSegment(taskID))/actions",
             requestID: requestID,
-            body: StopReq(request_id: requestID, expected_revision: 0, value: ["action": "stop"])
+            value: ["action": "stop"]
         )
     }
 
@@ -709,15 +955,10 @@ public actor LiveNoriTransport: NoriTransport {
             let action: String
             let budget_usd: Double
         }
-        struct ContinueReq: Encodable {
-            let request_id: String
-            let expected_revision: Int
-            let value: ContinueValue
-        }
-        return try await mutate(
-            "/v1/work/\(taskID)/actions",
+        return try await mutateEnvelope(
+            "/v1/work/\(encodeSegment(taskID))/actions",
             requestID: requestID,
-            body: ContinueReq(request_id: requestID, expected_revision: 0, value: ContinueValue(action: "continue", budget_usd: budgetUSD))
+            value: ContinueValue(action: "continue", budget_usd: budgetUSD)
         )
     }
 
@@ -726,24 +967,23 @@ public actor LiveNoriTransport: NoriTransport {
         return resp.items
     }
 
+    public func fetchInteraction(id: String) async throws -> Interaction {
+        try await getJSON("/v1/interactions/\(encodeSegment(id))")
+    }
+
     public func respondToInteraction(
         id: String,
         expectedRevision: Int,
         answer: InteractionAnswer,
         requestID: String
     ) async throws -> MutationReceipt<Interaction> {
-        struct RespReq: Encodable {
-            let request_id: String
-            let expected_revision: Int
-            let value: [String: AnyJSON]
-        }
-        return try await mutate(
-            "/v1/interactions/\(id)/responses",
+        try await mutateEnvelope(
+            "/v1/interactions/\(encodeSegment(id))/responses",
             requestID: requestID,
-            body: RespReq(request_id: requestID, expected_revision: expectedRevision, value: answer.payloadDictionary)
+            expectedRevision: expectedRevision,
+            value: answer.payloadDictionary
         )
     }
-
 
     public func fetchMCPServers() async throws -> [MCPServer] {
         let resp: ListResponse<MCPServer> = try await getJSON("/v1/mcp")
@@ -751,21 +991,12 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func fetchMCPTools(serverID: String) async throws -> [MCPServerTool] {
-        let resp: ListResponse<MCPServerTool> = try await getJSON("/v1/mcp/\(serverID)/tools")
+        let resp: ListResponse<MCPServerTool> = try await getJSON("/v1/mcp/\(encodeSegment(serverID))/tools")
         return resp.items
     }
 
     public func createMCPServer(input: MCPServerInput, requestID: String) async throws -> MutationReceipt<MCPServer> {
-        struct CreateReq: Encodable {
-            let request_id: String
-            let expected_revision: Int
-            let value: MCPServerInput
-        }
-        return try await mutate(
-            "/v1/mcp",
-            requestID: requestID,
-            body: CreateReq(request_id: requestID, expected_revision: 0, value: input)
-        )
+        try await mutateEnvelope("/v1/mcp", requestID: requestID, value: input)
     }
 
     public func performMCPAction(
@@ -779,20 +1010,12 @@ public actor LiveNoriTransport: NoriTransport {
             let action: String
             let return_to: String?
         }
-        struct ActionReq: Encodable {
-            let request_id: String
-            let expected_revision: Int
-            let value: ActionVal
-        }
         let cleanReturnTo = (returnTo?.isEmpty == false) ? returnTo : nil
-        return try await mutate(
-            "/v1/mcp/\(serverID)/actions",
+        return try await mutateEnvelope(
+            "/v1/mcp/\(encodeSegment(serverID))/actions",
             requestID: requestID,
-            body: ActionReq(
-                request_id: requestID,
-                expected_revision: expectedRevision,
-                value: ActionVal(action: action, return_to: cleanReturnTo)
-            )
+            expectedRevision: expectedRevision,
+            value: ActionVal(action: action, return_to: cleanReturnTo)
         )
     }
 
@@ -804,7 +1027,7 @@ public actor LiveNoriTransport: NoriTransport {
     ) async throws -> MutationReceipt<MCPServer> {
         _ = expectedRevision
         return try await mutate(
-            "/v1/mcp/\(serverID)/credential",
+            "/v1/mcp/\(encodeSegment(serverID))/credential",
             requestID: requestID,
             body: MCPCredentialInput(requestID: requestID, token: secret)
         )
@@ -822,19 +1045,11 @@ public actor LiveNoriTransport: NoriTransport {
             let tool: String
             let exposure: String
         }
-        struct ExposureReq: Encodable {
-            let request_id: String
-            let expected_revision: Int
-            let value: ExposureVal
-        }
-        return try await mutate(
-            "/v1/mcp/\(serverID)/actions",
+        return try await mutateEnvelope(
+            "/v1/mcp/\(encodeSegment(serverID))/actions",
             requestID: requestID,
-            body: ExposureReq(
-                request_id: requestID,
-                expected_revision: expectedRevision,
-                value: ExposureVal(action: "set_exposure", tool: toolName, exposure: exposure.rawValue)
-            )
+            expectedRevision: expectedRevision,
+            value: ExposureVal(action: "set_exposure", tool: toolName, exposure: exposure.rawValue)
         )
     }
 
@@ -849,8 +1064,7 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func fetchConnectionResources(connectionID: String) async throws -> [ConnectionResource] {
-        let encodedID = connectionID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? connectionID
-        let resp: ListResponse<ConnectionResource> = try await getJSON("/v1/connections/\(encodedID)/resources")
+        let resp: ListResponse<ConnectionResource> = try await getJSON("/v1/connections/\(encodeSegment(connectionID))/resources")
         return resp.items
     }
 
@@ -860,27 +1074,17 @@ public actor LiveNoriTransport: NoriTransport {
             let title: String
             let selected_resource_ids: [String]
         }
-        struct Request: Encodable {
-            let request_id: String
-            let expected_revision: Int
-            let value: Value
-        }
-        return try await mutate(
+        return try await mutateEnvelope(
             "/v1/connections",
             requestID: requestID,
-            body: Request(
-                request_id: requestID,
-                expected_revision: 0,
-                value: Value(integration_id: integrationID, title: "", selected_resource_ids: [])
-            )
+            value: Value(integration_id: integrationID, title: "", selected_resource_ids: [])
         )
     }
 
     public func startGoogleDrivePicker(connectionID: String, returnTo: String) async throws -> AuthAttempt {
         struct Request: Encodable { let return_to: String }
-        let encodedID = connectionID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? connectionID
         return try await sendJSON(
-            "/v1/connections/\(encodedID)/google-drive/picker",
+            "/v1/connections/\(encodeSegment(connectionID))/google-drive/picker",
             body: Request(return_to: returnTo)
         )
     }
@@ -892,7 +1096,7 @@ public actor LiveNoriTransport: NoriTransport {
         returnTo: String?,
         requestID: String
     ) async throws -> MutationReceipt<Connection> {
-        return try await performConnectionAction(
+        try await performConnectionAction(
             connectionID: connectionID,
             expectedRevision: expectedRevision,
             action: action,
@@ -915,23 +1119,14 @@ public actor LiveNoriTransport: NoriTransport {
             let return_to: String?
             let capabilities: [String]?
         }
-        struct ActionReq: Encodable {
-            let request_id: String
-            let expected_revision: Int
-            let value: ActionVal
-        }
         let cleanReturnTo = (returnTo?.isEmpty == false) ? returnTo : nil
-        return try await mutate(
-            "/v1/connections/\(connectionID)/actions",
+        return try await mutateEnvelope(
+            "/v1/connections/\(encodeSegment(connectionID))/actions",
             requestID: requestID,
-            body: ActionReq(
-                request_id: requestID,
-                expected_revision: expectedRevision,
-                value: ActionVal(action: action, return_to: cleanReturnTo, capabilities: capabilities.isEmpty ? nil : capabilities)
-            )
+            expectedRevision: expectedRevision,
+            value: ActionVal(action: action, return_to: cleanReturnTo, capabilities: capabilities.isEmpty ? nil : capabilities)
         )
     }
-
 
     public func fetchLibrary() async throws -> [LibraryItem] {
         let resp: ListResponse<LibraryItem> = try await getJSON("/v1/library")
@@ -939,20 +1134,18 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func fetchLibraryItem(id: String) async throws -> LibraryItem {
-        let encodedID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        return try await getJSON("/v1/library/\(encodedID)")
+        try await getJSON("/v1/library/\(encodeSegment(id))")
     }
 
     public func fetchLibraryItemFile(id: String, format: String?) async throws -> LibraryFilePayload {
         try await withRequestSpan(route: "/v1/library/:id/file", method: "GET") { span in
             let userID = try await ensureUserID()
             span.setTag("nori.user.id", value: userID)
-            let encodedID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
             var query: [URLQueryItem] = []
             if let format, !format.isEmpty {
                 query.append(URLQueryItem(name: "format", value: format))
             }
-            let url = try router.scopedURL(path: "/v1/library/\(encodedID)/file", userID: userID, queryItems: query)
+            let url = try router.scopedURL(path: "/v1/library/\(encodeSegment(id))/file", userID: userID, queryItems: query)
             let (data, response) = try await performAuthenticated(URLRequest(url: url), traceContext: span.traceContext)
             let http = response as? HTTPURLResponse
             if let http { span.setTag("http.response.status_code", value: String(http.statusCode)) }
@@ -996,22 +1189,13 @@ public actor LiveNoriTransport: NoriTransport {
         instruction: String,
         requestID: String
     ) async throws -> MutationReceipt<LibraryItem> {
-        struct ReviseReq: Encodable {
-            let request_id: String
-            let expected_revision: Int
-            let value: [String: String]
-        }
-        return try await mutate(
-            "/v1/library/\(id)/actions",
+        try await mutateEnvelope(
+            "/v1/library/\(encodeSegment(id))/actions",
             requestID: requestID,
-            body: ReviseReq(
-                request_id: requestID,
-                expected_revision: expectedRevision,
-                value: ["action": "revise", "instruction": instruction]
-            )
+            expectedRevision: expectedRevision,
+            value: ["action": "revise", "instruction": instruction]
         )
     }
-
 
     public func fetchCoreMemories() async throws -> [MemoryFact] {
         let resp: ListResponse<MemoryFact> = try await getJSON("/v1/memory")
@@ -1027,6 +1211,17 @@ public actor LiveNoriTransport: NoriTransport {
         try await getJSON("/v1/memory/working")
     }
 
+    public func searchMemory(query: String, layer: String? = nil, limit: Int = 20) async throws -> MemorySearchResponse {
+        var queryItems = [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "limit", value: String(limit))
+        ]
+        if let layer, !layer.isEmpty, layer != "all" {
+            queryItems.append(URLQueryItem(name: "layer", value: layer))
+        }
+        return try await getJSON("/v1/memory/search", queryItems: queryItems)
+    }
+
     public func createMemory(
         text: String,
         section: String?,
@@ -1040,15 +1235,10 @@ public actor LiveNoriTransport: NoriTransport {
             let about: String?
             let pinned: Bool
         }
-        struct MemReq: Encodable {
-            let request_id: String
-            let expected_revision: Int
-            let value: MemVal
-        }
-        return try await mutate(
+        return try await mutateEnvelope(
             "/v1/memory",
             requestID: requestID,
-            body: MemReq(request_id: requestID, expected_revision: 0, value: MemVal(text: text, section: section, about: about, pinned: pinned))
+            value: MemVal(text: text, section: section, about: about, pinned: pinned)
         )
     }
 
@@ -1058,15 +1248,11 @@ public actor LiveNoriTransport: NoriTransport {
         action: String,
         requestID: String
     ) async throws -> MutationReceipt<MemoryActionResource> {
-        struct ActionReq: Encodable {
-            let request_id: String
-            let expected_revision: Int
-            let value: [String: String]
-        }
-        return try await mutate(
-            "/v1/memory/\(id)/actions",
+        try await mutateEnvelope(
+            "/v1/memory/\(encodeSegment(id))/actions",
             requestID: requestID,
-            body: ActionReq(request_id: requestID, expected_revision: expectedRevision, value: ["action": action])
+            expectedRevision: expectedRevision,
+            value: ["action": action]
         )
     }
 
@@ -1082,19 +1268,11 @@ public actor LiveNoriTransport: NoriTransport {
             let action: String
             let pinned: Bool?
         }
-        struct ActionReq: Encodable {
-            let request_id: String
-            let expected_revision: Int
-            let value: ActionVal
-        }
-        return try await mutate(
-            "/v1/memory/logs/\(date)/\(entryID)/actions",
+        return try await mutateEnvelope(
+            "/v1/memory/logs/\(encodeSegment(date))/\(encodeSegment(entryID))/actions",
             requestID: requestID,
-            body: ActionReq(
-                request_id: requestID,
-                expected_revision: expectedRevision,
-                value: ActionVal(action: action, pinned: action == "promote" ? pinned : nil)
-            )
+            expectedRevision: expectedRevision,
+            value: ActionVal(action: action, pinned: action == "promote" ? pinned : nil)
         )
     }
 
@@ -1104,18 +1282,13 @@ public actor LiveNoriTransport: NoriTransport {
         action: String,
         requestID: String
     ) async throws -> MutationReceipt<WorkingMemoryActionResource> {
-        struct ActionReq: Encodable {
-            let request_id: String
-            let expected_revision: Int
-            let value: [String: String]
-        }
-        return try await mutate(
-            "/v1/memory/working/\(itemID)/actions",
+        try await mutateEnvelope(
+            "/v1/memory/working/\(encodeSegment(itemID))/actions",
             requestID: requestID,
-            body: ActionReq(request_id: requestID, expected_revision: expectedRevision, value: ["action": action])
+            expectedRevision: expectedRevision,
+            value: ["action": action]
         )
     }
-
 
     public func fetchAutomations() async throws -> [Automation] {
         let resp: ListResponse<Automation> = try await getJSON("/v1/automations")
@@ -1123,8 +1296,7 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func fetchAutomation(id: String) async throws -> Automation {
-        let encodedID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        return try await getJSON("/v1/automations/\(encodedID)")
+        try await getJSON("/v1/automations/\(encodeSegment(id))")
     }
 
     public func updateAutomation(
@@ -1133,17 +1305,12 @@ public actor LiveNoriTransport: NoriTransport {
         value: AutomationEditable,
         requestID: String
     ) async throws -> MutationReceipt<Automation> {
-        struct UpdateReq: Encodable {
-            let request_id: String
-            let expected_revision: Int
-            let value: AutomationEditable
-        }
-        let encodedID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        return try await mutate(
-            "/v1/automations/\(encodedID)",
+        try await mutateEnvelope(
+            "/v1/automations/\(encodeSegment(id))",
             method: "PUT",
             requestID: requestID,
-            body: UpdateReq(request_id: requestID, expected_revision: expectedRevision, value: value)
+            expectedRevision: expectedRevision,
+            value: value
         )
     }
 
@@ -1153,15 +1320,11 @@ public actor LiveNoriTransport: NoriTransport {
         action: String,
         requestID: String
     ) async throws -> MutationReceipt<Automation> {
-        struct ActionReq: Encodable {
-            let request_id: String
-            let expected_revision: Int
-            let value: [String: String]
-        }
-        return try await mutate(
-            "/v1/automations/\(id)/actions",
+        try await mutateEnvelope(
+            "/v1/automations/\(encodeSegment(id))/actions",
             requestID: requestID,
-            body: ActionReq(request_id: requestID, expected_revision: expectedRevision, value: ["action": action])
+            expectedRevision: expectedRevision,
+            value: ["action": action]
         )
     }
 
@@ -1179,16 +1342,7 @@ public actor LiveNoriTransport: NoriTransport {
         _ rule: PermissionRuleEditable,
         requestID: String
     ) async throws -> MutationReceipt<PermissionRule> {
-        struct RuleReq: Encodable {
-            let request_id: String
-            let expected_revision: Int
-            let value: PermissionRuleEditable
-        }
-        return try await mutate(
-            "/v1/permissions",
-            requestID: requestID,
-            body: RuleReq(request_id: requestID, expected_revision: 0, value: rule)
-        )
+        try await mutateEnvelope("/v1/permissions", requestID: requestID, value: rule)
     }
 
     public func revokePermissionRule(
@@ -1196,15 +1350,11 @@ public actor LiveNoriTransport: NoriTransport {
         expectedRevision: Int,
         requestID: String
     ) async throws -> MutationReceipt<PermissionRule> {
-        struct ActionReq: Encodable {
-            let request_id: String
-            let expected_revision: Int
-            let value: [String: String]
-        }
-        return try await mutate(
-            "/v1/permissions/\(id)/actions",
+        try await mutateEnvelope(
+            "/v1/permissions/\(encodeSegment(id))/actions",
             requestID: requestID,
-            body: ActionReq(request_id: requestID, expected_revision: expectedRevision, value: ["action": "revoke"])
+            expectedRevision: expectedRevision,
+            value: ["action": "revoke"]
         )
     }
 
@@ -1217,40 +1367,22 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func resetUserData(confirmation: String) async throws {
-        try await sendDataReset(confirmation: confirmation, resumePending: false)
+        try await sendAccountMaintenance(path: "/v1/settings/reset", confirmation: confirmation, resumePending: false)
     }
 
     public func resumePendingDataReset() async throws {
-        try await sendDataReset(confirmation: "RESET", resumePending: true)
-    }
-
-    private func sendDataReset(confirmation: String, resumePending: Bool) async throws {
-        struct ResetRequest: Encodable {
-            let confirmation: String
-            let resume_pending: Bool?
-        }
-        let path = "/v1/settings/reset"
-        try await withRequestSpan(route: path, method: "POST") { span in
-            let userID = try await ensureUserID()
-            span.setTag("nori.user.id", value: userID)
-            let url = try router.scopedURL(path: path, userID: userID)
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.timeoutInterval = 90
-            request.httpBody = try encoder.encode(ResetRequest(
-                confirmation: confirmation,
-                resume_pending: resumePending ? true : nil
-            ))
-            _ = try await authenticatedData(request, contentType: "application/json", span: span)
-        }
+        try await sendAccountMaintenance(path: "/v1/settings/reset", confirmation: "RESET", resumePending: true)
     }
 
     public func deleteAccount(confirmation: String, resumePending: Bool) async throws {
-        struct DeleteAccountRequest: Encodable {
+        try await sendAccountMaintenance(path: "/v1/settings/account/delete", confirmation: confirmation, resumePending: resumePending)
+    }
+
+    private func sendAccountMaintenance(path: String, confirmation: String, resumePending: Bool) async throws {
+        struct MaintenanceRequest: Encodable {
             let confirmation: String
             let resume_pending: Bool?
         }
-        let path = "/v1/settings/account/delete"
         try await withRequestSpan(route: path, method: "POST") { span in
             let userID = try await ensureUserID()
             span.setTag("nori.user.id", value: userID)
@@ -1258,7 +1390,7 @@ public actor LiveNoriTransport: NoriTransport {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.timeoutInterval = 90
-            request.httpBody = try encoder.encode(DeleteAccountRequest(
+            request.httpBody = try encoder.encode(MaintenanceRequest(
                 confirmation: confirmation,
                 resume_pending: resumePending ? true : nil
             ))
@@ -1278,11 +1410,6 @@ public actor LiveNoriTransport: NoriTransport {
             let input: InputPreferences?
             let onboarding_completed_at: String?
         }
-        struct PrefReq: Encodable {
-            let request_id: String
-            let expected_revision: Int
-            let value: PrefVal
-        }
         let val = PrefVal(
             timezone: preferences.timezone,
             locale: preferences.locale,
@@ -1294,11 +1421,12 @@ public actor LiveNoriTransport: NoriTransport {
             input: preferences.input,
             onboarding_completed_at: preferences.onboardingCompletedAt
         )
-        return try await mutate(
+        return try await mutateEnvelope(
             "/v1/preferences",
             method: "PUT",
             requestID: requestID,
-            body: PrefReq(request_id: requestID, expected_revision: preferences.revision, value: val)
+            expectedRevision: preferences.revision,
+            value: val
         )
     }
 
@@ -1317,17 +1445,15 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func saveModelKey(provider: String, apiKey: String) async throws -> ModelKeyProvider {
-        let encodedProvider = provider.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? provider
-        return try await sendJSON(
-            "/v1/settings/model-keys/\(encodedProvider)",
+        try await sendJSON(
+            "/v1/settings/model-keys/\(encodeSegment(provider))",
             method: "PUT",
             body: SaveModelKeyRequest(apiKey: apiKey)
         )
     }
 
     public func deleteModelKey(provider: String) async throws -> ModelKeyProvider {
-        let encodedProvider = provider.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? provider
-        return try await deleteJSON("/v1/settings/model-keys/\(encodedProvider)")
+        try await deleteJSON("/v1/settings/model-keys/\(encodeSegment(provider))")
     }
 
     public func fetchHomeConnectors() async throws -> HomeConnectorsResponse {
@@ -1343,16 +1469,12 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func testHomeConnector(_ id: String) async throws -> HomeConnectorTest {
-        let encodedID = id.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-_"))) ?? id
-        return try await sendJSON("/v1/settings/home-connectors/\(encodedID)/test", body: EmptyBody())
+        try await sendJSON("/v1/settings/home-connectors/\(encodeSegment(id))/test", body: EmptyBody())
     }
 
     public func revokeHomeConnector(_ id: String) async throws {
-        let encodedID = id.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-_"))) ?? id
-        try await sendWithoutResponse("/v1/settings/home-connectors/\(encodedID)", method: "DELETE", body: EmptyBody())
+        try await sendWithoutResponse("/v1/settings/home-connectors/\(encodeSegment(id))", method: "DELETE", body: EmptyBody())
     }
-
-    private struct EmptyBody: Encodable {}
 
     private func sendWithoutResponse<Body: Encodable>(_ path: String, method: String, body: Body) async throws {
         try await withRequestSpan(route: normalizedRoute(for: path), method: method) { span in
