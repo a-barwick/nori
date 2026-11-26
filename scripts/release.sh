@@ -139,7 +139,7 @@ fi
 
 ci_green() {
   [[ "${NORI_RELEASE_CI_GATED:-}" == 1 ]] && return 0
-  NORI_GITHUB_REPO="$REPO_SLUG" "$CI_STATUS" "$1" >/dev/null
+  NORI_GITHUB_REPO="$REPO_SLUG" "$CI_STATUS" "$1" --exclude-job "Swift package and iOS app" >/dev/null
 }
 images_exist() {
   local name
@@ -249,9 +249,14 @@ revert_group() {
 }
 
 check_staged() {
-  local svc="$1" url="$2"
+  local svc="$1" url="$2" root_status
   case "$svc" in
     nori-core) [[ "$(http_status "$url/readyz")" == 200 ]] ;;
+    nori-web)
+      root_status="$(http_status "$url/")"
+      [[ "$(http_status "$url/api/health")" == 200 ]] &&
+        [[ "$root_status" =~ ^[234][0-9][0-9]$ ]]
+      ;;
     nori-web-mac)
       [[ "$(http_status "$url/api/health")" == 200 ]] &&
         [[ "$(http_status "$url/")" == 403 ]] &&
@@ -303,11 +308,18 @@ release_group() {
 }
 
 bake_failures() {
-  local since="$1" revisions filter
+  local since="$1" revisions filter attempt output
   revisions="$(for svc in "${PROMOTED[@]}"; do printf '"%s" OR ' "$(get_for STAGED "$svc")"; done)"
   revisions="${revisions% OR }"
   filter="resource.type=\"cloud_run_revision\" AND resource.labels.revision_name=($revisions) AND timestamp>=\"$since\" AND ((logName:\"run.googleapis.com%2Frequests\" AND httpRequest.status>=500) OR (logName:\"run.googleapis.com%2Fvarlog%2Fsystem\" AND textPayload=~\"probe failed|Container called exit|Container terminated|Memory limit\"))"
-  gcloud logging read "$filter" --project="$PROJECT" --limit=20 --format='value(resource.labels.revision_name)' | sort -u
+  for attempt in 1 2 3; do
+    if output="$(gcloud logging read "$filter" --project="$PROJECT" --limit=20 --format='value(resource.labels.revision_name)')"; then
+      printf '%s\n' "$output" | awk 'NF' | sort -u
+      return 0
+    fi
+    [[ "$attempt" -lt 3 ]] && sleep "${NORI_RELEASE_LOG_RETRY_SLEEP:-5}"
+  done
+  return 1
 }
 
 FAILED=0

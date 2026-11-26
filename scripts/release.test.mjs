@@ -20,7 +20,7 @@ function commitFile(repo, path, contents) {
   return git(repo, "rev-parse", "HEAD");
 }
 
-function fixture(t, { change, live = "base", failDeploy = "", badRevisions = "", args = [], green = null } = {}) {
+function fixture(t, { change, live = "base", failDeploy = "", badRevisions = "", webRootStatus = "200", failLogReads = 0, args = [], green = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "nori-release-test-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const repo = join(dir, "repo");
@@ -30,6 +30,7 @@ function fixture(t, { change, live = "base", failDeploy = "", badRevisions = "",
   git(repo, "init", "-q", "-b", "main");
   git(repo, "config", "user.email", "fixture@example.com");
   git(repo, "config", "user.name", "Fixture");
+  git(repo, "config", "commit.gpgsign", "false");
   for (const path of ["core/main.go", "web/page.tsx", "contracts/api.json", "ios/App.swift"]) {
     mkdirSync(join(repo, path, ".."), { recursive: true });
     writeFileSync(join(repo, path), "v1\n");
@@ -58,7 +59,16 @@ case "$1 $2 $3" in
       *) printf '{"metadata":{"labels":{}},"status":{"conditions":[{"type":"Ready","status":"True"}]}}' ;;
     esac ;;
   "run deploy "*) [ "$3" != "$FIXTURE_FAIL_DEPLOY" ] || exit 1 ;;
-  "logging read "*) [ -z "$FIXTURE_BAD" ] || printf '%s\\n' $FIXTURE_BAD ;;
+  "logging read "*)
+    if [ "\${FIXTURE_FAIL_LOG_READS:-0}" -gt 0 ]; then
+      count=0
+      [ -f "$FIXTURE_LOG_FAIL_FILE" ] && count=$(cat "$FIXTURE_LOG_FAIL_FILE")
+      if [ "$count" -lt "$FIXTURE_FAIL_LOG_READS" ]; then
+        echo $((count + 1)) > "$FIXTURE_LOG_FAIL_FILE"
+        exit 1
+      fi
+    fi
+    [ -z "$FIXTURE_BAD" ] || printf '%s\\n' $FIXTURE_BAD ;;
 esac
 exit 0`);
   command("ci-status", `for sha in $FIXTURE_GREEN; do [ "$sha" = "$1" ] && exit 0; done; exit 1`);
@@ -66,6 +76,7 @@ exit 0`);
 url="\${@: -1}"
 case "$url" in
   */readyz|*/api/health) printf 200 ;;
+  *nori-web-new.example/) printf '%s' "$FIXTURE_WEB_ROOT_STATUS" ;;
   *) printf 403 ;;
 esac`);
 
@@ -81,10 +92,14 @@ esac`);
       FIXTURE_LIVE: liveCommit,
       FIXTURE_FAIL_DEPLOY: failDeploy,
       FIXTURE_BAD: badRevisions,
+      FIXTURE_WEB_ROOT_STATUS: webRootStatus,
+      FIXTURE_FAIL_LOG_READS: String(failLogReads),
+      FIXTURE_LOG_FAIL_FILE: join(dir, "log-fail-count"),
       GITHUB_ACTIONS: "true",
       NORI_RELEASE_CI_GATED: greenCommits ? "0" : "1",
       NORI_RELEASE_REPO: repo,
       NORI_RELEASE_BAKE_SECONDS: "0",
+      NORI_RELEASE_LOG_RETRY_SLEEP: "0",
     },
   });
   const calls = readFileSync(log, "utf8");
@@ -176,4 +191,41 @@ test("--latest-green with no green commit releases nothing", (t) => {
   assert.equal(result.status, 0, result.stderr + result.stdout);
   assert.match(result.stdout, /Nothing to release/);
   assert.doesNotMatch(calls, /run deploy/);
+});
+
+test("a 500 on nori-web root blocks promotion and removes tags", (t) => {
+  const { result, calls } = fixture(t, { change: "web/page.tsx", webRootStatus: "500" });
+  assert.equal(result.status, 1);
+  assert.doesNotMatch(calls, /--to-revisions=nori-web-new=100/);
+  assert.match(calls, /update-traffic nori-web .*--remove-tags=release-/);
+});
+
+test("transient gcloud logging read errors during bake are retried", (t) => {
+  const { result } = fixture(t, { change: "web/page.tsx", failLogReads: 2 });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+});
+
+test("ci-status.sh --exclude-job ignores excluded job failures while still gating on them by default", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "nori-ci-status-test-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  const ciStatus = fileURLToPath(new URL("./ci-status.sh", import.meta.url));
+  writeFileSync(
+    join(bin, "gh"),
+    `#!/bin/bash
+if [[ "$1 $2" == "run list" ]]; then
+  echo 42
+elif [[ "$1 $2" == "run view" ]]; then
+  printf '{"jobs":[{"name":"Check (Go, Contracts, Web, Scripts)","conclusion":"success"},{"name":"Swift package and iOS app","conclusion":"failure"},{"name":"Build images","conclusion":"skipped"}]}\\n'
+fi`,
+    { mode: 0o755 },
+  );
+  const env = { PATH: `${bin}:${process.env.PATH}` };
+  const all = spawnSync("bash", [ciStatus, "a".repeat(40)], { encoding: "utf8", env });
+  assert.equal(all.status, 1);
+  assert.equal(all.stdout.trim(), "failure");
+  const excluded = spawnSync("bash", [ciStatus, "a".repeat(40), "--exclude-job", "Swift package and iOS app"], { encoding: "utf8", env });
+  assert.equal(excluded.status, 0, excluded.stderr + excluded.stdout);
+  assert.equal(excluded.stdout.trim(), "success");
 });

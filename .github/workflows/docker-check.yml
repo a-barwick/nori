@@ -1,0 +1,37 @@
+name: Docker Build Check
+
+on:
+  pull_request:
+    paths:
+      - "core/infrastructure/Dockerfile"
+      - "web/Dockerfile"
+      - "web/next.config.*"
+      - "web/package.json"
+      - "web/bun.lock"
+      - ".github/workflows/docker-check.yml"
+
+concurrency:
+  group: docker-check-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  core-image:
+    name: Build core image (PR check)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Verify core Dockerfile builds
+        run: docker buildx build --platform linux/amd64 -f core/infrastructure/Dockerfile core
+
+  web-image:
+    name: Build web image (PR check)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Verify web Dockerfile builds
+        run: docker buildx build --platform linux/amd64 -f web/Dockerfile .
