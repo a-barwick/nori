@@ -24,11 +24,13 @@ type UserRoutes struct {
 }
 
 type UserHandlerOptions struct {
-	ReadyCheck   func(context.Context) error
-	ReadyTimeout time.Duration
-	Metrics      http.Handler
-	UserActivity func(context.Context, users.User) (context.Context, users.User, func(), error)
-	ResetData    func(context.Context, users.User, bool) error
+	ReadyCheck       func(context.Context) error
+	ReadyTimeout     time.Duration
+	Metrics          http.Handler
+	UserActivity     func(context.Context, users.User) (context.Context, users.User, func(), error)
+	ResetData        func(context.Context, users.User, bool) error
+	RateLimiter      *RateLimiter
+	DisableRateLimit bool
 }
 
 const (
@@ -44,10 +46,14 @@ func userDataResetPending(ctx context.Context) bool {
 }
 
 func UserHandler(directory users.Directory, open func(context.Context, users.User) (UserRoutes, func(), error), local bool, model string) http.Handler {
-	return UserHandlerWithOptions(directory, open, local, model, UserHandlerOptions{})
+	return UserHandlerWithOptions(directory, open, local, model, UserHandlerOptions{DisableRateLimit: true})
 }
 
 func UserHandlerWithOptions(directory users.Directory, open func(context.Context, users.User) (UserRoutes, func(), error), local bool, model string, opts UserHandlerOptions) http.Handler {
+	limiter := opts.RateLimiter
+	if limiter == nil && !opts.DisableRateLimit {
+		limiter = NewRateLimiterFromEnv()
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if local && (r.Header.Get("Origin") != "" || r.Header.Get("Sec-Fetch-Site") != "") {
 			writeJSON(w, 403, map[string]string{"error": "Use the web server to access the runtime."})
@@ -85,6 +91,12 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 			return
 		}
 		if r.Method == "POST" && r.URL.Path == "/api/users/resolve" {
+			if limiter != nil {
+				if ok, retryAfter := limiter.Allow(RateLimitResolve, "ip:"+clientIP(r)); !ok {
+					writeRateLimited(w, r, RateLimitResolve, retryAfter)
+					return
+				}
+			}
 			var body struct {
 				Email string `json:"email"`
 			}
@@ -107,6 +119,14 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 					return
 				}
 				lookupEmail = verifiedEmail
+			}
+			if limiter != nil {
+				if normalizedEmail := strings.ToLower(strings.TrimSpace(lookupEmail)); normalizedEmail != "" {
+					if ok, retryAfter := limiter.Allow(RateLimitResolve, "email:"+hashRateLimitKey(normalizedEmail)); !ok {
+						writeRateLimited(w, r, RateLimitResolve, retryAfter)
+						return
+					}
+				}
 			}
 			row, err := directory.FindEmail(r.Context(), lookupEmail)
 			if err != nil {
@@ -186,6 +206,21 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 			return
 		}
 		ctx := observability.BindHTTPUser(r.Context(), row.ID)
+		if limiter != nil {
+			cat, isSSE := classifyUserRequest(r.Method, r.URL.Path)
+			if ok, retryAfter := limiter.Allow(cat, row.ID); !ok {
+				writeRateLimited(w, r.WithContext(ctx), cat, retryAfter)
+				return
+			}
+			if isSSE {
+				releaseSSE, ok := limiter.AcquireSSE(row.ID)
+				if !ok {
+					writeSSELimitExceeded(w, r.WithContext(ctx))
+					return
+				}
+				defer releaseSSE()
+			}
+		}
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/settings/reset" && opts.ResetData != nil {
 			jsonBody(func(w http.ResponseWriter, r *http.Request) {
 				resetUserData(w, r, row, opts.ResetData)
