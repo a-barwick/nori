@@ -384,7 +384,11 @@ export type PreferencesChange = {
   expected_revision: Revision;
   value: PreferencesEditable;
 };
-export type ErrorCode = "revision_conflict" | "idempotency_conflict" | "interaction_stale" | "validation_failed" | "not_found" | "credential_store_unavailable" | "provider_unavailable";
+export type AccountDeleteRequest = {
+  confirmation: string;
+  resume_pending?: boolean;
+};
+export type ErrorCode = "revision_conflict" | "idempotency_conflict" | "interaction_stale" | "validation_failed" | "not_found" | "credential_store_unavailable" | "provider_unavailable" | "account_delete_pending" | "account_delete_not_pending" | "account_delete_forbidden" | "account_delete_busy";
 
 export type ConnectionStatus = "not_connected" | "connecting" | "connected" | "needs_attention" | "disabled" | "disconnecting" | "disconnected";
 export type Health = {

@@ -1,5 +1,28 @@
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs/config";
+import { API_DEFAULT_CSP, BASELINE_SECURITY_HEADERS, HSTS_HEADER_VALUE } from "./src/lib/securityHeaders";
+
+export async function securityHeaders() {
+  const rules: Awaited<ReturnType<NonNullable<NextConfig["headers"]>>> = [
+    {
+      source: "/:path*",
+      headers: [...BASELINE_SECURITY_HEADERS],
+    },
+    {
+      source: "/api/((?!v1/uploads/|v1/results/|v1/library/).*)",
+      headers: [{ key: "Content-Security-Policy", value: API_DEFAULT_CSP }],
+    },
+  ];
+  if (process.env.NODE_ENV === "production") {
+    rules.push({
+      source: "/:path*",
+      has: [{ type: "header", key: "x-forwarded-proto", value: "https" }],
+      missing: [{ type: "host", value: "(localhost|127\\.0\\.0\\.1|\\[::1\\])(:\\d+)?" }],
+      headers: [{ key: "Strict-Transport-Security", value: HSTS_HEADER_VALUE }],
+    });
+  }
+  return rules;
+}
 
 const nextConfig: NextConfig = {
   output: "standalone",
@@ -8,6 +31,7 @@ const nextConfig: NextConfig = {
   devIndicators: false,
   allowedDevOrigins: process.env.NORI_DEV_ORIGINS?.split(",").map((origin) => origin.trim()).filter(Boolean),
   agentRules: false,
+  headers: securityHeaders,
   experimental: {
     instantInsights: { validationLevel: "manual-warning" },
   },

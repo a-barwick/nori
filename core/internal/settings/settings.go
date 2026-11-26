@@ -141,18 +141,26 @@ func load(defaultCloud string, simulation bool) (Settings, error) {
 	}
 	s := fromEnvironment(defaultCloud, simulation)
 	switch s.Cloud {
-	case "aws", "local":
+	case "aws", "gcp", "local":
 	default:
-		return Settings{}, fmt.Errorf("NORI_CLOUD must be aws or local")
+		return Settings{}, fmt.Errorf("NORI_CLOUD must be aws, gcp, or local")
 	}
 	if !ValidEnvProfile(s.EnvProfile) {
 		return Settings{}, fmt.Errorf("NORI_ENV_PROFILE must be prod, dev, or test")
 	}
-	if s.Cloud == "aws" && s.EnvProfile != "prod" {
-		return Settings{}, fmt.Errorf("NORI_ENV_PROFILE must be prod when NORI_CLOUD=aws")
+	if (s.Cloud == "aws" || s.Cloud == "gcp") && s.EnvProfile != "prod" {
+		return Settings{}, fmt.Errorf("NORI_ENV_PROFILE must be prod when NORI_CLOUD=%s", s.Cloud)
 	}
 	if s.Cloud == "local" && s.EnvProfile == "prod" {
 		return Settings{}, fmt.Errorf("NORI_ENV_PROFILE=prod is not allowed when NORI_CLOUD=local")
+	}
+	if s.Cloud == "gcp" {
+		if _, err := Required("ARTIFACT_BUCKET", s.Store.ArtifactBucket); err != nil {
+			return Settings{}, err
+		}
+	}
+	if s.Cloud != "aws" && strings.TrimSpace(s.Connections.CredentialKeySecret) != "" {
+		return Settings{}, fmt.Errorf("NORI_CREDENTIAL_KEY_SECRET requires NORI_CLOUD=aws")
 	}
 	if simulation {
 		if s.Cloud != "local" {

@@ -45,6 +45,21 @@
       "valid": true
     },
     {
+      "file": "fixtures/common/api-error.account-delete-pending.valid.json",
+      "schema": "common.schema.json#/$defs/APIError",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/account-delete-request.valid.json",
+      "schema": "common.schema.json#/$defs/AccountDeleteRequest",
+      "valid": true
+    },
+    {
+      "file": "fixtures/common/account-delete-request.empty.invalid.json",
+      "schema": "common.schema.json#/$defs/AccountDeleteRequest",
+      "valid": false
+    },
+    {
       "file": "fixtures/common/list.valid.json",
       "schema": "common.schema.json#/$defs/ListResponse",
       "valid": true

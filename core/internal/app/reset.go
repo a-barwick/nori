@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"nori/internal/api"
 	"nori/internal/state/docstore"
 	"nori/internal/users"
 )
@@ -12,6 +13,9 @@ import (
 type userActivityKey struct{}
 
 func (s *Service) userDataActivity(ctx context.Context, row users.User) (context.Context, users.User, func(), error) {
+	if isAccountDeleteRequest(ctx) {
+		return ctx, row, func() {}, nil
+	}
 	if current, ok := ctx.Value(userActivityKey{}).(users.User); ok && current.ID == row.ID {
 		return ctx, current, func() {}, nil
 	}
@@ -27,6 +31,12 @@ func (s *Service) userDataActivity(ctx context.Context, row users.User) (context
 	if err != nil {
 		release()
 		return ctx, row, nil, err
+	}
+	if pending, pErr := s.isAccountDeletePending(ctx, current.ID); pErr != nil {
+		release()
+		return ctx, row, nil, pErr
+	} else if pending {
+		ctx = withAccountDeletePending(ctx)
 	}
 	return context.WithValue(ctx, userActivityKey{}, current), current, release, nil
 }
@@ -46,6 +56,11 @@ func (s *Service) resetUserData(ctx context.Context, row users.User, resumePendi
 	row, err = s.Users.Get(ctx, row.ID)
 	if err != nil {
 		return err
+	}
+	if pending, pErr := s.isAccountDeletePending(ctx, row.ID); pErr != nil {
+		return pErr
+	} else if pending {
+		return api.ErrAccountDeletePending
 	}
 	if resumePending && !row.ResetPending {
 		return docstore.ErrUserDataResetNotPending

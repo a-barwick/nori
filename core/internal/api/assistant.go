@@ -23,9 +23,17 @@ import (
 	"nori/internal/scheduler"
 	"nori/internal/secret"
 	"nori/internal/state"
+	"nori/internal/state/docstore"
 )
 
 const AssistantContract = "nori-assistant-1"
+
+var (
+	ErrAccountDeleteOwnerForbidden = errors.New("The legacy owner account cannot be deleted from self-service settings.")
+	ErrAccountDeleteEmailMismatch  = errors.New("Enter your account email to confirm deletion.")
+	ErrAccountDeletePending        = errors.New("Your account deletion is incomplete. Finish deleting your account to continue.")
+	ErrAccountDeleteNotPending     = errors.New("There is no account deletion to finish.")
+)
 
 type Assistant struct {
 	Store               state.ConversationStore
@@ -51,6 +59,7 @@ type Assistant struct {
 	InboxUnread         func(ctx context.Context) int
 	ConsolidateMemory   func(ctx context.Context) (state.ConversationSummary, error)
 	NormalizeMemory     func(ctx context.Context, input conversation.ManualMemoryInput) (conversation.NormalizedMemory, error)
+	DeleteAccount       func(ctx context.Context, confirmation string, resumePending bool) error
 	Extra               []func(mux *http.ServeMux, a *Assistant)
 }
 
@@ -221,9 +230,61 @@ func (a *Assistant) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/diagnostics", a.diagnostics)
 	mux.HandleFunc("POST /v1/diagnostics/actions", jsonBody(a.diagnosticsAction))
 	mux.HandleFunc("POST /v1/feedback", jsonBody(a.feedback))
+	mux.HandleFunc("POST /v1/settings/account/delete", jsonBody(a.deleteAccount))
 	for _, extra := range a.Extra {
 		extra(mux, a)
 	}
+}
+
+func (a *Assistant) deleteAccount(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Confirmation  string `json:"confirmation"`
+		ResumePending bool   `json:"resume_pending,omitempty"`
+	}
+	if err := httpjson.Decode(w, r, &body, 64<<10); err != nil {
+		if errors.Is(err, httpjson.ErrTooLarge) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, apiError{Error: "Request body is too large.", Code: "payload_too_large"})
+			return
+		}
+		message := "Send a valid JSON object."
+		if errors.Is(err, httpjson.ErrMultiple) {
+			message = "Send one JSON object."
+		}
+		writeJSON(w, http.StatusBadRequest, apiError{Error: message, Code: "validation_failed"})
+		return
+	}
+	if strings.TrimSpace(body.Confirmation) == "" {
+		writeJSON(w, http.StatusBadRequest, apiError{Error: ErrAccountDeleteEmailMismatch.Error(), Code: "validation_failed"})
+		return
+	}
+	if a.DeleteAccount == nil {
+		writeJSON(w, http.StatusServiceUnavailable, apiError{Error: "Account deletion is unavailable.", Code: "provider_unavailable"})
+		return
+	}
+	if err := a.DeleteAccount(r.Context(), body.Confirmation, body.ResumePending); err != nil {
+		switch {
+		case errors.Is(err, ErrAccountDeleteOwnerForbidden):
+			writeJSON(w, http.StatusForbidden, apiError{Error: ErrAccountDeleteOwnerForbidden.Error(), Code: "account_delete_forbidden"})
+		case errors.Is(err, ErrAccountDeleteEmailMismatch):
+			writeJSON(w, http.StatusBadRequest, apiError{Error: ErrAccountDeleteEmailMismatch.Error(), Code: "validation_failed"})
+		case errors.Is(err, docstore.ErrUserDataBusy):
+			writeJSON(w, http.StatusConflict, apiError{Error: docstore.ErrUserDataBusy.Error(), Code: "account_delete_busy", Retryable: true})
+		case errors.Is(err, ErrAccountDeleteNotPending):
+			writeJSON(w, http.StatusConflict, apiError{Error: ErrAccountDeleteNotPending.Error(), Code: "account_delete_not_pending"})
+		case errors.Is(err, ErrAccountDeletePending):
+			slog.ErrorContext(r.Context(), "account deletion incomplete", "err", err)
+			writeJSON(w, http.StatusBadGateway, apiError{Error: ErrAccountDeletePending.Error(), Code: "account_delete_pending", Retryable: true})
+		case errors.Is(err, state.ErrNotFound), errors.Is(err, docstore.ErrNotFound):
+			writeJSON(w, http.StatusNotFound, apiError{Error: "Not found.", Code: "not_found"})
+		default:
+			slog.ErrorContext(r.Context(), "account deletion failed", "err", err)
+			writeJSON(w, http.StatusBadGateway, apiError{Error: "Nori could not delete your account. Try again.", Code: "internal", Retryable: true})
+		}
+		return
+	}
+	slog.InfoContext(r.Context(), "account deletion completed")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *Assistant) integrations(w http.ResponseWriter, r *http.Request) {

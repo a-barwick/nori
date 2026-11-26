@@ -1,6 +1,7 @@
-import { accessFailureResponse, resolveUser, sameOrigin, sameOriginRead, type ScopedRuntime } from "./auth";
+import { accessFailureResponse, evictResolvedUser, resolveUser, sameOrigin, sameOriginRead, type ScopedRuntime } from "./auth";
 import { isRuntimeMethod, isRuntimeRead } from "./methods";
 import { runtimeHeaders } from "./credentials";
+import { signedOutCookie } from "./session";
 import { localDevelopment, runtimeMode, runtimeTarget, type Mode } from "./target";
 import { reportUpstreamFailure, reportUpstreamRejection, rejectionHeaders, upstreamTraceHeaders } from "@/lib/observability/upstream";
 import { MAX_FILE_BYTES } from "../submission";
@@ -49,7 +50,7 @@ async function relay(request: Request, { base, userID, mode }: ScopedRuntime, pa
         if (value) headers[name] = value;
       }
     }
-    return new Response(upstream.body, { status: upstream.status, headers });
+    return new Response(upstream.status === 204 ? null : upstream.body, { status: upstream.status, headers });
   } catch {
     if (!request.signal.aborted) reportUpstreamFailure(label, mode, userID);
     const error = !operation ? "Connection to Nori's runtime was interrupted."
@@ -107,6 +108,17 @@ async function forward(request: Request, mode: Mode, path: string, init: Request
   if (read && mode === "hosted" && SHARED_READS.has(path)) return sharedRead(request, user, path, allowed);
   const response = await relay(request, user, path, init, { timeout: READ_TIMEOUT_MS, allowed });
   if (!read) forgetSharedReads(user.userID);
+  if (init.method === "POST" && path.split("?")[0] === "v1/settings/account/delete" && (response.status === 204 || response.status === 200)) {
+    evictResolvedUser(user.userID);
+    const headers = new Headers(response.headers);
+    headers.set("Cache-Control", "no-store");
+    headers.append("Set-Cookie", signedOutCookie("1", 60 * 60 * 24 * 365));
+    const oidcCookie = process.env.NORI_OIDC_COOKIE;
+    if (oidcCookie && /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(oidcCookie)) {
+      headers.append("Set-Cookie", `${oidcCookie}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${process.env.NODE_ENV === "production" ? "; Secure" : ""}`);
+    }
+    return new Response(response.status === 204 ? null : response.body, { status: response.status, headers });
+  }
   return response;
 }
 

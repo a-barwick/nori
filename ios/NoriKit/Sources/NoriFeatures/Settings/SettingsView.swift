@@ -339,14 +339,19 @@ public struct AppearanceSettingsView: View {
 
 public struct AccountSettingsView: View {
     @Bindable private var store: NoriStore
+    @State private var showingDeleteAccount = false
 
     public init(store: NoriStore) {
         self.store = store
     }
 
+    private func legalURL(path: String) -> URL {
+        NoriConfig.legalURL(path: path)
+    }
+
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 20) {
                 NoriRows {
                     NoriRow(
                         title: store.authState.email ?? "Signed in",
@@ -362,13 +367,69 @@ public struct AccountSettingsView: View {
                     }
                 }
 
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Legal")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(NoriColors.ink3)
+                        .padding(.leading, 4)
+
+                    NoriRows {
+                        Link(destination: legalURL(path: "/privacy")) {
+                            NoriRow(
+                                title: "Privacy Policy",
+                                showDivider: true
+                            ) {
+                                Image(systemName: "arrow.up.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(NoriColors.ink3)
+                            }
+                        }
+                        .buttonStyle(.plain)
+
+                        Link(destination: legalURL(path: "/terms")) {
+                            NoriRow(
+                                title: "Terms of Service",
+                                showDivider: false
+                            ) {
+                                Image(systemName: "arrow.up.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(NoriColors.ink3)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
                 Button {
                     Task { await store.signOut() }
                 } label: {
                     Text("Sign Out")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(NoriButtonStyle(.danger, fullWidth: true, compact: true))
+                .buttonStyle(NoriButtonStyle(.quiet, fullWidth: true, compact: true))
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Delete account")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(NoriColors.ink3)
+                        .padding(.leading, 4)
+
+                    NoriCard {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Permanently deletes your account and all Nori data.")
+                                .font(NoriTypography.meta)
+                                .foregroundStyle(NoriColors.ink2)
+
+                            Button {
+                                showingDeleteAccount = true
+                            } label: {
+                                Text(store.accountDeletePending ? "Finish deleting account" : "Delete account")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(NoriButtonStyle(.danger, fullWidth: true, compact: true))
+                        }
+                    }
+                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -383,6 +444,13 @@ public struct AccountSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         #endif
+        .sheet(isPresented: $showingDeleteAccount) {
+            DeleteAccountSheet(store: store)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(NoriColors.sheetBackground)
+                .presentationCornerRadius(NoriRadius.sheet)
+        }
     }
 }
 

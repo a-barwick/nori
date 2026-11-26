@@ -111,6 +111,9 @@ public final class NoriStore {
     public private(set) var dataResetRecoveryRequired = false
     public private(set) var dataResetStatusRequired = false
     public private(set) var isResettingData = false
+    public private(set) var isDeletingAccount = false
+    public private(set) var accountDeletePending = false
+    public var accountDeletedNotice: String?
 
     public var session: Session
     public var workItems: [WorkItem]
@@ -497,10 +500,39 @@ public final class NoriStore {
 
     public func signOut() async {
         sessionGeneration &+= 1
+        accountDeletePending = false
         clearUserState()
         NoriLogger.auth.info("auth.signed_out", breadcrumb: true)
         await clearTransportIdentity()
         await authProvider.clearSession()
+    }
+
+    public func deleteAccount(confirmation: String, resumePending: Bool = false) async throws {
+        guard !isDeletingAccount else {
+            throw NoriAPIError(message: "Account deletion is already in progress.")
+        }
+        isDeletingAccount = true
+        defer { isDeletingAccount = false }
+        let onboardingKey = onboardingDoneKey
+        let observedKey = observedResetKey
+        let completionKey = resetCompletionKey
+        do {
+            try await transport.deleteAccount(
+                confirmation: confirmation.trimmingCharacters(in: .whitespacesAndNewlines),
+                resumePending: resumePending
+            )
+        } catch {
+            if let apiError = error as? NoriAPIError, apiError.code == "account_delete_pending" {
+                accountDeletePending = true
+            }
+            throw error
+        }
+        if let key = onboardingKey { UserDefaults.standard.removeObject(forKey: key) }
+        if let key = observedKey { UserDefaults.standard.removeObject(forKey: key) }
+        if let key = completionKey { UserDefaults.standard.removeObject(forKey: key) }
+        accountDeletePending = false
+        accountDeletedNotice = "Your account has been deleted."
+        await signOut()
     }
 
     public func resetUserData(confirmation: String) async throws {

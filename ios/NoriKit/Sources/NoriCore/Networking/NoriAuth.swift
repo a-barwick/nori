@@ -6,6 +6,21 @@ import Security
 public enum NoriConfig {
     public static let serverURL = URL(string: "https://nori-core-8273801370.us-central1.run.app")!
 
+    public static var webURL: URL {
+        if let raw = (Bundle.main.object(forInfoDictionaryKey: "NORI_WEB_URL") as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !raw.isEmpty,
+           let url = URL(string: raw) {
+            return url
+        }
+        return URL(string: "https://nori-web-elaoqxqkuq-uc.a.run.app")!
+    }
+
+    public static func legalURL(path: String) -> URL {
+        let normalized = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        return webURL.appendingPathComponent(normalized)
+    }
+
     public static let oauthCallbackURL = "nori://oauth/callback"
 
     public static var googleOAuthClientID: String {
@@ -68,6 +83,7 @@ public struct GoogleOAuthPKCE: Sendable {
     public let codeVerifier: String
     public let codeChallenge: String
     public let state: String
+    private let preexchangedSession: AuthSession?
 
     public init(clientID: String = NoriConfig.googleOAuthClientID) {
         self.clientID = clientID
@@ -78,6 +94,37 @@ public struct GoogleOAuthPKCE: Sendable {
         let digest = SHA256.hash(data: Data(verifier.utf8))
         self.codeChallenge = Self.base64URL(Data(digest))
         self.state = Self.randomBase64URL(byteCount: 16)
+        self.preexchangedSession = nil
+    }
+
+    private init(
+        clientID: String,
+        redirectScheme: String,
+        redirectURI: String,
+        codeVerifier: String,
+        codeChallenge: String,
+        state: String,
+        preexchangedSession: AuthSession?
+    ) {
+        self.clientID = clientID
+        self.redirectScheme = redirectScheme
+        self.redirectURI = redirectURI
+        self.codeVerifier = codeVerifier
+        self.codeChallenge = codeChallenge
+        self.state = state
+        self.preexchangedSession = preexchangedSession
+    }
+
+    public func withExchangedSession(_ session: AuthSession) -> GoogleOAuthPKCE {
+        GoogleOAuthPKCE(
+            clientID: clientID,
+            redirectScheme: redirectScheme,
+            redirectURI: redirectURI,
+            codeVerifier: codeVerifier,
+            codeChallenge: codeChallenge,
+            state: state,
+            preexchangedSession: session
+        )
     }
 
     public func authorizationURL() throws -> URL {
@@ -125,6 +172,9 @@ public struct GoogleOAuthPKCE: Sendable {
     }
 
     public func exchangeCode(_ code: String, session: URLSession = .shared) async throws -> AuthSession {
+        if let preexchangedSession {
+            return preexchangedSession
+        }
         var req = URLRequest(url: URL(string: "https://oauth2.googleapis.com/token")!)
         req.httpMethod = "POST"
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
@@ -225,6 +275,23 @@ public struct GoogleOAuthPKCE: Sendable {
     }
 
     public static func extractEmailFromJWT(_ jwt: String) -> String? {
+        guard let payload = decodeJWTPayload(jwt),
+              let email = payload["email"] as? String else {
+            return nil
+        }
+        return email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    public static func extractNameFromJWT(_ jwt: String) -> String? {
+        guard let payload = decodeJWTPayload(jwt),
+              let name = payload["name"] as? String else {
+            return nil
+        }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func decodeJWTPayload(_ jwt: String) -> [String: Any]? {
         let parts = jwt.split(separator: ".")
         guard parts.count >= 2 else { return nil }
         var base64 = String(parts[1])
@@ -232,11 +299,10 @@ public struct GoogleOAuthPKCE: Sendable {
             .replacingOccurrences(of: "_", with: "/")
         while base64.count % 4 != 0 { base64.append("=") }
         guard let data = Data(base64Encoded: base64),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let email = json["email"] as? String else {
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil
         }
-        return email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return json
     }
 
     private static func formEncode(_ pairs: [(String, String)]) -> Data {
@@ -417,5 +483,114 @@ public struct KeychainStore: Sendable {
         ]
         let status = SecItemDelete(query as CFDictionary)
         return status == errSecSuccess || status == errSecItemNotFound
+    }
+}
+
+
+public enum UserResolveOutcome: Sendable, Equatable {
+    case resolved(userID: String)
+    case inviteRequired(message: String)
+    case forbidden(message: String)
+}
+
+public struct NoriProvisioningClient: Sendable {
+    public let serverURL: URL
+    private let urlSession: URLSession
+
+    public init(serverURL: URL = NoriConfig.serverURL, urlSession: URLSession = .shared) {
+        self.serverURL = serverURL
+        self.urlSession = urlSession
+    }
+
+    public func resolveUser(
+        idToken: String,
+        email: String? = nil,
+        name: String? = nil
+    ) async throws -> UserResolveOutcome {
+        let url = serverURL.appendingPathComponent("api/users/resolve")
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if !idToken.isEmpty {
+            req.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
+        }
+        var payload: [String: String] = [:]
+        if let email, !email.isEmpty { payload["email"] = email }
+        if let name, !name.isEmpty { payload["name"] = name }
+        req.httpBody = try JSONEncoder().encode(payload)
+
+        let (data, response) = try await urlSession.data(for: req)
+        guard let http = response as? HTTPURLResponse else {
+            throw NoriAPIError(message: "Invalid response from server.", statusCode: 0, code: "invalid_response", retryable: true)
+        }
+        if (200..<300).contains(http.statusCode) {
+            struct ResolveResponse: Decodable { let id: String }
+            let decoded = try JSONDecoder().decode(ResolveResponse.self, from: data)
+            return .resolved(userID: decoded.id)
+        }
+        let body = decodeErrorBody(data)
+        if http.statusCode == 403 {
+            if body.code == "invite_required" {
+                return .inviteRequired(message: body.error ?? "An invite code is required to access Nori.")
+            }
+            return .forbidden(message: body.error ?? "This Google account is not authorized to access Nori.")
+        }
+        throw NoriAPIError(
+            message: body.error ?? "Nori could not check your account. Try again shortly.",
+            statusCode: http.statusCode,
+            code: body.code,
+            retryable: http.statusCode == 429 || http.statusCode >= 500
+        )
+    }
+
+    public func redeemInvite(
+        idToken: String,
+        inviteCode: String,
+        email: String? = nil,
+        name: String? = nil
+    ) async throws -> String {
+        let trimmed = inviteCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw NoriAPIError(message: "Enter an invite code.", statusCode: 400, code: "invite_code_required", retryable: false)
+        }
+        let url = serverURL.appendingPathComponent("api/users/redeem")
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if !idToken.isEmpty {
+            req.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
+        }
+        var payload: [String: String] = ["invite_code": trimmed]
+        if let email, !email.isEmpty { payload["email"] = email }
+        if let name, !name.isEmpty { payload["name"] = name }
+        req.httpBody = try JSONEncoder().encode(payload)
+
+        let (data, response) = try await urlSession.data(for: req)
+        guard let http = response as? HTTPURLResponse else {
+            throw NoriAPIError(message: "Invalid response from server.", statusCode: 0, code: "invalid_response", retryable: true)
+        }
+        if (200..<300).contains(http.statusCode) {
+            struct RedeemResponse: Decodable { let id: String }
+            let decoded = try JSONDecoder().decode(RedeemResponse.self, from: data)
+            return decoded.id
+        }
+        let body = decodeErrorBody(data)
+        throw NoriAPIError(
+            message: body.error ?? "Invalid invite code.",
+            statusCode: http.statusCode,
+            code: body.code,
+            retryable: http.statusCode == 429 || http.statusCode >= 500
+        )
+    }
+
+    private func decodeErrorBody(_ data: Data) -> (error: String?, code: String?) {
+        struct ErrorEnvelope: Decodable {
+            let error: String?
+            let code: String?
+        }
+        guard let decoded = try? JSONDecoder().decode(ErrorEnvelope.self, from: data) else {
+            return (nil, nil)
+        }
+        return (decoded.error, decoded.code)
     }
 }

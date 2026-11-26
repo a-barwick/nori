@@ -344,8 +344,109 @@ function AccountSettings() {
         trailing={<Pill tone={statusPill.tone}>{statusPill.label}</Pill>}
       />
     </Rows>
+    <Section title="Legal">
+      <Rows label="Legal">
+        <Row href="/privacy" title="Privacy Policy" />
+        <Row href="/terms" title="Terms of Service" />
+      </Rows>
+    </Section>
     {!localMode && <Section><form action="/api/auth/sign-out" method="post"><Button type="submit" variant="quiet">Sign out</Button></form></Section>}
+    {!localMode && <DeleteAccountSection />}
     </>
+  );
+}
+
+function DeleteAccountSection() {
+  const [expanded, setExpanded] = useState(false);
+  const [confirmation, setConfirmation] = useState("");
+  const [pending, setPending] = useState(false);
+  const [deletePending, setDeletePending] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async (resumePending: boolean) => {
+    const email = confirmation.trim();
+    if (!email || pending) return;
+    setPending(true);
+    setError("");
+    try {
+      const response = await fetch("/api/v1/settings/account/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmation: email, ...(resumePending ? { resume_pending: true } : {}) }),
+        cache: "no-store",
+        redirect: "error",
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => null) as { error?: string; code?: string } | null;
+        if (data?.code === "account_delete_pending") {
+          setDeletePending(true);
+        }
+        setError(data?.error || `Could not delete your account (${response.status}).`);
+        setPending(false);
+        return;
+      }
+      window.location.replace("/signed-out");
+    } catch {
+      setError("Could not reach Nori to confirm account deletion. Try again.");
+      setPending(false);
+    }
+  };
+
+  return (
+    <Section title="Delete account">
+      <div className="max-w-xl space-y-4 rounded-card border border-card-border bg-surface p-4 sm:p-5">
+        <p className="text-body text-ink-2">
+          Permanently deletes your account and all Nori data, including chats, memories, work, files, schedules, preferences, and saved API keys.
+        </p>
+        {!expanded && !deletePending ? (
+          <Button variant="danger" onClick={() => setExpanded(true)}>Delete account</Button>
+        ) : (
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submit(deletePending);
+            }}
+          >
+            {deletePending && (
+              <Notice tone="warning">
+                Your account deletion was interrupted. Retry below to finish removing your account.
+              </Notice>
+            )}
+            <Field label="Type your account email to confirm">
+              <input
+                type="email"
+                autoComplete="off"
+                placeholder="you@example.com"
+                className={inputClass}
+                value={confirmation}
+                onChange={(event) => setConfirmation(event.target.value)}
+                disabled={pending}
+              />
+            </Field>
+            {error && <Notice tone="danger">{error}</Notice>}
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" variant="danger" disabled={!confirmation.trim() || pending}>
+                {pending ? "Deleting…" : deletePending ? "Finish deleting account" : "Delete account"}
+              </Button>
+              {!deletePending && (
+                <Button
+                  variant="quiet"
+                  disabled={pending}
+                  onClick={() => {
+                    setExpanded(false);
+                    setConfirmation("");
+                    setError("");
+                  }}
+                >
+                  Cancel
+                </Button>
+              )}
+            </div>
+          </form>
+        )}
+      </div>
+    </Section>
   );
 }
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
-import { accessFailureResponse, resolveUser, sameOrigin, sameOriginRead } from "./auth";
+import { accessFailureResponse, redeemInvite, resolveUser, sameOrigin, sameOriginRead } from "./auth";
 import { oidcIdentity } from "./oidc";
 import { runtimeTarget } from "./target";
 
@@ -171,6 +171,9 @@ describe("oidcIdentity and resolveUser", () => {
       if (url.startsWith(`${RUNTIME_URL}/api/users/resolve`) && onResolve) {
         return onResolve(new Request(url, init));
       }
+      if (url.startsWith(`${RUNTIME_URL}/api/users/redeem`) && onResolve) {
+        return onResolve(new Request(url, init));
+      }
       throw new Error(`Unexpected fetch URL: ${url}`);
     }) as unknown as typeof fetch;
   }
@@ -257,6 +260,45 @@ describe("oidcIdentity and resolveUser", () => {
     const badIdToken = await signIDToken({ sub: "s5", email: "bad-id@example.test", email_verified: true });
     const badId = await resolveUser(new Headers({ authorization: `Bearer ${badIdToken}` }));
     assert.equal("status" in badId && badId.status, 503);
+  });
+
+  test("resolveUser preserves invite_required and forwards OIDC name claim; redeemInvite caches provisioned user", async () => {
+    const provisionedID = "22222222-2222-4222-8222-222222222222";
+    let sawName: string | undefined;
+    let sawCode: string | undefined;
+
+    await installOIDCFetch(async (req) => {
+      const body = await req.json() as { email: string; name?: string; invite_code?: string };
+      sawName = body.name;
+      if (req.url.endsWith("/api/users/resolve")) {
+        return Response.json({ error: "An invite code is required to access Nori.", code: "invite_required" }, { status: 403 });
+      }
+      sawCode = body.invite_code;
+      if (body.invite_code === "NORI-GOOD-CODE") {
+        return Response.json({ id: provisionedID });
+      }
+      return Response.json({ error: "Invalid invite code.", code: "invalid_invite" }, { status: 403 });
+    });
+
+    const token = await signIDToken({ sub: "inv-1", email: "invited@example.test", email_verified: true, name: "Invited User" });
+    const headers = new Headers({ authorization: `Bearer ${token}` });
+
+    const res = await resolveUser(headers);
+    assert.equal("status" in res && res.status, 403);
+    assert.equal("code" in res && res.code, "invite_required");
+    assert.equal(sawName, "Invited User");
+
+    const badRedeem = await redeemInvite(headers, "NORI-BAD-CODE");
+    assert.equal("status" in badRedeem && badRedeem.status, 403);
+    assert.equal("code" in badRedeem && badRedeem.code, "invalid_invite");
+
+    const okRedeem = await redeemInvite(headers, "NORI-GOOD-CODE");
+    assert.equal("userID" in okRedeem && okRedeem.userID, provisionedID);
+    assert.equal(sawCode, "NORI-GOOD-CODE");
+
+    // Subsequent resolveUser hits the populated cache without calling upstream.
+    const cached = await resolveUser(headers);
+    assert.equal("userID" in cached && cached.userID, provisionedID);
   });
 
   test("runtimeTarget enforces https in hosted mode and loopback http in local mode", () => {

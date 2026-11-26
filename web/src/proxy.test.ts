@@ -174,4 +174,116 @@ describe("proxy auth gate and header stripping", () => {
     assert.equal(res.headers.get("x-middleware-request-x-serverless-authorization"), null);
     assert.equal(res.headers.get("x-middleware-request-x-custom-ok"), "keep-me");
   });
+
+  function assertBaselineHeaders(res: Response, { expectHsts }: { expectHsts: boolean }) {
+    assert.equal(res.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(res.headers.get("x-frame-options"), "DENY");
+    assert.equal(res.headers.get("referrer-policy"), "strict-origin-when-cross-origin");
+    assert.equal(
+      res.headers.get("permissions-policy"),
+      "camera=(), microphone=(), geolocation=(), interest-cohort=()",
+    );
+    const csp = res.headers.get("content-security-policy") ?? "";
+    assert.match(csp, /default-src 'self'/);
+    assert.match(csp, /script-src 'self' 'nonce-[A-Za-z0-9+/=]+'/);
+    const scriptDirective = csp.split(";").map((part) => part.trim()).find((part) => part.startsWith("script-src ")) ?? "";
+    assert.equal(scriptDirective.includes("'unsafe-inline'"), false, `script-src must not allow unsafe-inline: ${scriptDirective}`);
+    assert.equal(scriptDirective.includes("'unsafe-eval'"), false, `production script-src must not allow unsafe-eval: ${scriptDirective}`);
+    assert.match(csp, /style-src 'self' 'unsafe-inline'/);
+    assert.match(csp, /img-src 'self' data: blob:/);
+    assert.match(csp, /font-src 'self'/);
+    assert.match(csp, /connect-src 'self'/);
+    assert.match(csp, /frame-ancestors 'none'/);
+    assert.match(csp, /base-uri 'self'/);
+    assert.match(csp, /form-action 'self'/);
+    assert.match(csp, /object-src 'none'/);
+    if (expectHsts) {
+      assert.equal(res.headers.get("strict-transport-security"), "max-age=63072000; includeSubDomains");
+    } else {
+      assert.equal(res.headers.get("strict-transport-security"), null);
+    }
+    return csp;
+  }
+
+  test("exempts /privacy and /terms from auth gating and applies security headers + per-request nonce CSP", async () => {
+    for (const pathname of ["/privacy", "/terms"]) {
+      const unauth = await proxy(new NextRequest(`https://app.nori.example${pathname}`));
+      assert.equal(unauth.headers.get("x-middleware-next"), "1");
+      const csp = assertBaselineHeaders(unauth, { expectHsts: true });
+      const nonce = unauth.headers.get("x-middleware-request-x-nonce");
+      assert.ok(nonce && nonce.length >= 16);
+      assert.ok(csp.includes(`'nonce-${nonce}'`));
+      assert.equal(unauth.headers.get("x-middleware-request-content-security-policy"), csp);
+
+      const signedOut = await proxy(new NextRequest(`https://app.nori.example${pathname}`, {
+        headers: { cookie: "nori_signed_out=1" },
+      }));
+      assert.equal(signedOut.headers.get("x-middleware-next"), "1");
+      const csp2 = assertBaselineHeaders(signedOut, { expectHsts: true });
+      assert.notEqual(signedOut.headers.get("x-middleware-request-x-nonce"), nonce);
+      assert.notEqual(csp2, csp);
+    }
+  });
+
+  test("applies security headers on /signed-out, authenticated pages, and reconnecting page with matching script nonce", async () => {
+    const signedOutRes = await proxy(new NextRequest("https://app.nori.example/signed-out", {
+      headers: { cookie: "nori_signed_out=1" },
+    }));
+    assert.equal(signedOutRes.headers.get("x-middleware-next"), "1");
+    assertBaselineHeaders(signedOutRes, { expectHsts: true });
+
+    await mockResolve(() => new Response("", { status: 503 }));
+    const downToken = await bearerFor("down-csp@example.test");
+    const reconnectRes = await proxy(new NextRequest("https://app.nori.example/", {
+      headers: { authorization: `Bearer ${downToken}`, "sec-fetch-dest": "document" },
+    }));
+    assert.equal(reconnectRes.status, 503);
+    const reconnectCsp = assertBaselineHeaders(reconnectRes, { expectHsts: true });
+    const match = reconnectCsp.match(/'nonce-([^']+)'/);
+    assert.ok(match);
+    const html = await reconnectRes.text();
+    assert.ok(html.includes(`<script nonce="${match[1]}">`), "reconnecting page inline script must carry the CSP nonce");
+  });
+
+  test("omits Strict-Transport-Security on loopback HTTP/localhost and non-production environments", async () => {
+    const loopbackHttp = await proxy(new NextRequest("http://127.0.0.1:3210/privacy"));
+    assertBaselineHeaders(loopbackHttp, { expectHsts: false });
+
+    const localhostHttps = await proxy(new NextRequest("https://localhost:3210/terms"));
+    assertBaselineHeaders(localhostHttps, { expectHsts: false });
+
+    env.NODE_ENV = "development";
+    const devHttps = await proxy(new NextRequest("https://app.nori.example/privacy"));
+    assert.equal(devHttps.headers.get("strict-transport-security"), null);
+    assert.match(devHttps.headers.get("content-security-policy") ?? "", /'unsafe-eval'/);
+  });
+
+  test("redirects invite_required document requests to /invite and allows /invite to render", async () => {
+    await mockResolve((email) => {
+      if (email === "needs-invite@example.test") {
+        return Response.json({ error: "An invite code is required.", code: "invite_required" }, { status: 403 });
+      }
+      return Response.json({ id: "44444444-4444-4444-8444-444444444444" });
+    });
+
+    const inviteToken = await bearerFor("needs-invite@example.test");
+    const docRedirect = await proxy(new NextRequest("https://app.nori.example/work", {
+      headers: { authorization: `Bearer ${inviteToken}`, "sec-fetch-dest": "document" },
+    }));
+    assert.equal(docRedirect.status, 307);
+    assert.equal(docRedirect.headers.get("location"), "https://app.nori.example/invite");
+
+    const invitePage = await proxy(new NextRequest("https://app.nori.example/invite", {
+      headers: { authorization: `Bearer ${inviteToken}`, "sec-fetch-dest": "document" },
+    }));
+    assert.equal(invitePage.headers.get("x-middleware-next"), "1");
+    assertBaselineHeaders(invitePage, { expectHsts: true });
+
+    const activeToken = await bearerFor("active@example.test");
+    const activeOnInvite = await proxy(new NextRequest("https://app.nori.example/invite", {
+      headers: { authorization: `Bearer ${activeToken}`, "sec-fetch-dest": "document" },
+    }));
+    assert.equal(activeOnInvite.status, 307);
+    assert.equal(activeOnInvite.headers.get("location"), "https://app.nori.example/");
+  });
 });

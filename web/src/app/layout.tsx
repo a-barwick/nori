@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { Figtree, IBM_Plex_Mono } from "next/font/google";
+import { headers } from "next/headers";
 import { connection } from "next/server";
 import { APPEARANCE_BOOT_SCRIPT } from "@/lib/appearance";
 import { browserObservabilityConfig } from "@/lib/observability/config.server";
+import { CSP_NONCE_HEADER } from "@/lib/securityHeaders";
 import "./globals.css";
 
 const figtree = Figtree({
@@ -27,6 +29,7 @@ export const instant = false;
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {
   await connection();
+  const nonce = (await headers()).get(CSP_NONCE_HEADER) ?? undefined;
   return (
     <html
       lang="en"
@@ -35,7 +38,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
       data-nori-observability={JSON.stringify(browserObservabilityConfig())}
     >
       <head>
-        <script dangerouslySetInnerHTML={{ __html: APPEARANCE_BOOT_SCRIPT }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: APPEARANCE_BOOT_SCRIPT }} />
       </head>
       <body className="h-full overflow-clip">
         {children}

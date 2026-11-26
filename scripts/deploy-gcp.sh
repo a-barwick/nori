@@ -1,11 +1,46 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Cloud Run production deployment script supporting both topologies:
+#   - combined (default, matches live prod today): nori-core (--role=all) + nori-web
+#   - split (NORI_DEPLOY_TOPOLOGY=split): mandatory migration job (nori-migrate),
+#     nori-api (NORI_ROLE=api), nori-worker (NORI_ROLE=worker, internal ingress,
+#     --no-cpu-throttling, min-instances >= 1, --metrics-addr=0.0.0.0:8080), and nori-web.
+#
+# Postgres connection budget (split topology):
+#   total_conns = (NORI_API_MAX_INSTANCES * NORI_API_POSTGRES_MAX_CONNS)
+#               + (NORI_WORKER_MAX_INSTANCES * (NORI_WORKER_POSTGRES_MAX_CONNS + 1_listen))
+#               + migration_job (4)
+#   Defaults: (10 * 8) + (4 * 11) + 4 = 128 connections (fits Cloud SQL max_connections=200).
+#   When using PgBouncer in transaction pooling mode for NORI_POSTGRES_URL, set
+#   NORI_POSTGRES_LISTEN_URL_SECRET (e.g. "nori-postgres-listen-url:latest") so the
+#   direct session-mode Postgres URL is mounted as a Secret Manager secret (never plain env).
 
 PROJECT="${GCP_PROJECT:-bot-111549}"
 REGION="${GCP_REGION:-us-central1}"
 REPO="${GCP_AR_REPO:-nori-poc}"
 REGISTRY="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}"
+CLOUD="${NORI_CLOUD:-gcp}"
+TOPOLOGY="${NORI_DEPLOY_TOPOLOGY:-combined}"
+
+CORE_SERVICE="${NORI_GCP_CORE_SERVICE:-nori-core}"
+API_SERVICE="${NORI_GCP_API_SERVICE:-nori-api}"
+WORKER_SERVICE="${NORI_GCP_WORKER_SERVICE:-nori-worker}"
+WEB_SERVICE="${NORI_GCP_WEB_SERVICE:-nori-web}"
+if [[ "$TOPOLOGY" == "split" ]]; then
+  MIGRATION_JOB="${NORI_GCP_MIGRATION_JOB-nori-migrate}"
+else
+  MIGRATION_JOB="${NORI_GCP_MIGRATION_JOB:-}"
+fi
+
+API_MIN_INSTANCES="${NORI_API_MIN_INSTANCES:-1}"
+API_MAX_INSTANCES="${NORI_API_MAX_INSTANCES:-10}"
+API_CONCURRENCY="${NORI_API_CONCURRENCY:-80}"
+API_POSTGRES_MAX_CONNS="${NORI_API_POSTGRES_MAX_CONNS:-${NORI_POSTGRES_MAX_CONNS:-8}}"
+
+WORKER_MIN_INSTANCES="${NORI_WORKER_MIN_INSTANCES:-1}"
+WORKER_MAX_INSTANCES="${NORI_WORKER_MAX_INSTANCES:-4}"
+WORKER_POSTGRES_MAX_CONNS="${NORI_WORKER_POSTGRES_MAX_CONNS:-${NORI_POSTGRES_MAX_CONNS:-10}}"
 
 SKIP_TESTS=0
 DEPLOY_CORE=1
@@ -26,7 +61,26 @@ Test and deploy Nori Core and Nori Web to GCP Cloud Run.
 
 Usage: ./scripts/deploy-gcp.sh [--skip-tests] [--core-only | --web-only] [--allow-branch] [--dry-run]
 
-Set NORI_POSTGRES_MAX_CONNS to update the Core database pool limit with the release.
+Environment variables:
+  NORI_DEPLOY_TOPOLOGY        combined (default: nori-core + nori-web) or split (nori-api + nori-worker + nori-web)
+  NORI_CLOUD                  Cloud adapter: gcp (default) or aws
+  NORI_GCP_MIGRATION_JOB      Cloud Run Job name for --migrate-only (mandatory in split mode, optional in combined mode)
+  NORI_GCP_CORE_SERVICE       Cloud Run combined core service name (default: nori-core)
+  NORI_GCP_API_SERVICE        Cloud Run API service name for split mode (default: nori-api)
+  NORI_GCP_WORKER_SERVICE     Cloud Run Worker service name for split mode (default: nori-worker)
+  NORI_GCP_WEB_SERVICE        Cloud Run Web service name (default: nori-web)
+  NORI_API_MIN_INSTANCES      nori-api min instances (default: 1)
+  NORI_API_MAX_INSTANCES      nori-api max instances (default: 10)
+  NORI_API_CONCURRENCY        nori-api max concurrent requests per instance (default: 80)
+  NORI_API_POSTGRES_MAX_CONNS Postgres pool cap per nori-api instance (default: NORI_POSTGRES_MAX_CONNS or 8)
+  NORI_WORKER_MIN_INSTANCES   nori-worker min instances; must be >= 1 (default: 1)
+  NORI_WORKER_MAX_INSTANCES   nori-worker max instances (default: 4)
+  NORI_WORKER_POSTGRES_MAX_CONNS
+                              Postgres pool cap per nori-worker instance (default: NORI_POSTGRES_MAX_CONNS or 10)
+  NORI_POSTGRES_LISTEN_URL_SECRET
+                              Optional Secret Manager ref (e.g. nori-postgres-listen-url:latest) for LISTEN/NOTIFY
+  NORI_DEPLOY_SMOKE_TOKEN_FILE
+                              Optional file with ID token for post-deploy authenticated web smoke check
 USAGE
       exit 0
       ;;
@@ -36,6 +90,27 @@ USAGE
       ;;
   esac
 done
+
+if [[ "$CLOUD" != "gcp" && "$CLOUD" != "aws" ]]; then
+  echo "NORI_CLOUD must be 'gcp' or 'aws' (got '$CLOUD')." >&2
+  exit 1
+fi
+
+if [[ "$TOPOLOGY" != "combined" && "$TOPOLOGY" != "split" ]]; then
+  echo "NORI_DEPLOY_TOPOLOGY must be 'combined' or 'split' (got '$TOPOLOGY')." >&2
+  exit 1
+fi
+
+if [[ "$DEPLOY_CORE" -eq 1 && "$TOPOLOGY" == "split" ]]; then
+  if [[ -z "$MIGRATION_JOB" ]]; then
+    echo "NORI_GCP_MIGRATION_JOB must be set for split core deployments (pre-deploy --migrate-only is mandatory)." >&2
+    exit 1
+  fi
+  if ! [[ "$WORKER_MIN_INSTANCES" =~ ^[0-9]+$ ]] || [[ "$WORKER_MIN_INSTANCES" -lt 1 ]]; then
+    echo "NORI_WORKER_MIN_INSTANCES must be an integer >= 1 (got '$WORKER_MIN_INSTANCES')." >&2
+    exit 1
+  fi
+fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -62,9 +137,18 @@ SHA="$(git rev-parse --short HEAD)"
 CORE_IMAGE="${REGISTRY}/nori-core:${SHA}"
 WEB_IMAGE="${REGISTRY}/nori-web:${SHA}"
 
-echo "==> Target: project=${PROJECT} region=${REGION} branch=${BRANCH} sha=${SHA}"
-[[ "$DEPLOY_CORE" -eq 1 ]] && echo "    core image: ${CORE_IMAGE}"
-[[ "$DEPLOY_WEB" -eq 1 ]] && echo "    web image:  ${WEB_IMAGE}"
+echo "==> Target: project=${PROJECT} region=${REGION} topology=${TOPOLOGY} cloud=${CLOUD} branch=${BRANCH} sha=${SHA}"
+if [[ "$DEPLOY_CORE" -eq 1 ]]; then
+  echo "    core image:   ${CORE_IMAGE}"
+  [[ -n "$MIGRATION_JOB" ]] && echo "    migrate job:  ${MIGRATION_JOB}"
+  if [[ "$TOPOLOGY" == "split" ]]; then
+    echo "    api service:  ${API_SERVICE} (min=${API_MIN_INSTANCES} max=${API_MAX_INSTANCES} pg_max_conns=${API_POSTGRES_MAX_CONNS})"
+    echo "    worker svc:   ${WORKER_SERVICE} (min=${WORKER_MIN_INSTANCES} max=${WORKER_MAX_INSTANCES} pg_max_conns=${WORKER_POSTGRES_MAX_CONNS})"
+  else
+    echo "    core service: ${CORE_SERVICE}"
+  fi
+fi
+[[ "$DEPLOY_WEB" -eq 1 ]] && echo "    web image:    ${WEB_IMAGE} (${WEB_SERVICE})"
 
 run() {
   echo "+ $*"
@@ -110,13 +194,21 @@ probe_url() {
   curl --silent --show-error --fail --output /dev/null --max-time 15 --retry 5 --retry-all-errors "$1"
 }
 
+check_revision_ready() {
+  local revision="$1"
+  local status
+  status="$(gcloud run revisions describe "$revision" --project="$PROJECT" --region="$REGION" \
+    --format='value(status.conditions[?type="Ready"].status)')"
+  [[ "$status" == "True" ]]
+}
+
 deploy_checked() {
   local service="$1" image="$2" path="$3" tag="release-${SHA}"
   shift 3
   run gcloud run deploy "$service" --project="$PROJECT" --region="$REGION" \
     --image="$image" --no-traffic --tag="$tag" --quiet "$@"
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "+ check tagged $service $path"
+    echo "+ check tagged $service ($path)"
     echo "+ promote tagged $service to 100% and remove $tag"
     return
   fi
@@ -126,35 +218,87 @@ deploy_checked() {
     --flatten='status.traffic[]' --format='value(status.traffic.tag,status.traffic.revisionName,status.traffic.url)' |
     awk -F '\t' -v tag="$tag" '$1 == tag { print $2 "\t" $3 }')"
   IFS=$'\t' read -r revision url <<< "$candidate"
-  if [[ -z "$revision" || -z "$url" ]] || ! probe_url "${url}${path}"; then
+
+  local ready=0
+  if [[ "$path" == "revision-ready" ]]; then
+    [[ -n "$revision" ]] && check_revision_ready "$revision" && ready=1
+  else
+    [[ -n "$revision" && -n "$url" ]] && probe_url "${url}${path}" && ready=1
+  fi
+
+  if [[ "$ready" -ne 1 ]]; then
     echo "Tagged $service revision failed readiness. Existing traffic was preserved." >&2
     run gcloud run services update-traffic "$service" --project="$PROJECT" --region="$REGION" --remove-tags="$tag" --quiet || true
     return 1
   fi
   run gcloud run services update-traffic "$service" --project="$PROJECT" --region="$REGION" \
     --to-revisions="$revision=100" --remove-tags="$tag" --quiet
-  probe_url "$(service_url "$service")$path"
+  if [[ "$path" != "revision-ready" ]]; then
+    probe_url "$(service_url "$service")$path"
+  fi
 }
 
 if [[ "$DEPLOY_CORE" -eq 1 ]]; then
-  if [[ -n "${NORI_GCP_MIGRATION_JOB:-}" ]]; then
-    run gcloud run jobs update "$NORI_GCP_MIGRATION_JOB" --project="$PROJECT" --region="$REGION" --image="$CORE_IMAGE" --args=--migrate-only --quiet
-    run gcloud run jobs execute "$NORI_GCP_MIGRATION_JOB" --project="$PROJECT" --region="$REGION" --wait --quiet
+  if [[ -n "$MIGRATION_JOB" ]]; then
+    echo "==> Running pre-deploy migration job (${MIGRATION_JOB})..."
+    run gcloud run jobs update "$MIGRATION_JOB" --project="$PROJECT" --region="$REGION" \
+      --image="$CORE_IMAGE" --args=--migrate-only --update-env-vars="NORI_CLOUD=${CLOUD}" --quiet
+    run gcloud run jobs execute "$MIGRATION_JOB" --project="$PROJECT" --region="$REGION" --wait --quiet
   fi
-  core_args=(
+
+  common_core_hygiene=(
     --remove-secrets=OPENAI_API_KEY,ANTHROPIC_API_KEY,OPENROUTER_API_KEY,NORI_MODEL_GATEWAY_API_KEY
     --remove-env-vars=NORI_MODEL_PROVIDER,NORI_MODEL_GATEWAY_URL,NORI_MODEL_PICKER_USERS,NORI_BYOK_REQUIRED,NORI_AGENT_MODEL,MODEL_NAME,NORI_OUTER_REASONING_EFFORT,NORI_INNER_REASONING_EFFORT
   )
-  if [[ -n "${NORI_POSTGRES_MAX_CONNS:-}" ]]; then
-    core_args+=(--update-env-vars="NORI_POSTGRES_MAX_CONNS=$NORI_POSTGRES_MAX_CONNS")
+  listen_secret_args=()
+  if [[ -n "${NORI_POSTGRES_LISTEN_URL_SECRET:-}" ]]; then
+    listen_secret_args+=(--update-secrets="NORI_POSTGRES_LISTEN_URL=${NORI_POSTGRES_LISTEN_URL_SECRET}")
   fi
-  deploy_checked nori-core "$CORE_IMAGE" /readyz "${core_args[@]}"
+
+  if [[ "$TOPOLOGY" == "split" ]]; then
+    api_args=(
+      "${common_core_hygiene[@]}"
+      --min-instances="${API_MIN_INSTANCES}"
+      --max-instances="${API_MAX_INSTANCES}"
+      --concurrency="${API_CONCURRENCY}"
+      --update-env-vars="NORI_ROLE=api,NORI_CLOUD=${CLOUD},NORI_POSTGRES_MAX_CONNS=${API_POSTGRES_MAX_CONNS}"
+    )
+    if [[ "${#listen_secret_args[@]}" -gt 0 ]]; then
+      api_args+=("${listen_secret_args[@]}")
+    fi
+    deploy_checked "$API_SERVICE" "$CORE_IMAGE" /readyz "${api_args[@]}"
+
+    # nori-worker uses --ingress=internal, so verify Cloud Run's internal revision readiness
+    # condition rather than curling its internal-only URL from the developer workstation.
+    worker_args=(
+      "${common_core_hygiene[@]}"
+      --args=--metrics-addr=0.0.0.0:8080
+      --ingress=internal
+      --no-cpu-throttling
+      --min-instances="${WORKER_MIN_INSTANCES}"
+      --max-instances="${WORKER_MAX_INSTANCES}"
+      --update-env-vars="NORI_ROLE=worker,NORI_CLOUD=${CLOUD},NORI_POSTGRES_MAX_CONNS=${WORKER_POSTGRES_MAX_CONNS}"
+    )
+    if [[ "${#listen_secret_args[@]}" -gt 0 ]]; then
+      worker_args+=("${listen_secret_args[@]}")
+    fi
+    deploy_checked "$WORKER_SERVICE" "$CORE_IMAGE" revision-ready "${worker_args[@]}"
+  else
+    core_args=(
+      "${common_core_hygiene[@]}"
+      --update-env-vars="NORI_CLOUD=${CLOUD}"
+    )
+    if [[ "${#listen_secret_args[@]}" -gt 0 ]]; then
+      core_args+=("${listen_secret_args[@]}")
+    fi
+    deploy_checked "$CORE_SERVICE" "$CORE_IMAGE" /readyz "${core_args[@]}"
+  fi
 fi
 
 if [[ "$DEPLOY_WEB" -eq 1 ]]; then
-  deploy_checked nori-web "$WEB_IMAGE" /api/health
+  deploy_checked "$WEB_SERVICE" "$WEB_IMAGE" /api/health --update-env-vars="NORI_CLOUD=${CLOUD}"
   if [[ -n "${NORI_DEPLOY_SMOKE_TOKEN_FILE:-}" && "$DRY_RUN" -eq 0 ]]; then
-    web_url="$(service_url nori-web)"
+    web_url="$(service_url "$WEB_SERVICE")"
     smoke_token="$(<"$NORI_DEPLOY_SMOKE_TOKEN_FILE")"
     printf 'Authorization: Bearer %s\nSec-Fetch-Site: same-origin\n' "$smoke_token" |
       curl --silent --show-error --fail --output /dev/null --max-time 15 --retry 5 --retry-all-errors -H @- "${web_url}/api/v1/capabilities"
