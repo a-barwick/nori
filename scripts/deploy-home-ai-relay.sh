@@ -47,15 +47,19 @@ fi
 image="$region-docker.pkg.dev/$project/$repo/nori-connector-relay:$sha"
 tag="release-$sha"
 cloud() { gcloud run "$@" --project="$project" --region="$region"; }
+compute_resource() {
+  gcloud compute "$@" --project="$project" --format=json |
+    jq -ce 'if type == "array" then select(length == 1) | .[0] else . end | select(type == "object")'
+}
 
 if [[ "$dry_run" != 1 ]]; then
-  backend="$(gcloud compute backend-services describe "$NORI_HOME_AI_RELAY_EDGE_BACKEND" --global --project="$project" --format=json)"
+  backend="$(compute_resource backend-services describe "$NORI_HOME_AI_RELAY_EDGE_BACKEND" --global)"
   security_policy="$(jq -er '.securityPolicy | split("/") | last' <<< "$backend")"
   group="$(jq -er 'select(.loadBalancingScheme=="EXTERNAL_MANAGED" or .loadBalancingScheme=="EXTERNAL") | .backends | select(length==1) | .[0].group' <<< "$backend")"
   [[ "$group" == */regions/"$region"/networkEndpointGroups/* ]]
-  gcloud compute network-endpoint-groups describe "${group##*/}" --project="$project" --region="$region" --format=json |
+  compute_resource network-endpoint-groups describe "${group##*/}" --region="$region" |
     jq -e --arg service "$service" '.networkEndpointType == "SERVERLESS" and .cloudRun.service == $service and (.cloudRun.tag // "") == ""' >/dev/null
-  gcloud compute security-policies describe "$security_policy" --project="$project" --format=json |
+  compute_resource security-policies describe "$security_policy" |
     jq -e '
       [.rules[] | select(.preview != true and .priority < 2147483647)] | sort_by(.priority) | first
       | (.action == "throttle" or .action == "rate_based_ban")
