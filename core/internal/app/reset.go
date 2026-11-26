@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"nori/internal/api"
 	"nori/internal/state/docstore"
 	"nori/internal/users"
 )
@@ -59,7 +60,7 @@ func (s *Service) resetUserData(ctx context.Context, row users.User, resumePendi
 	if pending, pErr := s.isAccountDeletePending(ctx, row.ID); pErr != nil {
 		return pErr
 	} else if pending {
-		return ErrAccountDeletePending
+		return api.ErrAccountDeletePending
 	}
 	if resumePending && !row.ResetPending {
 		return docstore.ErrUserDataResetNotPending

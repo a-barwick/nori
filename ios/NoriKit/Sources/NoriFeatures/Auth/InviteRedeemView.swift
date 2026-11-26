@@ -98,7 +98,7 @@ public struct InviteRedeemView: View {
                 Link("Terms of Service", destination: NoriConfig.legalURL(path: "/terms"))
             }
             .font(.system(size: 13))
-            .foregroundStyle(NoriColors.textMuted)
+            .foregroundStyle(NoriColors.ink3)
             .padding(.bottom, 20)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

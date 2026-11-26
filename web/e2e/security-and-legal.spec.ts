@@ -67,7 +67,7 @@ test("authenticated app, Settings -> Account, /signed-out, and /api/health enfor
   assertBaselineHeaders(health.headers());
   expect(health.headers()["content-security-policy"]).toBe("default-src 'none'; frame-ancestors 'none'");
 
-  const accountResponse = await page.goto(signInURL("first", "/settings/account"));
+  const accountResponse = await page.goto(signInURL("second", "/settings/account"));
   expect(accountResponse?.status()).toBe(200);
   assertBaselineHeaders(accountResponse!.headers());
   await expect(page.getByRole("link", { name: "Privacy Policy" })).toHaveAttribute("href", "/privacy");
