@@ -12,9 +12,17 @@ struct NoriApp: App {
         #if DEBUG
         let isPreview = CommandLine.arguments.contains("-nori-preview")
         SentryNoriTelemetry.bootstrap(isPreviewMode: isPreview)
-        let initialStore: NoriStore = isPreview
-            ? NoriStore.makePreviewStore()
-            : NoriStore()
+        let initialStore: NoriStore
+        if isPreview {
+            initialStore = NoriStore.makePreviewStore()
+        } else if let localServer = Self.resolveArg("-nori-local-server", env: "NORI_LOCAL_SERVER"),
+                  let localURL = URL(string: localServer),
+                  let localEmail = Self.resolveArg("-nori-local-email", env: "NORI_LOCAL_EMAIL") {
+            let transport = LiveNoriTransport(baseURL: localURL, localEmail: localEmail)
+            initialStore = NoriStore(transport: transport, devLocalEmail: localEmail)
+        } else {
+            initialStore = NoriStore()
+        }
         #else
         SentryNoriTelemetry.bootstrap(isPreviewMode: false)
         let initialStore = NoriStore()
@@ -35,6 +43,19 @@ struct NoriApp: App {
                 .tint(NoriColors.accent)
                 .preferredColorScheme(appearance.colorScheme)
         }
+    }
+
+    private static func resolveArg(_ flag: String, env: String) -> String? {
+        let args = CommandLine.arguments
+        if let idx = args.firstIndex(of: flag), args.indices.contains(idx + 1) {
+            let val = args[idx + 1].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !val.isEmpty { return val }
+        }
+        if let envVal = ProcessInfo.processInfo.environment[env]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !envVal.isEmpty {
+            return envVal
+        }
+        return nil
     }
 
     private static func resolveInitialURL() -> URL? {

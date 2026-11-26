@@ -507,6 +507,30 @@ func buildDefaultCatalog(cloud, envProfile string, m settings.Models) Catalog {
 					Paid:        true,
 					Endpoint:    m.GatewayURL,
 				},
+				Profile{
+					ID:          "cloud-gpt-6-2-sol",
+					Version:     "v1",
+					Label:       "GPT-6.2 Sol · Cloud",
+					Backend:     BackendGateway,
+					Model:       "openai/gpt-6.2-sol",
+					ChatAdapter: AdapterChatCompletions,
+					TaskAdapter: AdapterResponses,
+					Lanes:       []string{LaneChat, LaneTask},
+					Paid:        true,
+					Endpoint:    m.GatewayURL,
+				},
+				Profile{
+					ID:          "cloud-gpt-6-1-luna",
+					Version:     "v1",
+					Label:       "GPT-6.1 Luna · Cloud",
+					Backend:     BackendGateway,
+					Model:       "openai/gpt-6.1-luna",
+					ChatAdapter: AdapterChatCompletions,
+					TaskAdapter: AdapterResponses,
+					Lanes:       []string{LaneChat, LaneTask},
+					Paid:        true,
+					Endpoint:    m.GatewayURL,
+				},
 			)
 		} else {
 			profiles = append(profiles,
@@ -540,6 +564,24 @@ func buildDefaultCatalog(cloud, envProfile string, m settings.Models) Catalog {
 			cat.DefaultTaskProfileID = p.ID
 			if p.SupportsReasoning(m.InnerReasoning) {
 				cat.DefaultTaskReasoning = m.InnerReasoning
+			}
+		}
+	}
+	if cat.DefaultChatProfileID == "" {
+		for _, preferredID := range []string{"cloud-gemini-4-neon", "cloud-claude-opus-5-5", "cloud-gpt-6-2-sol", "local-inkling-2-mini"} {
+			if p, ok := cat.Get(preferredID); ok && p.SupportsLane(LaneChat) {
+				cat.DefaultChatProfileID = p.ID
+				cat.DefaultChatReasoning = p.DefaultReasoning
+				break
+			}
+		}
+	}
+	if cat.DefaultTaskProfileID == "" {
+		for _, preferredID := range []string{"cloud-gemini-4-hydrogen", "cloud-claude-haiku-5-5", "cloud-gpt-6-1-luna", "local-inkling-2-mini"} {
+			if p, ok := cat.Get(preferredID); ok && p.SupportsLane(LaneTask) {
+				cat.DefaultTaskProfileID = p.ID
+				cat.DefaultTaskReasoning = p.DefaultReasoning
+				break
 			}
 		}
 	}

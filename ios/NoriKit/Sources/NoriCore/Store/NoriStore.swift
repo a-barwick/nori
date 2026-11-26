@@ -252,6 +252,7 @@ public final class NoriStore {
     }
 
     private let authProvider: AuthTokenProvider
+    private let devLocalEmail: String?
     private let liveTransport: LiveNoriTransport?
     var transport: any NoriTransport
     var sessionGeneration: UInt64 = 0
@@ -270,9 +271,11 @@ public final class NoriStore {
 
     public init(
         transport: (any NoriTransport)? = nil,
-        authProvider: AuthTokenProvider = AuthTokenProvider()
+        authProvider: AuthTokenProvider = AuthTokenProvider(),
+        devLocalEmail: String? = nil
     ) {
         self.authProvider = authProvider
+        self.devLocalEmail = devLocalEmail
         if let transport {
             self.liveTransport = transport as? LiveNoriTransport
             self.transport = transport
@@ -302,6 +305,10 @@ public final class NoriStore {
         self.modelKeys = ModelKeysResponse()
     }
 
+
+    public var serverHost: String {
+        liveTransport?.baseURL.host() ?? NoriConfig.serverURL.host() ?? "nori-core"
+    }
 
     public var messages: [Message] {
         session.messages
@@ -393,7 +400,12 @@ public final class NoriStore {
         guard !hasBootstrapped else { return }
         hasBootstrapped = true
         let generation = sessionGeneration
-        let savedSession = await authProvider.loadSession()
+        let savedSession: AuthSession?
+        if let devLocalEmail {
+            savedSession = AuthSession(idToken: "", refreshToken: nil, expiresAt: .distantFuture, email: devLocalEmail)
+        } else {
+            savedSession = await authProvider.loadSession()
+        }
         guard generation == sessionGeneration else { return }
         guard let savedSession else {
             authState = .signedOut

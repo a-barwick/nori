@@ -293,6 +293,9 @@ public struct NoriRootView: View {
     }
 
     private func applyDeepLink(_ link: NoriDeepLink) {
+        if link != .onboarding {
+            store.isShowingOnboardingReplay = false
+        }
         switch link {
         case .tab(let tab):
             isActivitySheetPresented = false

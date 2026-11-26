@@ -191,6 +191,12 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 	runner.ModelForTurn = func(sel *state.ModelSelection) conversation.ReplyModel {
 		p, reasoning, explicit, err := profilesReg.ResolveChat(sel)
 		if !explicit {
+			if profilesReg != nil {
+				cat := profilesReg.Snapshot()
+				if def, ok := cat.Get(cat.DefaultChatProfileID); ok && def.Backend == modelprofiles.BackendLocal {
+					return platform.ReplyModelForProfile(modelsCfg, user.ID, def, def.DefaultReasoning)
+				}
+			}
 			if modelsCfg.UsesGatewayOuter() && (services.ModelKeys != nil || modelsCfg.BYOKRequired) {
 				resolvedCfg, rerr := resolveGatewayModels(modelsCfg)
 				if rerr != nil {
@@ -245,6 +251,12 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 		ModelForRun: func(sel *state.ModelSelection) agent.Model {
 			p, reasoning, explicit, err := profilesReg.ResolveTask(sel)
 			if !explicit {
+				if profilesReg != nil {
+					cat := profilesReg.Snapshot()
+					if def, ok := cat.Get(cat.DefaultTaskProfileID); ok && def.Backend == modelprofiles.BackendLocal {
+						return platform.TaskModelForProfile(modelsCfg, store, user.ID, def, def.DefaultReasoning)
+					}
+				}
 				return nil
 			}
 			if err != nil {
