@@ -332,6 +332,9 @@ func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span tr
 	if err != nil {
 		return nil, err
 	}
+	if m.GoogleCompatibility || strings.HasPrefix(strings.TrimPrefix(m.name, "google/"), "gemini-") {
+		input = completeGeminiTurn(input)
+	}
 	body := map[string]any{
 		"model": m.name, "messages": input, "max_completion_tokens": outputLimit, "store": false,
 	}
@@ -576,6 +579,20 @@ func isDuplicateActionFreePair(first, second json.RawMessage) bool {
 		return false
 	}
 	return strings.TrimSpace(env.Text) == strings.TrimSpace(*b.Content)
+}
+
+func completeGeminiTurn(messages []map[string]any) []map[string]any {
+	// Gemini extracts system messages before validating the final conversation role.
+	for i := len(messages) - 1; i >= 0; i-- {
+		switch messages[i]["role"] {
+		case "system":
+			continue
+		case "user":
+			return messages
+		}
+		break
+	}
+	return append(messages, map[string]any{"role": "user", "content": prompts.Runtime("gemini-current-turn", nil)})
 }
 
 func openAIConversation(messages []json.RawMessage, breakpoints []int) ([]map[string]any, error) {
