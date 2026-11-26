@@ -41,6 +41,13 @@ func New(cfg Config) (*Connector, error) {
 }
 
 func (c *Connector) Serve(ctx context.Context) error {
+	if DesktopMode == "1" {
+		return c.serveDesktop(ctx)
+	}
+	return c.serve(ctx)
+}
+
+func (c *Connector) serve(ctx context.Context) error {
 	if err := ensureStateDir(c.config.StateDir); err != nil {
 		return err
 	}

@@ -180,7 +180,8 @@ func (s *Service) redeemGrant(ctx context.Context, code string) (tokenResponse, 
 	var expiry time.Time
 	var lastPoll *time.Time
 	var interval int
-	err = tx.QueryRow(ctx, `SELECT id,device_name,status,user_id,expires_at,last_polled,poll_interval FROM nori_home_ai_grants WHERE device_code_hash=$1 FOR UPDATE`, tokenHash(code)).Scan(&id, &name, &status, &userID, &expiry, &lastPoll, &interval)
+	pairingHash := tokenHash(code)
+	err = tx.QueryRow(ctx, `SELECT id,device_name,status,user_id,expires_at,last_polled,poll_interval FROM nori_home_ai_grants WHERE device_code_hash=$1 FOR UPDATE`, pairingHash).Scan(&id, &name, &status, &userID, &expiry, &lastPoll, &interval)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return empty, "invalid_grant"
 	}
@@ -238,7 +239,7 @@ func (s *Service) redeemGrant(ctx context.Context, code string) (tokenResponse, 
 	if err != nil {
 		return empty, "server_error"
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO nori_home_ai_devices(id,user_id,name,access_hash,refresh_hash,access_expires_at,refresh_expires_at) VALUES($1,$2,$3,$4,$5,clock_timestamp()+$6::interval,clock_timestamp()+$7::interval)`, uuid.NewString(), *userID, name, tokenHash(tok.AccessToken), tokenHash(tok.RefreshToken), fmt.Sprintf("%d seconds", int(accessLifetime.Seconds())), fmt.Sprintf("%d seconds", int(refreshLifetime.Seconds())))
+	_, err = tx.Exec(ctx, `INSERT INTO nori_home_ai_devices(id,user_id,name,access_hash,refresh_hash,access_expires_at,refresh_expires_at,pairing_hash) VALUES($1,$2,$3,$4,$5,clock_timestamp()+$6::interval,clock_timestamp()+$7::interval,$8)`, uuid.NewString(), *userID, name, tokenHash(tok.AccessToken), tokenHash(tok.RefreshToken), fmt.Sprintf("%d seconds", int(accessLifetime.Seconds())), fmt.Sprintf("%d seconds", int(refreshLifetime.Seconds())), pairingHash)
 	if err != nil {
 		return empty, "server_error"
 	}
@@ -327,18 +328,46 @@ func (s *Service) revokeToken(w http.ResponseWriter, r *http.Request) {
 	token := r.PostForm.Get("token")
 	if len(token) >= 32 && len(token) <= 200 {
 		ctx := r.Context()
-		var deviceID, userID string
-		err := s.pool.QueryRow(ctx, `SELECT id,user_id FROM nori_home_ai_devices WHERE refresh_hash=$1 OR access_hash=$1 UNION SELECT d.id,d.user_id FROM nori_home_ai_devices d JOIN nori_home_ai_refresh_history h ON h.device_id=d.id WHERE h.token_hash=$1 LIMIT 1`, tokenHash(token)).Scan(&deviceID, &userID)
-		if err == nil {
-			if err = s.Revoke(ctx, userID, deviceID); err != nil {
-				writeJSON(w, http.StatusServiceUnavailable, oauthError{Error: "temporarily_unavailable"})
-				return
+		hash := tokenHash(token)
+		var err error
+		if r.PostForm.Get("token_type_hint") == "device_code" {
+			err = s.revokePairing(ctx, hash)
+		} else {
+			var deviceID, userID string
+			err = s.pool.QueryRow(ctx, `SELECT id,user_id FROM nori_home_ai_devices WHERE refresh_hash=$1 OR access_hash=$1 UNION SELECT d.id,d.user_id FROM nori_home_ai_devices d JOIN nori_home_ai_refresh_history h ON h.device_id=d.id WHERE h.token_hash=$1 LIMIT 1`, hash).Scan(&deviceID, &userID)
+			if err == nil {
+				err = s.Revoke(ctx, userID, deviceID)
 			}
-		} else if !errors.Is(err, pgx.ErrNoRows) {
+		}
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) && !errors.Is(err, ErrDeviceNotFound) {
 			writeJSON(w, http.StatusServiceUnavailable, oauthError{Error: "temporarily_unavailable"})
 			return
 		}
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
+}
+
+// Revocation accepts the original secret device code so a connector can undo a
+// redemption whose token response never reached it. Updating the grant
+// serializes cancellation with approval and redemption.
+func (s *Service) revokePairing(ctx context.Context, hash []byte) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `UPDATE nori_home_ai_grants SET status='denied' WHERE device_code_hash=$1 AND status<>'denied'`, hash); err != nil {
+		return err
+	}
+	var deviceID, userID string
+	err = tx.QueryRow(ctx, `SELECT id,user_id FROM nori_home_ai_devices WHERE pairing_hash=$1 AND revoked_at IS NULL FOR UPDATE`, hash).Scan(&deviceID, &userID)
+	if err == nil {
+		if err := revokeDevice(ctx, tx, userID, deviceID); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	return tx.Commit(ctx)
 }

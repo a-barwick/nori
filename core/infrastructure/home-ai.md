@@ -4,13 +4,13 @@ The connector runs beside a local Ollama instance. It uses outbound HTTPS and an
 
 ## Rollout
 
-1. Apply Core migrations on the target Postgres database through the normal migration job.
-2. Create a relay service account and a Postgres login scoped to the home AI tables. Grant the relay SELECT on the nori_home_ai_accounts view so it can reject reset or missing accounts. Keep conversation, artifacts, and connected-app credentials outside the relay role. Use a dedicated service identity for Cloud SQL connectivity.
-3. Create one shared 32-byte base64 encryption key in Secret Manager. Grant the Core and relay identities access. Supply individual Postgres URL secrets for Core and relay when their database roles differ.
-4. Deploy the relay with [deploy-home-ai-relay.sh](../../scripts/deploy-home-ai-relay.sh) and point the public HTTPS pairing URL at the Nori Web `/connector/activate` page. Cap relay concurrency and instance count for the pilot. Apply per-source connection and OAuth endpoint limits at the public edge. Verify that the deployed ingress preserves client identity for rate limiting before broad enrollment.
-5. Publish signed connector packages configured with the relay HTTPS origin. Serve versioned artifacts from the Nori release origin. Keep earlier supported builds available during the release window.
-6. Enable Core by supplying `NORI_HOME_AI_KEY` and `NORI_HOME_AI_VERIFY_URL`. Configure the download URLs for clients after the artifacts are published. Confirm Core and relay readiness and pair a test account on staging.
-7. Enable `NORI_HOME_AI_WORK_ENABLED=true` after confirming tool calls, tool results, and offline recovery against supported Ollama versions and models in staging.
+1. Build the Apple-silicon Nori DMG and the standalone Mac and Debian connectors at the same Git revision and version with the **Build Nori Mac and Home AI installers** workflow. Check the Developer ID signature, notarization ticket, and signed Linux checksums. GitHub Releases can host the versioned downloads. In Models, the Mac download points to the full Nori app. The release assets also include the standalone Mac connector.
+2. Use [deploy-gcp-mac-web.sh](../../scripts/deploy-gcp-mac-web.sh) to deploy the Mac Web entry point for the dedicated Google Desktop OAuth client. The service uses Nori’s Google token verification and account lookup. It reads the browser site’s direct, unconditional IAP user grants with a service identity that has policy-read permission on that resource. Revocation is reflected after at most a 30-second cache window. Regular Web continues to use IAP. This Mac entry point is for a pilot with directly granted accounts. Review the authorization design before using inherited, group, conditional, or deny policies for Mac access.
+3. Apply Core migrations on the target Postgres database through the normal migration job. Create a relay service account and a Postgres login scoped to the Home AI tables. Grant the relay SELECT on the `nori_home_ai_accounts` view so it can reject account resets and missing accounts. Keep conversation, artifact, and integration credentials outside the relay role.
+4. Create one shared 32-byte base64 encryption key in Secret Manager and grant the Core and relay identities access. Use separate Postgres URL secrets when their database roles differ.
+5. Deploy the relay with [deploy-home-ai-relay.sh](../../scripts/deploy-home-ai-relay.sh). Configure its pairing URL to the Web origin’s `/connector/activate` page. Apply connection and OAuth endpoint limits at the public edge and check that ingress preserves the source identity used for rate limiting.
+6. Verify the relay returns HTTP 200 from `/readyz`, then publish the signed release and set the download URLs. Use [deploy-gcp.sh](../../scripts/deploy-gcp.sh) with `NORI_HOME_AI_KEY_SECRET`, the verification and download URLs, and a short-lived IAP token for a provisioned account in `NORI_DEPLOY_SMOKE_TOKEN_FILE`. Enable Work after validating tool calls, tool results, and offline recovery with the supported Ollama model.
+7. Check the signed installer with a fresh pilot account. Confirm sign-in, setup, iPhone Chat and scheduled Work while Nori for Mac is quit, relay recovery, disconnect, and switching accounts. The [macOS release guide](../../macos/README.md) covers the app build and Apple signing.
 
 | Core variables | Purpose |
 | --- | --- |
@@ -29,7 +29,9 @@ Cloud Run treats a relay instance with an open WebSocket as active and billable.
 
 ## Device setup
 
-On the computer running Ollama, open **More → Models → Home AI Server → Get connector**. Open the Mac app or run `sudo nori-connector-control pair` on Linux. Enter the displayed code in **More → Models** and approve pairing, then save the device model for Chat. The Mac background helper starts at login. On Linux, systemd can start the service at boot.
+In Nori for Mac, open **More → Models → Use this Mac as a Home AI Server**. Select an installed Ollama model and approve background access. During setup, choose whether to use that model for Chat, Work, or both. Change either route later in **More → Models**. The per-user helper keeps running after you quit the window and starts at login while sharing is enabled. Signing out or switching accounts stops local sharing and revokes the Mac. If the relay is unreachable, the app retries revocation while open and on the next launch.
+
+On a headless Debian or Ubuntu host, install the standalone package and run `sudo nori-connector-control pair`. Enter its code in **More → Models** from another signed-in device. systemd can start the service at boot.
 
 Keep Ollama bound to loopback and configure it to start automatically. Set `disable_ollama_cloud` to `true` in the serving user's `~/.ollama/server.json` or set `OLLAMA_NO_CLOUD=1` in the service environment, then restart Ollama. [Ollama local-only configuration](https://docs.ollama.com/faq#how-do-i-disable-ollamas-cloud-features)
 

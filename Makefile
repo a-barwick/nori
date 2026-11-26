@@ -39,6 +39,7 @@ contracts-check:
 check: contracts-check
 	$(MAKE) -C core check
 	cd web && node scripts/contract-types.mjs --check && ./node_modules/.bin/next typegen && ./node_modules/.bin/tsc --noEmit -p . && ./node_modules/.bin/eslint src && bun test src
+	npm --prefix macos test
 
 sim-deep:
 	$(MAKE) -C core sim-deep

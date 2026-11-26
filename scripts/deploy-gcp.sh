@@ -81,6 +81,8 @@ Environment variables:
                               Optional Secret Manager ref (e.g. nori-postgres-listen-url:latest) for LISTEN/NOTIFY
   NORI_DEPLOY_SMOKE_TOKEN_FILE
                               Optional file with ID token for post-deploy authenticated web smoke check
+  NORI_HOME_AI_KEY_SECRET    Shared Home AI encryption key secret, in name:version form.
+                              Set the verification URL and optional download, Work, and database settings.
 USAGE
       exit 0
       ;;
@@ -131,6 +133,10 @@ fi
 if [[ "$DEPLOY_WEB" -eq 1 && -n "${NORI_DEPLOY_SMOKE_TOKEN_FILE:-}" && ! -s "$NORI_DEPLOY_SMOKE_TOKEN_FILE" ]]; then
   echo "NORI_DEPLOY_SMOKE_TOKEN_FILE must contain an ID token for a provisioned account." >&2
   exit 1
+fi
+
+if [[ "$DEPLOY_CORE" -eq 1 && -n "${NORI_HOME_AI_KEY_SECRET:-}" ]]; then
+  : "${NORI_HOME_AI_VERIFY_URL:?Set the Nori Web pairing URL}"
 fi
 
 SHA="$(git rev-parse --short HEAD)"
@@ -191,7 +197,16 @@ service_url() {
 }
 
 probe_url() {
-  curl --silent --show-error --fail --output /dev/null --max-time 15 --retry 5 --retry-all-errors "$1"
+  local url="$1" service="$2" status
+  local args=(--silent --show-error --fail --output /dev/null --write-out '%{http_code}' --max-time 15 --retry 5 --retry-all-errors)
+  if [[ "$service" == "$WEB_SERVICE" && -n "${NORI_DEPLOY_SMOKE_TOKEN_FILE:-}" ]]; then
+    status="$(printf 'Authorization: Bearer %s\nSec-Fetch-Site: same-origin\n' "$(<"$NORI_DEPLOY_SMOKE_TOKEN_FILE")" |
+      curl "${args[@]}" -H @- "$url")" || return 1
+    [[ "$status" == 200 ]]
+  else
+    status="$(curl "${args[@]}" "$url")" || return 1
+    [[ "$status" == 200 || ("$service" == "$WEB_SERVICE" && "$status" == 302) ]]
+  fi
 }
 
 check_revision_ready() {
@@ -223,7 +238,11 @@ deploy_checked() {
   if [[ "$path" == "revision-ready" ]]; then
     [[ -n "$revision" ]] && check_revision_ready "$revision" && ready=1
   else
-    [[ -n "$revision" && -n "$url" ]] && probe_url "${url}${path}" && ready=1
+    if [[ -n "$revision" && -n "$url" ]] && probe_url "${url}${path}" "$service"; then
+      if [[ "$service" != "$WEB_SERVICE" || -n "${NORI_DEPLOY_SMOKE_TOKEN_FILE:-}" ]] || check_revision_ready "$revision"; then
+        ready=1
+      fi
+    fi
   fi
 
   if [[ "$ready" -ne 1 ]]; then
@@ -234,7 +253,7 @@ deploy_checked() {
   run gcloud run services update-traffic "$service" --project="$PROJECT" --region="$REGION" \
     --to-revisions="$revision=100" --remove-tags="$tag" --quiet
   if [[ "$path" != "revision-ready" ]]; then
-    probe_url "$(service_url "$service")$path"
+    probe_url "$(service_url "$service")$path" "$service"
   fi
 }
 
@@ -250,9 +269,27 @@ if [[ "$DEPLOY_CORE" -eq 1 ]]; then
     --remove-secrets=OPENAI_API_KEY,ANTHROPIC_API_KEY,OPENROUTER_API_KEY,NORI_MODEL_GATEWAY_API_KEY
     --remove-env-vars=NORI_MODEL_PROVIDER,NORI_MODEL_GATEWAY_URL,NORI_MODEL_PICKER_USERS,NORI_BYOK_REQUIRED,NORI_AGENT_MODEL,MODEL_NAME,NORI_OUTER_REASONING_EFFORT,NORI_INNER_REASONING_EFFORT
   )
-  listen_secret_args=()
+  secret_updates=()
   if [[ -n "${NORI_POSTGRES_LISTEN_URL_SECRET:-}" ]]; then
-    listen_secret_args+=(--update-secrets="NORI_POSTGRES_LISTEN_URL=${NORI_POSTGRES_LISTEN_URL_SECRET}")
+    secret_updates+=("NORI_POSTGRES_LISTEN_URL=$NORI_POSTGRES_LISTEN_URL_SECRET")
+  fi
+  home_env=""
+  if [[ -n "${NORI_HOME_AI_KEY_SECRET:-}" ]]; then
+    secret_updates+=("NORI_HOME_AI_KEY=$NORI_HOME_AI_KEY_SECRET")
+    for name in NORI_HOME_AI_CORE_DB_SECRET NORI_HOME_AI_CORE_DB_LISTEN_SECRET; do
+      if [[ -n "${!name:-}" ]]; then
+        key=NORI_HOME_AI_POSTGRES_URL
+        if [[ "$name" == NORI_HOME_AI_CORE_DB_LISTEN_SECRET ]]; then key=NORI_HOME_AI_POSTGRES_LISTEN_URL; fi
+        secret_updates+=("$key=${!name}")
+      fi
+    done
+    home_env=",NORI_HOME_AI_VERIFY_URL=$NORI_HOME_AI_VERIFY_URL,NORI_HOME_AI_WORK_ENABLED=${NORI_HOME_AI_WORK_ENABLED:-false}"
+    for name in NORI_HOME_AI_DOWNLOAD_MACOS NORI_HOME_AI_DOWNLOAD_LINUX_AMD64 NORI_HOME_AI_DOWNLOAD_LINUX_ARM64; do
+      if [[ -n "${!name:-}" ]]; then home_env+=",$name=${!name}"; fi
+    done
+  fi
+  if [[ "${#secret_updates[@]}" -gt 0 ]]; then
+    common_core_hygiene+=(--update-secrets="$(IFS=,; printf '%s' "${secret_updates[*]}")")
   fi
 
   if [[ "$TOPOLOGY" == "split" ]]; then
@@ -261,11 +298,8 @@ if [[ "$DEPLOY_CORE" -eq 1 ]]; then
       --min-instances="${API_MIN_INSTANCES}"
       --max-instances="${API_MAX_INSTANCES}"
       --concurrency="${API_CONCURRENCY}"
-      --update-env-vars="NORI_ROLE=api,NORI_CLOUD=${CLOUD},NORI_POSTGRES_MAX_CONNS=${API_POSTGRES_MAX_CONNS}"
+      --update-env-vars="NORI_ROLE=api,NORI_CLOUD=${CLOUD},NORI_POSTGRES_MAX_CONNS=${API_POSTGRES_MAX_CONNS}${home_env}"
     )
-    if [[ "${#listen_secret_args[@]}" -gt 0 ]]; then
-      api_args+=("${listen_secret_args[@]}")
-    fi
     deploy_checked "$API_SERVICE" "$CORE_IMAGE" /readyz "${api_args[@]}"
 
     # nori-worker uses --ingress=internal, so verify Cloud Run's internal revision readiness
@@ -277,20 +311,16 @@ if [[ "$DEPLOY_CORE" -eq 1 ]]; then
       --no-cpu-throttling
       --min-instances="${WORKER_MIN_INSTANCES}"
       --max-instances="${WORKER_MAX_INSTANCES}"
-      --update-env-vars="NORI_ROLE=worker,NORI_CLOUD=${CLOUD},NORI_POSTGRES_MAX_CONNS=${WORKER_POSTGRES_MAX_CONNS}"
+      --update-env-vars="NORI_ROLE=worker,NORI_CLOUD=${CLOUD},NORI_POSTGRES_MAX_CONNS=${WORKER_POSTGRES_MAX_CONNS}${home_env}"
     )
-    if [[ "${#listen_secret_args[@]}" -gt 0 ]]; then
-      worker_args+=("${listen_secret_args[@]}")
-    fi
     deploy_checked "$WORKER_SERVICE" "$CORE_IMAGE" revision-ready "${worker_args[@]}"
   else
+    combined_env="NORI_CLOUD=${CLOUD}${home_env}"
+    if [[ -n "${NORI_POSTGRES_MAX_CONNS:-}" ]]; then combined_env+=",NORI_POSTGRES_MAX_CONNS=$NORI_POSTGRES_MAX_CONNS"; fi
     core_args=(
       "${common_core_hygiene[@]}"
-      --update-env-vars="NORI_CLOUD=${CLOUD}"
+      --update-env-vars="$combined_env"
     )
-    if [[ "${#listen_secret_args[@]}" -gt 0 ]]; then
-      core_args+=("${listen_secret_args[@]}")
-    fi
     deploy_checked "$CORE_SERVICE" "$CORE_IMAGE" /readyz "${core_args[@]}"
   fi
 fi

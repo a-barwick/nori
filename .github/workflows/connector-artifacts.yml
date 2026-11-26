@@ -1,10 +1,10 @@
-name: Build Connector Artifacts
+name: Build Nori Mac and Home AI installers
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Connector version
+        description: Nori Mac and Home AI release version
         required: true
         type: string
 
@@ -70,10 +70,21 @@ jobs:
         with:
           go-version-file: core/go.mod
           cache-dependency-path: core/go.sum
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: macos/package-lock.json
+      - name: Install desktop build dependencies
+        run: npm --prefix macos ci --no-audit --no-fund
       - name: Build and notarize
         env:
           NORI_CONNECTOR_RELAY_URL: ${{ vars.NORI_CONNECTOR_RELAY_URL }}
-          NORI_CONNECTOR_VERSION: ${{ inputs.version }}
+          NORI_MAC_VERSION: ${{ inputs.version }}
+          NORI_MAC_WEB_ORIGIN: ${{ vars.NORI_MAC_WEB_ORIGIN }}
+          NORI_MAC_BROWSER_ORIGIN: ${{ vars.NORI_MAC_BROWSER_ORIGIN }}
+          NORI_MAC_GOOGLE_CLIENT_ID: ${{ vars.NORI_MAC_GOOGLE_CLIENT_ID }}
+          NORI_MAC_GOOGLE_CLIENT_SECRET: ${{ secrets.NORI_MAC_GOOGLE_CLIENT_SECRET }}
           NORI_MAC_SIGNING_IDENTITY: ${{ vars.NORI_MAC_SIGNING_IDENTITY }}
           SIGNING_P12: ${{ secrets.NORI_MAC_DEVELOPER_ID_P12 }}
           SIGNING_PASSWORD: ${{ secrets.NORI_MAC_DEVELOPER_ID_PASSWORD }}
@@ -84,6 +95,9 @@ jobs:
         run: |
           set -euo pipefail
           : "${NORI_MAC_SIGNING_IDENTITY:?Set NORI_MAC_SIGNING_IDENTITY}"
+          : "${NORI_MAC_WEB_ORIGIN:?Set NORI_MAC_WEB_ORIGIN}"
+          : "${NORI_MAC_GOOGLE_CLIENT_ID:?Set NORI_MAC_GOOGLE_CLIENT_ID}"
+          : "${NORI_MAC_GOOGLE_CLIENT_SECRET:?Set NORI_MAC_GOOGLE_CLIENT_SECRET}"
           : "${SIGNING_P12:?Set NORI_MAC_DEVELOPER_ID_P12}"
           : "${SIGNING_PASSWORD:?Set NORI_MAC_DEVELOPER_ID_PASSWORD}"
           : "${ASC_KEY_ID:?Set ASC_KEY_ID}"
@@ -104,8 +118,16 @@ jobs:
           security list-keychains -d user -s "$keychain"
           xcrun notarytool store-credentials nori-connector --key "$signing_dir/AuthKey.p8" \
             --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" --keychain "$keychain"
-          NORI_CONNECTOR_DMG=1 NORI_MAC_NOTARY_PROFILE=nori-connector NORI_MAC_NOTARY_KEYCHAIN="$keychain" \
+          NORI_MAC_RELEASE=1 NORI_MAC_NOTARY_PROFILE=nori-connector NORI_MAC_NOTARY_KEYCHAIN="$keychain" \
+            macos/scripts/build.sh "$RUNNER_TEMP/nori-mac"
+          NORI_CONNECTOR_VERSION="$NORI_MAC_VERSION" NORI_CONNECTOR_DMG=1 \
+            NORI_MAC_NOTARY_PROFILE=nori-connector NORI_MAC_NOTARY_KEYCHAIN="$keychain" \
             connector/macos/build.sh "$RUNNER_TEMP/connector-macos"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nori-for-mac
+          path: ${{ runner.temp }}/nori-mac/*.dmg
+          if-no-files-found: error
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: nori-connector-macos

@@ -47,6 +47,29 @@ func run() error {
 	defer stop()
 	encoder := json.NewEncoder(os.Stdout)
 	switch command {
+	case "desktop-enable":
+		if homeconnector.DesktopMode != "1" {
+			return errors.New("desktop sharing controls are unavailable")
+		}
+		if err := homeconnector.DesktopEnable(cfg); err != nil {
+			return err
+		}
+		return encoder.Encode(map[string]bool{"enabled": true})
+	case "desktop-disable", "desktop-revoke-pending":
+		if homeconnector.DesktopMode != "1" {
+			return errors.New("desktop sharing controls are unavailable")
+		}
+		var pending bool
+		var err error
+		if command == "desktop-disable" {
+			pending, err = homeconnector.DesktopDisable(ctx, cfg)
+		} else {
+			pending, err = homeconnector.DesktopRevokePending(ctx, cfg)
+		}
+		if err != nil {
+			return err
+		}
+		return encoder.Encode(map[string]bool{"revocation_pending": pending})
 	case "pair":
 		err := homeconnector.Pair(ctx, cfg, *deviceName, func(pairing homeconnector.Pairing) error {
 			if *jsonOutput {
@@ -96,6 +119,12 @@ func run() error {
 		status.Paired, err = homeconnector.CredentialPresent(cfg)
 		if err != nil {
 			return err
+		}
+		if homeconnector.DesktopMode == "1" {
+			status.RevocationPending, err = homeconnector.DesktopRevocationPending(cfg)
+			if err != nil {
+				return err
+			}
 		}
 		if !status.UpdatedAt.IsZero() && time.Since(status.UpdatedAt) > 90*time.Second {
 			status.State = "stopped"

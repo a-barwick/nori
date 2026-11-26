@@ -649,3 +649,56 @@ func TestRelayReadinessRequiresDrainMigration(t *testing.T) {
 		t.Fatal("ready without drain migration")
 	}
 }
+
+func TestPairingCancellationRecoversFromLostTokenResponse(t *testing.T) {
+	f := newRelayFixture(t)
+	if err := f.service.Revoke(f.ctx, f.userID, f.deviceID); err != nil {
+		t.Fatal(err)
+	}
+	cancel := func(code string) {
+		t.Helper()
+		res, err := http.PostForm(f.server.URL+"/oauth/revoke", url.Values{
+			"client_id":       {"nori-connector"},
+			"token":           {code},
+			"token_type_hint": {"device_code"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("cancel pairing HTTP %d", res.StatusCode)
+		}
+	}
+	authorize := func(name string) deviceAuthorization {
+		t.Helper()
+		grant := f.start(t, name)
+		if _, err := f.service.Approve(f.ctx, f.userID, grant.UserCode); err != nil {
+			t.Fatal(err)
+		}
+		return grant
+	}
+
+	abandoned := authorize("Cancelled before redemption")
+	cancel(abandoned.DeviceCode)
+	if _, code := f.service.redeemGrant(f.ctx, abandoned.DeviceCode); code != "access_denied" {
+		t.Fatalf("cancelled grant redeemed: %q", code)
+	}
+
+	lost := authorize("Lost redemption response")
+	if _, code := f.service.redeemGrant(f.ctx, lost.DeviceCode); code != "" {
+		t.Fatalf("first redemption: %q", code)
+	}
+	if _, err := f.service.pool.Exec(f.ctx, `DELETE FROM nori_home_ai_grants WHERE device_code_hash=$1`, tokenHash(lost.DeviceCode)); err != nil {
+		t.Fatal(err)
+	}
+	cancel(lost.DeviceCode)
+	cancel(lost.DeviceCode)
+	if devices, err := f.service.List(f.ctx, f.userID); err != nil || len(devices) != 0 {
+		t.Fatalf("cancelled device remains registered: %v, %v", devices, err)
+	}
+	replacement := authorize("Replacement after cancellation")
+	if _, code := f.service.redeemGrant(f.ctx, replacement.DeviceCode); code != "" {
+		t.Fatalf("replacement redemption: %q", code)
+	}
+}

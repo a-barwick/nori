@@ -158,7 +158,7 @@ func (s *Service) Ready(ctx context.Context) error {
 	if !ok {
 		return errors.New("home AI database migration is not applied")
 	}
-	if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT draining FROM nori_home_ai_devices WHERE false)`).Scan(&ok); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT draining, pairing_hash FROM nori_home_ai_devices WHERE false)`).Scan(&ok); err != nil {
 		return err
 	}
 	return nil
@@ -335,6 +335,13 @@ func (s *Service) Revoke(ctx context.Context, userID, deviceID string) error {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if err := revokeDevice(ctx, tx, userID, deviceID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func revokeDevice(ctx context.Context, tx pgx.Tx, userID, deviceID string) error {
 	r, err := tx.Exec(ctx, `UPDATE nori_home_ai_devices SET revoked_at=COALESCE(revoked_at,clock_timestamp()),generation=generation+1,connection_id=NULL WHERE id=$1 AND user_id=$2`, deviceID, userID)
 	if err != nil {
 		return err
@@ -345,10 +352,7 @@ func (s *Service) Revoke(ctx context.Context, userID, deviceID string) error {
 	if _, err = tx.Exec(ctx, `DELETE FROM nori_home_ai_requests WHERE device_id=$1 AND user_id=$2`, deviceID, userID); err != nil {
 		return err
 	}
-	if err = notify(ctx, tx, "d:"+deviceID); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	return notify(ctx, tx, "d:"+deviceID)
 }
 
 func expireRequests(ctx context.Context, tx pgx.Tx, deviceID string) error {

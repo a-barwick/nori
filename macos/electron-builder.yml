@@ -1,0 +1,44 @@
+appId: com.nori.mac
+productName: Nori
+asar: true
+files:
+  - "*.cjs"
+  - "welcome.js"
+  - "welcome.html"
+  - "config.json"
+  - "package.json"
+extraFiles:
+  - from: .build/native
+    to: MacOS
+  - from: native/com.nori.mac.home-ai.plist
+    to: Library/LaunchAgents/com.nori.mac.home-ai.plist
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  grantFileProtocolExtraPrivileges: false
+mac:
+  sign: ./scripts/sign.cjs
+  category: public.app-category.productivity
+  minimumSystemVersion: "13.0"
+  icon: .build/Nori.icns
+  target:
+    - target: dmg
+      arch:
+        - arm64
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: false
+dmg:
+  sign: true
+  artifactName: Nori-${version}-arm64.dmg
+  contents:
+    - x: 140
+      y: 120
+    - x: 400
+      y: 120
+      type: link
+      path: /Applications

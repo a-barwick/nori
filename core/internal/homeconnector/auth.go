@@ -54,6 +54,14 @@ func Pair(ctx context.Context, cfg Config, deviceName string, notify func(Pairin
 	if err != nil {
 		return err
 	}
+	if DesktopMode == "1" {
+		if !desktopSharingEnabled(cfg.StateDir) {
+			return errors.New("enable home sharing before pairing")
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = desktopSharingContext(ctx, cfg.StateDir)
+		defer cancel()
+	}
 	if strings.TrimSpace(deviceName) == "" {
 		deviceName, _ = os.Hostname()
 	}
@@ -83,6 +91,14 @@ func Pair(ctx context.Context, cfg Config, deviceName string, notify func(Pairin
 	if grant.UserCode == "" || grant.DeviceCode == "" || grant.Expiry.IsZero() || grant.Interval < 1 || grant.Interval > 60 {
 		return errors.New("relay returned an invalid pairing response")
 	}
+	if DesktopMode == "1" {
+		if err := rememberDesktopGrant(cfg, grant.DeviceCode); err != nil {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, _ = DesktopRevokePending(cleanupCtx, cfg)
+			return err
+		}
+	}
 	verify, err := url.Parse(grant.VerificationURI)
 	if err != nil || verify == nil || verify.Hostname() == "" || verify.User != nil || verify.Fragment != "" {
 		return errors.New("relay returned an invalid verification URL")
@@ -107,6 +123,9 @@ func Pair(ctx context.Context, cfg Config, deviceName string, notify func(Pairin
 
 func storePairedCredential(cfg Config, credential Credential, store credentialStore) error {
 	err := withStateLock(cfg.StateDir, func() error {
+		if DesktopMode == "1" && !desktopSharingEnabled(cfg.StateDir) {
+			return errors.New("home sharing was turned off while pairing")
+		}
 		_, err := store.read(cfg.StateDir)
 		if err == nil {
 			return errors.New("another pairing completed on this machine")
@@ -114,7 +133,15 @@ func storePairedCredential(cfg Config, credential Credential, store credentialSt
 		if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		return store.save(cfg.StateDir, credential)
+		if err := store.save(cfg.StateDir, credential); err != nil {
+			return err
+		}
+		if DesktopMode == "1" {
+			// A saved device credential makes the grant record safe to discard.
+			// A failed deletion is recovered when the desktop next checks.
+			_ = store.remove(cfg.StateDir + ".pairing")
+		}
+		return nil
 	})
 	if err == nil {
 		return nil
@@ -223,7 +250,20 @@ func Unpair(ctx context.Context, cfg Config) error {
 
 func revokeCredential(ctx context.Context, credential Credential) error {
 	form := url.Values{"client_id": {"nori-connector"}, "token": {credential.RefreshToken}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, credential.RelayURL+"/oauth/revoke", strings.NewReader(form.Encode()))
+	return revokeWithForm(ctx, credential.RelayURL, form)
+}
+
+func revokeDeviceGrant(ctx context.Context, relayURL, deviceCode string) error {
+	form := url.Values{
+		"client_id":       {"nori-connector"},
+		"token":           {deviceCode},
+		"token_type_hint": {"device_code"},
+	}
+	return revokeWithForm(ctx, relayURL, form)
+}
+
+func revokeWithForm(ctx context.Context, relayURL string, form url.Values) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, relayURL+"/oauth/revoke", strings.NewReader(form.Encode()))
 	if err != nil {
 		return err
 	}

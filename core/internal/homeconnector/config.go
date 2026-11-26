@@ -15,6 +15,7 @@ import (
 
 var DefaultRelayURL string
 var Version = "dev"
+var DesktopMode string
 
 type Config struct {
 	RelayURL  string
@@ -23,6 +24,20 @@ type Config struct {
 }
 
 func (c Config) Validate() (Config, error) {
+	if DesktopMode == "1" {
+		if strings.TrimSpace(DefaultRelayURL) == "" {
+			return c, errors.New("desktop connector relay is not configured")
+		}
+		dir, err := os.UserConfigDir()
+		if err != nil {
+			return c, fmt.Errorf("locate connector state: %w", err)
+		}
+		c = Config{
+			RelayURL:  DefaultRelayURL,
+			StateDir:  filepath.Join(dir, "Nori", "Home AI"),
+			OllamaURL: "http://127.0.0.1:11434",
+		}
+	}
 	c.RelayURL = strings.TrimRight(strings.TrimSpace(c.RelayURL), "/")
 	if c.RelayURL == "" {
 		c.RelayURL = strings.TrimRight(strings.TrimSpace(os.Getenv("NORI_CONNECTOR_RELAY_URL")), "/")
@@ -78,10 +93,11 @@ type Credential struct {
 }
 
 type Status struct {
-	State           string             `json:"state"`
-	Paired          bool               `json:"paired"`
-	Message         string             `json:"message,omitempty"`
-	OllamaAvailable bool               `json:"ollama_available"`
-	Models          []homeaiwire.Model `json:"models,omitempty"`
-	UpdatedAt       time.Time          `json:"updated_at"`
+	State             string             `json:"state"`
+	Paired            bool               `json:"paired"`
+	Message           string             `json:"message,omitempty"`
+	OllamaAvailable   bool               `json:"ollama_available"`
+	Models            []homeaiwire.Model `json:"models,omitempty"`
+	UpdatedAt         time.Time          `json:"updated_at"`
+	RevocationPending bool               `json:"revocation_pending,omitempty"`
 }
