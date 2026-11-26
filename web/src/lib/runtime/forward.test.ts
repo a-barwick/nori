@@ -650,6 +650,32 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     assert.equal(nestedModelsRes.status, 404);
   });
 
+  test("Home AI pairing preserves a bodyless 204 and rejects an unexpected response body", async () => {
+    const email = "home-pairing@example.test";
+    const userID = "22222222-2222-4222-8222-222222222213";
+    const path = ["home-connectors", "pairing", "approve"];
+    const headers = await authHeaders(email, { "content-type": "application/json" });
+    let response = new Response(null, { status: 204, headers: { "content-type": "text/plain; charset=UTF-8" } });
+    await mockUpstream({ [email]: userID }, (url) => {
+      assert.equal(url.pathname, `/users/${userID}/v1/settings/${path.join("/")}`);
+      return response;
+    });
+    const approve = () => settingsRoute.POST(
+      new Request(`${APP_ORIGIN}/api/v1/settings/${path.join("/")}`, {
+        method: "POST", headers, body: JSON.stringify({ user_code: "ABCD-EFGH" }),
+      }),
+      { params: Promise.resolve({ path }) },
+    );
+
+    const accepted = await approve();
+    assert.equal(accepted.status, 204);
+    assert.equal(accepted.body, null);
+    assert.equal(accepted.headers.get("content-type"), null);
+
+    response = new Response("unexpected", { headers: { "content-type": "text/plain" } });
+    assert.equal((await approve()).status, 502);
+  });
+
   test("settings reset forwards the confirmation to the signed-in user and relays 204", async () => {
     const email = "settings-reset-user@example.test";
     const userID = "22222222-2222-4222-8222-222222222211";

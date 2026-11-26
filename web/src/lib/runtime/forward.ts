@@ -42,6 +42,12 @@ async function relay(request: Request, { base, userID, mode, identity }: ScopedR
         headers: { "Cache-Control": "no-store", ...rejectionHeaders(upstream.headers) },
       });
     }
+    if (upstream.status === 204) {
+      return new Response(null, {
+        status: 204,
+        headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
+      });
+    }
     const type = upstream.headers.get("content-type") || "application/json";
     if (!allowed(type)) {
       void upstream.body?.cancel().catch(() => undefined);
@@ -56,7 +62,7 @@ async function relay(request: Request, { base, userID, mode, identity }: ScopedR
         if (value) headers[name] = value;
       }
     }
-    return new Response(upstream.status === 204 ? null : upstream.body, { status: upstream.status, headers });
+    return new Response(upstream.body, { status: upstream.status, headers });
   } catch {
     if (!request.signal.aborted) reportUpstreamFailure(label, mode, userID);
     const error = !operation ? "Connection to Nori's runtime was interrupted."
