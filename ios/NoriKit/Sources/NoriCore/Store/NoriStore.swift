@@ -262,7 +262,6 @@ public final class NoriStore {
 
     private let authProvider: AuthTokenProvider
     private let resetMinimumDuration: Duration
-    private let resetMinimumDisplay: @Sendable (Duration) async -> Void
     private let devLocalEmail: String?
     private let liveTransport: LiveNoriTransport?
     var transport: any NoriTransport
@@ -284,12 +283,10 @@ public final class NoriStore {
         transport: (any NoriTransport)? = nil,
         authProvider: AuthTokenProvider = AuthTokenProvider(),
         resetMinimumDuration: Duration = .seconds(2),
-        resetMinimumDisplay: @escaping @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) },
         devLocalEmail: String? = nil
     ) {
         self.authProvider = authProvider
         self.resetMinimumDuration = resetMinimumDuration
-        self.resetMinimumDisplay = resetMinimumDisplay
         self.devLocalEmail = devLocalEmail
         if let transport {
             self.liveTransport = transport as? LiveNoriTransport
@@ -551,9 +548,8 @@ public final class NoriStore {
         guard !isResettingData else { throw NoriAPIError(message: "A reset is already in progress.") }
         isResettingData = true
         let duration = resetMinimumDuration
-        let wait = resetMinimumDisplay
         let minimumDisplay = Task.detached {
-            await wait(duration)
+            try? await Task.sleep(for: duration)
         }
         defer { isResettingData = false }
         do {

@@ -1097,18 +1097,13 @@ struct MemoryReceiptsAndStoreTests {
         defer {
             UserDefaults.standard.removeObject(forKey: markerKey)
         }
-        let (released, release) = AsyncStream<Void>.makeStream()
-        let store = NoriStore(transport: mock, resetMinimumDisplay: { _ in
-            for await _ in released { break }
-        })
+        let store = NoriStore(transport: mock, resetMinimumDuration: .seconds(1))
         store.authState = .signedIn(email: email)
         let resetting = Task { try await store.resetUserData(confirmation: "RESET") }
         #expect(await eventually { store.authState == .signedOut })
         #expect(store.isResettingData)
         for _ in 0..<100 { await Task.yield() }
         #expect(store.isResettingData)
-        release.yield()
-        release.finish()
         try await resetting.value
         #expect(!store.isResettingData)
         #expect(store.authState == .signedOut)
