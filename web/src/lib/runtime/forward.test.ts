@@ -592,4 +592,52 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     assert.equal(response.status, 204);
     assert.deepEqual(seen, { path: `/users/${userID}/v1/settings/reset`, body: JSON.stringify({ confirmation: "RESET" }) });
   });
+
+  test("settings account delete forwards POST, evicts resolved user cache, clears session cookies, and rejects GET", async () => {
+    const email = "settings-delete-user@example.test";
+    const userID = "22222222-2222-4222-8222-222222222212";
+    const activeUsers: Record<string, string> = { [email]: userID };
+    let seen: { path: string; body?: string } | undefined;
+
+    await mockUpstream(activeUsers, (url, init) => {
+      seen = { path: url.pathname, body: typeof init?.body === "string" ? init.body : undefined };
+      delete activeUsers[email];
+      return new Response(null, { status: 204 });
+    });
+
+    const getRes = await settingsRoute.GET(
+      new Request(`${APP_ORIGIN}/api/v1/settings/account/delete`, {
+        method: "GET",
+        headers: await authHeaders(email),
+      }),
+      { params: Promise.resolve({ path: ["account", "delete"] }) },
+    );
+    assert.equal(getRes.status, 404);
+
+    const response = await settingsRoute.POST(
+      new Request(`${APP_ORIGIN}/api/v1/settings/account/delete`, {
+        method: "POST",
+        headers: await authHeaders(email, { "content-type": "application/json" }),
+        body: JSON.stringify({ confirmation: email }),
+      }),
+      { params: Promise.resolve({ path: ["account", "delete"] }) },
+    );
+    assert.equal(response.status, 204);
+    assert.deepEqual(seen, {
+      path: `/users/${userID}/v1/settings/account/delete`,
+      body: JSON.stringify({ confirmation: email }),
+    });
+    const setCookie = response.headers.get("set-cookie") ?? "";
+    assert.match(setCookie, /nori_signed_out=1/);
+
+    // Resolved user cache must be evicted immediately so a subsequent request without the signed-out cookie is rejected.
+    const afterDelete = await settingsRoute.GET(
+      new Request(`${APP_ORIGIN}/api/v1/settings/model-keys`, {
+        method: "GET",
+        headers: await authHeaders(email),
+      }),
+      { params: Promise.resolve({ path: ["model-keys"] }) },
+    );
+    assert.equal(afterDelete.status, 403);
+  });
 });
