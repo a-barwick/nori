@@ -53,7 +53,9 @@ type Options struct {
 	CancelGrace    time.Duration
 	Backoff        time.Duration
 
-	Now func() time.Time
+	Now       func() time.Time
+	NewTicker func(time.Duration) (<-chan time.Time, func())
+	NewTimer  func(time.Duration) (<-chan time.Time, func())
 
 	RunTask              func(ctx context.Context, userApp *app.App, claim docstore.TaskLease, drain <-chan struct{}) (task.RunOutcome, error)
 	RunConversation      func(ctx context.Context, userApp *app.App) error
@@ -230,6 +232,22 @@ func (p *Pool) now() time.Time {
 	return time.Now()
 }
 
+func (p *Pool) newTicker(d time.Duration) (<-chan time.Time, func()) {
+	if p.opts.NewTicker != nil {
+		return p.opts.NewTicker(d)
+	}
+	t := time.NewTicker(d)
+	return t.C, t.Stop
+}
+
+func (p *Pool) newTimer(d time.Duration) (<-chan time.Time, func()) {
+	if p.opts.NewTimer != nil {
+		return p.opts.NewTimer(d)
+	}
+	t := time.NewTimer(d)
+	return t.C, func() { t.Stop() }
+}
+
 func (p *Pool) closeDrain() {
 	p.drainOnce.Do(func() {
 		close(p.drainCh)
@@ -378,13 +396,13 @@ func (p *Pool) Run(ctx context.Context) error {
 		close(workDone)
 	}()
 
-	timer := time.NewTimer(p.opts.DrainTimeout)
-	defer timer.Stop()
+	timerCh, stopTimer := p.newTimer(p.opts.DrainTimeout)
+	defer stopTimer()
 	select {
 	case <-workDone:
 		cancelWork()
 		return nil
-	case <-timer.C:
+	case <-timerCh:
 		slog.WarnContext(ctx, "worker drain timeout reached; canceling remaining in-flight work", "owner", p.owner, "drain_timeout", p.opts.DrainTimeout)
 		cancelWork()
 		<-workDone
@@ -396,13 +414,13 @@ func (p *Pool) runRepairLoop(ctx context.Context) {
 	if err := p.RepairOnce(ctx); err != nil && ctx.Err() == nil {
 		slog.WarnContext(ctx, "worker startup repair sweep failed", "owner", p.owner, "err", err)
 	}
-	ticker := time.NewTicker(p.opts.RepairInterval)
-	defer ticker.Stop()
+	tickCh, stopTick := p.newTicker(p.opts.RepairInterval)
+	defer stopTick()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-tickCh:
 			p.service.EvictIdle()
 			if err := p.RepairOnce(ctx); err != nil && ctx.Err() == nil {
 				slog.WarnContext(ctx, "worker periodic repair sweep failed", "owner", p.owner, "err", err)
@@ -419,7 +437,7 @@ func repairAdvisoryLockKeyForUser(userID string) int64 {
 	_, _ = h.Write([]byte("nori-repair-user:"))
 	_, _ = h.Write([]byte(userID))
 	key := int64(h.Sum64() & 0x7fffffffffffffff)
-	if key == 0 || key == 7162384101 || key == repairAdvisoryLockKey {
+	if key == 0 || key == docstore.MigrationAdvisoryLockKey || key == repairAdvisoryLockKey {
 		key += 3
 	}
 	return key
@@ -488,21 +506,34 @@ func (p *Pool) RepairOnce(ctx context.Context) error {
 	return errors.Join(failures...)
 }
 
-func (p *Pool) waitNext(ctx context.Context, wakeCh <-chan struct{}, ticker *time.Ticker) bool {
+func (p *Pool) waitNext(ctx context.Context, wakeCh <-chan struct{}, tickCh <-chan time.Time) bool {
 	select {
 	case <-ctx.Done():
 		return false
 	case <-wakeCh:
 		return true
-	case <-ticker.C:
+	case <-tickCh:
 		return true
 	}
 }
 
-func (p *Pool) runTaskLoop(claimCtx, workCtx context.Context, workWG *sync.WaitGroup) {
-	sem := make(chan struct{}, p.opts.TaskConcurrency)
-	ticker := time.NewTicker(p.opts.PollInterval)
-	defer ticker.Stop()
+type claimLoopSpec[T any] struct {
+	lane          string
+	claimErrMsg   string
+	concurrency   int
+	wakeCh        <-chan struct{}
+	active        *atomic.Int64
+	limitPerUser  bool
+	userID        func(T) string
+	claim         func(context.Context) (T, bool, error)
+	deferClaim    func(context.Context, T)
+	handle        func(context.Context, T)
+}
+
+func runClaimLoop[T any](p *Pool, claimCtx, workCtx context.Context, workWG *sync.WaitGroup, spec claimLoopSpec[T]) {
+	sem := make(chan struct{}, spec.concurrency)
+	tickCh, stopTick := p.newTicker(p.opts.PollInterval)
+	defer stopTick()
 
 	for {
 		select {
@@ -514,51 +545,72 @@ func (p *Pool) runTaskLoop(claimCtx, workCtx context.Context, workWG *sync.WaitG
 			<-sem
 			return
 		}
-		var claim docstore.TaskLease
-		var ok bool
-		var err error
-		if p.userID != "" {
-			claim, ok, err = p.scopedLeases.ClaimTaskForUser(claimCtx, p.userID, p.owner, state.TaskLease)
-		} else {
-			claim, ok, err = p.leases.ClaimTask(claimCtx, p.owner, state.TaskLease)
-		}
+		item, ok, err := spec.claim(claimCtx)
 		if err != nil {
 			<-sem
 			if claimCtx.Err() != nil {
 				return
 			}
-			slog.WarnContext(claimCtx, "worker claim task failed", "owner", p.owner, "lane", "task", "err", err)
-			if !p.waitNext(claimCtx, p.taskWakeCh, ticker) {
+			slog.WarnContext(claimCtx, spec.claimErrMsg, "owner", p.owner, "lane", spec.lane, "err", err)
+			if !p.waitNext(claimCtx, spec.wakeCh, tickCh) {
 				return
 			}
 			continue
 		}
 		if !ok {
 			<-sem
-			if !p.waitNext(claimCtx, p.taskWakeCh, ticker) {
+			if !p.waitNext(claimCtx, spec.wakeCh, tickCh) {
 				return
 			}
 			continue
 		}
-		if !p.tryAcquireUser(claim.UserID) {
-			<-sem
-			rctx, cancel := context.WithTimeout(context.WithoutCancel(claimCtx), p.opts.CancelGrace)
+		uid := ""
+		if spec.limitPerUser {
+			uid = spec.userID(item)
+			if !p.tryAcquireUser(uid) {
+				<-sem
+				rctx, cancel := context.WithTimeout(context.WithoutCancel(claimCtx), p.opts.CancelGrace)
+				spec.deferClaim(rctx, item)
+				cancel()
+				continue
+			}
+		}
+		workWG.Add(1)
+		spec.active.Add(1)
+		go func(item T, uid string) {
+			defer workWG.Done()
+			if spec.limitPerUser {
+				defer p.releaseUser(uid)
+			}
+			defer func() { <-sem }()
+			defer spec.active.Add(-1)
+			spec.handle(workCtx, item)
+		}(item, uid)
+	}
+}
+
+func (p *Pool) runTaskLoop(claimCtx, workCtx context.Context, workWG *sync.WaitGroup) {
+	runClaimLoop(p, claimCtx, workCtx, workWG, claimLoopSpec[docstore.TaskLease]{
+		lane:         "task",
+		claimErrMsg:  "worker claim task failed",
+		concurrency:  p.opts.TaskConcurrency,
+		wakeCh:       p.taskWakeCh,
+		active:       &p.taskActive,
+		limitPerUser: true,
+		userID:       func(c docstore.TaskLease) string { return c.UserID },
+		claim: func(ctx context.Context) (docstore.TaskLease, bool, error) {
+			if p.userID != "" {
+				return p.scopedLeases.ClaimTaskForUser(ctx, p.userID, p.owner, state.TaskLease)
+			}
+			return p.leases.ClaimTask(ctx, p.owner, state.TaskLease)
+		},
+		deferClaim: func(rctx context.Context, claim docstore.TaskLease) {
 			if relErr := p.leases.ReleaseTask(rctx, claim.UserID, claim.RunID, p.owner, claim.WakeSeq, p.now().Add(p.perUserDeferDelay())); relErr != nil {
 				slog.WarnContext(claimCtx, "worker release deferred task failed", "owner", p.owner, "lane", "task", "user_id", claim.UserID, "run_id", claim.RunID, "err", relErr)
 			}
-			cancel()
-			continue
-		}
-		workWG.Add(1)
-		p.taskActive.Add(1)
-		go func(claim docstore.TaskLease) {
-			defer workWG.Done()
-			defer p.releaseUser(claim.UserID)
-			defer func() { <-sem }()
-			defer p.taskActive.Add(-1)
-			p.handleTask(workCtx, claim)
-		}(claim)
-	}
+		},
+		handle: p.handleTask,
+	})
 }
 
 func (p *Pool) handleTask(workCtx context.Context, claim docstore.TaskLease) {
@@ -611,74 +663,39 @@ func (p *Pool) handleTask(workCtx context.Context, claim docstore.TaskLease) {
 }
 
 func (p *Pool) runConversationLoop(claimCtx, workCtx context.Context, workWG *sync.WaitGroup) {
-	sem := make(chan struct{}, p.opts.ConversationConcurrency)
-	ticker := time.NewTicker(p.opts.PollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-claimCtx.Done():
-			return
-		case sem <- struct{}{}:
-		}
-		if claimCtx.Err() != nil {
-			<-sem
-			return
-		}
-		var uw docstore.UserWake
-		var ok bool
-		var err error
-		if p.userID != "" {
-			uw, ok, err = p.scopedLeases.ClaimUserWakeForUser(claimCtx, p.userID, docstore.LaneConversation, p.owner, state.ConversationLease)
-		} else {
-			uw, ok, err = p.leases.ClaimUserWake(claimCtx, docstore.LaneConversation, p.owner, state.ConversationLease)
-		}
-		if err != nil {
-			<-sem
-			if claimCtx.Err() != nil {
-				return
+	runClaimLoop(p, claimCtx, workCtx, workWG, claimLoopSpec[docstore.UserWake]{
+		lane:        docstore.LaneConversation,
+		claimErrMsg: "worker claim user wake failed",
+		concurrency: p.opts.ConversationConcurrency,
+		wakeCh:      p.convWakeCh,
+		active:      &p.convActive,
+		claim: func(ctx context.Context) (docstore.UserWake, bool, error) {
+			if p.userID != "" {
+				return p.scopedLeases.ClaimUserWakeForUser(ctx, p.userID, docstore.LaneConversation, p.owner, state.ConversationLease)
 			}
-			slog.WarnContext(claimCtx, "worker claim user wake failed", "owner", p.owner, "lane", docstore.LaneConversation, "err", err)
-			if !p.waitNext(claimCtx, p.convWakeCh, ticker) {
-				return
-			}
-			continue
-		}
-		if !ok {
-			<-sem
-			if !p.waitNext(claimCtx, p.convWakeCh, ticker) {
-				return
-			}
-			continue
-		}
-		workWG.Add(1)
-		p.convActive.Add(1)
-		go func(uw docstore.UserWake) {
-			defer workWG.Done()
-			defer func() { <-sem }()
-			defer p.convActive.Add(-1)
-			p.handleConversation(workCtx, uw)
-		}(uw)
-	}
+			return p.leases.ClaimUserWake(ctx, docstore.LaneConversation, p.owner, state.ConversationLease)
+		},
+		handle: p.handleConversation,
+	})
 }
 
-func (p *Pool) startUserWakeRenewer(parent context.Context, userID, lane string) (context.Context, func()) {
+func (p *Pool) startUserWakeRenewer(parent context.Context, userID, lane string, lease time.Duration) (context.Context, func()) {
 	turnCtx, cancelTurn := context.WithCancel(parent)
 	stopRenew := make(chan struct{})
 	doneRenew := make(chan struct{})
 	go func() {
 		defer close(doneRenew)
-		ticker := time.NewTicker(p.opts.RenewInterval)
-		defer ticker.Stop()
+		tickCh, stopTick := p.newTicker(p.opts.RenewInterval)
+		defer stopTick()
 		for {
 			select {
 			case <-stopRenew:
 				return
 			case <-turnCtx.Done():
 				return
-			case <-ticker.C:
+			case <-tickCh:
 				renewCtx, cancelRenew := context.WithTimeout(turnCtx, userWakeRenewTimeout)
-				renewed, err := p.leases.RenewUserWake(renewCtx, userID, lane, p.owner, state.ConversationLease)
+				renewed, err := p.leases.RenewUserWake(renewCtx, userID, lane, p.owner, lease)
 				cancelRenew()
 				if err != nil || !renewed {
 					if err != nil && turnCtx.Err() == nil {
@@ -690,10 +707,13 @@ func (p *Pool) startUserWakeRenewer(parent context.Context, userID, lane string)
 			}
 		}
 	}()
+	var stopOnce sync.Once
 	stop := func() {
-		close(stopRenew)
-		<-doneRenew
-		cancelTurn()
+		stopOnce.Do(func() {
+			close(stopRenew)
+			<-doneRenew
+			cancelTurn()
+		})
 	}
 	return turnCtx, stop
 }
@@ -719,7 +739,7 @@ func (p *Pool) handleConversation(workCtx context.Context, uw docstore.UserWake)
 	}
 	defer release()
 
-	turnCtx, stopRenew := p.startUserWakeRenewer(workCtx, uw.UserID, docstore.LaneConversation)
+	turnCtx, stopRenew := p.startUserWakeRenewer(workCtx, uw.UserID, docstore.LaneConversation, state.ConversationLease)
 	var runErr error
 	if p.opts.RunConversation != nil {
 		runErr = p.opts.RunConversation(turnCtx, userApp)
@@ -778,65 +798,27 @@ func (p *Pool) handleConversation(workCtx context.Context, uw docstore.UserWake)
 }
 
 func (p *Pool) runSchedulerLoop(claimCtx, workCtx context.Context, workWG *sync.WaitGroup) {
-	sem := make(chan struct{}, p.opts.SchedulerConcurrency)
-	ticker := time.NewTicker(p.opts.PollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-claimCtx.Done():
-			return
-		case sem <- struct{}{}:
-		}
-		if claimCtx.Err() != nil {
-			<-sem
-			return
-		}
-		var uw docstore.UserWake
-		var ok bool
-		var err error
-		if p.userID != "" {
-			uw, ok, err = p.scopedLeases.ClaimUserWakeForUser(claimCtx, p.userID, docstore.LaneScheduler, p.owner, state.ConversationLease)
-		} else {
-			uw, ok, err = p.leases.ClaimUserWake(claimCtx, docstore.LaneScheduler, p.owner, state.ConversationLease)
-		}
-		if err != nil {
-			<-sem
-			if claimCtx.Err() != nil {
-				return
+	runClaimLoop(p, claimCtx, workCtx, workWG, claimLoopSpec[docstore.UserWake]{
+		lane:         docstore.LaneScheduler,
+		claimErrMsg:  "worker claim user wake failed",
+		concurrency:  p.opts.SchedulerConcurrency,
+		wakeCh:       p.schedWakeCh,
+		active:       &p.schedActive,
+		limitPerUser: true,
+		userID:       func(uw docstore.UserWake) string { return uw.UserID },
+		claim: func(ctx context.Context) (docstore.UserWake, bool, error) {
+			if p.userID != "" {
+				return p.scopedLeases.ClaimUserWakeForUser(ctx, p.userID, docstore.LaneScheduler, p.owner, state.SchedulerLease)
 			}
-			slog.WarnContext(claimCtx, "worker claim user wake failed", "owner", p.owner, "lane", docstore.LaneScheduler, "err", err)
-			if !p.waitNext(claimCtx, p.schedWakeCh, ticker) {
-				return
-			}
-			continue
-		}
-		if !ok {
-			<-sem
-			if !p.waitNext(claimCtx, p.schedWakeCh, ticker) {
-				return
-			}
-			continue
-		}
-		if !p.tryAcquireUser(uw.UserID) {
-			<-sem
-			rctx, cancel := context.WithTimeout(context.WithoutCancel(claimCtx), p.opts.CancelGrace)
+			return p.leases.ClaimUserWake(ctx, docstore.LaneScheduler, p.owner, state.SchedulerLease)
+		},
+		deferClaim: func(rctx context.Context, uw docstore.UserWake) {
 			if relErr := p.leases.ReleaseUserWake(rctx, uw.UserID, docstore.LaneScheduler, p.owner, uw.WakeSeq, p.now().Add(p.perUserDeferDelay())); relErr != nil {
 				slog.WarnContext(claimCtx, "worker release deferred user wake failed", "owner", p.owner, "lane", docstore.LaneScheduler, "user_id", uw.UserID, "err", relErr)
 			}
-			cancel()
-			continue
-		}
-		workWG.Add(1)
-		p.schedActive.Add(1)
-		go func(uw docstore.UserWake) {
-			defer workWG.Done()
-			defer p.releaseUser(uw.UserID)
-			defer func() { <-sem }()
-			defer p.schedActive.Add(-1)
-			p.handleScheduler(workCtx, uw)
-		}(uw)
-	}
+		},
+		handle: p.handleScheduler,
+	})
 }
 
 func (p *Pool) handleScheduler(workCtx context.Context, uw docstore.UserWake) {
@@ -860,7 +842,7 @@ func (p *Pool) handleScheduler(workCtx context.Context, uw docstore.UserWake) {
 	}
 	defer release()
 
-	turnCtx, stopRenew := p.startUserWakeRenewer(workCtx, uw.UserID, docstore.LaneScheduler)
+	turnCtx, stopRenew := p.startUserWakeRenewer(workCtx, uw.UserID, docstore.LaneScheduler, state.SchedulerLease)
 	var nextDue *time.Time
 	var runErr error
 	if p.opts.RunScheduler != nil {

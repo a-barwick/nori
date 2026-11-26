@@ -191,7 +191,7 @@ func (s *Service) ActGoal(ctx context.Context, id, requestID string, expected in
 	}
 	for _, r := range resources {
 		a, err := decodeAutomation(r)
-		if err != nil || a.Status == "cancelled" {
+		if err != nil || a.Status == AutomationCancelled {
 			continue
 		}
 		cancelID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("goal-stop:"+requestID+":"+a.ID)).String()

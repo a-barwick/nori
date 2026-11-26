@@ -376,13 +376,13 @@ func (s *Service) Save(ctx context.Context, id, requestID string, expected int64
 				if a, err = decodeAutomation(*current); err != nil {
 					return state.MutationResult{}, err
 				}
-				if a.Status == "cancelled" {
+				if a.Status == AutomationCancelled {
 					return state.MutationResult{}, fmt.Errorf("%w: a cancelled automation cannot be edited", state.ErrInvalidResource)
 				}
 				revision = current.Revision + 1
 				a.Generation++
 			} else {
-				a.Status = "enabled"
+				a.Status = AutomationEnabled
 				a.Cursor = &now
 			}
 			a.ID, a.Title, a.Instruction, a.Trigger = id, value.Title, value.Instruction, value.Trigger
@@ -432,7 +432,7 @@ func (s *Service) Save(ctx context.Context, id, requestID string, expected int64
 				}
 			}
 			a.NextAt = s.computeNext(ctx, a, now)
-			resource, err := state.NewResource(CollectionAutomations, id, revision, a, map[string]string{"status": a.Status, "goal_id": a.GoalID}, now)
+			resource, err := state.NewResource(CollectionAutomations, id, revision, a, map[string]string{"status": string(a.Status), "goal_id": a.GoalID}, now)
 			if err != nil {
 				return state.MutationResult{}, err
 			}
@@ -445,7 +445,7 @@ func (s *Service) Save(ctx context.Context, id, requestID string, expected int64
 }
 
 func (s *Service) computeNext(ctx context.Context, a stored, now time.Time) *time.Time {
-	if a.Status != "enabled" || (a.MaxOccurrences > 0 && a.Created >= a.MaxOccurrences) {
+	if a.Status != AutomationEnabled || (a.MaxOccurrences > 0 && a.Created >= a.MaxOccurrences) {
 		return nil
 	}
 	after := now.Add(-time.Second)
@@ -486,18 +486,18 @@ func (s *Service) Act(ctx context.Context, id, requestID string, expected int64,
 			var extra []state.Resource
 			var work *state.WorkRef
 			switch {
-			case action.Action == "pause" && a.Status == "enabled":
-				a.Status = "paused"
-			case action.Action == "resume" && a.Status == "paused":
-				a.Status = "enabled"
+			case action.Action == "pause" && a.Status == AutomationEnabled:
+				a.Status = AutomationPaused
+			case action.Action == "resume" && a.Status == AutomationPaused:
+				a.Status = AutomationEnabled
 				a.Cursor = &now
-			case action.Action == "cancel" && a.Status != "cancelled":
-				a.Status = "cancelled"
-			case action.Action == "snooze" && a.Status == "enabled" && action.Until != nil && action.Until.After(now):
+			case action.Action == "cancel" && a.Status != AutomationCancelled:
+				a.Status = AutomationCancelled
+			case action.Action == "snooze" && a.Status == AutomationEnabled && action.Until != nil && action.Until.After(now):
 				a.SnoozedUntil = action.Until
-			case action.Action == "run_now" && a.Status != "cancelled":
+			case action.Action == "run_now" && a.Status != AutomationCancelled:
 				occurrence := s.newOccurrence(a, now, current.Revision+1, "run_now")
-				resource, err := state.NewResource(CollectionOccurrences, occurrence.ID, 1, occurrence, map[string]string{"automation_id": a.ID, "status": occurrence.Status}, now)
+				resource, err := state.NewResource(CollectionOccurrences, occurrence.ID, 1, occurrence, map[string]string{"automation_id": a.ID, "status": string(occurrence.Status)}, now)
 				if err != nil {
 					return state.MutationResult{}, err
 				}
@@ -509,7 +509,7 @@ func (s *Service) Act(ctx context.Context, id, requestID string, expected int64,
 			}
 			a.NextAt = s.computeNext(ctx, a, now)
 			revision := current.Revision + 1
-			resource, err := state.NewResource(CollectionAutomations, id, revision, a, map[string]string{"status": a.Status, "goal_id": a.GoalID}, now)
+			resource, err := state.NewResource(CollectionAutomations, id, revision, a, map[string]string{"status": string(a.Status), "goal_id": a.GoalID}, now)
 			if err != nil {
 				return state.MutationResult{}, err
 			}
@@ -546,7 +546,7 @@ func (s *Service) newOccurrence(a stored, slot time.Time, revision int64, source
 	return occurrenceDoc{
 		Occurrence: Occurrence{
 			ID: occurrenceID(a.ID, a.Generation, slot, source), AutomationID: a.ID, AutomationRevision: revision, Generation: a.Generation,
-			ScheduledAt: slot.UTC(), SourceRevision: a.EventRevision, Status: "pending", TaskIDs: []string{}, DeliveryIDs: []string{},
+			ScheduledAt: slot.UTC(), SourceRevision: a.EventRevision, Status: OccurrencePending, TaskIDs: []string{}, DeliveryIDs: []string{},
 		},
 		Instruction: instruction, BudgetUSD: a.BudgetUSD, GoalID: a.GoalID, Monitor: monitor,
 	}

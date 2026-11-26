@@ -22,7 +22,7 @@ func TestRecurringWorkStaysEnabledAfterModelAccessFailures(t *testing.T) {
 	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
 	s := &Service{Store: db, Now: func() time.Time { return now }}
 	next := now.AddDate(0, 0, 1)
-	a := stored{Automation: Automation{ID: "daily-check", Status: "enabled", NextAt: &next}}
+	a := stored{Automation: Automation{ID: "daily-check", Status: AutomationEnabled, NextAt: &next}}
 	resource, err := state.NewResource(CollectionAutomations, a.ID, 0, a, nil, now)
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +31,7 @@ func TestRecurringWorkStaysEnabledAfterModelAccessFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, failure := range []error{modelkeys.ErrMissingAPIKey, fmt.Errorf("%w Check billing.", modelkeys.ErrModelAccess), modelkeys.ErrMissingAPIKey} {
-		s.recordOutcomeHealth(ctx, a.ID, "failed", failure.Error())
+		s.recordOutcomeHealth(ctx, a.ID, OccurrenceFailed, failure.Error())
 	}
 	row, err := db.Resource(ctx, CollectionAutomations, a.ID)
 	if err != nil {
@@ -41,7 +41,7 @@ func TestRecurringWorkStaysEnabledAfterModelAccessFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != "enabled" || got.NextAt == nil || !got.NextAt.Equal(next) || got.ConsecutiveFailures != 0 {
+	if got.Status != AutomationEnabled || got.NextAt == nil || !got.NextAt.Equal(next) || got.ConsecutiveFailures != 0 {
 		t.Fatalf("provider key failures changed the routine: %+v", got)
 	}
 }

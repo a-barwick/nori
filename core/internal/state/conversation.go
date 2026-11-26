@@ -12,7 +12,44 @@ var ErrConversationBusy = errors.New("conversation lease is held by another proc
 var ErrConversationConflict = errors.New("message ID already accepted with different text")
 var ErrConversationStale = errors.New("conversation attempt superseded")
 
-const ConversationLease = 30 * time.Second
+const (
+	ConversationLease = 30 * time.Second
+	SchedulerLease    = 30 * time.Second
+)
+
+type AttemptStatus string
+
+const (
+	AttemptRunning    AttemptStatus = "running"
+	AttemptCompleted  AttemptStatus = "completed"
+	AttemptError      AttemptStatus = "error"
+	AttemptSuperseded AttemptStatus = "superseded"
+)
+
+type TurnStatus string
+
+const (
+	TurnRunning   TurnStatus = "running"
+	TurnCompleted TurnStatus = "completed"
+)
+
+type ActionStatus string
+
+const (
+	ActionPending  ActionStatus = "pending"
+	ActionAccepted ActionStatus = "accepted"
+	ActionRejected ActionStatus = "rejected"
+)
+
+type CheckpointPhase string
+
+const (
+	CheckpointPreparingReply  CheckpointPhase = "preparing_reply"
+	CheckpointRequestingReply CheckpointPhase = "requesting_reply"
+	CheckpointProposedReply   CheckpointPhase = "proposed_reply"
+	CheckpointRequestingPlan  CheckpointPhase = "requesting_plan"
+	CheckpointResolvedReply   CheckpointPhase = "resolved_reply"
+)
 
 type ConversationInput struct {
 	ID             string            `firestore:"id"`
@@ -43,13 +80,13 @@ type ConversationControl struct {
 }
 
 type ConversationAction struct {
-	ID        string    `json:"id" firestore:"id"`
-	Request   string    `json:"request" firestore:"request"`
-	Bytes     int       `json:"bytes" firestore:"bytes"`
-	Status    string    `json:"status" firestore:"status"`
-	Error     string    `json:"error,omitempty" firestore:"error,omitempty"`
-	CreatedAt time.Time `json:"created_at" firestore:"created_at"`
-	Command   Command   `json:"command" firestore:"command"`
+	ID        string       `json:"id" firestore:"id"`
+	Request   string       `json:"request" firestore:"request"`
+	Bytes     int          `json:"bytes" firestore:"bytes"`
+	Status    ActionStatus `json:"status" firestore:"status"`
+	Error     string       `json:"error,omitempty" firestore:"error,omitempty"`
+	CreatedAt time.Time    `json:"created_at" firestore:"created_at"`
+	Command   Command      `json:"command" firestore:"command"`
 }
 
 type ConversationAttempt struct {
@@ -62,7 +99,7 @@ type ConversationAttempt struct {
 	Model            string                       `firestore:"model"`
 	ServedModel      string                       `firestore:"served_model,omitempty"`
 	ModelSelection   *ModelSelection              `firestore:"model_selection,omitempty"`
-	Status           string                       `firestore:"status"`
+	Status           AttemptStatus                `firestore:"status"`
 	StartedAt        time.Time                    `firestore:"started_at"`
 	FinishedAt       *time.Time                   `firestore:"finished_at,omitempty"`
 	DurationMS       int64                        `firestore:"duration_ms"`
@@ -84,10 +121,10 @@ type ConversationAttempt struct {
 }
 
 type ConversationModelCheckpoint struct {
-	Phase      string `firestore:"phase"`
-	Message    string `firestore:"message,omitempty"`
-	Text       string `firestore:"text,omitempty"`
-	Structured bool   `firestore:"structured,omitempty"`
+	Phase      CheckpointPhase `firestore:"phase"`
+	Message    string          `firestore:"message,omitempty"`
+	Text       string          `firestore:"text,omitempty"`
+	Structured bool            `firestore:"structured,omitempty"`
 }
 
 type ConversationTurn struct {
@@ -99,7 +136,7 @@ type ConversationTurn struct {
 	Frozen         bool                `firestore:"frozen"`
 	StartedAt      time.Time           `firestore:"started_at"`
 	FinishedAt     *time.Time          `firestore:"finished_at,omitempty"`
-	Status         string              `firestore:"status"`
+	Status         TurnStatus          `firestore:"status"`
 	Protocol       []string            `firestore:"protocol"`
 	Context        []string            `firestore:"context"`
 	ModelSelection *ModelSelection     `firestore:"model_selection,omitempty"`
@@ -313,7 +350,7 @@ func hasUserInput(inputs []ConversationInput) bool {
 func NewTurn(id string, inputs, unresolved []ConversationInput, c ConversationControl, now time.Time) ConversationTurn {
 	t := ConversationTurn{
 		ID: id, Inputs: inputs, Through: inputs[len(inputs)-1].Position,
-		StartedAt: now, Status: "running", ModelSelection: turnModelSelection(inputs),
+		StartedAt: now, Status: TurnRunning, ModelSelection: turnModelSelection(inputs),
 	}
 	if len(unresolved) > 0 {
 		t.Inputs = append(unresolved, inputs...)
@@ -377,7 +414,7 @@ func RestartTurn(c ConversationControl, t ConversationTurn, inputs []Conversatio
 	if t.Attempt.ID != "" {
 		accepted := false
 		for _, a := range t.Attempt.Actions {
-			accepted = accepted || a.Status == "accepted"
+			accepted = accepted || a.Status == ActionAccepted
 		}
 		if accepted && t.Attempt.Reply != "" {
 			t.Context = append(t.Context, t.Attempt.Reply)
@@ -390,7 +427,7 @@ func RestartTurn(c ConversationControl, t ConversationTurn, inputs []Conversatio
 			}
 		}
 		attempt := t.Attempt
-		attempt.Status = "superseded"
+		attempt.Status = AttemptSuperseded
 		attempt.Error = ""
 		attempt.FinishedAt = &now
 		attempt.DurationMS = now.Sub(attempt.StartedAt).Milliseconds()
@@ -406,10 +443,10 @@ func RestartTurn(c ConversationControl, t ConversationTurn, inputs []Conversatio
 }
 
 func CompleteTurn(c ConversationControl, t ConversationTurn, text string, now time.Time) (ConversationControl, ConversationTurn, Message) {
-	t.Status = "completed"
+	t.Status = TurnCompleted
 	t.FinishedAt = &now
 	c.Consumed = t.Through
-	if t.Attempt.Status != "error" {
+	if t.Attempt.Status != AttemptError {
 		c.UserRouted = max(c.UserRouted, userThrough(t.Inputs))
 	}
 	c.Introducing = false
@@ -417,7 +454,7 @@ func CompleteTurn(c ConversationControl, t ConversationTurn, text string, now ti
 	c.Owner = ""
 	c.LeaseUntil = time.Time{}
 	message := Message{ID: AssistantMessageID(t.ID), Role: "assistant", Text: text, Parts: TextParts(text), CreatedAt: now, TurnID: t.ID}
-	if t.Attempt.Status == "error" {
+	if t.Attempt.Status == AttemptError {
 		message.Status = MessageStatusFailed
 		if t.Attempt.Failure != nil {
 			cp := *t.Attempt.Failure
@@ -486,7 +523,7 @@ type HistoryWindow struct {
 func NewHistoryWindow() *HistoryWindow { return &HistoryWindow{Turns: []ConversationTurn{}} }
 
 func (w *HistoryWindow) Add(t ConversationTurn) bool {
-	if t.Status != "completed" {
+	if t.Status != TurnCompleted {
 		return true
 	}
 	n := TurnBytes(t)

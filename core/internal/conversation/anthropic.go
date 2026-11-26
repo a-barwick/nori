@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"nori/internal/contextview"
+	"nori/internal/httpretry"
 	"nori/internal/llmguard"
 	"nori/internal/modelgateway"
 	"nori/internal/observability"
@@ -114,7 +115,7 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 		attribute.String("openinference.span.kind", "LLM"),
 		attribute.String("session.id", observability.SessionID()),
 		attribute.String("gen_ai.operation.name", "chat"),
-		attribute.String("gen_ai.provider.name", anthropicProvider),
+		attribute.String("gen_ai.provider.name", m.provider()),
 		attribute.String("gen_ai.request.model", m.name),
 		attribute.String("llm.model_name", m.name),
 	))
@@ -139,7 +140,7 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 	meta := llmguard.CallMeta{
 		UserID:          m.UserID,
 		Scope:           scope,
-		Provider:        anthropicProvider,
+		Provider:        m.provider(),
 		Model:           m.name,
 		MaxOutputTokens: 4096,
 		BYOK:            m.BYOKProviderLabel != "",
@@ -208,7 +209,7 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 		if ctx.Err() != nil {
 			return reply, ctx.Err()
 		}
-		return reply, fmt.Errorf("model request interrupted or unavailable")
+		return reply, ErrProviderUnavailable
 	}
 	reply.Usage.RequestStatus = "received"
 	defer res.Body.Close()
@@ -449,7 +450,7 @@ func (m *AnthropicModel) decodeAnthropicStream(res *http.Response, reply Reply, 
 	}
 
 	if scanner.Err() != nil || !done {
-		return reply, errors.New("model stream interrupted; request will not be repeated")
+		return reply, ErrStreamInterrupted
 	}
 	if stopReason != "" && stopReason != "end_turn" {
 		return reply, fmt.Errorf("anthropic model did not finish normally (stop_reason=%s)", stopReason)
@@ -480,10 +481,16 @@ func (m *AnthropicModel) decodeAnthropicStream(res *http.Response, reply Reply, 
 }
 
 func (m *AnthropicModel) doWithRetry(ctx context.Context, body []byte, onRetry func(statusCode int) error) (*http.Response, error) {
-	client := m.httpClient()
-	const maxRetries = 3
-	baseDelay := 500 * time.Millisecond
-	for attempt := 0; ; attempt++ {
+	return httpretry.Do(ctx, httpretry.Config{
+		Client:    m.httpClient(),
+		BaseDelay: 500 * time.Millisecond,
+		Now:       m.now,
+		ShouldStopRetry: func(res *http.Response) bool {
+			return m.BYOKProviderLabel != "" && llmguard.ModelAccessError(res, m.BYOKProviderLabel) != nil
+		},
+		OnRetry:   onRetry,
+		LogPrefix: "outer anthropic model",
+	}, func() (*http.Request, error) {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, m.endpoint(), bytes.NewReader(body))
 		if err != nil {
 			return nil, fmt.Errorf("invalid model request")
@@ -495,46 +502,8 @@ func (m *AnthropicModel) doWithRetry(ctx context.Context, body []byte, onRetry f
 		}
 		httpReq.Header.Set("anthropic-version", anthropicAPIVersion)
 		httpReq.Header.Set("Content-Type", "application/json")
-
-		res, err := client.Do(httpReq)
-		if err != nil {
-			if attempt >= maxRetries || ctx.Err() != nil || llmguard.IsGuardError(err) {
-				return nil, err
-			}
-			delay := baseDelay << attempt
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(delay):
-			}
-			if onRetry != nil {
-				if rErr := onRetry(0); rErr != nil {
-					return nil, rErr
-				}
-			}
-			continue
-		}
-		retryable := res.StatusCode == http.StatusTooManyRequests ||
-			res.StatusCode == 529 ||
-			res.StatusCode >= 500
-		if !retryable || attempt >= maxRetries || (m.BYOKProviderLabel != "" && llmguard.ModelAccessError(res, m.BYOKProviderLabel) != nil) {
-			return res, nil
-		}
-		status := res.StatusCode
-		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 4096))
-		_ = res.Body.Close()
-		delay := baseDelay << attempt
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(delay):
-		}
-		if onRetry != nil {
-			if rErr := onRetry(status); rErr != nil {
-				return nil, rErr
-			}
-		}
-	}
+		return httpReq, nil
+	})
 }
 
 func (m *AnthropicModel) buildRequestBody(request ReplyRequest, outputLimit int) ([]byte, bool, error) {

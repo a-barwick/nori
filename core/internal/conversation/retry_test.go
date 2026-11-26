@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"nori/internal/httpretry"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -169,21 +171,21 @@ func TestOpenAIModelRetriesTransportErrorsAndDoesNotRetry400(t *testing.T) {
 func TestParseRetryAfterHTTPDateAndDelta(t *testing.T) {
 	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
 
-	if d, ok := parseRetryAfter("5", now, 15*time.Second); !ok || d != 5*time.Second {
+	if d, ok := httpretry.ParseRetryAfter("5", now, 15*time.Second); !ok || d != 5*time.Second {
 		t.Fatalf("delta 5s: got (%v, %v)", d, ok)
 	}
-	if d, ok := parseRetryAfter("30", now, 15*time.Second); !ok || d != 15*time.Second {
+	if d, ok := httpretry.ParseRetryAfter("30", now, 15*time.Second); !ok || d != 15*time.Second {
 		t.Fatalf("capped delta 30s: got (%v, %v)", d, ok)
 	}
 	futureDate := now.Add(7 * time.Second).Format(http.TimeFormat)
-	if d, ok := parseRetryAfter(futureDate, now, 15*time.Second); !ok || d != 7*time.Second {
+	if d, ok := httpretry.ParseRetryAfter(futureDate, now, 15*time.Second); !ok || d != 7*time.Second {
 		t.Fatalf("HTTP-date 7s: got (%v, %v)", d, ok)
 	}
 	pastDate := now.Add(-5 * time.Second).Format(http.TimeFormat)
-	if d, ok := parseRetryAfter(pastDate, now, 15*time.Second); !ok || d != 0 {
+	if d, ok := httpretry.ParseRetryAfter(pastDate, now, 15*time.Second); !ok || d != 0 {
 		t.Fatalf("past HTTP-date: got (%v, %v)", d, ok)
 	}
-	if _, ok := parseRetryAfter("not-a-date", now, 15*time.Second); ok {
+	if _, ok := httpretry.ParseRetryAfter("not-a-date", now, 15*time.Second); ok {
 		t.Fatalf("expected invalid Retry-After to return ok=false")
 	}
 }

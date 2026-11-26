@@ -14,6 +14,27 @@ const (
 	InAppDestination      = "dest_in_app"
 )
 
+type AutomationStatus string
+
+const (
+	AutomationEnabled   AutomationStatus = "enabled"
+	AutomationPaused    AutomationStatus = "paused"
+	AutomationCancelled AutomationStatus = "cancelled"
+)
+
+type OccurrenceStatus string
+
+const (
+	OccurrencePending   OccurrenceStatus = "pending"
+	OccurrenceAccepted  OccurrenceStatus = "accepted"
+	OccurrenceRunning   OccurrenceStatus = "running"
+	OccurrenceCompleted OccurrenceStatus = "completed"
+	OccurrenceFailed    OccurrenceStatus = "failed"
+	OccurrenceCancelled OccurrenceStatus = "cancelled"
+	OccurrenceSkipped   OccurrenceStatus = "skipped"
+	OccurrenceExpired   OccurrenceStatus = "expired"
+)
+
 type Trigger struct {
 	Kind               string       `json:"kind"`
 	At                 *time.Time   `json:"at,omitempty"`
@@ -59,11 +80,11 @@ type Editable struct {
 }
 
 type Automation struct {
-	ID                     string      `json:"id"`
-	Revision               int64       `json:"revision"`
-	Title                  string      `json:"title"`
-	Instruction            string      `json:"instruction"`
-	Status                 string      `json:"status"`
+	ID                     string           `json:"id"`
+	Revision               int64            `json:"revision"`
+	Title                  string           `json:"title"`
+	Instruction            string           `json:"instruction"`
+	Status                 AutomationStatus `json:"status"`
 	Trigger                Trigger     `json:"trigger"`
 	ConnectionIDs          []string    `json:"connection_ids"`
 	AuthorityRuleIDs       []string    `json:"authority_rule_ids"`
@@ -125,8 +146,8 @@ type Occurrence struct {
 	AutomationRevision int64        `json:"automation_revision"`
 	Generation         int64        `json:"generation"`
 	ScheduledAt        time.Time    `json:"scheduled_at"`
-	SourceRevision     string       `json:"source_revision,omitempty"`
-	Status             string       `json:"status"`
+	SourceRevision     string           `json:"source_revision,omitempty"`
+	Status             OccurrenceStatus `json:"status"`
 	TaskIDs            []string     `json:"task_ids"`
 	DeliveryIDs        []string     `json:"delivery_ids"`
 	StartedAt          *time.Time   `json:"started_at,omitempty"`

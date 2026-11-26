@@ -166,7 +166,11 @@ func TestHTTPServerGracefulShutdownDrainsInFlight(t *testing.T) {
 	}
 
 	cancelServer()
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-ln.closed:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("listener was not closed after server context cancel")
+	}
 	if ctxCanceledEarly.Load() {
 		t.Fatalf("in-flight request context canceled prematurely on shutdown: %v", ctxErrDuringWait.Load())
 	}

@@ -137,7 +137,7 @@ func (r *Runner) planDream(
 }
 
 func (r *Runner) maybeDream(ctx context.Context) {
-	if r.summarizer == nil || r.now().Before(r.dreamAfter) {
+	if r.summarizer == nil || r.now().Before(r.getDreamAfter()) {
 		return
 	}
 	control, _, err := r.tasks.Store.ConversationStatus(ctx)
@@ -167,7 +167,7 @@ func (r *Runner) maybeDream(ctx context.Context) {
 	}
 	if _, err := r.dreamConsolidate(ctx, false); err != nil && ctx.Err() == nil && !errors.Is(err, state.ErrConversationStale) {
 		slog.WarnContext(ctx, "idle autodream consolidation failed", "err", err)
-		r.dreamAfter = r.now().Add(compactionPause)
+		r.setDreamAfter(r.now().Add(compactionPause))
 	}
 }
 

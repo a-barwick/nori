@@ -2,9 +2,10 @@ package wake
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"time"
+
+	"nori/internal/state"
 )
 
 type Repairer struct {
@@ -15,15 +16,6 @@ type Repairer struct {
 	mu      sync.Mutex
 	last    time.Time
 	version string
-}
-
-func isTaskOnlyVersion(version string) bool {
-	for _, prefix := range []string{"finishing:", "stop:", "command:", "publication:", "cleanup:"} {
-		if strings.HasPrefix(version, prefix) {
-			return true
-		}
-	}
-	return false
 }
 
 func (r *Repairer) now() time.Time {
@@ -37,7 +29,7 @@ func (r *Repairer) Repair(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	version, err := r.Pending(ctx)
-	if err != nil || version == "" || isTaskOnlyVersion(version) {
+	if err != nil || version == "" || state.IsTaskOnlyWorkVersion(version) {
 		return err
 	}
 	now := r.now()

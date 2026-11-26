@@ -3,8 +3,8 @@ package records
 import (
 	"cmp"
 	"context"
-	"fmt"
 	"slices"
+	"strconv"
 
 	"nori/internal/state"
 )
@@ -19,13 +19,13 @@ func (d *Database) WorkVersion(ctx context.Context, tasks bool) (string, error) 
 		return "", err
 	}
 	if c.Pending() && !c.Processing(now) {
-		return fmt.Sprintf("assistant:%d", c.Received), nil
+		return state.FormatWorkVersion(state.WorkVersionAssistant, strconv.FormatInt(c.Received, 10)), nil
 	}
 	control, err := d.Control(ctx)
 	if err != nil {
 		return "", err
 	}
-	runs, err := documents[state.Run](d.runs().Where("status", "==", "running").
+	runs, err := documents[state.Run](d.runs().Where("status", "==", string(state.RunRunning)).
 		Select("id", "revision", "cancel_requested", "finishing").Documents(ctx))
 	if err != nil {
 		return "", err
@@ -33,10 +33,10 @@ func (d *Database) WorkVersion(ctx context.Context, tasks bool) (string, error) 
 	slices.SortFunc(runs, func(a, b state.Run) int { return cmp.Compare(a.ID, b.ID) })
 	for _, run := range runs {
 		if run.Finishing != nil {
-			return fmt.Sprintf("finishing:%s:%d", run.ID, run.Revision), nil
+			return state.FormatWorkVersion(state.WorkVersionFinishing, run.ID, strconv.FormatInt(run.Revision, 10)), nil
 		}
 		if control.Paused && run.CancelRequested {
-			return fmt.Sprintf("stop:%s:%d", run.ID, run.Revision), nil
+			return state.FormatWorkVersion(state.WorkVersionStop, run.ID, strconv.FormatInt(run.Revision, 10)), nil
 		}
 	}
 	if control.Paused {
@@ -47,7 +47,7 @@ func (d *Database) WorkVersion(ctx context.Context, tasks bool) (string, error) 
 		return "", err
 	}
 	if len(commands) > 0 {
-		return "command:" + commands[0].ID, nil
+		return state.FormatWorkVersion(state.WorkVersionCommand, commands[0].ID), nil
 	}
 	if !c.RoutingPending() {
 		runs, err := d.PublicationTasks(ctx)
@@ -55,13 +55,13 @@ func (d *Database) WorkVersion(ctx context.Context, tasks bool) (string, error) 
 			return "", err
 		}
 		if len(runs) > 0 {
-			return fmt.Sprintf("publication:%s:%d", runs[0].ID, runs[0].PublicationGeneration), nil
+			return state.FormatWorkVersion(state.WorkVersionPublication, runs[0].ID, strconv.FormatInt(runs[0].PublicationGeneration, 10)), nil
 		}
 	}
 	cleanup, err := d.CleanupTasks(ctx)
 	for _, run := range cleanup {
 		if run.Status != state.RunRunning {
-			return "cleanup:" + run.ID, err
+			return state.FormatWorkVersion(state.WorkVersionCleanup, run.ID), err
 		}
 	}
 	return "", err

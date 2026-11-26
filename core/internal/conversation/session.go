@@ -50,7 +50,7 @@ func (r *Runner) SnapshotPage(ctx context.Context, before string) (Session, erro
 	for _, a := range attempts {
 		trace := Trace{
 			ID: a.ID, TurnID: a.TurnID, Attempt: a.Number, InputIDs: a.InputIDs, Model: a.Model,
-			ServedModel: a.ServedModel, ModelSelection: a.ModelSelection, Status: a.Status,
+			ServedModel: a.ServedModel, ModelSelection: a.ModelSelection, Status: string(a.Status),
 			StartedAt: a.StartedAt, FinishedAt: a.FinishedAt, DurationMS: a.DurationMS, Actions: a.Actions, Usage: a.Usage, Error: a.Error,
 			ContextTruncated: a.ContextTruncated, ContextTurns: a.ContextTurns, ContextBytes: a.ContextBytes,
 		}
@@ -71,8 +71,8 @@ func (r *Runner) SnapshotPage(ctx context.Context, before string) (Session, erro
 		}
 		result.Traces = append(result.Traces, trace)
 		for _, action := range a.Actions {
-			if action.Status == "accepted" && (action.Command.Kind == "start" || action.Command.Kind == "") {
-				result.Dispatches = append(result.Dispatches, Dispatch{ID: action.ID, Request: action.Request, Status: action.Status, CreatedAt: action.CreatedAt})
+			if action.Status == state.ActionAccepted && (action.Command.Kind == state.CommandStart || action.Command.Kind == "") {
+				result.Dispatches = append(result.Dispatches, Dispatch{ID: action.ID, Request: action.Request, Status: string(action.Status), CreatedAt: action.CreatedAt})
 			}
 		}
 		for i := range result.Messages {
