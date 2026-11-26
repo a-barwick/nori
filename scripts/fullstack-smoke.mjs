@@ -207,7 +207,7 @@ async function main() {
 
     // 1. Unauthenticated API call must be rejected.
     const unauth = await fetch(`${webBase}/api/v1/capabilities`);
-    assert.equal(unauth.status, 401, `Expected 401 unauthenticated, got ${unauth.status}`);
+    assert.equal(unauth.status, 403, `Expected 403 unauthenticated, got ${unauth.status}`);
 
     // 2. Sign in through prod-check OIDC redirect to obtain the session cookie.
     const signIn = await fetch(`http://127.0.0.1:9445/sign-in?to=${encodeURIComponent(`${webBase}/`)}`, {
