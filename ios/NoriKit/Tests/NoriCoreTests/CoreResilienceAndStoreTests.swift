@@ -99,6 +99,35 @@ struct AuthAndLiveTransportTests {
         )
     }
 
+    @Test("API costs use the authenticated owner and requested range")
+    func apiCostsWireRequest() async throws {
+        let urlSession = StubURLProtocol.makeSession()
+        let provider = makeProvider(session: urlSession)
+        await provider.saveSession(AuthSession(
+            idToken: makeFakeJWT(email: "alex@example.com"),
+            refreshToken: "refresh",
+            expiresAt: Date().addingTimeInterval(3_600),
+            email: "alex@example.com"
+        ))
+        defer { StubURLProtocol.setHandler(nil) }
+        StubURLProtocol.setHandler { request in
+            let url = try #require(request.url)
+            if url.path == "/api/users/resolve" {
+                return (httpResponse(url: url, statusCode: 200), Data(#"{"id":"usr-1"}"#.utf8))
+            }
+            #expect(url.path == "/users/usr-1/v1/settings/api-costs")
+            #expect(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems == [URLQueryItem(name: "days", value: "7")])
+            #expect(request.httpMethod == "GET")
+            #expect(request.value(forHTTPHeaderField: "Authorization")?.hasPrefix("Bearer ") == true)
+            let json = #"{"days":7,"timezone":"America/Los_Angeles","start_at":"2026-11-19T08:00:00Z","end_at":"2026-11-26T08:00:00Z","bucket_size":"day","totals":{"cost_usd":0.12,"priced_calls":1,"unpriced_calls":0,"local_calls":0,"pending_calls":0},"models":[],"buckets":[]}"#
+            return (httpResponse(url: url, statusCode: 200), Data(json.utf8))
+        }
+        let transport = LiveNoriTransport(baseURL: URL(string: "https://nori.test")!, authProvider: provider, urlSession: urlSession)
+        let response = try await transport.fetchAPICosts(days: 7)
+        #expect(response.days == 7)
+        #expect(response.totals.costUSD == 0.12)
+    }
+
     @Test("Reset sends confirmation to the authenticated user and accepts an empty response")
     func resetDataWirePayload() async throws {
         let urlSession = StubURLProtocol.makeSession()

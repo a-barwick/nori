@@ -31,6 +31,7 @@ func TestBackendConformance_Memstore(t *testing.T) {
 	b := memstore.New()
 	t.Cleanup(func() { _ = b.Close() })
 	runBackendConformanceSuite(t, b, "mem")
+	runUsageCostConformance(t, b)
 	runLeaseConformanceSuite(t, b, b, "mem")
 	runMemoryIndexConformanceSuite(t, b, b, "mem")
 	runRecordsMemoryConformanceSuite(t, b, b, "mem")
@@ -106,6 +107,7 @@ func TestBackendConformance_Postgres(t *testing.T) {
 	t.Cleanup(func() { _ = b.Close() })
 	prefix := "pgtest_" + uuid.NewString()[:8]
 	runBackendConformanceSuite(t, b, prefix)
+	runUsageCostConformance(t, b)
 	ls, ok := any(b).(docstore.LeaseStore)
 	if !ok {
 		t.Fatalf("postgres backend does not implement docstore.LeaseStore")

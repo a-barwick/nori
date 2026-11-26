@@ -8,6 +8,7 @@ public enum MoreRoute: Hashable, Sendable {
     case memory
     case permissions
     case preferences
+    case apiCosts
     case models
     case appearance
     case account
@@ -169,6 +170,17 @@ public struct MoreHubView: View {
                     title: "Preferences & Budgets",
                     detail: preferencesDetail,
                     systemImage: "slider.horizontal.3",
+                    iconTone: .neutral,
+                    showChevron: true,
+                    showDivider: true
+                )
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink(value: MoreRoute.apiCosts) {
+                NoriRow(
+                    title: "API costs",
+                    systemImage: "chart.bar",
                     iconTone: .neutral,
                     showChevron: true,
                     showDivider: true

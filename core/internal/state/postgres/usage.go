@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"nori/internal/state/docstore"
@@ -49,4 +50,35 @@ func (t *transaction) ReadUsageWindow(ctx context.Context, collection string, ho
 		return docstore.UsageWindow{}, err
 	}
 	return readUsageWindow(ctx, t.q, collection, hour, day, unknown)
+}
+
+const usageCostsSQL = `
+SELECT idx_created_at #>> '{}', coalesce(data->>'model', ''),
+       (data->>'cost_usd')::double precision, coalesce(data->>'cost_status', ''),
+       coalesce(data->>'request_status', '')
+FROM nori_records
+WHERE shard = $1 AND collection = $2
+  AND idx_created_at >= to_jsonb($3::text) AND idx_created_at < to_jsonb($4::text)
+  AND data->>'request_status' IS DISTINCT FROM 'not_sent'
+`
+
+func (b *backend) ReadUsageCosts(ctx context.Context, collection string, start, end time.Time, visit func(docstore.UsageCostRecord)) error {
+	rows, err := b.pool.Query(ctx, usageCostsSQL, recordShard(collection), collection, docstore.JSONValue(start), docstore.JSONValue(end))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var record docstore.UsageCostRecord
+		var createdAt string
+		if err := rows.Scan(&createdAt, &record.Model, &record.CostUSD, &record.CostStatus, &record.RequestStatus); err != nil {
+			return err
+		}
+		record.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+		if err != nil {
+			return fmt.Errorf("decode model usage timestamp: %w", err)
+		}
+		visit(record)
+	}
+	return rows.Err()
 }

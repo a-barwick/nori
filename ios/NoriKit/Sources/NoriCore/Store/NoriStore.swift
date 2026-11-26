@@ -2077,6 +2077,19 @@ public final class NoriStore {
         }
     }
 
+    public func fetchAPICosts(days: Int) async throws -> APICostResponse {
+        let generation = sessionGeneration
+        do {
+            let result = try await transport.fetchAPICosts(days: days)
+            guard generation == sessionGeneration, !Task.isCancelled else { throw CancellationError() }
+            return result
+        } catch {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            _ = await handleAuthFailureIfNeeded(error)
+            throw error
+        }
+    }
+
     public func refreshModelSettings() async throws {
         let generation = sessionGeneration
         do {

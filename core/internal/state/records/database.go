@@ -174,6 +174,10 @@ func (d *Database) RecordUsage(ctx context.Context, usage state.Usage) error {
 	return err
 }
 
+func (d *Database) ReadUsageCosts(ctx context.Context, start, end time.Time, visit func(docstore.UsageCostRecord)) error {
+	return d.db.ReadUsageCosts(ctx, d.usage().Path, start, end, visit)
+}
+
 func (d *Database) ReserveUsage(
 	ctx context.Context,
 	u state.Usage,

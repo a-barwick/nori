@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Activity, Brain, History, KeyRound, Monitor, Moon, RotateCcw, ShieldCheck, SlidersHorizontal, Sun, UserCircle } from "lucide-react";
+import { Activity, BarChart3, Brain, History, KeyRound, Monitor, Moon, RotateCcw, ShieldCheck, SlidersHorizontal, Sun, UserCircle } from "lucide-react";
 import { NoriMark } from "@/components/mark/NoriMark";
 import { Button } from "@/components/ui/primitives";
 import { APPEARANCE_OPTIONS, useAppearance, type NoriAppearance } from "@/lib/appearance";
@@ -27,15 +27,17 @@ import type { Connection, MCPServer, OperationProjection as Operation, Permissio
 import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "@/lib/runtime/messages";
 import { cn } from "@/lib/utils";
 import { ModelsSettings } from "./ModelsSettings";
+import { ApiCosts } from "./ApiCosts";
 import { OperationRows, shownOperations } from "./WorkScreen";
 import { Confirm, Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, Row, Rows, Screen, Section, Tabs } from "./ui";
 
 type List<T> = { items: T[] };
-export type SettingsSection = "permissions" | "preferences" | "appearance" | "models" | "reset" | "account" | "history" | "diagnostics";
+export type SettingsSection = "permissions" | "preferences" | "api-costs" | "appearance" | "models" | "reset" | "account" | "history" | "diagnostics";
 
 const SECTIONS: { id: SettingsSection | "memory"; title: string; icon: typeof ShieldCheck; href?: string; feature?: Parameters<ReturnType<typeof useAssistant>["has"]>[0] }[] = [
   { id: "permissions", title: "Standing Permissions", icon: ShieldCheck, feature: "permissions" },
   { id: "preferences", title: "Preferences & Budgets", icon: SlidersHorizontal, feature: "preferences" },
+  { id: "api-costs", title: "API costs", icon: BarChart3 },
   { id: "appearance", title: "Appearance", icon: Monitor },
   { id: "models", title: "Models", icon: KeyRound },
   { id: "reset", title: "Reset data", icon: RotateCcw },
@@ -62,6 +64,8 @@ export function SettingsScreen({ section }: { section: SettingsSection }) {
       ? <Permissions />
       : section === "preferences"
         ? <PreferencesForm />
+        : section === "api-costs"
+          ? <ApiCosts />
         : section === "appearance"
           ? <AppearanceSettings />
           : section === "models"

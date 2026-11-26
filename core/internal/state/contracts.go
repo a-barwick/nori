@@ -99,6 +99,7 @@ type TaskStore interface {
 
 type Database interface {
 	TaskDatabase
+	ReadUsageCosts(context.Context, time.Time, time.Time, func(docstore.UsageCostRecord)) error
 	ConversationDatabase
 	ResourceStore
 	EditMemory(ctx context.Context, id string, expectedUpdated int64, text string) (Memory, error)

@@ -1151,6 +1151,10 @@ public actor LiveNoriTransport: NoriTransport {
         try await getJSON("/v1/preferences")
     }
 
+    public func fetchAPICosts(days: Int) async throws -> APICostResponse {
+        try await getJSON("/v1/settings/api-costs", queryItems: [URLQueryItem(name: "days", value: String(days))])
+    }
+
     public func resetUserData(confirmation: String) async throws {
         try await sendDataReset(confirmation: confirmation, resumePending: false)
     }
