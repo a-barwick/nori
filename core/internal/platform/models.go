@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"strings"
+
 	"nori/internal/agent"
 	"nori/internal/agent/anthropic"
 	"nori/internal/agent/responses"
@@ -12,7 +14,6 @@ import (
 	"nori/internal/modelprofiles"
 	"nori/internal/settings"
 	"nori/internal/usage"
-	"strings"
 )
 
 const vercelGatewayBaseURL = "https://ai-gateway.vercel.sh/v1"
@@ -36,6 +37,9 @@ func (m unavailableBYOKTask) Inspect(context.Context, agent.InspectRequest) (age
 }
 
 func ReplyModelForBYOK(models settings.Models, userID string, p modelprofiles.Profile, reasoning, key string) conversation.ReplyModel {
+	if strings.TrimSpace(key) == "" {
+		return unavailableBYOKModel{name: p.Model}
+	}
 	if p.Backend == "anthropic" || (p.Backend == "vercel_ai_gateway" && strings.HasPrefix(p.Model, "anthropic/")) {
 		model := conversation.NewAnthropicModel(key, p.Model)
 		label := "Anthropic"
@@ -88,6 +92,9 @@ func ReplyModelForBYOK(models settings.Models, userID string, p modelprofiles.Pr
 }
 
 func TaskModelForBYOK(models settings.Models, meter usage.Meter, userID string, p modelprofiles.Profile, reasoning, key string) agent.Model {
+	if strings.TrimSpace(key) == "" {
+		return unavailableBYOKTask{name: p.Model}
+	}
 	if p.Backend == "anthropic" || (p.Backend == "vercel_ai_gateway" && strings.HasPrefix(p.Model, "anthropic/")) {
 		model := anthropic.New(key, p.Model, meter)
 		label := "Anthropic"
@@ -137,9 +144,6 @@ func TaskModelForBYOK(models settings.Models, meter usage.Meter, userID string, 
 	model.HTTP = cmp.Or(models.CloudDispatchClient, model.HTTP)
 	model.Guard, model.UserID, model.DefaultReasoning = modelGuard(models, userID), userID, reasoning
 	model.BYOKProviderLabel, model.AllowGatewayReasoning, model.Byok = label, true, true
-	if strings.TrimSpace(key) == "" {
-		return unavailableBYOKTask{name: p.Model}
-	}
 	return model
 }
 
@@ -214,62 +218,4 @@ func ClassifierForUser(models settings.Models, userID string) *conversation.JevC
 	classifier.Guard = modelGuard(models, userID)
 	classifier.UserID = userID
 	return classifier
-}
-
-func ReplyModelForProfile(models settings.Models, userID string, p modelprofiles.Profile, reasoning string) conversation.ReplyModel {
-	endpoint := p.Endpoint
-	key := models.GatewayKey
-	localOnly := p.Backend == modelprofiles.BackendLocal
-	if localOnly {
-		key = "ollama"
-	}
-	if !localOnly && p.ChatAdapter == modelprofiles.AdapterAnthropicMessages {
-		model := conversation.NewGatewayAnthropicModel(endpoint, key, p.Model)
-		model.ReasoningEffort = reasoning
-		model.Guard = modelGuard(models, userID)
-		model.UserID = userID
-		return model
-	}
-	model := conversation.NewGatewayModel(endpoint, key, p.Model)
-	model.LocalOnly = localOnly
-	if reasoning != "" && p.SupportsReasoning(reasoning) {
-		model.ReasoningEffort = reasoning
-		model.AllowGatewayReasoning = true
-	}
-	if localOnly {
-		model.Guard = llmguard.New(llmguard.DefaultConfig())
-	} else {
-		model.Guard = modelGuard(models, userID)
-	}
-	model.UserID = userID
-	return model
-}
-
-func TaskModelForProfile(models settings.Models, meter usage.Meter, userID string, p modelprofiles.Profile, reasoning string) agent.Model {
-	endpoint := p.Endpoint
-	key := models.GatewayKey
-	localOnly := p.Backend == modelprofiles.BackendLocal
-	if localOnly {
-		key = "ollama"
-	}
-	if !localOnly && p.TaskAdapter == modelprofiles.AdapterAnthropicMessages {
-		model := anthropic.NewGateway(endpoint, key, p.Model, meter)
-		model.DefaultReasoning = reasoning
-		model.Guard = modelGuard(models, userID)
-		model.UserID = userID
-		return model
-	}
-	model := responses.NewGateway(endpoint, key, p.Model, meter)
-	model.LocalOnly = localOnly
-	if reasoning != "" && p.SupportsReasoning(reasoning) {
-		model.DefaultReasoning = reasoning
-		model.AllowGatewayReasoning = true
-	}
-	if localOnly {
-		model.Guard = llmguard.New(llmguard.DefaultConfig())
-	} else {
-		model.Guard = modelGuard(models, userID)
-	}
-	model.UserID = userID
-	return model
 }

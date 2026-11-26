@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -175,7 +176,7 @@ func (a *Assistant) item(ctx context.Context, run state.Run, ops []state.Operati
 		item.Bucket = "finished"
 	case len(item.InteractionIDs) > 0 || (run.Question != nil && run.Question.ResolvedBy == "" && run.Question.Revision == run.Revision):
 		item.Bucket = "needs_you"
-		if run.Question != nil && !contains(item.InteractionIDs, run.Question.ID) {
+		if run.Question != nil && !slices.Contains(item.InteractionIDs, run.Question.ID) {
 			item.InteractionIDs = append(item.InteractionIDs, run.Question.ID)
 		}
 	default:
@@ -402,7 +403,7 @@ func (a *Assistant) workAction(w http.ResponseWriter, r *http.Request) {
 	}
 	ops, _ := a.Store.Operations(r.Context(), run.ID)
 	item := a.item(r.Context(), run, ops, nil, nil)
-	data, _ := jsonMarshal(item)
+	data, _ := json.Marshal(item)
 	writeJSON(w, 202, state.MutationReceipt{RequestID: requestID, Accepted: true, Status: "queued", Resource: data, Work: &state.WorkRef{TaskID: run.ID}})
 }
 
@@ -505,6 +506,6 @@ func (a *Assistant) continueWork(w http.ResponseWriter, r *http.Request, request
 		return
 	}
 	ops, _ := a.Store.Operations(r.Context(), run.ID)
-	data, _ := jsonMarshal(a.item(r.Context(), run, ops, nil, nil))
+	data, _ := json.Marshal(a.item(r.Context(), run, ops, nil, nil))
 	writeJSON(w, 202, state.MutationReceipt{RequestID: requestID, Accepted: true, Status: "queued", Resource: data, Work: &state.WorkRef{TaskID: run.ID}})
 }

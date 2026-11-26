@@ -4,13 +4,14 @@ import (
 	"cmp"
 	"fmt"
 	"math"
-	"net"
 	"net/url"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
+
+	"nori/internal/netguard"
+	"nori/internal/secret"
 )
 
 const (
@@ -147,11 +148,6 @@ func modelsFromEnvironment(profile, cloud string, simulation bool) Models {
 		OuterProvider:  strings.ToLower(strings.TrimSpace(os.Getenv("NORI_OUTER_PROVIDER"))),
 		InnerProvider:  strings.ToLower(strings.TrimSpace(os.Getenv("NORI_INNER_PROVIDER"))),
 		GatewayURL:     strings.TrimSpace(os.Getenv("NORI_MODEL_GATEWAY_URL")),
-		LocalURL:       strings.TrimSpace(os.Getenv("NORI_LOCAL_MODEL_URL")),
-		LocalModel:     strings.TrimSpace(os.Getenv("NORI_LOCAL_MODEL_TAG")),
-		ProfilesFile:   strings.TrimSpace(os.Getenv("NORI_MODEL_PROFILES_FILE")),
-		ProfilesJSON:   strings.TrimSpace(os.Getenv("NORI_MODEL_PROFILES")),
-		PickerUsers:    parseCSVList(os.Getenv("NORI_MODEL_PICKER_USERS")),
 		JevKey:         strings.TrimSpace(os.Getenv("JEV_API_KEY")),
 		Outer:          strings.TrimSpace(os.Getenv("NORI_AGENT_MODEL")),
 		Inner:          strings.TrimSpace(os.Getenv("MODEL_NAME")),
@@ -168,8 +164,7 @@ func modelsFromEnvironment(profile, cloud string, simulation bool) Models {
 	} else {
 		// App fixtures can use only the explicit, validated loopback endpoint.
 		models.Provider, models.OuterProvider, models.InnerProvider = "openai", "", ""
-		models.GatewayURL, models.LocalURL, models.LocalModel = "", "", ""
-		models.ProfilesJSON, models.ProfilesFile = "", ""
+		models.GatewayURL = ""
 	}
 	if models.InnerReasoning == "" {
 		models.InnerReasoning = "low"
@@ -250,17 +245,6 @@ func (m Models) TaskCredential() (name, key string) {
 	}
 }
 
-var bearerToken = regexp.MustCompile(`^[A-Za-z0-9._~+/-]+=*$`)
-
-func isLoopbackHostname(host string) bool {
-	h := strings.ToLower(strings.TrimSpace(host))
-	if h == "localhost" || h == "127.0.0.1" || h == "::1" {
-		return true
-	}
-	ip := net.ParseIP(h)
-	return ip != nil && ip.IsLoopback()
-}
-
 func ValidReasoningEffort(e string) bool {
 	switch e {
 	case "", "none", "low", "medium", "high", "xhigh", "max":
@@ -268,19 +252,6 @@ func ValidReasoningEffort(e string) bool {
 	default:
 		return false
 	}
-}
-
-func parseCSVList(raw string) []string {
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-	var out []string
-	for _, part := range strings.Split(raw, ",") {
-		if trimmed := strings.TrimSpace(part); trimmed != "" {
-			out = append(out, trimmed)
-		}
-	}
-	return out
 }
 
 func (m Models) validateModels(cloud string) error {
@@ -294,29 +265,13 @@ func (m Models) validateModels(cloud string) error {
 		return fmt.Errorf("NORI_INNER_PROVIDER must be openai, anthropic, openrouter, or gateway")
 	}
 	if !ValidReasoningEffort(m.OuterReasoning) {
-		return fmt.Errorf("NORI_OUTER_REASONING_EFFORT must be none, low, medium, high, or max")
+		return fmt.Errorf("NORI_OUTER_REASONING_EFFORT must be none, low, medium, high, xhigh, or max")
 	}
 	if !ValidReasoningEffort(m.InnerReasoning) {
-		return fmt.Errorf("NORI_INNER_REASONING_EFFORT must be none, low, medium, high, or max")
+		return fmt.Errorf("NORI_INNER_REASONING_EFFORT must be none, low, medium, high, xhigh, or max")
 	}
 	if math.IsNaN(m.MaxUSD) || math.IsInf(m.MaxUSD, 0) || m.MaxUSD < 0 {
 		return fmt.Errorf("NORI_LLM_MAX_USD must be a non-negative dollar amount")
-	}
-	if m.LocalURL != "" || m.LocalModel != "" {
-		if cloud != "local" {
-			return fmt.Errorf("NORI_LOCAL_MODEL_URL and NORI_LOCAL_MODEL_TAG are only allowed when NORI_CLOUD=local")
-		}
-		if m.LocalURL == "" || m.LocalModel == "" {
-			return fmt.Errorf("NORI_LOCAL_MODEL_URL and NORI_LOCAL_MODEL_TAG must both be set when configuring a local model")
-		}
-		u, err := url.Parse(m.LocalURL)
-		if err != nil || u == nil || u.Scheme != "http" || !isLoopbackHostname(u.Hostname()) || u.User != nil ||
-			strings.ContainsAny(m.LocalURL, "?#") || strings.IndexFunc(m.LocalURL, unicode.IsSpace) >= 0 {
-			return fmt.Errorf("NORI_LOCAL_MODEL_URL must be an http loopback URL without credentials, query or fragment")
-		}
-		if strings.IndexFunc(m.LocalModel, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
-			return fmt.Errorf("NORI_LOCAL_MODEL_TAG must not contain whitespace or control characters")
-		}
 	}
 	return m.validateGateway(cloud)
 }
@@ -332,7 +287,7 @@ func (m Models) validateGateway(cloud string) error {
 		return fmt.Errorf("NORI_MODEL_TEST_URL must be unset when NORI_MODEL_PROVIDER=gateway")
 	}
 	u, err := url.Parse(m.GatewayURL)
-	validScheme := u != nil && (u.Scheme == "https" || (cloud == "local" && u.Scheme == "http" && isLoopbackHostname(u.Hostname())))
+	validScheme := u != nil && (u.Scheme == "https" || (cloud == "local" && u.Scheme == "http" && netguard.IsLoopbackHost(u.Hostname())))
 	if err != nil || !validScheme || u.Hostname() == "" || u.User != nil ||
 		strings.ContainsAny(m.GatewayURL, "?#") || strings.IndexFunc(m.GatewayURL, unicode.IsSpace) >= 0 {
 		return fmt.Errorf("NORI_MODEL_GATEWAY_URL must be an absolute HTTPS API base URL (or http loopback with NORI_CLOUD=local) without credentials, query or fragment")
@@ -343,7 +298,7 @@ func (m Models) validateGateway(cloud string) error {
 			return fmt.Errorf("NORI_MODEL_GATEWAY_URL must use a valid port")
 		}
 	}
-	if (!m.BYOKRequired || m.GatewayKey != "") && !bearerToken.MatchString(m.GatewayKey) {
+	if (!m.BYOKRequired || m.GatewayKey != "") && !secret.ValidBearerToken(m.GatewayKey) {
 		return fmt.Errorf("NORI_MODEL_GATEWAY_API_KEY must contain a bearer token")
 	}
 	var checks [][2]string

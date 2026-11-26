@@ -24,6 +24,10 @@ import (
 	"nori/internal/users"
 )
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 func TestBYOKAccountSettingsRouteChatAndWorkWithoutFallback(t *testing.T) {
 	ctx := context.Background()
 	backend := memstore.New()

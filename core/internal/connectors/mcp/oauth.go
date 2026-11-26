@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
 	"golang.org/x/oauth2"
+	"nori/internal/connections"
 	"nori/internal/secret"
 	"nori/internal/state"
 )
@@ -151,77 +152,22 @@ func (s *Service) discoverAuth(ctx context.Context, endpoint string) (*oauthex.P
 	return nil, nil, fmt.Errorf("%w: the authorization server's metadata could not be read (%v)", ErrUnsupported, lastErr)
 }
 
-const iosOAuthCallbackURL = "nori://oauth/callback"
+const iosOAuthCallbackURL = connections.IOSOAuthCallbackURL
 
 func isIOSOAuthCallback(raw string) bool {
-	if raw != iosOAuthCallbackURL {
-		return false
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return false
-	}
-	return u.Scheme == "nori" &&
-		u.Opaque == "" &&
-		u.User == nil &&
-		u.Host == "oauth" &&
-		u.Port() == "" &&
-		u.Path == "/callback" &&
-		u.RawPath == "" &&
-		u.RawQuery == "" &&
-		!u.ForceQuery &&
-		u.Fragment == "" &&
-		u.RawFragment == "" &&
-		u.String() == iosOAuthCallbackURL
+	return connections.IsIOSOAuthCallback(raw)
 }
 
 func validReturnTo(returnTo string) bool {
-	if returnTo == "" || strings.ContainsAny(returnTo, `\#?`) {
-		return false
-	}
-	for i := 0; i < len(returnTo); i++ {
-		if returnTo[i] < 0x20 || returnTo[i] == 0x7f {
-			return false
-		}
-	}
-	if isIOSOAuthCallback(returnTo) {
-		return true
-	}
-	if !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") {
-		return false
-	}
-	u, err := url.Parse(returnTo)
-	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" {
-		return false
-	}
-	return strings.HasPrefix(u.Path, "/") && !strings.HasPrefix(u.Path, "//") && !strings.Contains(u.Path, "\\")
+	return connections.ValidReturnTo(returnTo)
 }
 
 func safeReturnTo(returnTo string) string {
-	if !validReturnTo(returnTo) {
-		return "/apps"
-	}
-	if isIOSOAuthCallback(returnTo) {
-		return iosOAuthCallbackURL
-	}
-	u, err := url.Parse(returnTo)
-	if err != nil || u.Path == "" {
-		return "/apps"
-	}
-	return u.Path
+	return connections.SafeReturnTo(returnTo)
 }
 
 func buildReturnRedirect(returnTo string, params url.Values) string {
-	target := safeReturnTo(returnTo)
-	if isIOSOAuthCallback(target) {
-		return (&url.URL{
-			Scheme:   "nori",
-			Host:     "oauth",
-			Path:     "/callback",
-			RawQuery: params.Encode(),
-		}).String()
-	}
-	return (&url.URL{Path: target, RawQuery: params.Encode()}).String()
+	return connections.BuildReturnRedirect(returnTo, params)
 }
 
 func (s *Service) pruneExpiredAttempts(ctx context.Context) {

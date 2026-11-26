@@ -8,25 +8,7 @@ import (
 const IOSOAuthCallbackURL = "nori://oauth/callback"
 
 func IsIOSOAuthCallback(raw string) bool {
-	if raw != IOSOAuthCallbackURL {
-		return false
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return false
-	}
-	return u.Scheme == "nori" &&
-		u.Opaque == "" &&
-		u.User == nil &&
-		u.Host == "oauth" &&
-		u.Port() == "" &&
-		u.Path == "/callback" &&
-		u.RawPath == "" &&
-		u.RawQuery == "" &&
-		!u.ForceQuery &&
-		u.Fragment == "" &&
-		u.RawFragment == "" &&
-		u.String() == IOSOAuthCallbackURL
+	return raw == IOSOAuthCallbackURL
 }
 
 func ValidReturnTo(raw string) bool {

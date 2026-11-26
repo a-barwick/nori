@@ -10,13 +10,16 @@ import (
 	"io"
 	"log/slog"
 	"math"
-	"net"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"nori/internal/netguard"
+	"nori/internal/usage"
 )
 
 const (
@@ -210,10 +213,16 @@ type scopeKey struct {
 	scope string
 }
 
+const (
+	maxScopes   = 2048
+	maxCircuits = 1024
+)
+
 type scopeState struct {
 	inFlight    int
 	minuteCalls []time.Time
 	hourCalls   []time.Time
+	lastUsed    time.Time
 }
 
 type circuitKey struct {
@@ -227,8 +236,10 @@ type circuitState struct {
 	consecutiveErrors int
 	breakerTrips      int
 	circuitOpenUntil  time.Time
+	halfOpenInFlight  bool
 	circuitReason     string
 	accessErr         error
+	lastUsed          time.Time
 }
 
 type dupKey struct {
@@ -433,6 +444,10 @@ type guardedTransport struct {
 	defaults CallMeta
 }
 
+func (t *guardedTransport) Unwrap() http.RoundTripper {
+	return t.base
+}
+
 func (t *guardedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req == nil || req.URL == nil {
 		return nil, errors.New("llmguard: request URL is nil")
@@ -445,7 +460,7 @@ func (t *guardedTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 		meta.Scope = ScopeOuter
 	}
 
-	if testing.Testing() && !t.guard.cfg.AllowLiveInTests && isRealNetworkTransport(t.base) && !isLoopbackHost(req.URL.Hostname()) {
+	if testing.Testing() && !t.guard.cfg.AllowLiveInTests && isRealNetworkTransport(t.base) && !netguard.IsLoopbackHost(req.URL.Hostname()) {
 		t.guard.mu.Lock()
 		t.guard.stats.TotalBlocked++
 		t.guard.stats.BlockedLiveTest++
@@ -497,6 +512,8 @@ type meteredBody struct {
 	io.ReadCloser
 	settle func(int, *float64, error, error)
 	status int
+
+	mu     sync.Mutex
 	cost   *float64
 	failed error
 }
@@ -504,25 +521,38 @@ type meteredBody struct {
 func (b *meteredBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
 	if err != nil && err != io.EOF {
+		b.mu.Lock()
 		b.failed = err
+		b.mu.Unlock()
 	}
 	return n, err
 }
 
+func (b *meteredBody) setCost(usd float64) {
+	b.mu.Lock()
+	v := usd
+	b.cost = &v
+	b.mu.Unlock()
+}
+
 func (b *meteredBody) Close() error {
 	err := b.ReadCloser.Close()
-	b.settle(b.status, b.cost, errors.Join(b.failed, err), nil)
+	b.mu.Lock()
+	cost := b.cost
+	failed := b.failed
+	b.mu.Unlock()
+	b.settle(b.status, cost, errors.Join(failed, err), nil)
 	return err
 }
 
 type responseMeterKey struct{}
 
 func RecordResponseCost(res *http.Response, usd float64) {
-	if res.Request == nil {
+	if res == nil || res.Request == nil {
 		return
 	}
 	if body, ok := res.Request.Context().Value(responseMeterKey{}).(*meteredBody); ok && usd >= 0 && !math.IsNaN(usd) && !math.IsInf(usd, 0) {
-		body.cost = &usd
+		body.setCost(usd)
 	}
 }
 
@@ -549,20 +579,111 @@ func mergeMeta(base, override CallMeta) CallMeta {
 	return out
 }
 
+var roundTripperType = reflect.TypeOf((*http.RoundTripper)(nil)).Elem()
+
 func isRealNetworkTransport(rt http.RoundTripper) bool {
-	if checked, ok := rt.(dispatchTransport); ok {
-		return isRealNetworkTransport(checked.base)
+	return isRealNetworkTransportDepth(rt, 0)
+}
+
+func isRealNetworkTransportDepth(rt http.RoundTripper, depth int) bool {
+	if depth > 16 {
+		return false
 	}
 	if rt == nil {
 		return true
 	}
-	_, isHTTP := rt.(*http.Transport)
-	return isHTTP
+	if _, isHTTP := rt.(*http.Transport); isHTTP {
+		return true
+	}
+	if unwrapper, ok := rt.(interface{ Unwrap() http.RoundTripper }); ok {
+		return isRealNetworkTransportDepth(unwrapper.Unwrap(), depth+1)
+	}
+	val := reflect.ValueOf(rt)
+	if val.Kind() == reflect.Pointer {
+		if val.IsNil() {
+			return false
+		}
+		val = val.Elem()
+	}
+	if val.Kind() != reflect.Struct {
+		return false
+	}
+	typ := val.Type()
+	for i := range typ.NumField() {
+		fieldType := typ.Field(i).Type
+		if !fieldType.Implements(roundTripperType) {
+			continue
+		}
+		fv := val.Field(i)
+		if fv.Kind() == reflect.Interface && fv.IsNil() {
+			continue
+		}
+		if fv.Kind() == reflect.Pointer && fv.IsNil() {
+			continue
+		}
+		if fieldType == reflect.TypeOf((*http.Transport)(nil)) {
+			return true
+		}
+		if fv.CanInterface() {
+			if inner, ok := fv.Interface().(http.RoundTripper); ok && isRealNetworkTransportDepth(inner, depth+1) {
+				return true
+			}
+		} else if fv.Kind() == reflect.Interface {
+			innerVal := fv.Elem()
+			if innerVal.IsValid() && innerVal.Type() == reflect.TypeOf((*http.Transport)(nil)) {
+				return !innerVal.IsNil()
+			}
+			if inspectValueForRealTransport(innerVal, depth+1) {
+				return true
+			}
+		} else if inspectValueForRealTransport(fv, depth+1) {
+			return true
+		}
+	}
+	return false
+}
+
+func inspectValueForRealTransport(val reflect.Value, depth int) bool {
+	if depth > 16 || !val.IsValid() {
+		return false
+	}
+	if val.Type() == reflect.TypeOf((*http.Transport)(nil)) {
+		return !val.IsNil()
+	}
+	if val.Kind() == reflect.Interface {
+		if val.IsNil() {
+			return false
+		}
+		return inspectValueForRealTransport(val.Elem(), depth+1)
+	}
+	if val.Kind() == reflect.Pointer {
+		if val.IsNil() {
+			return false
+		}
+		val = val.Elem()
+	}
+	if val.Kind() != reflect.Struct {
+		return false
+	}
+	typ := val.Type()
+	for i := range typ.NumField() {
+		if !typ.Field(i).Type.Implements(roundTripperType) {
+			continue
+		}
+		if inspectValueForRealTransport(val.Field(i), depth+1) {
+			return true
+		}
+	}
+	return false
 }
 
 type dispatchTransport struct {
 	base  http.RoundTripper
 	check func(context.Context) error
+}
+
+func (t dispatchTransport) Unwrap() http.RoundTripper {
+	return t.base
 }
 
 func NewCheckedClient(check func(context.Context) error) *http.Client {
@@ -577,15 +698,6 @@ func (t dispatchTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 		return nil, fmt.Errorf("%w: %w", ErrDispatchBlocked, err)
 	}
 	return t.base.RoundTrip(req)
-}
-
-func isLoopbackHost(host string) bool {
-	h := strings.ToLower(strings.TrimSpace(host))
-	if h == "localhost" || h == "127.0.0.1" || h == "::1" {
-		return true
-	}
-	ip := net.ParseIP(h)
-	return ip != nil && ip.IsLoopback()
 }
 
 func hashAndRestoreBody(req *http.Request) (string, int, error) {
@@ -609,35 +721,7 @@ func hashAndRestoreBody(req *http.Request) (string, int, error) {
 const ProviderHome = "home"
 
 func EstimateCallUSD(meta CallMeta, bodyBytes int) float64 {
-	if meta.Provider == ProviderHome {
-		return 0
-	}
-	inputRate, outputRate := 2.5, 10.0
-	model := strings.ToLower(meta.Model)
-	switch {
-	case strings.Contains(model, "gemini-4-carbon"):
-		inputRate, outputRate = 5, 25
-	case strings.Contains(model, "gemini-4-neon"):
-		inputRate, outputRate = 3.75, 18.75
-	case strings.Contains(model, "gemini-4-hydrogen"):
-		inputRate, outputRate = 2.5, 10
-	case strings.Contains(model, "opus-5.5"), strings.Contains(model, "opus-5-5"):
-		inputRate, outputRate = 5, 20
-	case strings.Contains(model, "opus"):
-		inputRate, outputRate = 18.75, 75
-	case strings.Contains(model, "claude"), meta.Provider == "anthropic":
-		inputRate, outputRate = 3.75, 15
-	case strings.Contains(model, "gpt-6.1-terra"):
-		inputRate, outputRate = 2.5, 7.5
-	case strings.Contains(model, "gpt-6"):
-	case meta.Provider == "gateway", meta.Provider == "openrouter":
-		inputRate, outputRate = 18.75, 75
-	}
-	output := meta.MaxOutputTokens
-	if output <= 0 {
-		output = 1024
-	}
-	return (float64(max(bodyBytes, 256))*inputRate + float64(output)*outputRate) / 1e6
+	return usage.EstimateCallUSD(meta.Provider, meta.Model, bodyBytes, meta.MaxOutputTokens)
 }
 
 func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash string, bodyBytes int, identity [32]byte) (func(int, *float64, error, error), error) {
@@ -650,22 +734,24 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 
 	st := g.scopes[sk]
 	if st == nil {
+		if len(g.scopes) >= maxScopes {
+			g.evictScopesLocked(now.Add(-time.Hour))
+		}
 		st = &scopeState{}
 		g.scopes[sk] = st
 	}
+	st.lastUsed = now
+
 	ck := circuitKey{user: meta.UserID, scope: meta.Scope, identity: identity}
 	cs := g.circuits[ck]
 	if cs == nil {
-		if len(g.circuits) >= 1024 {
-			for key, existing := range g.circuits {
-				if !now.Before(existing.circuitOpenUntil) {
-					delete(g.circuits, key)
-				}
-			}
+		if len(g.circuits) >= maxCircuits {
+			g.evictCircuitsLocked(now)
 		}
 		cs = &circuitState{}
 		g.circuits[ck] = cs
 	}
+	cs.lastUsed = now
 
 	if !cs.circuitOpenUntil.IsZero() && now.Before(cs.circuitOpenUntil) {
 		g.stats.TotalBlocked++
@@ -678,6 +764,17 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 		}
 		return nil, fmt.Errorf("%w (%s, retry in %s)", ErrCircuitOpen, cs.circuitReason, remaining)
 	}
+	if cs.halfOpenInFlight {
+		g.stats.TotalBlocked++
+		g.stats.BlockedCircuit++
+		slog.WarnContext(ctx, "llmguard rejected call: circuit breaker half-open probe already in flight",
+			"user_id", meta.UserID, "scope", meta.Scope, "reason", cs.circuitReason)
+		if cs.accessErr != nil {
+			return nil, fmt.Errorf("%w: %w", cs.accessErr, ErrCircuitOpen)
+		}
+		return nil, fmt.Errorf("%w (half-open probe in flight)", ErrCircuitOpen)
+	}
+	enteringHalfOpen := !cs.circuitOpenUntil.IsZero() && !now.Before(cs.circuitOpenUntil)
 
 	if g.cfg.MaxTotalCalls > 0 && g.stats.TotalAdmitted >= int64(g.cfg.MaxTotalCalls) {
 		g.stats.TotalBlocked++
@@ -780,6 +877,12 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 		}
 	}
 
+	if enteringHalfOpen {
+		cs.halfOpenInFlight = true
+		cs.circuitOpenUntil = time.Time{}
+		cs.consecutiveAborts = 0
+		cs.consecutiveErrors = 0
+	}
 	if hasDup {
 		g.duplicates[dk] = append(dupRecent, now)
 		if len(g.duplicates) > 2048 {
@@ -805,15 +908,25 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 			if st.inFlight > 0 {
 				st.inFlight--
 			}
+			if enteringHalfOpen {
+				cs.halfOpenInFlight = false
+			}
 			g.stats.InFlightEstimatedUSD = max(0, g.stats.InFlightEstimatedUSD-estCallUSD)
 			if errors.Is(resultErr, ErrDispatchBlocked) {
-				if hasDup {
-					recent := g.duplicates[dk]
-					if i := slices.Index(recent, now); i >= 0 {
-						g.duplicates[dk] = slices.Delete(recent, i, i+1)
-					}
+				if g.stats.TotalAdmitted > 0 {
+					g.stats.TotalAdmitted--
 				}
-				resultErr = nil
+				g.globalMinute = removeTimestamp(g.globalMinute, now)
+				st.minuteCalls = removeTimestamp(st.minuteCalls, now)
+				st.hourCalls = removeTimestamp(st.hourCalls, now)
+				if hasDup {
+					g.duplicates[dk] = removeTimestamp(g.duplicates[dk], now)
+				}
+				g.mu.Unlock()
+				if parentSettle != nil {
+					parentSettle(status, actual, resultErr)
+				}
+				return
 			}
 			if actual != nil {
 				g.stats.RecordedActualUSD += *actual
@@ -888,6 +1001,13 @@ func (g *Guard) admitGlobal(ctx context.Context, meta CallMeta, now time.Time, e
 				g.globalInFlight--
 			}
 			g.stats.InFlightEstimatedUSD = max(0, g.stats.InFlightEstimatedUSD-estCallUSD)
+			if errors.Is(resultErr, ErrDispatchBlocked) {
+				if g.stats.TotalAdmitted > 0 {
+					g.stats.TotalAdmitted--
+				}
+				g.globalMinute = removeTimestamp(g.globalMinute, now)
+				return
+			}
 			if actual != nil {
 				g.stats.RecordedActualUSD += *actual
 			} else if resultErr != nil || (status >= 200 && status < 300) {
@@ -979,6 +1099,71 @@ func pruneBefore(ts []time.Time, cutoff time.Time) []time.Time {
 		}
 	}
 	return ts[:keep]
+}
+
+func removeTimestamp(ts []time.Time, target time.Time) []time.Time {
+	if i := slices.Index(ts, target); i >= 0 {
+		return slices.Delete(ts, i, i+1)
+	}
+	return ts
+}
+
+func (g *Guard) evictScopesLocked(hourCutoff time.Time) {
+	for k, st := range g.scopes {
+		if st.inFlight > 0 {
+			continue
+		}
+		st.hourCalls = pruneBefore(st.hourCalls, hourCutoff)
+		if len(st.hourCalls) == 0 {
+			delete(g.scopes, k)
+		}
+	}
+	if len(g.scopes) < maxScopes {
+		return
+	}
+	var oldestKey scopeKey
+	var oldestTime time.Time
+	found := false
+	for k, st := range g.scopes {
+		if st.inFlight > 0 {
+			continue
+		}
+		if !found || st.lastUsed.Before(oldestTime) {
+			oldestKey = k
+			oldestTime = st.lastUsed
+			found = true
+		}
+	}
+	if found {
+		delete(g.scopes, oldestKey)
+	}
+}
+
+func (g *Guard) evictCircuitsLocked(now time.Time) {
+	for k, existing := range g.circuits {
+		if !existing.halfOpenInFlight && !now.Before(existing.circuitOpenUntil) {
+			delete(g.circuits, k)
+		}
+	}
+	if len(g.circuits) < maxCircuits {
+		return
+	}
+	var oldestKey circuitKey
+	var oldestTime time.Time
+	found := false
+	for k, existing := range g.circuits {
+		if existing.halfOpenInFlight {
+			continue
+		}
+		if !found || existing.lastUsed.Before(oldestTime) {
+			oldestKey = k
+			oldestTime = existing.lastUsed
+			found = true
+		}
+	}
+	if found {
+		delete(g.circuits, oldestKey)
+	}
 }
 
 func (g *Guard) gcDuplicatesLocked(cutoff time.Time) {

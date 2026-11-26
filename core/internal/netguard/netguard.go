@@ -59,6 +59,18 @@ func AllowedAddr(addr netip.Addr, allowLoopback bool) bool {
 	return true
 }
 
+// IsLoopbackHost reports whether host is localhost or a loopback IP address.
+func IsLoopbackHost(host string) bool {
+	h := strings.ToLower(strings.TrimSpace(host))
+	h = strings.TrimPrefix(strings.TrimSuffix(h, "]"), "[")
+	h = strings.TrimRight(h, ".")
+	if h == "localhost" {
+		return true
+	}
+	addr, err := netip.ParseAddr(h)
+	return err == nil && addr.Unmap().IsLoopback()
+}
+
 func IsInternalHostname(host string) bool {
 	h := strings.ToLower(strings.TrimRight(host, "."))
 	return h == "metadata" || h == "metadata.google.internal" ||
@@ -149,6 +161,10 @@ func WrapTransport(base http.RoundTripper, allowLoopback bool) http.RoundTripper
 type guardedRoundTripper struct {
 	base          http.RoundTripper
 	allowLoopback bool
+}
+
+func (t guardedRoundTripper) Unwrap() http.RoundTripper {
+	return t.base
 }
 
 func (t guardedRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {

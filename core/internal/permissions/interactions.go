@@ -481,20 +481,30 @@ func (s *Service) rememberApprovalRule(requestID string, i Interaction, body sto
 	return res, err
 }
 
-func (s *Service) MarkDelivered(ctx context.Context, id string) {
+func (s *Service) MarkDelivered(ctx context.Context, id string) error {
 	r, err := s.Store.Resource(ctx, CollectionInteractions, id)
 	if err != nil {
-		return
+		if errors.Is(err, state.ErrNotFound) {
+			return nil
+		}
+		return err
 	}
 	var body stored
-	if r.Decode(&body) != nil || body.CommandAccepted {
-		return
+	if err := r.Decode(&body); err != nil {
+		return err
+	}
+	if body.CommandAccepted {
+		return nil
 	}
 	body.CommandAccepted = true
 	next, err := state.NewResource(CollectionInteractions, id, 0, body, r.Index, s.now())
-	if err == nil {
-		_, _ = s.Store.PutResource(ctx, next, r.Revision)
+	if err != nil {
+		return err
 	}
+	if _, err := s.Store.PutResource(ctx, next, r.Revision); err != nil && !errors.Is(err, state.ErrRevisionConflict) {
+		return err
+	}
+	return nil
 }
 
 func (s *Service) UnperformedApprovals(ctx context.Context, runID string, revision int64, attempted map[string]bool) ([]string, error) {

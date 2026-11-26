@@ -37,10 +37,32 @@ var (
 )
 
 type Assistant struct {
-	Store               state.ConversationStore
-	Connections         *connections.Service
-	Permissions         *permissions.Service
-	Tools               func(ctx context.Context) (*extensions.Snapshot, []extensions.CapabilityState)
+	// Core state & services
+	Store       state.ConversationStore
+	Connections *connections.Service
+	Permissions *permissions.Service
+	Scheduler   *scheduler.Service
+	MCP         *mcp.Service
+
+	// Models, keys & Home AI
+	ModelKeys   *modelkeys.Service
+	Models      *modelprofiles.Account
+	HomeAI      *HomeAISettings
+	AccountBYOK bool
+	UsageNow    func() time.Time
+
+	// Policy, feature flags & runtime hooks
+	Features          map[string]bool
+	UnattendedWrites  string
+	Tools             func(ctx context.Context) (*extensions.Snapshot, []extensions.CapabilityState)
+	NextScheduled     func(ctx context.Context) *time.Time
+	InboxUnread       func(ctx context.Context) int
+	ConsolidateMemory func(ctx context.Context) (state.ConversationSummary, error)
+	NormalizeMemory   func(ctx context.Context, input conversation.ManualMemoryInput) (conversation.NormalizedMemory, error)
+	DeleteAccount     func(ctx context.Context, confirmation string, resumePending bool) error
+	Extra             []func(mux *http.ServeMux, a *Assistant)
+
+	// Task & interaction lifecycle callbacks
 	Answer              func(ctx context.Context, commandID, taskID, questionID, text string) error
 	Revise              func(ctx context.Context, taskID, resultID, instruction string) (state.Run, error)
 	DeliverAnswers      func(ctx context.Context) error
@@ -48,21 +70,6 @@ type Assistant struct {
 	Resume              func(ctx context.Context) error
 	Continue            func(ctx context.Context, taskID, previous, request string, budget float64) (state.Run, error)
 	Stop                func(ctx context.Context, commandID, taskID string) (state.Run, error)
-	Features            map[string]bool
-	Scheduler           *scheduler.Service
-	MCP                 *mcp.Service
-	ModelKeys           *modelkeys.Service
-	UsageNow            func() time.Time
-	Models              *modelprofiles.Account
-	HomeAI              *HomeAISettings
-	AccountBYOK         bool
-	UnattendedWrites    string
-	NextScheduled       func(ctx context.Context) *time.Time
-	InboxUnread         func(ctx context.Context) int
-	ConsolidateMemory   func(ctx context.Context) (state.ConversationSummary, error)
-	NormalizeMemory     func(ctx context.Context, input conversation.ManualMemoryInput) (conversation.NormalizedMemory, error)
-	DeleteAccount       func(ctx context.Context, confirmation string, resumePending bool) error
-	Extra               []func(mux *http.ServeMux, a *Assistant)
 }
 
 type apiError struct {
@@ -126,18 +133,15 @@ type changeRequest struct {
 	Value            json.RawMessage `json:"value"`
 }
 
+func writeDecodeAPIError(w http.ResponseWriter, err error) {
+	status, code, message := httpjson.ErrorStatus(err)
+	writeJSON(w, status, apiError{Error: message, Code: code})
+}
+
 func decodeChange(w http.ResponseWriter, r *http.Request, value any) (string, int64, bool) {
 	var req changeRequest
 	if err := httpjson.Decode(w, r, &req, 64<<10); err != nil {
-		if errors.Is(err, httpjson.ErrTooLarge) {
-			writeJSON(w, http.StatusRequestEntityTooLarge, apiError{Error: "Request body is too large.", Code: "payload_too_large"})
-			return "", 0, false
-		}
-		message := "Send a valid JSON object."
-		if errors.Is(err, httpjson.ErrMultiple) {
-			message = "Send one JSON object."
-		}
-		writeJSON(w, http.StatusBadRequest, apiError{Error: message, Code: "validation_failed"})
+		writeDecodeAPIError(w, err)
 		return "", 0, false
 	}
 	trimmed := bytes.TrimSpace(req.Value)
@@ -248,15 +252,7 @@ func (a *Assistant) deleteAccount(w http.ResponseWriter, r *http.Request) {
 		ResumePending bool   `json:"resume_pending,omitempty"`
 	}
 	if err := httpjson.Decode(w, r, &body, 64<<10); err != nil {
-		if errors.Is(err, httpjson.ErrTooLarge) {
-			writeJSON(w, http.StatusRequestEntityTooLarge, apiError{Error: "Request body is too large.", Code: "payload_too_large"})
-			return
-		}
-		message := "Send a valid JSON object."
-		if errors.Is(err, httpjson.ErrMultiple) {
-			message = "Send one JSON object."
-		}
-		writeJSON(w, http.StatusBadRequest, apiError{Error: message, Code: "validation_failed"})
+		writeDecodeAPIError(w, err)
 		return
 	}
 	if strings.TrimSpace(body.Confirmation) == "" {
@@ -411,7 +407,7 @@ func (a *Assistant) googleDrivePicker(w http.ResponseWriter, r *http.Request) {
 		ReturnTo string `json:"return_to"`
 	}
 	if err := httpjson.Decode(w, r, &input, 4096); err != nil {
-		writeAPIError(w, state.ErrInvalidResource, "", nil)
+		writeDecodeAPIError(w, err)
 		return
 	}
 	attempt, err := a.Connections.StartGoogleDrivePicker(r.Context(), r.PathValue("id"), input.ReturnTo)
@@ -695,9 +691,13 @@ func (a *Assistant) respond(w http.ResponseWriter, r *http.Request) {
 		err := a.Answer(r.Context(), answer.CommandID, answer.TaskID, answer.Question, answer.Text)
 		switch {
 		case err == nil || errors.Is(err, state.ErrDuplicate):
-			a.Permissions.MarkDelivered(r.Context(), id)
+			if markErr := a.Permissions.MarkDelivered(r.Context(), id); markErr != nil {
+				slog.WarnContext(r.Context(), "failed to mark interaction delivered", "interaction_id", id, "err", markErr)
+			}
 		case errors.Is(err, state.ErrBusy) && !a.taskRunning(r.Context(), answer.TaskID):
-			a.Permissions.MarkDelivered(r.Context(), id)
+			if markErr := a.Permissions.MarkDelivered(r.Context(), id); markErr != nil {
+				slog.WarnContext(r.Context(), "failed to mark interaction delivered", "interaction_id", id, "err", markErr)
+			}
 		case errors.Is(err, state.ErrQuestionStale), errors.Is(err, state.ErrBusy):
 			if a.ScheduleAnswerRetry != nil {
 				a.ScheduleAnswerRetry(context.WithoutCancel(r.Context()))
@@ -806,7 +806,7 @@ func (a *Assistant) availableTools(ctx context.Context) ([]availableTool, error)
 		ids := []string{}
 		for _, record := range records {
 			if record.IntegrationID == d.ConnectionType && record.Status == connections.StatusConnected &&
-				(d.RequiredCapability == "" || contains(record.Capabilities, d.RequiredCapability)) {
+				(d.RequiredCapability == "" || slices.Contains(record.Capabilities, d.RequiredCapability)) {
 				ids = append(ids, record.ID)
 			}
 		}
@@ -827,15 +827,6 @@ func (a *Assistant) availableTools(ctx context.Context) ([]availableTool, error)
 		}
 	}
 	return out, nil
-}
-
-func contains(values []string, value string) bool {
-	for _, v := range values {
-		if v == value {
-			return true
-		}
-	}
-	return false
 }
 
 func (a *Assistant) tools(w http.ResponseWriter, r *http.Request) {
@@ -886,8 +877,6 @@ func (a *Assistant) tool(w http.ResponseWriter, r *http.Request) {
 
 func newRequestID() string { return uuid.NewString() }
 
-func jsonMarshal(v any) ([]byte, error) { return json.Marshal(v) }
-
 func mustJSON(v any) json.RawMessage {
 	data, _ := json.Marshal(v)
 	return data
@@ -928,7 +917,9 @@ func (a *Assistant) ResolveSignIns(ctx context.Context, connectionID string) {
 			continue
 		}
 		if err := a.Answer(ctx, answer.CommandID, answer.TaskID, answer.Question, answer.Text); err == nil || errors.Is(err, state.ErrDuplicate) {
-			a.Permissions.MarkDelivered(ctx, i.ID)
+			if markErr := a.Permissions.MarkDelivered(ctx, i.ID); markErr != nil {
+				slog.WarnContext(ctx, "failed to mark sign-in interaction delivered", "interaction_id", i.ID, "err", markErr)
+			}
 		} else if a.ScheduleAnswerRetry != nil && (errors.Is(err, state.ErrQuestionStale) || errors.Is(err, state.ErrBusy)) {
 			a.ScheduleAnswerRetry(context.WithoutCancel(ctx))
 		}

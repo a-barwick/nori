@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 	"nori/internal/conversation"
 	"nori/internal/httpjson"
-	"nori/internal/modelprofiles"
 	"nori/internal/settings"
 	"nori/internal/state"
 	"nori/internal/state/docstore"
@@ -22,8 +21,6 @@ type Deps struct {
 	Features      settings.Features
 	Model         string
 	ModelProvider string
-	ModelProfiles *modelprofiles.Registry
-	CanPickModels bool
 	Runner        *conversation.Runner
 	Tasks         *conversation.Tasks
 	Waker         wake.Waker
@@ -107,15 +104,8 @@ func validID(value string) bool {
 
 func decode(w http.ResponseWriter, r *http.Request, value any) bool {
 	if err := httpjson.Decode(w, r, value, 64<<10); err != nil {
-		if errors.Is(err, httpjson.ErrTooLarge) {
-			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "Request body is too large."})
-			return false
-		}
-		message := "Send a valid JSON object."
-		if errors.Is(err, httpjson.ErrMultiple) {
-			message = "Send one JSON object."
-		}
-		writeJSON(w, 400, map[string]string{"error": message})
+		status, code, message := httpjson.ErrorStatus(err)
+		writeJSON(w, status, map[string]string{"error": message, "code": code})
 		return false
 	}
 	return true

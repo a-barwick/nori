@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"nori/internal/httpjson"
 	"nori/internal/llmguard"
 	"nori/internal/usage"
 )
@@ -170,7 +171,7 @@ func (s *Server) authorized(r *http.Request) bool {
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	httpjson.Write(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
@@ -178,7 +179,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid gateway token")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.Stats())
+	httpjson.Write(w, http.StatusOK, s.Stats())
 }
 
 func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
@@ -349,7 +350,7 @@ func (s *Server) resolveUpstream(path, explicitProvider, model string) (provider
 	switch p {
 	case "anthropic":
 		if s.cfg.AnthropicKey == "" {
-			return "", "", nil, errors.New("ANTHROPIC_TEST_API_KEY / ANTHROPIC_API_KEY is not configured in gateway")
+			return "", "", nil, errors.New("ANTHROPIC_TEST_API_KEY is not configured in gateway")
 		}
 		return "anthropic", strings.TrimRight(s.cfg.AnthropicBaseURL, "/") + suffix, map[string]string{
 			"x-api-key":         s.cfg.AnthropicKey,
@@ -357,14 +358,14 @@ func (s *Server) resolveUpstream(path, explicitProvider, model string) (provider
 		}, nil
 	case "openrouter":
 		if s.cfg.OpenRouterKey == "" {
-			return "", "", nil, errors.New("OPENROUTER_TEST_API_KEY / OPENROUTER_API_KEY is not configured in gateway")
+			return "", "", nil, errors.New("OPENROUTER_TEST_API_KEY is not configured in gateway")
 		}
 		return "openrouter", strings.TrimRight(s.cfg.OpenRouterBaseURL, "/") + suffix, map[string]string{
 			"Authorization": "Bearer " + s.cfg.OpenRouterKey,
 		}, nil
 	default:
 		if s.cfg.OpenAIKey == "" {
-			return "", "", nil, errors.New("OPENAI_TEST_API_KEY / OPENAI_API_KEY is not configured in gateway")
+			return "", "", nil, errors.New("OPENAI_TEST_API_KEY is not configured in gateway")
 		}
 		return "openai", strings.TrimRight(s.cfg.OpenAIBaseURL, "/") + suffix, map[string]string{
 			"Authorization": "Bearer " + s.cfg.OpenAIKey,
@@ -532,29 +533,14 @@ func extractAndCalculateCost(provider, fallbackModel string, raw []byte) (cost f
 	if inPtr == nil || outPtr == nil {
 		return 0, inTok, outTok, false
 	}
-	low := strings.ToLower(model)
-	switch {
-	case strings.HasPrefix(low, "gpt-4.1-mini"):
-		c := (float64(max(inTok-cached, 0))*0.40 + float64(cached)*0.10 + float64(outTok)*1.60) / 1e6
-		return c, inTok, outTok, true
-	case strings.HasPrefix(low, "gpt-4.1-nano"):
-		c := (float64(max(inTok-cached, 0))*0.10 + float64(cached)*0.025 + float64(outTok)*0.40) / 1e6
-		return c, inTok, outTok, true
-	case strings.HasPrefix(low, "gpt-4.1"):
-		c := (float64(max(inTok-cached, 0))*2.00 + float64(cached)*0.50 + float64(outTok)*8.00) / 1e6
+	if c, ok := usage.LegacyOpenAICost(model, inTok, outTok, cached); ok {
 		return c, inTok, outTok, true
 	}
 	return 0, inTok, outTok, false
 }
 
-func writeJSON(w http.ResponseWriter, status int, payload any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
-}
-
 func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, map[string]any{
+	httpjson.Write(w, status, map[string]any{
 		"error": map[string]string{
 			"type":    code,
 			"code":    code,

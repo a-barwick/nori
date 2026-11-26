@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"nori/internal/modelprofiles"
+	"nori/internal/secret/rowstore"
 	"nori/internal/secret/tenantkey"
 	"nori/internal/settings"
 	"nori/internal/state"
@@ -25,13 +26,14 @@ import (
 )
 
 type Storage struct {
-	docs      docstore.Backend
-	artifacts func(users.User) state.ArtifactStore
-	Now       func() time.Time
-	mu        sync.Mutex
-	s3        *s3.Client
-	gcs       *gcs.Client
-	dekCache  *tenantkey.Cache
+	docs       docstore.Backend
+	artifacts  func(users.User) state.ArtifactStore
+	Now        func() time.Time
+	mu         sync.Mutex
+	s3         *s3.Client
+	gcs        *gcs.Client
+	dekCache   *tenantkey.Cache
+	keyWrapper rowstore.KeyWrapper
 }
 
 func OpenStorage(ctx context.Context, s settings.Settings) (*Storage, error) {
@@ -151,7 +153,7 @@ func (p *Storage) wrapUserArtifacts(s settings.Settings, user users.User, resour
 	if s.Connections.CredentialStore != "database" {
 		return inner, nil
 	}
-	keys, err := credentialKeys(s)
+	keys, err := p.credentialKeys(s)
 	if err != nil {
 		return nil, err
 	}

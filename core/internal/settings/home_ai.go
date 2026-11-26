@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+
+	"nori/internal/netguard"
 )
 
 type HomeAI struct {
@@ -53,7 +55,7 @@ func (c HomeAI) validate(cloud string) error {
 	}
 	u, err := url.Parse(c.VerificationURL)
 	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
-		(u.Scheme != "https" && (cloud != "local" || u.Scheme != "http" || !isLoopbackHostname(u.Hostname()))) {
+		(u.Scheme != "https" && (cloud != "local" || u.Scheme != "http" || !netguard.IsLoopbackHost(u.Hostname()))) {
 		return fmt.Errorf("NORI_HOME_AI_VERIFY_URL must be an HTTPS pairing page URL")
 	}
 	for _, raw := range []string{c.Downloads.MacOS, c.Downloads.LinuxAMD64, c.Downloads.LinuxARM64} {

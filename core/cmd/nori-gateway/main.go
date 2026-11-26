@@ -1,7 +1,6 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -18,16 +17,9 @@ import (
 	"time"
 
 	"nori/internal/gateway"
+	"nori/internal/httpserver"
+	"nori/internal/netguard"
 )
-
-func isLoopbackHost(host string) bool {
-	h := strings.ToLower(strings.TrimSpace(host))
-	if h == "localhost" || h == "127.0.0.1" || h == "::1" {
-		return true
-	}
-	ip := net.ParseIP(h)
-	return ip != nil && ip.IsLoopback()
-}
 
 func randomToken() (string, error) {
 	buf := make([]byte, 24)
@@ -35,6 +27,47 @@ func randomToken() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+type gatewayKeys struct {
+	openAI     string
+	anthropic  string
+	openRouter string
+}
+
+// loadGatewayKeys reads dedicated *_TEST_API_KEY variables only and refuses
+// key reuse with production *_API_KEY / *_PROD_API_KEY variables.
+func loadGatewayKeys(getenv func(string) string) (gatewayKeys, error) {
+	read := func(name string) string { return strings.TrimSpace(getenv(name)) }
+	checkIsolated := func(testVar string, prodVars ...string) (string, error) {
+		val := read(testVar)
+		if val == "" {
+			return "", nil
+		}
+		for _, prodVar := range prodVars {
+			if prod := read(prodVar); prod != "" && prod == val {
+				return "", fmt.Errorf("%s must not reuse %s", testVar, prodVar)
+			}
+		}
+		return val, nil
+	}
+	openAI, err := checkIsolated("OPENAI_TEST_API_KEY", "OPENAI_API_KEY", "OPENAI_PROD_API_KEY")
+	if err != nil {
+		return gatewayKeys{}, err
+	}
+	anthropic, err := checkIsolated("ANTHROPIC_TEST_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_PROD_API_KEY")
+	if err != nil {
+		return gatewayKeys{}, err
+	}
+	openRouter, err := checkIsolated("OPENROUTER_TEST_API_KEY", "OPENROUTER_API_KEY", "OPENROUTER_PROD_API_KEY")
+	if err != nil {
+		return gatewayKeys{}, err
+	}
+	return gatewayKeys{
+		openAI:     openAI,
+		anthropic:  anthropic,
+		openRouter: openRouter,
+	}, nil
 }
 
 func main() {
@@ -45,7 +78,7 @@ func main() {
 	flag.Parse()
 
 	host, _, err := net.SplitHostPort(*listenAddr)
-	if err != nil || !isLoopbackHost(host) {
+	if err != nil || !netguard.IsLoopbackHost(host) {
 		slog.Error("nori-gateway refuses to bind non-loopback address", "listen", *listenAddr)
 		os.Exit(2)
 	}
@@ -59,15 +92,17 @@ func main() {
 		}
 	}
 
-	openaiKey := cmp.Or(strings.TrimSpace(os.Getenv("OPENAI_TEST_API_KEY")), strings.TrimSpace(os.Getenv("OPENAI_API_KEY")))
-	anthropicKey := cmp.Or(strings.TrimSpace(os.Getenv("ANTHROPIC_TEST_API_KEY")), strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")))
-	openrouterKey := cmp.Or(strings.TrimSpace(os.Getenv("OPENROUTER_TEST_API_KEY")), strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")))
+	keys, err := loadGatewayKeys(os.Getenv)
+	if err != nil {
+		slog.Error("nori-gateway key isolation check failed", "err", err)
+		os.Exit(2)
+	}
 
 	srv, err := gateway.New(gateway.Config{
 		Token:         token,
-		OpenAIKey:     openaiKey,
-		AnthropicKey:  anthropicKey,
-		OpenRouterKey: openrouterKey,
+		OpenAIKey:     keys.openAI,
+		AnthropicKey:  keys.anthropic,
+		OpenRouterKey: keys.openRouter,
 		MaxUSD:        *maxUSD,
 		MaxCalls:      *maxCalls,
 	})
@@ -100,7 +135,8 @@ func main() {
 		}
 	}
 
-	httpServer := &http.Server{
+	server := &http.Server{
+		Addr:              boundAddr,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 15 * time.Second,
 	}
@@ -108,15 +144,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = httpServer.Shutdown(shutdownCtx)
-	}()
-
 	slog.Info("nori-gateway listening", "url", baseURL, "max_usd", *maxUSD, "max_calls", *maxCalls)
-	if err := httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
+	if err := httpserver.Serve(ctx, server, ln, 5*time.Second); err != nil {
 		slog.Error("gateway server error", "err", err)
 		os.Exit(1)
 	}

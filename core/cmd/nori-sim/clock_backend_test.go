@@ -18,9 +18,10 @@ func TestSimClockFrozenDeterministic(t *testing.T) {
 	if got := clock.Now(); !got.Equal(start) {
 		t.Fatalf("initial Now = %s, want %s", got, start)
 	}
-	time.Sleep(50 * time.Millisecond)
-	if got := clock.Now(); !got.Equal(start) {
-		t.Fatalf("Now drifted across wall-clock sleep: got %s, want %s", got, start)
+	for range 10 {
+		if got := clock.Now(); !got.Equal(start) {
+			t.Fatalf("Now drifted without Advance: got %s, want %s", got, start)
+		}
 	}
 
 	adv := clock.Advance(90 * time.Second)

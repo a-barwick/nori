@@ -45,3 +45,15 @@ func Write(w http.ResponseWriter, status int, value any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
+
+// ErrorStatus maps a Decode error to its HTTP status code, machine error code, and user message.
+func ErrorStatus(err error) (status int, code, message string) {
+	switch {
+	case errors.Is(err, ErrTooLarge):
+		return http.StatusRequestEntityTooLarge, "payload_too_large", "Request body is too large."
+	case errors.Is(err, ErrMultiple):
+		return http.StatusBadRequest, "validation_failed", "Send one JSON object."
+	default:
+		return http.StatusBadRequest, "validation_failed", "Send a valid JSON object."
+	}
+}

@@ -173,6 +173,9 @@ func (m *accountTaskModel) availability(ctx context.Context, selection *state.Mo
 	if selection == nil || selection.TaskPinned == nil || selection.TaskPinned.Backend != modelprofiles.BackendHome {
 		return true, nil
 	}
+	if m.home == nil {
+		return false, nil
+	}
 	devices, err := m.home.List(ctx, m.userID)
 	if err != nil {
 		return false, err
@@ -181,7 +184,7 @@ func (m *accountTaskModel) availability(ctx context.Context, selection *state.Mo
 		if device.ID != selection.TaskPinned.HomeDeviceID {
 			continue
 		}
-		return device.Status != "offline" && device.Status != "ollama_unavailable", nil
+		return device.Status == "online", nil
 	}
-	return true, nil
+	return false, nil
 }
