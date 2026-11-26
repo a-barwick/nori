@@ -515,7 +515,7 @@ public final class NoriStore {
         defer { isDeletingAccount = false }
         let onboardingKey = onboardingDoneKey
         let observedKey = observedResetKey
-        let completionKey = resetCompletionKey
+        let legacyResetKey = authState.email.map { "nori.data-reset.completion." + $0.lowercased() }
         do {
             try await transport.deleteAccount(
                 confirmation: confirmation.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -529,7 +529,7 @@ public final class NoriStore {
         }
         if let key = onboardingKey { UserDefaults.standard.removeObject(forKey: key) }
         if let key = observedKey { UserDefaults.standard.removeObject(forKey: key) }
-        if let key = completionKey { UserDefaults.standard.removeObject(forKey: key) }
+        if let legacyResetKey { UserDefaults.standard.removeObject(forKey: legacyResetKey) }
         accountDeletePending = false
         accountDeletedNotice = "Your account has been deleted."
         await signOut()
@@ -2074,6 +2074,19 @@ public final class NoriStore {
         } catch {
             guard generation == sessionGeneration else { return }
             lastError = error.localizedDescription
+        }
+    }
+
+    public func fetchAPICosts(days: Int) async throws -> APICostResponse {
+        let generation = sessionGeneration
+        do {
+            let result = try await transport.fetchAPICosts(days: days)
+            guard generation == sessionGeneration, !Task.isCancelled else { throw CancellationError() }
+            return result
+        } catch {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            _ = await handleAuthFailureIfNeeded(error)
+            throw error
         }
     }
 

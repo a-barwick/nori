@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Activity, Brain, History, KeyRound, LayoutGrid, Monitor, Moon, RotateCcw, ShieldCheck, SlidersHorizontal, Sun, UserCircle } from "lucide-react";
+import { Activity, BarChart3, Brain, History, KeyRound, LayoutGrid, Monitor, Moon, RotateCcw, ShieldCheck, SlidersHorizontal, Sun, UserCircle } from "lucide-react";
 import { appearanceLabel, useAppearance, type NoriAppearance } from "@/lib/appearance";
 import type { ModelKeysResponse, ModelSettings } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
@@ -126,6 +126,15 @@ export function MoreScreen() {
             }
             title="Preferences & Budgets"
             detail={prefs ? `${prefs.timezone} · ${money(prefs.budgets.task_usd)} / task` : undefined}
+          />
+          <Row
+            href="/settings/api-costs"
+            leading={
+              <span className="grid size-9 place-items-center rounded-[10px] bg-fill-1 text-ink-2">
+                <BarChart3 size={18} strokeWidth={1.85} aria-hidden />
+              </span>
+            }
+            title="API costs"
           />
           <Row
             href="/settings/appearance"

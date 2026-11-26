@@ -198,6 +198,7 @@ public protocol NoriTransport: Sendable {
         _ preferences: Preferences,
         requestID: String
     ) async throws -> MutationReceipt<Preferences>
+    func fetchAPICosts(days: Int) async throws -> APICostResponse
     func resetUserData(confirmation: String) async throws
     func resumePendingDataReset() async throws
     func deleteAccount(confirmation: String, resumePending: Bool) async throws
@@ -216,6 +217,10 @@ public protocol NoriTransport: Sendable {
 }
 
 public extension NoriTransport {
+    func fetchAPICosts(days: Int) async throws -> APICostResponse {
+        throw NoriAPIError(message: "API costs are not supported by this transport.")
+    }
+
     func resumePendingDataReset() async throws {
         throw NoriAPIError(message: "Reset recovery is not supported by this transport.")
     }

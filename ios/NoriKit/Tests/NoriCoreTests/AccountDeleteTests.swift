@@ -8,27 +8,33 @@ struct AccountDeleteTests {
     @MainActor
     func deleteAccountSuccessCleansUpAndSignsOut() async throws {
         let transport = MockAccountDeleteTransport()
+        let email = "account-cleanup-\(UUID().uuidString.lowercased())@example.com"
         let auth = AuthTokenProvider(keychain: KeychainStore(service: "com.nori.test.acct-del.\(UUID().uuidString)"))
         await auth.saveSession(AuthSession(
             idToken: "test-id-token",
             refreshToken: "test-refresh-token",
             expiresAt: Date().addingTimeInterval(3600),
-            email: "alice@example.com"
+            email: email
         ))
         let store = NoriStore(transport: transport, authProvider: auth)
-        store.authState = .signedIn(email: "alice@example.com")
+        store.authState = .signedIn(email: email)
         store.session = Session(messages: [Message(id: "m1", role: .user, text: "hello")])
         store.coreMemories = [MemoryFact(id: "mem-1", text: "likes tea")]
 
-        let onboardingKey = "nori.onboarding.done.alice@example.com"
+        let onboardingKey = "nori.onboarding.done.\(email)"
+        let legacyResetKey = "nori.data-reset.completion.\(email)"
         UserDefaults.standard.set(true, forKey: onboardingKey)
-        defer { UserDefaults.standard.removeObject(forKey: onboardingKey) }
+        UserDefaults.standard.set(true, forKey: legacyResetKey)
+        defer {
+            UserDefaults.standard.removeObject(forKey: onboardingKey)
+            UserDefaults.standard.removeObject(forKey: legacyResetKey)
+        }
 
-        try await store.deleteAccount(confirmation: "  alice@example.com  ")
+        try await store.deleteAccount(confirmation: "  \(email)  ")
 
         let calls = await transport.deleteCalls
         #expect(calls.count == 1)
-        #expect(calls[0].confirmation == "alice@example.com")
+        #expect(calls[0].confirmation == email)
         #expect(calls[0].resumePending == false)
         #expect(store.authState == .signedOut)
         #expect(store.session.messages.isEmpty)
@@ -36,6 +42,7 @@ struct AccountDeleteTests {
         #expect(store.accountDeletePending == false)
         #expect(store.accountDeletedNotice == "Your account has been deleted.")
         #expect(UserDefaults.standard.object(forKey: onboardingKey) == nil)
+        #expect(UserDefaults.standard.object(forKey: legacyResetKey) == nil)
         #expect(await auth.loadSession() == nil)
     }
 

@@ -51,6 +51,7 @@ type Assistant struct {
 	Scheduler           *scheduler.Service
 	MCP                 *mcp.Service
 	ModelKeys           *modelkeys.Service
+	UsageNow            func() time.Time
 	Models              *modelprofiles.Account
 	HomeAI              *HomeAISettings
 	AccountBYOK         bool
@@ -220,6 +221,9 @@ func (a *Assistant) register(mux *http.ServeMux) {
 	}
 	if a.ModelKeys != nil {
 		a.registerModelKeys(mux)
+	}
+	if a.Store != nil && a.Connections != nil {
+		mux.HandleFunc("GET /v1/settings/api-costs", a.apiCosts)
 	}
 	if a.Models != nil {
 		a.registerModelSettings(mux)

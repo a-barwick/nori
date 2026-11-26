@@ -239,6 +239,8 @@ public struct NoriRootView: View {
                                 StandingPermissionsView(store: store)
                             case .preferences:
                                 PreferencesBudgetsView(store: store)
+                            case .apiCosts:
+                                APICostsView(store: store)
                             case .models:
                                 ModelsSettingsView(store: store)
                             case .appearance:
