@@ -1,0 +1,47 @@
+name: iOS Archive
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ios/**"
+      - "scripts/upload-ios-dsyms.sh"
+      - ".github/workflows/ios-archive.yml"
+      - ".github/actions/ios-symbols/**"
+  pull_request:
+    paths:
+      - "ios/**"
+      - "scripts/upload-ios-dsyms.sh"
+      - ".github/workflows/ios-archive.yml"
+      - ".github/actions/ios-symbols/**"
+
+concurrency:
+  group: ios-archive-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  archive:
+    name: Release archive and dSYM validation
+    runs-on: xcode-27
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Swift tests
+        run: swift test --package-path ios/NoriKit
+
+      - name: Build unsigned Release archive
+        run: |
+          xcodebuild -project ios/Nori.xcodeproj -scheme Nori -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Nori.xcarchive" \
+            -disableAutomaticPackageResolution CODE_SIGNING_ALLOWED=NO archive
+
+      - name: Verify archive symbols
+        uses: ./.github/actions/ios-symbols
+        with:
+          archive-path: ${{ runner.temp }}/Nori.xcarchive
+          verify-only: "true"
