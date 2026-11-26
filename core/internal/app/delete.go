@@ -21,6 +21,33 @@ type accountDeleter interface {
 	FinishAccountDelete(ctx context.Context, userID, owner string) error
 }
 
+type accountDeletePendingLister interface {
+	ListAccountDeletePending(ctx context.Context) ([]string, error)
+}
+
+// SweepPendingAccountDeletions finishes any accounts left in delete_pending state
+// (e.g. if a client disconnected or timed out mid-deletion).
+func (s *Service) SweepPendingAccountDeletions(ctx context.Context) {
+	lister, ok := s.Backend().(accountDeletePendingLister)
+	if !ok {
+		return
+	}
+	ids, err := lister.ListAccountDeletePending(ctx)
+	if err != nil {
+		return
+	}
+	for _, id := range ids {
+		if ctx.Err() != nil {
+			return
+		}
+		row, err := s.Users.Get(ctx, id)
+		if err != nil {
+			continue
+		}
+		_ = s.deleteUserAccount(ctx, row, row.Email, true)
+	}
+}
+
 type accountDeleteRequestKey struct{}
 type accountDeletePendingKey struct{}
 
