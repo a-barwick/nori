@@ -7,7 +7,7 @@ export async function runtimeHeaders(mode: Mode): Promise<Record<string, string>
 
 async function runtimeAuthorization(): Promise<string> {
   const cloud = process.env.NORI_CLOUD || "aws";
-  if (cloud === "aws") {
+  if (cloud === "aws" || cloud === "gcp") {
     const key = new TextEncoder().encode(process.env.NORI_SERVICE_TOKEN_KEY || "");
     const audience = process.env.NORI_SERVICE_AUDIENCE || "nori";
     if (key.length < 32 || !audience.trim()) throw new Error("Service authentication is not configured");
