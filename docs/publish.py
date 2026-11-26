@@ -143,7 +143,7 @@ def public_html(page, nav):
 def publish(out):
     if out.exists() and any(out.iterdir()):
         raise ValueError("The public output directory must be empty")
-    shutil.copytree(SITE, out, dirs_exist_ok=True, ignore=shutil.ignore_patterns("*.html"))
+    shutil.copytree(SITE, out, dirs_exist_ok=True, ignore=shutil.ignore_patterns("*.html", "AGENTS.md"))
     pages = [read_page(path) for path in sorted(SITE.glob("*.html")) if path.stem not in REPO_ONLY]
     links = "".join(f'<li><a tabindex="-1" href="{p["path"].name}">{html.escape(p["title"])}</a>: {html.escape(p["summary"])} <a tabindex="-1" href="{p["path"].stem}.md">Plain text</a></li>' for p in pages)
     nav = f'<nav aria-hidden="true" style="position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)"><p>Pages on this site. <a tabindex="-1" href="llms.txt">Plain text index</a></p><ul>{links}</ul></nav>\n'
@@ -165,7 +165,7 @@ def publish(out):
     for name in ("request-data.js", "task-data.js"):
         data = out / name
         data.write_text(re.sub(r"'(?:core|web|docs|integrations)/[^']*'", "''", re.sub(r"\bsource: '[^']*'", "source: ''", data.read_text(encoding="utf-8"))), encoding="utf-8")
-    script = out / "site.js"
+    script = out / "site-config.js"
     source = script.read_text(encoding="utf-8")
     for name in REPO_ONLY:
         source = re.sub(rf",?\s*\['{name}', '[^']*'\]", "", source, count=1)
