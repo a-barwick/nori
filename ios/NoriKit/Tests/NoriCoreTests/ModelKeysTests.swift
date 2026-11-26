@@ -201,7 +201,7 @@ private actor MockModelKeysTransport: NoriTransport {
     nonisolated func eventStream(after position: Int) -> AsyncThrowingStream<NoriStreamEvent, Error> {
         AsyncThrowingStream { $0.finish() }
     }
-    func sendTurn(id: String, message: String, attachmentIDs: [String]) async throws -> Session { Session() }
+    func sendTurn(id: String, message: String, attachmentIDs: [String], modelSelection: ModelSelection?) async throws -> Session { Session() }
     func retryTurn(turnID: String?, messageID: String?) async throws -> Session { Session() }
     func sendTaskCommand(_ command: TaskCommand) async throws -> TaskCommandResponse { TaskCommandResponse(accepted: true) }
     func uploadFile(id: String, filename: String, mediaType: String, data: Data) async throws -> NoriCore.Attachment {

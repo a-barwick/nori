@@ -291,14 +291,17 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     private func deleteJSON<Response: Decodable>(_ path: String) async throws -> Response {
-        let userID = try await ensureUserID()
-        let url = try router.scopedURL(path: path, userID: userID)
-        var req = URLRequest(url: url)
-        req.httpMethod = "DELETE"
-        let (data, response) = try await performAuthenticated(req)
-        try validateHTTPResponse(response, data: data)
-        return try decoder.decode(Response.self, from: data)
+        try await withRequestSpan(route: normalizedRoute(for: path), method: "DELETE") { span in
+            let userID = try await ensureUserID()
+            span.setTag("nori.user.id", value: userID)
+            let url = try router.scopedURL(path: path, userID: userID)
+            var req = URLRequest(url: url)
+            req.httpMethod = "DELETE"
+            let data = try await authenticatedData(req, span: span)
+            return try decoder.decode(Response.self, from: data)
+        }
     }
+
     private func mutate<Body: Encodable, Resource: Sendable & Codable & Hashable>(
         _ path: String,
         method: String = "POST",
