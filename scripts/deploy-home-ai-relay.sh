@@ -2,7 +2,9 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: NORI_HOME_AI_RELAY_ACCOUNT=... NORI_HOME_AI_RELAY_DB_SECRET=... NORI_HOME_AI_KEY_SECRET=... NORI_HOME_AI_VERIFY_URL=... $0 [--dry-run]"
+  echo "Set NORI_HOME_AI_RELAY_ACCOUNT, NORI_HOME_AI_RELAY_DB_SECRET, NORI_HOME_AI_KEY_SECRET,"
+  echo "NORI_HOME_AI_VERIFY_URL, NORI_HOME_AI_RELAY_PUBLIC_ORIGIN and NORI_HOME_AI_RELAY_EDGE_BACKEND."
+  echo "Usage: $0 [--dry-run]"
 }
 
 dry_run=0
@@ -12,15 +14,19 @@ case "${1:-}" in
   -h|--help) usage; exit 0 ;;
   *) usage >&2; exit 2 ;;
 esac
-if (( $# > 1 )); then
-  usage >&2
-  exit 2
-fi
+[[ "$#" -le 1 ]] || { usage >&2; exit 2; }
 
 : "${NORI_HOME_AI_RELAY_ACCOUNT:?Set the relay service account}"
 : "${NORI_HOME_AI_RELAY_DB_SECRET:?Set the Secret Manager name and version containing the relay Postgres URL}"
 : "${NORI_HOME_AI_KEY_SECRET:?Set the Secret Manager name and version containing the relay encryption key}"
 : "${NORI_HOME_AI_VERIFY_URL:?Set the public Nori pairing page URL}"
+: "${NORI_HOME_AI_RELAY_PUBLIC_ORIGIN:?Set the relay load balancer HTTPS origin}"
+: "${NORI_HOME_AI_RELAY_EDGE_BACKEND:?Set the global load balancer backend with a Cloud Armor policy}"
+public_origin="$NORI_HOME_AI_RELAY_PUBLIC_ORIGIN"
+if ! [[ "$public_origin" =~ ^https://[A-Za-z0-9-]+([.][A-Za-z0-9-]+)+$ ]] || [[ "$public_origin" == *.run.app ]]; then
+  echo "Use the relay load balancer's HTTPS origin." >&2
+  exit 2
+fi
 
 cd "$(dirname "$0")/.."
 project="${GCP_PROJECT:-bot-111549}"
@@ -35,65 +41,89 @@ fi
 
 image="$region-docker.pkg.dev/$project/$repo/nori-connector-relay:$sha"
 tag="release-$sha"
-run() {
-  if [[ "$dry_run" == 1 ]]; then
-    printf '%q ' "$@"
-    printf '\n'
-  else
-    "$@"
-  fi
-}
-
-run docker buildx build --platform linux/amd64 -f core/infrastructure/ConnectorRelay.Dockerfile --tag "$image" --push core
 cloud() { gcloud run "$@" --project="$project" --region="$region"; }
+
+if [[ "$dry_run" != 1 ]]; then
+  backend="$(gcloud compute backend-services describe "$NORI_HOME_AI_RELAY_EDGE_BACKEND" --global --project="$project" --format=json)"
+  security_policy="$(jq -er '.securityPolicy | split("/") | last' <<< "$backend")"
+  group="$(jq -er 'select(.loadBalancingScheme=="EXTERNAL_MANAGED" or .loadBalancingScheme=="EXTERNAL") | .backends | select(length==1) | .[0].group' <<< "$backend")"
+  [[ "$group" == */regions/"$region"/networkEndpointGroups/* ]]
+  gcloud compute network-endpoint-groups describe "${group##*/}" --project="$project" --region="$region" --format=json |
+    jq -e --arg service "$service" '.networkEndpointType == "SERVERLESS" and .cloudRun.service == $service and (.cloudRun.tag // "") == ""' >/dev/null
+  gcloud compute security-policies describe "$security_policy" --project="$project" --format=json |
+    jq -e '
+      [.rules[] | select(.preview != true and .priority < 2147483647)] | sort_by(.priority) | first
+      | (.action == "throttle" or .action == "rate_based_ban")
+        and .match.versionedExpr == "SRC_IPS_V1"
+        and (.match.config.srcIpRanges | index("*") != null)
+        and .rateLimitOptions.enforceOnKey == "IP"
+        and .rateLimitOptions.conformAction == "allow"
+        and .rateLimitOptions.exceedAction == "deny(429)"
+        and (.rateLimitOptions.rateLimitThreshold | .count > 0 and .intervalSec > 0 and .count <= 10 * .intervalSec)
+    ' >/dev/null || { echo "The relay backend needs an active per-IP Cloud Armor throttle for every route." >&2; exit 1; }
+  gcloud beta run domain-mappings list --project="$project" --region="$region" --format=json |
+    jq -e --arg service "$service" 'all(.[]; .spec.routeName != $service)' >/dev/null ||
+    { echo "Remove direct Cloud Run domain mappings from the relay before deploying." >&2; exit 1; }
+fi
+
 relay_secrets="NORI_HOME_AI_POSTGRES_URL=$NORI_HOME_AI_RELAY_DB_SECRET,NORI_HOME_AI_KEY=$NORI_HOME_AI_KEY_SECRET"
 if [[ -n "${NORI_HOME_AI_RELAY_DB_LISTEN_SECRET:-}" ]]; then
   relay_secrets+=",NORI_HOME_AI_POSTGRES_LISTEN_URL=$NORI_HOME_AI_RELAY_DB_LISTEN_SECRET"
 fi
-edge_token=""
+
+traffic_flags=(--invoker-iam-check)
+previous=""
 if [[ "$dry_run" == 1 ]] || cloud services describe "$service" --format=json >/dev/null 2>&1; then
   traffic_flags=(--no-traffic)
-else
-  traffic_flags=(--invoker-iam-check)
-  edge_token="$(gcloud auth print-identity-token)"
+  if [[ "$dry_run" != 1 ]]; then
+    previous="$(cloud services describe "$service" --format=json |
+      jq -er '[.status.traffic[] | select(.percent>0) | "\(.revisionName)=\(.percent)"] | join(",")')"
+  fi
 fi
+
 args=(
   --image="$image" "${traffic_flags[@]}" --tag="$tag" --quiet
+  --ingress=internal-and-cloud-load-balancing --no-default-url
   --service-account="$NORI_HOME_AI_RELAY_ACCOUNT"
-  --timeout=3600 --concurrency="${NORI_HOME_AI_RELAY_CONCURRENCY:-80}" --max-instances="${NORI_HOME_AI_RELAY_MAX_INSTANCES:-4}"
+  --timeout=3600 --concurrency="${NORI_HOME_AI_RELAY_CONCURRENCY:-40}" --max-instances="${NORI_HOME_AI_RELAY_MAX_INSTANCES:-1}"
+  --startup-probe=httpGet.path=/readyz,periodSeconds=3,timeoutSeconds=3,failureThreshold=40
   --update-secrets="$relay_secrets"
-  --update-env-vars="NORI_HOME_AI_VERIFY_URL=$NORI_HOME_AI_VERIFY_URL"
+  --update-env-vars="NORI_HOME_AI_VERIFY_URL=$NORI_HOME_AI_VERIFY_URL,NORI_HOME_AI_MAX_CONNS=${NORI_HOME_AI_RELAY_PG_MAX_CONNS:-4}"
 )
 if [[ -n "${NORI_HOME_AI_CLOUD_SQL_INSTANCE:-}" ]]; then
   args+=(--add-cloudsql-instances="$NORI_HOME_AI_CLOUD_SQL_INSTANCE")
 fi
-run cloud deploy "$service" "${args[@]}"
+
 if [[ "$dry_run" == 1 ]]; then
-  echo "Probe the tagged /readyz and promote its revision."
+  echo "Verify the serverless backend and Cloud Armor policy for $public_origin."
+  printf '%q ' docker buildx build --platform linux/amd64 -f core/infrastructure/ConnectorRelay.Dockerfile --tag "$image" --push core
+  printf '\n'
+  printf '%q ' gcloud run deploy "$service" "${args[@]}" --project="$project" --region="$region"
+  printf '\n'
+  echo "Verify the tagged revision's startup probe, enable invocation through the load balancer, and check /readyz."
   exit 0
 fi
 
-candidate="$( cloud services describe "$service" --flatten='status.traffic[]' \
-  --format='value(status.traffic.tag,status.traffic.revisionName,status.traffic.url)' |
-  awk -F '\t' -v tag="$tag" '$1 == tag { print $2 "\t" $3 }')"
-IFS=$'\t' read -r revision url <<< "$candidate"
-probe_ready() {
-  local flags=(--silent --show-error --fail --output /dev/null --write-out '%{http_code}' --max-time 15 --retry 5 --retry-all-errors)
-  local code
-  if [[ -n "$edge_token" ]]; then
-    code="$(printf 'X-Serverless-Authorization: Bearer %s\n' "$edge_token" | curl "${flags[@]}" -H @- "$1")" || return 1
-  else
-    code="$(curl "${flags[@]}" "$1")" || return 1
-  fi
-  [[ "$code" == 200 ]]
-}
-if [[ -z "$revision" || -z "$url" ]] || ! probe_ready "$url/readyz"; then
+docker buildx build --platform linux/amd64 -f core/infrastructure/ConnectorRelay.Dockerfile --tag "$image" --push core
+cloud deploy "$service" "${args[@]}"
+
+revision="$(cloud services describe "$service" --format=json |
+  jq -er --arg tag "$tag" '.status.traffic[] | select(.tag==$tag) | .revisionName')"
+if ! cloud revisions describe "$revision" --format=json |
+  jq -e 'any(.status.conditions[]; .type=="Ready" and .status=="True")' >/dev/null; then
   cloud services update-traffic "$service" --remove-tags="$tag" --quiet || true
-  echo "Connector relay readiness failed." >&2
+  echo "The tagged relay revision failed readiness." >&2
   exit 1
 fi
+
 cloud services update-traffic "$service" --to-revisions="$revision=100" --remove-tags="$tag" --quiet
 cloud services update "$service" --no-invoker-iam-check --quiet
-edge_token=""
-service_url="$(cloud services describe "$service" --format='value(status.url)')"
-probe_ready "$service_url/readyz"
+if [[ "$(curl --silent --show-error --fail --output /dev/null --write-out '%{http_code}' --max-time 15 --retry 5 --retry-all-errors "$public_origin/readyz" || true)" != 200 ]]; then
+  if [[ -n "$previous" ]]; then
+    cloud services update-traffic "$service" --to-revisions="$previous" --quiet
+  else
+    cloud services update "$service" --invoker-iam-check --quiet
+  fi
+  echo "Relay health failed through the load balancer." >&2
+  exit 1
+fi
