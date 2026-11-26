@@ -2,39 +2,14 @@ import Foundation
 
 // MARK: - Model API Keys (BYOK)
 
-public struct ModelKeyProvider: Sendable, Codable, Hashable, Identifiable {
+public typealias ModelKeyProvider = OpenAPI.ModelKeyProvider
+public typealias SaveModelKeyRequest = OpenAPI.SetModelKeyRequest
+
+extension OpenAPI.ModelKeyProvider: Identifiable {
     public var id: String { provider }
 
-    public var provider: String
-    public var label: String
-    public var configured: Bool
-    public var last4: String?
-    public var updatedAt: String?
-    public var validatedAt: String?
-
-    enum CodingKeys: String, CodingKey {
-        case provider
-        case label
-        case configured
-        case last4
-        case updatedAt = "updated_at"
-        case validatedAt = "validated_at"
-    }
-
-    public init(
-        provider: String,
-        label: String,
-        configured: Bool = false,
-        last4: String? = nil,
-        updatedAt: String? = nil,
-        validatedAt: String? = nil
-    ) {
-        self.provider = provider
-        self.label = label
-        self.configured = configured
-        self.last4 = last4
-        self.updatedAt = updatedAt
-        self.validatedAt = validatedAt
+    public init(provider: String, label: String) {
+        self.init(provider: provider, label: label, configured: false)
     }
 
     public var maskedKeyDisplay: String? {
@@ -61,18 +36,6 @@ public struct ModelKeysResponse: Sendable, Codable, Hashable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.byokRequired = try container.decodeIfPresent(Bool.self, forKey: .byokRequired) ?? false
         self.providers = try container.decodeIfPresent([ModelKeyProvider].self, forKey: .providers) ?? []
-    }
-}
-
-public struct SaveModelKeyRequest: Sendable, Codable, Hashable {
-    public var apiKey: String
-
-    enum CodingKeys: String, CodingKey {
-        case apiKey = "api_key"
-    }
-
-    public init(apiKey: String) {
-        self.apiKey = apiKey
     }
 }
 

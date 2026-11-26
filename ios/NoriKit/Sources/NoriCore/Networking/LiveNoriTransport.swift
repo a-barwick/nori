@@ -447,8 +447,7 @@ public actor LiveNoriTransport: NoriTransport {
         } catch let apiErr as NoriAPIError {
             throw apiErr
         } catch {
-            let encodedID = encodeSegment(requestID)
-            if let receipt: MutationReceipt<Resource> = try? await getJSON("/v1/mutations/\(encodedID)") {
+            if let receipt: MutationReceipt<Resource> = try? await getJSON(OpenAPI.Path.mutations(requestID: requestID)) {
                 return receipt
             }
             throw NoriAPIError(
@@ -502,11 +501,11 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func fetchCapabilities() async throws -> Capabilities {
-        try await getJSON("/v1/capabilities")
+        try await getJSON(OpenAPI.Path.capabilities)
     }
 
     public func fetchAssistantSummary() async throws -> AssistantSummary {
-        try await getJSON("/v1/assistant/summary")
+        try await getJSON(OpenAPI.Path.assistantSummary)
     }
 
     public func fetchSession(before cursor: String?) async throws -> Session {
@@ -514,7 +513,7 @@ public actor LiveNoriTransport: NoriTransport {
         if let cursor, !cursor.isEmpty {
             query.append(URLQueryItem(name: "before", value: cursor))
         }
-        return try await getJSON("/v1/snapshot", queryItems: query)
+        return try await getJSON(OpenAPI.Path.snapshot, queryItems: query)
     }
 
     private func captureSnapshotDomain<T: Sendable>(
@@ -716,7 +715,7 @@ public actor LiveNoriTransport: NoriTransport {
                         forceNextTokenRefresh = false
 
                         let url = try self.router.scopedURL(
-                            path: "/v1/events",
+                            path: OpenAPI.Path.events,
                             userID: userID,
                             queryItems: [URLQueryItem(name: "after", value: String(cursor))]
                         )
@@ -901,11 +900,11 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func uploadFile(id: String, filename: String, mediaType: String, data: Data) async throws -> Attachment {
-        try await withRequestSpan(route: "/v1/uploads", method: "POST") { span in
+        try await withRequestSpan(route: OpenAPI.Path.uploads, method: "POST") { span in
             let userID = try await ensureUserID()
             span.setTag("nori.user.id", value: userID)
             let url = try router.scopedURL(
-                path: "/v1/uploads",
+                path: OpenAPI.Path.uploads,
                 userID: userID,
                 queryItems: [
                     URLQueryItem(name: "id", value: id),
@@ -925,12 +924,12 @@ public actor LiveNoriTransport: NoriTransport {
         if let bucket {
             query.append(URLQueryItem(name: "bucket", value: bucket.rawValue))
         }
-        let resp: ListResponse<WorkItem> = try await getJSON("/v1/work", queryItems: query)
+        let resp: ListResponse<WorkItem> = try await getJSON(OpenAPI.Path.work, queryItems: query)
         return resp.items
     }
 
     public func fetchWorkDetail(taskID: String) async throws -> WorkDetail {
-        try await getJSON("/v1/work/\(encodeSegment(taskID))")
+        try await getJSON(OpenAPI.Path.workByTaskID(taskID: taskID))
     }
 
     public func fetchOperations(connectionID: String? = nil) async throws -> [OperationProjection] {
@@ -938,13 +937,13 @@ public actor LiveNoriTransport: NoriTransport {
         if let connectionID, !connectionID.isEmpty {
             query.append(URLQueryItem(name: "connection_id", value: connectionID))
         }
-        let resp: ListResponse<OperationProjection> = try await getJSON("/v1/operations", queryItems: query)
+        let resp: ListResponse<OperationProjection> = try await getJSON(OpenAPI.Path.operations, queryItems: query)
         return resp.items
     }
 
     public func stopWork(taskID: String, requestID: String) async throws -> MutationReceipt<WorkItem> {
         try await mutateEnvelope(
-            "/v1/work/\(encodeSegment(taskID))/actions",
+            OpenAPI.Path.workActions(taskID: taskID),
             requestID: requestID,
             value: ["action": "stop"]
         )
@@ -956,19 +955,19 @@ public actor LiveNoriTransport: NoriTransport {
             let budget_usd: Double
         }
         return try await mutateEnvelope(
-            "/v1/work/\(encodeSegment(taskID))/actions",
+            OpenAPI.Path.workActions(taskID: taskID),
             requestID: requestID,
             value: ContinueValue(action: "continue", budget_usd: budgetUSD)
         )
     }
 
     public func fetchInteractions() async throws -> [Interaction] {
-        let resp: ListResponse<Interaction> = try await getJSON("/v1/interactions")
+        let resp: ListResponse<Interaction> = try await getJSON(OpenAPI.Path.interactions)
         return resp.items
     }
 
     public func fetchInteraction(id: String) async throws -> Interaction {
-        try await getJSON("/v1/interactions/\(encodeSegment(id))")
+        try await getJSON(OpenAPI.Path.interactionsByID(id: id))
     }
 
     public func respondToInteraction(
@@ -978,7 +977,7 @@ public actor LiveNoriTransport: NoriTransport {
         requestID: String
     ) async throws -> MutationReceipt<Interaction> {
         try await mutateEnvelope(
-            "/v1/interactions/\(encodeSegment(id))/responses",
+            OpenAPI.Path.interactionsResponses(id: id),
             requestID: requestID,
             expectedRevision: expectedRevision,
             value: answer.payloadDictionary
@@ -986,17 +985,17 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func fetchMCPServers() async throws -> [MCPServer] {
-        let resp: ListResponse<MCPServer> = try await getJSON("/v1/mcp")
+        let resp: ListResponse<MCPServer> = try await getJSON(OpenAPI.Path.mcp)
         return resp.items
     }
 
     public func fetchMCPTools(serverID: String) async throws -> [MCPServerTool] {
-        let resp: ListResponse<MCPServerTool> = try await getJSON("/v1/mcp/\(encodeSegment(serverID))/tools")
+        let resp: ListResponse<MCPServerTool> = try await getJSON(OpenAPI.Path.mcpTools(id: serverID))
         return resp.items
     }
 
     public func createMCPServer(input: MCPServerInput, requestID: String) async throws -> MutationReceipt<MCPServer> {
-        try await mutateEnvelope("/v1/mcp", requestID: requestID, value: input)
+        try await mutateEnvelope(OpenAPI.Path.mcp, requestID: requestID, value: input)
     }
 
     public func performMCPAction(
@@ -1012,7 +1011,7 @@ public actor LiveNoriTransport: NoriTransport {
         }
         let cleanReturnTo = (returnTo?.isEmpty == false) ? returnTo : nil
         return try await mutateEnvelope(
-            "/v1/mcp/\(encodeSegment(serverID))/actions",
+            OpenAPI.Path.mcpActions(id: serverID),
             requestID: requestID,
             expectedRevision: expectedRevision,
             value: ActionVal(action: action, return_to: cleanReturnTo)
@@ -1027,7 +1026,7 @@ public actor LiveNoriTransport: NoriTransport {
     ) async throws -> MutationReceipt<MCPServer> {
         _ = expectedRevision
         return try await mutate(
-            "/v1/mcp/\(encodeSegment(serverID))/credential",
+            OpenAPI.Path.mcpCredential(id: serverID),
             requestID: requestID,
             body: MCPCredentialInput(requestID: requestID, token: secret)
         )
@@ -1046,7 +1045,7 @@ public actor LiveNoriTransport: NoriTransport {
             let exposure: String
         }
         return try await mutateEnvelope(
-            "/v1/mcp/\(encodeSegment(serverID))/actions",
+            OpenAPI.Path.mcpActions(id: serverID),
             requestID: requestID,
             expectedRevision: expectedRevision,
             value: ExposureVal(action: "set_exposure", tool: toolName, exposure: exposure.rawValue)
@@ -1054,17 +1053,17 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func fetchConnections() async throws -> [Connection] {
-        let resp: ListResponse<Connection> = try await getJSON("/v1/connections")
+        let resp: ListResponse<Connection> = try await getJSON(OpenAPI.Path.connections)
         return resp.items
     }
 
     public func fetchIntegrations() async throws -> [IntegrationSummary] {
-        let resp: ListResponse<IntegrationSummary> = try await getJSON("/v1/integrations")
+        let resp: ListResponse<IntegrationSummary> = try await getJSON(OpenAPI.Path.integrations)
         return resp.items
     }
 
     public func fetchConnectionResources(connectionID: String) async throws -> [ConnectionResource] {
-        let resp: ListResponse<ConnectionResource> = try await getJSON("/v1/connections/\(encodeSegment(connectionID))/resources")
+        let resp: ListResponse<ConnectionResource> = try await getJSON(OpenAPI.Path.connectionsResources(id: connectionID))
         return resp.items
     }
 
@@ -1075,17 +1074,16 @@ public actor LiveNoriTransport: NoriTransport {
             let selected_resource_ids: [String]
         }
         return try await mutateEnvelope(
-            "/v1/connections",
+            OpenAPI.Path.connections,
             requestID: requestID,
             value: Value(integration_id: integrationID, title: "", selected_resource_ids: [])
         )
     }
 
     public func startGoogleDrivePicker(connectionID: String, returnTo: String) async throws -> AuthAttempt {
-        struct Request: Encodable { let return_to: String }
-        return try await sendJSON(
-            "/v1/connections/\(encodeSegment(connectionID))/google-drive/picker",
-            body: Request(return_to: returnTo)
+        try await sendJSON(
+            OpenAPI.Path.connectionsGoogleDrivePicker(id: connectionID),
+            body: OpenAPI.GoogleDrivePickerRequest(returnTo: returnTo)
         )
     }
 
@@ -1121,7 +1119,7 @@ public actor LiveNoriTransport: NoriTransport {
         }
         let cleanReturnTo = (returnTo?.isEmpty == false) ? returnTo : nil
         return try await mutateEnvelope(
-            "/v1/connections/\(encodeSegment(connectionID))/actions",
+            OpenAPI.Path.connectionsActions(id: connectionID),
             requestID: requestID,
             expectedRevision: expectedRevision,
             value: ActionVal(action: action, return_to: cleanReturnTo, capabilities: capabilities.isEmpty ? nil : capabilities)
@@ -1129,12 +1127,12 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func fetchLibrary() async throws -> [LibraryItem] {
-        let resp: ListResponse<LibraryItem> = try await getJSON("/v1/library")
+        let resp: ListResponse<LibraryItem> = try await getJSON(OpenAPI.Path.library)
         return resp.items
     }
 
     public func fetchLibraryItem(id: String) async throws -> LibraryItem {
-        try await getJSON("/v1/library/\(encodeSegment(id))")
+        try await getJSON(OpenAPI.Path.libraryByID(id: id))
     }
 
     public func fetchLibraryItemFile(id: String, format: String?) async throws -> LibraryFilePayload {
@@ -1145,7 +1143,7 @@ public actor LiveNoriTransport: NoriTransport {
             if let format, !format.isEmpty {
                 query.append(URLQueryItem(name: "format", value: format))
             }
-            let url = try router.scopedURL(path: "/v1/library/\(encodeSegment(id))/file", userID: userID, queryItems: query)
+            let url = try router.scopedURL(path: OpenAPI.Path.libraryFile(id: id), userID: userID, queryItems: query)
             let (data, response) = try await performAuthenticated(URLRequest(url: url), traceContext: span.traceContext)
             let http = response as? HTTPURLResponse
             if let http { span.setTag("http.response.status_code", value: String(http.statusCode)) }
@@ -1180,7 +1178,7 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func search(query: String) async throws -> SearchResponse {
-        try await getJSON("/v1/search", queryItems: [URLQueryItem(name: "q", value: query)])
+        try await getJSON(OpenAPI.Path.search, queryItems: [URLQueryItem(name: "q", value: query)])
     }
 
     public func reviseLibraryItem(
@@ -1190,7 +1188,7 @@ public actor LiveNoriTransport: NoriTransport {
         requestID: String
     ) async throws -> MutationReceipt<LibraryItem> {
         try await mutateEnvelope(
-            "/v1/library/\(encodeSegment(id))/actions",
+            OpenAPI.Path.libraryActions(id: id),
             requestID: requestID,
             expectedRevision: expectedRevision,
             value: ["action": "revise", "instruction": instruction]
@@ -1198,17 +1196,17 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func fetchCoreMemories() async throws -> [MemoryFact] {
-        let resp: ListResponse<MemoryFact> = try await getJSON("/v1/memory")
+        let resp: ListResponse<MemoryFact> = try await getJSON(OpenAPI.Path.memory)
         return resp.items
     }
 
     public func fetchMemoryLogs() async throws -> [MemoryLog] {
-        let resp: ListResponse<MemoryLog> = try await getJSON("/v1/memory/logs")
+        let resp: ListResponse<MemoryLog> = try await getJSON(OpenAPI.Path.memoryLogs)
         return resp.items
     }
 
     public func fetchWorkingMemory() async throws -> WorkingMemory {
-        try await getJSON("/v1/memory/working")
+        try await getJSON(OpenAPI.Path.memoryWorking)
     }
 
     public func searchMemory(query: String, layer: String? = nil, limit: Int = 20) async throws -> MemorySearchResponse {
@@ -1219,7 +1217,7 @@ public actor LiveNoriTransport: NoriTransport {
         if let layer, !layer.isEmpty, layer != "all" {
             queryItems.append(URLQueryItem(name: "layer", value: layer))
         }
-        return try await getJSON("/v1/memory/search", queryItems: queryItems)
+        return try await getJSON(OpenAPI.Path.memorySearch, queryItems: queryItems)
     }
 
     public func createMemory(
@@ -1236,7 +1234,7 @@ public actor LiveNoriTransport: NoriTransport {
             let pinned: Bool
         }
         return try await mutateEnvelope(
-            "/v1/memory",
+            OpenAPI.Path.memory,
             requestID: requestID,
             value: MemVal(text: text, section: section, about: about, pinned: pinned)
         )
@@ -1249,7 +1247,7 @@ public actor LiveNoriTransport: NoriTransport {
         requestID: String
     ) async throws -> MutationReceipt<MemoryActionResource> {
         try await mutateEnvelope(
-            "/v1/memory/\(encodeSegment(id))/actions",
+            OpenAPI.Path.memoryActionsByID(id: id),
             requestID: requestID,
             expectedRevision: expectedRevision,
             value: ["action": action]
@@ -1269,7 +1267,7 @@ public actor LiveNoriTransport: NoriTransport {
             let pinned: Bool?
         }
         return try await mutateEnvelope(
-            "/v1/memory/logs/\(encodeSegment(date))/\(encodeSegment(entryID))/actions",
+            OpenAPI.Path.memoryLogsActions(date: date, entryID: entryID),
             requestID: requestID,
             expectedRevision: expectedRevision,
             value: ActionVal(action: action, pinned: action == "promote" ? pinned : nil)
@@ -1283,7 +1281,7 @@ public actor LiveNoriTransport: NoriTransport {
         requestID: String
     ) async throws -> MutationReceipt<WorkingMemoryActionResource> {
         try await mutateEnvelope(
-            "/v1/memory/working/\(encodeSegment(itemID))/actions",
+            OpenAPI.Path.memoryWorkingActions(itemID: itemID),
             requestID: requestID,
             expectedRevision: expectedRevision,
             value: ["action": action]
@@ -1291,12 +1289,12 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func fetchAutomations() async throws -> [Automation] {
-        let resp: ListResponse<Automation> = try await getJSON("/v1/automations")
+        let resp: ListResponse<Automation> = try await getJSON(OpenAPI.Path.automations)
         return resp.items
     }
 
     public func fetchAutomation(id: String) async throws -> Automation {
-        try await getJSON("/v1/automations/\(encodeSegment(id))")
+        try await getJSON(OpenAPI.Path.automationsByID(id: id))
     }
 
     public func updateAutomation(
@@ -1306,7 +1304,7 @@ public actor LiveNoriTransport: NoriTransport {
         requestID: String
     ) async throws -> MutationReceipt<Automation> {
         try await mutateEnvelope(
-            "/v1/automations/\(encodeSegment(id))",
+            OpenAPI.Path.automationsByID(id: id),
             method: "PUT",
             requestID: requestID,
             expectedRevision: expectedRevision,
@@ -1321,7 +1319,7 @@ public actor LiveNoriTransport: NoriTransport {
         requestID: String
     ) async throws -> MutationReceipt<Automation> {
         try await mutateEnvelope(
-            "/v1/automations/\(encodeSegment(id))/actions",
+            OpenAPI.Path.automationsActions(id: id),
             requestID: requestID,
             expectedRevision: expectedRevision,
             value: ["action": action]
@@ -1329,12 +1327,12 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func fetchGoals() async throws -> [Goal] {
-        let resp: ListResponse<Goal> = try await getJSON("/v1/goals")
+        let resp: ListResponse<Goal> = try await getJSON(OpenAPI.Path.goals)
         return resp.items
     }
 
     public func fetchPermissions() async throws -> [PermissionRule] {
-        let resp: ListResponse<PermissionRule> = try await getJSON("/v1/permissions")
+        let resp: ListResponse<PermissionRule> = try await getJSON(OpenAPI.Path.permissions)
         return resp.items
     }
 
@@ -1342,7 +1340,7 @@ public actor LiveNoriTransport: NoriTransport {
         _ rule: PermissionRuleEditable,
         requestID: String
     ) async throws -> MutationReceipt<PermissionRule> {
-        try await mutateEnvelope("/v1/permissions", requestID: requestID, value: rule)
+        try await mutateEnvelope(OpenAPI.Path.permissions, requestID: requestID, value: rule)
     }
 
     public func revokePermissionRule(
@@ -1351,7 +1349,7 @@ public actor LiveNoriTransport: NoriTransport {
         requestID: String
     ) async throws -> MutationReceipt<PermissionRule> {
         try await mutateEnvelope(
-            "/v1/permissions/\(encodeSegment(id))/actions",
+            OpenAPI.Path.permissionsActions(id: id),
             requestID: requestID,
             expectedRevision: expectedRevision,
             value: ["action": "revoke"]
@@ -1359,23 +1357,23 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func fetchPreferences() async throws -> Preferences {
-        try await getJSON("/v1/preferences")
+        try await getJSON(OpenAPI.Path.preferences)
     }
 
     public func fetchAPICosts(days: Int) async throws -> APICostResponse {
-        try await getJSON("/v1/settings/api-costs", queryItems: [URLQueryItem(name: "days", value: String(days))])
+        try await getJSON(OpenAPI.Path.settingsAPICosts, queryItems: [URLQueryItem(name: "days", value: String(days))])
     }
 
     public func resetUserData(confirmation: String) async throws {
-        try await sendAccountMaintenance(path: "/v1/settings/reset", confirmation: confirmation, resumePending: false)
+        try await sendAccountMaintenance(path: OpenAPI.Path.settingsReset, confirmation: confirmation, resumePending: false)
     }
 
     public func resumePendingDataReset() async throws {
-        try await sendAccountMaintenance(path: "/v1/settings/reset", confirmation: "RESET", resumePending: true)
+        try await sendAccountMaintenance(path: OpenAPI.Path.settingsReset, confirmation: "RESET", resumePending: true)
     }
 
     public func deleteAccount(confirmation: String, resumePending: Bool) async throws {
-        try await sendAccountMaintenance(path: "/v1/settings/account/delete", confirmation: confirmation, resumePending: resumePending)
+        try await sendAccountMaintenance(path: OpenAPI.Path.settingsAccountDelete, confirmation: confirmation, resumePending: resumePending)
     }
 
     private func sendAccountMaintenance(path: String, confirmation: String, resumePending: Bool) async throws {
@@ -1422,7 +1420,7 @@ public actor LiveNoriTransport: NoriTransport {
             onboarding_completed_at: preferences.onboardingCompletedAt
         )
         return try await mutateEnvelope(
-            "/v1/preferences",
+            OpenAPI.Path.preferences,
             method: "PUT",
             requestID: requestID,
             expectedRevision: preferences.revision,
@@ -1433,47 +1431,47 @@ public actor LiveNoriTransport: NoriTransport {
     // MARK: - Model API Keys (BYOK)
 
     public func fetchModelSettings() async throws -> ModelSettingsResponse {
-        try await getJSON("/v1/settings/models")
+        try await getJSON(OpenAPI.Path.settingsModels)
     }
 
     public func saveModelSettings(_ request: SaveModelSettingsRequest) async throws -> ModelSettingsResponse {
-        try await sendJSON("/v1/settings/models", method: "PUT", body: request)
+        try await sendJSON(OpenAPI.Path.settingsModels, method: "PUT", body: request)
     }
 
     public func fetchModelKeys() async throws -> ModelKeysResponse {
-        try await getJSON("/v1/settings/model-keys")
+        try await getJSON(OpenAPI.Path.settingsModelKeys)
     }
 
     public func saveModelKey(provider: String, apiKey: String) async throws -> ModelKeyProvider {
         try await sendJSON(
-            "/v1/settings/model-keys/\(encodeSegment(provider))",
+            OpenAPI.Path.settingsModelKeysByProvider(provider: provider),
             method: "PUT",
             body: SaveModelKeyRequest(apiKey: apiKey)
         )
     }
 
     public func deleteModelKey(provider: String) async throws -> ModelKeyProvider {
-        try await deleteJSON("/v1/settings/model-keys/\(encodeSegment(provider))")
+        try await deleteJSON(OpenAPI.Path.settingsModelKeysByProvider(provider: provider))
     }
 
     public func fetchHomeConnectors() async throws -> HomeConnectorsResponse {
-        try await getJSON("/v1/settings/home-connectors")
+        try await getJSON(OpenAPI.Path.settingsHomeConnectors)
     }
 
     public func lookupHomePairing(_ code: String) async throws -> HomePairing {
-        try await sendJSON("/v1/settings/home-connectors/pairing/lookup", body: HomePairingRequest(userCode: code))
+        try await sendJSON(OpenAPI.Path.settingsHomeConnectorsPairingLookup, body: HomePairingRequest(userCode: code))
     }
 
     public func approveHomePairing(_ code: String) async throws {
-        try await sendWithoutResponse("/v1/settings/home-connectors/pairing/approve", method: "POST", body: HomePairingRequest(userCode: code))
+        try await sendWithoutResponse(OpenAPI.Path.settingsHomeConnectorsPairingApprove, method: "POST", body: HomePairingRequest(userCode: code))
     }
 
     public func testHomeConnector(_ id: String) async throws -> HomeConnectorTest {
-        try await sendJSON("/v1/settings/home-connectors/\(encodeSegment(id))/test", body: EmptyBody())
+        try await sendJSON(OpenAPI.Path.settingsHomeConnectorsTest(id: id), body: EmptyBody())
     }
 
     public func revokeHomeConnector(_ id: String) async throws {
-        try await sendWithoutResponse("/v1/settings/home-connectors/\(encodeSegment(id))", method: "DELETE", body: EmptyBody())
+        try await sendWithoutResponse(OpenAPI.Path.settingsHomeConnectorsByID(id: id), method: "DELETE", body: EmptyBody())
     }
 
     private func sendWithoutResponse<Body: Encodable>(_ path: String, method: String, body: Body) async throws {
