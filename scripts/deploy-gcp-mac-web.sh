@@ -28,7 +28,7 @@ fi
 sha="$(git rev-parse --short HEAD)"
 image="$registry/nori-web:mac-$sha"
 tag="release-$sha"
-cloud=(gcloud run --project="$project" --region="$region")
+cloud() { gcloud run "$@" --project="$project" --region="$region"; }
 
 if [[ "$dry_run" -eq 1 ]]; then
   echo "Build $image, grant the Mac service read access to the existing IAP policy, and deploy a tagged $service revision."
@@ -62,7 +62,7 @@ gcloud iam roles describe "$role" --project="$project" --format=json |
   jq -e --arg permission "$permission" '.includedPermissions == [$permission]' >/dev/null
 iap add-iam-policy-binding --member="serviceAccount:$account" --role="projects/$project/roles/$role" --quiet >/dev/null
 
-web="$("${cloud[@]}" services describe nori-web --format=json)"
+web="$(cloud services describe nori-web --format=json)"
 read_environment() {
   jq -er --arg name "$1" '.spec.template.spec.containers[0].env[] | select(.name==$name) | .value' <<< "$web"
 }
@@ -74,11 +74,11 @@ gcloud secrets add-iam-policy-binding "${token_secret%:*}" --project="$project" 
 
 docker buildx build --platform linux/amd64 -f web/Dockerfile --build-arg "SENTRY_RELEASE=$sha" -t "$image" --push .
 env_vars="^|^NORI_CLOUD=aws|NORI_AUTH_PROVIDER=oidc|NORI_OIDC_ISSUER=https://accounts.google.com|NORI_OIDC_AUDIENCE=$NORI_MAC_GOOGLE_CLIENT_ID|NORI_OIDC_IAP_POLICY_RESOURCE=$policy_resource|NORI_RUNTIME_URL=$core|NORI_SERVICE_AUDIENCE=$audience"
-"${cloud[@]}" deploy "$service" --image="$image" --service-account="$account" --ingress=all \
+cloud deploy "$service" --image="$image" --service-account="$account" --ingress=all \
   --no-invoker-iam-check --min-instances=0 --max-instances=2 --no-traffic --tag="$tag" --quiet \
   --set-env-vars="$env_vars" --set-secrets="NORI_SERVICE_TOKEN_KEY=$token_secret"
 
-candidate="$("${cloud[@]}" services describe "$service" --flatten='status.traffic[]' \
+candidate="$(cloud services describe "$service" --flatten='status.traffic[]' \
   --format='value(status.traffic.tag,status.traffic.revisionName,status.traffic.url)' | awk -F '\t' -v tag="$tag" '$1==tag {print $2 "\t" $3}')"
 IFS=$'\t' read -r revision url <<< "$candidate"
 status() {
@@ -89,11 +89,11 @@ if [[ -z "$revision" || -z "$url" ]] ||
    [[ "$(status "$url/")" != 403 ]] ||
    [[ "$(status -H 'Authorization: Bearer invalid' "$url/")" != 403 ]]; then
   echo "The tagged Mac Web revision failed its health or authentication checks." >&2
-  "${cloud[@]}" services update-traffic "$service" --remove-tags="$tag" --quiet || true
+  cloud services update-traffic "$service" --remove-tags="$tag" --quiet || true
   exit 1
 fi
 
-"${cloud[@]}" services update-traffic "$service" --to-revisions="$revision=100" --remove-tags="$tag" --quiet
-url="$("${cloud[@]}" services describe "$service" --format='value(status.url)')"
+cloud services update-traffic "$service" --to-revisions="$revision=100" --remove-tags="$tag" --quiet
+url="$(cloud services describe "$service" --format='value(status.url)')"
 [[ "$(status --fail "$url/api/health")" == 200 && "$(status "$url/")" == 403 ]]
 printf 'Mac Web is ready at %s\n' "$url"
