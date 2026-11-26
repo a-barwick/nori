@@ -24,7 +24,7 @@
 </div></div>
 <section><h2>Built-in runtime tools</h2>
 <div class="card"><table><tr><th>Tool</th><th>Runs on</th><th>Effect</th><th>Returns</th></tr>
-<tr><td><code>web_search</code></td><td>Worker (Brave API)</td><td>Read</td><td>Up to 8 results with URLs and publication dates ($0.005/search).</td></tr>
+<tr><td><code>web_search</code></td><td>Worker (Exa API)</td><td>Read</td><td>Up to 8 results with URLs and publication dates ($0.01/search).</td></tr>
 <tr><td><code>upload_inspect</code></td><td>Worker (no-tools model)</td><td>Read</td><td>Text answer to one question about an attached image.</td></tr>
 <tr><td><code>result_link</code></td><td>Worker</td><td>Control</td><td>The ID of a <a href="results.html">saved result</a> linking to a URL.</td></tr>
 <tr><td><code>results_find</code>, <code>result_read</code></td><td>Worker</td><td>Read</td><td>Earlier saved results and tasks matching a query or ID.</td></tr>
@@ -46,7 +46,7 @@
 <ul class="pts">
 <li>A single model turn may propose at most 64 tool calls; the entire batch is validated before any call runs.</li>
 <li><code>upload_inspect</code> sends one attached image and one question to the task model in a separate call with no tools. Only the text answer joins the task's history, so text inside an image cannot invoke a tool. Its cost counts against the task's budget.</li>
-<li>Each <code>web_search</code> call adds $0.005 to the task's spent total; without <code>BRAVE_SEARCH_API_KEY</code>, web search reports itself unavailable.</li>
+<li>Each <code>web_search</code> call adds $0.01 to the task's spent total; without <code>EXA_API_KEY</code>, web search reports itself unavailable.</li>
 <li><code>compose</code> scripts run every step through <code>core/internal/permissions</code> and pin every call to its extension digest; on worker restart, completed steps are reused and finished writes are never repeated.</li>
 </ul>
 </details>

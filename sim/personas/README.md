@@ -64,9 +64,7 @@ Each persona in `runner.py` and `suite.py` receives its own isolated ephemeral P
 **Before you run:**
 
 - Local Postgres must be up on `127.0.0.1:15432` (`make deps`).
-- Keys come from `.env` at the repo root. A worktree reads the main checkout's `.env` automatically.
-- Inner/flush/dream calls go through OpenRouter. `suite.py` aborts up front if OpenRouter has less than `--min-credits` (default $15) or rejects a 1-token test call; a workspace monthly budget shows up as HTTP 403.
-- A full run costs roughly $25–30 (about $2.5–3 per persona). See `docs/vst-cost-plan.md`.
+- Strict BYOK applies: local simulation runs use either `--stub-models` (deterministic offline stubs) or a loopback local OpenAI-compatible server (e.g., Inkling Mini 2 via `NORI_LOCAL_MODEL_URL`). Operator cloud-LLM env vars are stripped automatically.
 - Keep the laptop awake with the lid open. Sleep mid-run corrupts results.
 
 **Where results go:** everything is written under `.sim-runs/` at the repo root. It's git-ignored, so results stay on your machine.

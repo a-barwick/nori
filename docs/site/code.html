@@ -53,13 +53,12 @@
     </table>
   </div>
   <div class="card">
-    <h3 style="margin-top:0">The eight binaries <span class="mono" style="font-size:11px;color:#8a8268">core/cmd/</span></h3>
+    <h3 style="margin-top:0">The seven binaries <span class="mono" style="font-size:11px;color:#8a8268">core/cmd/</span></h3>
     <ul class="pts" style="margin-bottom:0">
       <li><code>nori</code> — Hosted service binary (<code>--role=all|api|worker</code>, <code>--migrate-only</code>; HS256 service-authenticated HTTP API and/or unified Postgres-native worker pool, GCP and AWS adapters).</li>
       <li><code>nori-local</code> — Loopback development binary running both the HTTP API and the unified Postgres-native worker pool in one process.</li>
       <li><code>nori-user</code> — CLI for provisioning users, managing invites, and binding verified identities in Postgres.</li>
       <li><code>nori-sim</code> — Virtual-clock simulation server used by the multi-day persona simulation and grading suite.</li>
-      <li><code>nori-gateway</code> — Local loopback guarded LLM proxy with hard spend and call ceilings for isolated tests and simulations.</li>
       <li><code>nori-connector</code> — Home AI connector daemon and CLI bridging local Ollama hosts to the relay.</li>
       <li><code>nori-connector-relay</code> — Dedicated HTTPS/WebSocket relay forwarding encrypted Home AI requests between Core and paired connectors.</li>
       <li><code>nori-storage-audit</code> — Read-only audit tool inspecting artifact storage integrity and orphaned uploads.</li>

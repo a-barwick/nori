@@ -25,7 +25,6 @@ func TestNoRawLLMCallsOutsideGuardedAdapters(t *testing.T) {
 		filepath.ToSlash("internal/platform/models.go"):           true,
 		filepath.ToSlash("internal/agent/anthropic/anthropic.go"): true,
 		filepath.ToSlash("internal/conversation/jev.go"):          true,
-		filepath.ToSlash("internal/gateway/server.go"):            true,
 	}
 
 	providerHosts := []string{

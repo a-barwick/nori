@@ -12,7 +12,6 @@ Storage sits behind contracts. `internal/state` defines records, `ConversationSt
 | `nori-local` | `cmd/nori-local` | Loopback development runtime (`NORI_CLOUD=local` default, binds `127.0.0.1`). Runs both the HTTP API and the unified Postgres-native worker pool in-process. |
 | `nori-user` | `cmd/nori-user` | Provisions users, manages invites, and binds an existing user to a verified sign-in identity. |
 | `nori-sim` | `cmd/nori-sim` | Local-only virtual-clock simulation server (`/_sim/*` control, drain, snapshot, invariant checks) used by the persona simulation suite. |
-| `nori-gateway` | `cmd/nori-gateway` | Local loopback guarded LLM proxy with hard spend/call caps for isolated test and simulation runs. |
 | `nori-connector` | `cmd/nori-connector` | Home AI connector daemon and CLI (`pair`, `serve`, `status`, `doctor`, `unpair`) bridging local Ollama to the relay. |
 | `nori-connector-relay` | `cmd/nori-connector-relay` | Dedicated HTTPS/WebSocket relay forwarding encrypted Home AI model requests between Nori Core and paired connectors. |
 | `nori-storage-audit` | `cmd/nori-storage-audit` | Read-only audit utility for inspecting artifact storage integrity and orphaned uploads. |
@@ -174,7 +173,6 @@ Postgres records migrations by filename and checksum. Applied migrations keep th
 | `NORI_CREDENTIAL_STORE`, `NORI_CREDENTIAL_KMS_KEY`, `NORI_CREDENTIAL_KEY`, `NORI_CREDENTIAL_KEY_SECRET`, `NORI_CREDENTIAL_KEY_FILE`, `NORI_OAUTH_REDIRECT_URL`, `NORI_MCP_COMMANDS` | Encrypted Postgres credential store (`database`), OAuth callback URL, and local-only stdio MCP command map. |
 | `NORI_AUTOMATION_UNATTENDED`, `NORI_USER_SENDS` | Permission policies (`confirm_writes` / `require_rule`; `allow` / `ask`). |
 | `NORI_USAGE_METER`, `NORI_USAGE_ENDPOINT`, `NORI_USAGE_TOKEN` | Usage metering (`store` or `http` webhook). |
-| `BRAVE_SEARCH_API_KEY` | Enables built-in `web_search`; omitted reports search unavailable. |
 | `BIND_HOST`, `PORT` | Hosted API bind address (default `127.0.0.1:8080`); `nori-local` always binds `127.0.0.1`. |
 
 ## API routes
