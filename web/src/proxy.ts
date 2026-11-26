@@ -4,8 +4,6 @@ import { reconnectingPage } from "@/lib/runtime/reconnecting";
 import { isSignedOut } from "@/lib/runtime/session";
 import { applySecurityHeaders, buildAppCsp, CSP_NONCE_HEADER, generateCspNonce } from "@/lib/securityHeaders";
 
-const PUBLIC_PATHS = new Set(["/privacy", "/terms"]);
-
 export async function proxy(request: NextRequest) {
   const nonce = generateCspNonce();
   const csp = buildAppCsp(nonce, { isDev: process.env.NODE_ENV !== "production" });
@@ -18,9 +16,6 @@ export async function proxy(request: NextRequest) {
     return response;
   };
 
-  if (PUBLIC_PATHS.has(request.nextUrl.pathname)) {
-    return finalize(NextResponse.next({ request: { headers: requestHeaders } }));
-  }
   if (request.nextUrl.pathname === "/signed-out") {
     return finalize(
       isSignedOut(request.headers)

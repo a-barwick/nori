@@ -33,6 +33,13 @@ struct RoutingAndCodableTests {
         #expect(encodedURL.absoluteString.contains("/users/usr%2F1/v1/library/a%2Fb%3Fc%23d%20e/file"))
     }
 
+    @Test("Legal links open the public site")
+    func legalLinksUsePublicSite() {
+        #expect(NoriConfig.webURL.absoluteString == "https://www.noribot.chat")
+        #expect(NoriConfig.legalURL(path: "/privacy").absoluteString == "https://www.noribot.chat/privacy")
+        #expect(NoriConfig.legalURL(path: "terms").absoluteString == "https://www.noribot.chat/terms")
+    }
+
     @Test("Google OAuth PKCE builds reversed redirect scheme and validates state")
     func googleOAuthPKCE() throws {
         let clientID = "123456-abc.apps.googleusercontent.com"

@@ -24,6 +24,7 @@ import {
 } from "@/lib/assistant/permissions";
 import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant/useResource";
 import type { Connection, MCPServer, OperationProjection as Operation, PermissionRule, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
+import { PRIVACY_URL, TERMS_URL } from "@/lib/legal";
 import { cn } from "@/lib/utils";
 import { ApiCosts } from "./ApiCosts";
 import { ModelsSettings } from "./ModelsSettings";
@@ -350,8 +351,8 @@ function AccountSettings() {
     </Rows>
     <Section title="Legal">
       <Rows label="Legal">
-        <Row href="/privacy" title="Privacy Policy" />
-        <Row href="/terms" title="Terms of Service" />
+        <Row href={PRIVACY_URL} title="Privacy Policy" />
+        <Row href={TERMS_URL} title="Terms of Service" />
       </Rows>
     </Section>
     {!localMode && <Section><SignOutForm /></Section>}

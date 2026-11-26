@@ -2,9 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, describe, test } from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { securityHeaders } from "../../next.config";
-import PrivacyPage from "@/app/privacy/page";
-import TermsPage from "@/app/terms/page";
+import { legalRedirects, securityHeaders } from "../../next.config";
 import SignedOut from "@/app/signed-out/page";
 import {
   API_DEFAULT_CSP,
@@ -113,33 +111,17 @@ describe("securityHeaders helpers and Next.js header rules", () => {
   });
 });
 
-describe("public legal pages and signed-out legal links", () => {
-  test("Privacy Policy documents collected data, BYOK KMS encryption, providers, telemetry, retention, and deletion", () => {
-    const html = renderToStaticMarkup(React.createElement(PrivacyPage));
-    assert.match(html, /Privacy Policy/);
-    assert.match(html, /email address/i);
-    assert.match(html, /display name/i);
-    assert.match(html, /timezone/i);
-    assert.match(html, /Cloud KMS/i);
-    assert.match(html, /Sentry/i);
-    assert.match(html, /Arize/i);
-    assert.match(html, /redacted/i);
-    assert.match(html, /Reset data/i);
-    assert.match(html, /delete your Nori account/i);
-    assert.match(html, /href="\/terms"/);
+describe("legal pages on the public site", () => {
+  test("/privacy and /terms redirect to the public site", async () => {
+    assert.deepEqual(await legalRedirects(), [
+      { source: "/privacy", destination: "https://www.noribot.chat/privacy", permanent: false },
+      { source: "/terms", destination: "https://www.noribot.chat/terms", permanent: false },
+    ]);
   });
 
-  test("Terms of Service renders cleanly and links to Privacy Policy", () => {
-    const html = renderToStaticMarkup(React.createElement(TermsPage));
-    assert.match(html, /Terms of Service/);
-    assert.match(html, /BYOK/);
-    assert.match(html, /Reset data/i);
-    assert.match(html, /href="\/privacy"/);
-  });
-
-  test("SignedOut page links to Privacy Policy and Terms of Service", () => {
+  test("SignedOut page links to the public Privacy Policy and Terms of Service", () => {
     const html = renderToStaticMarkup(React.createElement(SignedOut));
-    assert.match(html, /href="\/privacy"/);
-    assert.match(html, /href="\/terms"/);
+    assert.match(html, /href="https:\/\/www\.noribot\.chat\/privacy"/);
+    assert.match(html, /href="https:\/\/www\.noribot\.chat\/terms"/);
   });
 });

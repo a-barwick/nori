@@ -1,10 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { NoriMark } from "@/components/mark/NoriMark";
 import { Button } from "@/components/ui/primitives";
+import { PRIVACY_URL, TERMS_URL } from "@/lib/legal";
 
 export default function InvitePage() {
   const router = useRouter();
@@ -74,9 +74,9 @@ export default function InvitePage() {
         </button>
       </form>
       <nav aria-label="Legal" className="mt-2 flex items-center gap-4 text-meta text-ink-2">
-        <Link href="/privacy" className="hover:text-ink hover:underline">Privacy Policy</Link>
+        <a href={PRIVACY_URL} className="hover:text-ink hover:underline">Privacy Policy</a>
         <span aria-hidden className="text-ink-3">·</span>
-        <Link href="/terms" className="hover:text-ink hover:underline">Terms of Service</Link>
+        <a href={TERMS_URL} className="hover:text-ink hover:underline">Terms of Service</a>
       </nav>
     </main>
   );
