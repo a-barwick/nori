@@ -73,7 +73,7 @@ gcloud secrets add-iam-policy-binding "${token_secret%:*}" --project="$project" 
   --member="serviceAccount:$account" --role=roles/secretmanager.secretAccessor --quiet >/dev/null
 
 docker buildx build --platform linux/amd64 -f web/Dockerfile --build-arg "SENTRY_RELEASE=$sha" -t "$image" --push .
-env_vars="^|^NORI_CLOUD=aws|NORI_AUTH_PROVIDER=oidc|NORI_OIDC_ISSUER=https://accounts.google.com|NORI_OIDC_AUDIENCE=$NORI_MAC_GOOGLE_CLIENT_ID|NORI_OIDC_IAP_POLICY_RESOURCE=$policy_resource|NORI_RUNTIME_URL=$core|NORI_SERVICE_AUDIENCE=$audience"
+env_vars="^|^NORI_CLOUD=gcp|NORI_AUTH_PROVIDER=oidc|NORI_OIDC_ISSUER=https://accounts.google.com|NORI_OIDC_AUDIENCE=$NORI_MAC_GOOGLE_CLIENT_ID|NORI_OIDC_IAP_POLICY_RESOURCE=$policy_resource|NORI_RUNTIME_URL=$core|NORI_SERVICE_AUDIENCE=$audience"
 edge_token=""
 if cloud services describe "$service" --format=json >/dev/null 2>&1; then
   traffic_flags=(--no-traffic)
