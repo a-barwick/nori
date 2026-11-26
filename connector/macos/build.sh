@@ -17,6 +17,12 @@ esac
 case "$version" in
   *[!A-Za-z0-9.+_-]*|'') printf '%s\n' "Invalid connector version." >&2; exit 1 ;;
 esac
+if [ "$identity" = "-" ]; then
+  case "$relay_url" in
+    http://127.0.0.1:*|http://localhost:*) ;;
+    *) printf '%s\n' "Use a signing identity for a hosted relay. Ad hoc builds are for loopback testing." >&2; exit 1 ;;
+  esac
+fi
 
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
@@ -30,6 +36,13 @@ cp "$project_dir/LICENSE" "$app/Contents/Resources/LICENSE"
 cp "$project_dir/connector/macos/com.nori.connector.agent.plist" "$app/Contents/Library/LaunchAgents/"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" "$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $version" "$app/Contents/Info.plist"
+swift_flags=(-D NORI_STANDALONE)
+if [ "$identity" = "-" ]; then
+  swift_flags+=(-D NORI_ADHOC)
+fi
+case "$identity" in
+  'Developer ID Application:'*) swift_flags+=(-D NORI_RELEASE) ;;
+esac
 for arch in arm64 amd64; do
   if [ "$arch" = "amd64" ]; then swift_arch=x86_64; else swift_arch=arm64; fi
   (
@@ -38,8 +51,8 @@ for arch in arm64 amd64; do
       -ldflags "-X nori/internal/homeconnector.DefaultRelayURL=$relay_url -X nori/internal/homeconnector.Version=$version" \
       -o "$scratch/nori-connector-$arch" ./cmd/nori-connector
   )
-  xcrun swiftc -target "$swift_arch-apple-macos13.0" \
-    -o "$scratch/nori-connector-keychain-$arch" "$project_dir/connector/macos/KeychainHelper.swift" -framework Security
+  xcrun swiftc -target "$swift_arch-apple-macos13.0" "${swift_flags[@]}" \
+    -o "$scratch/nori-connector-keychain-$arch" "$project_dir/macos/native/NoriKeychain.swift" -framework Security
   xcrun swiftc -parse-as-library -target "$swift_arch-apple-macos13.0" \
     -o "$scratch/nori-connector-ui-$arch" "$project_dir/connector/macos/NoriConnector.swift" \
     -framework AppKit -framework SwiftUI -framework ServiceManagement
@@ -52,8 +65,8 @@ if [ "$identity" = "-" ]; then
 else
   sign_args=(--force --options runtime --timestamp --sign "$identity")
 fi
-codesign "${sign_args[@]}" "$app/Contents/MacOS/nori-connector"
-codesign "${sign_args[@]}" "$app/Contents/MacOS/nori-connector-keychain"
+codesign "${sign_args[@]}" --identifier com.nori.connector.engine "$app/Contents/MacOS/nori-connector"
+codesign "${sign_args[@]}" --identifier com.nori.connector.keychain "$app/Contents/MacOS/nori-connector-keychain"
 codesign "${sign_args[@]}" "$app/Contents/MacOS/Nori Connector"
 codesign "${sign_args[@]}" "$app"
 codesign --verify --deep --strict "$app"
