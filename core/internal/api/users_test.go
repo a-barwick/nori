@@ -250,7 +250,14 @@ func TestUserResolveProvisioningModes(t *testing.T) {
 			t.Fatalf("exhausted response = %d %s", rec.Code, rec.Body.String())
 		}
 
-		// 5. 5th request from same IP hits resolve rate limit (burst 4).
+		// 5. Repeated requests for the same email hit the resolve rate limit (burst 4),
+		// while distinct emails arriving from a shared BFF IP remain isolated.
+		for i := 0; i < 4; i++ {
+			rec = httptest.NewRecorder()
+			req = httptest.NewRequest(http.MethodPost, "/api/users/redeem", strings.NewReader(`{"email":"dave@example.com","invite_code":"`+inv.Code+`"}`))
+			req.RemoteAddr = "198.51.100.10:1234"
+			handler.ServeHTTP(rec, req)
+		}
 		rec = httptest.NewRecorder()
 		req = httptest.NewRequest(http.MethodPost, "/api/users/redeem", strings.NewReader(`{"email":"dave@example.com","invite_code":"`+inv.Code+`"}`))
 		req.RemoteAddr = "198.51.100.10:1234"

@@ -119,8 +119,12 @@ export class IpRateLimiter {
 export function extractClientIp(headers: Headers): string {
   const forwarded = headers.get("x-forwarded-for");
   if (forwarded) {
-    const first = forwarded.split(",")[0]?.trim();
-    if (first) return first;
+    // Cloud Run's Google Front End appends the real connecting IP as the rightmost entry.
+    const parts = forwarded.split(",");
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const candidate = parts[i]?.trim();
+      if (candidate) return candidate;
+    }
   }
   const realIp = headers.get("x-real-ip")?.trim();
   if (realIp) return realIp;

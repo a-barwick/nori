@@ -98,12 +98,6 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 			return
 		}
 		if r.Method == "POST" && (r.URL.Path == "/api/users/resolve" || r.URL.Path == "/api/users/redeem") {
-			if limiter != nil {
-				if ok, retryAfter := limiter.Allow(RateLimitResolve, "ip:"+clientIP(r)); !ok {
-					writeRateLimited(w, r, RateLimitResolve, retryAfter)
-					return
-				}
-			}
 			var body struct {
 				Email      string `json:"email"`
 				Name       string `json:"name"`
@@ -111,6 +105,12 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 				Code       string `json:"code"`
 			}
 			if err := httpjson.Decode(w, r, &body, 64<<10); err != nil {
+				if limiter != nil {
+					if ok, retryAfter := limiter.Allow(RateLimitResolve, "ip:"+clientIP(r)); !ok {
+						writeRateLimited(w, r, RateLimitResolve, retryAfter)
+						return
+					}
+				}
 				if errors.Is(err, httpjson.ErrTooLarge) {
 					writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "Request body is too large."})
 					return
@@ -133,6 +133,11 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 			if limiter != nil {
 				if normalizedEmail := strings.ToLower(strings.TrimSpace(lookupEmail)); normalizedEmail != "" {
 					if ok, retryAfter := limiter.Allow(RateLimitResolve, "email:"+hashRateLimitKey(normalizedEmail)); !ok {
+						writeRateLimited(w, r, RateLimitResolve, retryAfter)
+						return
+					}
+				} else {
+					if ok, retryAfter := limiter.Allow(RateLimitResolve, "ip:"+clientIP(r)); !ok {
 						writeRateLimited(w, r, RateLimitResolve, retryAfter)
 						return
 					}

@@ -81,8 +81,8 @@ describe("IpRateLimiter", () => {
     }
   });
 
-  test("extractClientIp reads X-Forwarded-For and X-Real-IP", () => {
-    assert.equal(extractClientIp(new Headers({ "x-forwarded-for": "203.0.113.5, 10.0.0.1" })), "203.0.113.5");
+  test("extractClientIp reads rightmost X-Forwarded-For hop and X-Real-IP", () => {
+    assert.equal(extractClientIp(new Headers({ "x-forwarded-for": "198.51.100.99, 203.0.113.5" })), "203.0.113.5");
     assert.equal(extractClientIp(new Headers({ "x-real-ip": "198.51.100.7" })), "198.51.100.7");
     assert.equal(extractClientIp(new Headers()), "unknown");
   });
