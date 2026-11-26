@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nori</title>
+<meta name="description" content="Tell Nori what needs doing and it gets on with it, checking with you before it sends anything in your name.">
+<link rel="icon" href="/favicon.ico">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="/"><svg width="32" height="32" viewBox="0 0 96 96" aria-hidden="true" focusable="false"><defs><clipPath id="rice-head"><path d="M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z"/></clipPath></defs><path d="M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z" fill="var(--mark-body)"/><rect x="30" y="61" width="36" height="30" rx="3" fill="var(--mark-seaweed)" clip-path="url(#rice-head)"/><path d="M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z" fill="none" stroke="var(--mark-edge)" stroke-width="1.75" stroke-linejoin="round"/><ellipse cx="38.5" cy="46" rx="3.4" ry="4" fill="var(--mark-ink)"/><ellipse cx="57.5" cy="46" rx="3.4" ry="4" fill="var(--mark-ink)"/><path d="M43.5 53.5Q48 57 52.5 53.5" fill="none" stroke="var(--mark-ink)" stroke-width="2.6" stroke-linecap="round"/></svg><span>Nori</span></a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="/#download">Download</a>
+      <a href="/about">About</a>
+      <a class="btn" href="https://app.noribot.chat">Sign in</a>
+    </nav>
+  </div>
+</header>
+<main>
+<div class="wrap">
+<section class="hero">
+  <div>
+    <h1>An assistant you can actually hand things to</h1>
+    <p class="intro">Tell Nori what needs doing and it gets on with it, checking with you before it sends anything in your name.</p>
+    <div class="actions">
+      <a class="btn" href="#download">Download for Mac</a>
+      <a class="btn quiet" href="https://app.noribot.chat">Open in your browser</a>
+    </div>
+  </div>
+  <figure class="demo" aria-label="Example: you ask Nori to tell your landlord the heater is broken and to keep Thursday morning free for the repair. Nori blocks the time on your calendar and waits for your approval before sending the email.">
+    <div class="row you beat" aria-hidden="true"><p class="bubble">The heater's broken again. Let Pat know, and keep Thursday morning free for the repair.</p></div>
+    <div class="row beat" aria-hidden="true"><span class="avatar"><svg width="32" height="32" viewBox="0 0 96 96" aria-hidden="true" focusable="false"><defs><clipPath id="rice-demo"><path d="M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z"/></clipPath></defs><path d="M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z" fill="#fdfcff"/><rect x="30" y="61" width="36" height="30" rx="3" fill="#101a30" clip-path="url(#rice-demo)"/><path d="M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z" fill="none" stroke="#fdfcff" stroke-width="1.75" stroke-linejoin="round"/><ellipse cx="38.5" cy="46" rx="3.4" ry="4" fill="#190936"/><ellipse cx="57.5" cy="46" rx="3.4" ry="4" fill="#190936"/><path d="M43.5 53.5Q48 57 52.5 53.5" fill="none" stroke="#190936" stroke-width="2.6" stroke-linecap="round"/></svg></span><p class="reply">Thursday 9 to 12 is blocked on your calendar. Here's the email to Pat.</p></div>
+    <div class="approval beat" aria-hidden="true">
+      <div class="top"><h3>Send email to Pat</h3><span class="pill waiting">Needs approval</span></div>
+      <div class="mail">
+        <p><strong>To</strong> pat@example.com</p>
+        <p><strong>Subject</strong> Heater repair</p>
+        <p>Hi Pat, the heater stopped working again. I'm home Thursday from 9 to 12 if the repair person can come then.</p>
+      </div>
+      <div class="choices"><span>Approve</span><span>Decline</span></div>
+    </div>
+  </figure>
+</section>
+
+<section class="asks" aria-label="Examples of things people ask Nori">
+  <div class="ask-col">
+    <p class="bubble">what does my lease say about moving out early?</p>
+    <p class="answer"><span class="file">PDF</span>Lease.pdf, page 4</p>
+    <p class="bubble">move my 3pm with Jordan to tomorrow</p>
+  </div>
+  <div class="ask-col">
+    <p class="bubble">compare the three daycares near us, mostly on price</p>
+    <p class="answer"><span class="file sheet">Table</span>Daycare comparison</p>
+    <p class="bubble">every Monday morning, send me what's on this week</p>
+  </div>
+  <div class="ask-col">
+    <p class="bubble">find 30 minutes with Sam next week</p>
+    <p class="answer"><span class="file cal">Thu</span>Coffee with Sam, 10:30</p>
+    <p class="bubble">remind me to renew my passport in March</p>
+  </div>
+</section>
+</div>
+
+<section class="showcase">
+  <div class="wrap">
+    <div class="browser"><img src="/img/web-desktop.png" width="1024" height="640" alt="Nori in a web browser, with the conversation beside a list of running tasks"></div>
+    <div class="phones">
+      <img src="/img/ios-chat.jpg" width="506" height="1100" alt="Nori on iPhone, showing a conversation" loading="lazy">
+      <img src="/img/ios-work.jpg" width="506" height="1100" alt="Nori on iPhone, showing an email waiting for approval" loading="lazy">
+    </div>
+  </div>
+</section>
+
+<section class="trust">
+  <div class="wrap trust-grid">
+    <img class="phone" src="/img/ios-memory.jpg" width="506" height="1100" alt="Nori's Memory screen on iPhone, listing saved preferences" loading="lazy">
+    <div>
+      <h2>Nothing goes out without your okay</h2>
+      <p>Every email Nori writes waits for you to approve it, and everything it remembers about you is on one screen where you can change or delete it. It only opens the Drive files you pick, and your data is never sold or used to train AI models.</p>
+    </div>
+  </div>
+</section>
+
+<section class="get" id="download">
+  <div class="wrap">
+    <h2>Get Nori</h2>
+    <p>Nori for Mac can run the AI on your own computer, so your requests don't have to go to an AI company. It also works in <a href="https://app.noribot.chat">your browser</a>, there's a <a href="https://github.com/a-barwick/nori/releases/latest">Linux package</a> for running the model on a home server, and beta testers get the iPhone app through TestFlight.</p>
+    <a class="btn big" href="https://github.com/a-barwick/nori/releases/latest">Download for Mac</a>
+  </div>
+</section>
+</main>
+<footer class="site-footer">
+  <div class="wrap">
+    <span>© 2026 Nori</span>
+    <nav aria-label="Footer">
+      <a href="/about">About</a>
+      <a href="/privacy">Privacy Policy</a>
+      <a href="/terms">Terms of Service</a>
+      <a href="https://github.com/a-barwick/nori">Source code</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>
