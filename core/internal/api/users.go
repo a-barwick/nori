@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/mail"
+	"net/url"
 	"strings"
 	"time"
 
@@ -80,6 +82,8 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 			return
 		}
 		verifiedEmail, isUserToken := serviceauth.VerifiedEmail(r.Context())
+		verifiedIdentity, hasVerifiedIdentity := serviceauth.VerifiedIdentity(r.Context())
+		isService := serviceauth.IsService(r.Context())
 		if r.URL.Path == "/metrics" {
 			if isUserToken {
 				writeJSON(w, http.StatusForbidden, map[string]string{"error": "Forbidden."})
@@ -146,6 +150,18 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 			inviteCode := strings.TrimSpace(body.InviteCode)
 			if inviteCode == "" {
 				inviteCode = strings.TrimSpace(body.Code)
+			}
+			if hasVerifiedIdentity || isService {
+				identity := verifiedIdentity
+				if isService {
+					identity = users.Identity{
+						Issuer: r.Header.Get("X-Nori-Identity-Issuer"), Subject: r.Header.Get("X-Nori-Identity-Subject"),
+						EmailAuthoritative: r.Header.Get("X-Nori-Identity-Email-Authoritative") == "true" &&
+							r.Header.Get("X-Nori-Identity-Issuer") == "https://accounts.google.com",
+					}
+				}
+				serveIdentityResolve(w, r, directory, provisioningMode, identity, lookupEmail, body.Name, inviteCode)
+				return
 			}
 			if r.URL.Path == "/api/users/redeem" {
 				serveUserRedeem(w, r, directory, provisioningMode, lookupEmail, body.Name, inviteCode)
@@ -218,11 +234,36 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 			writeUserLookupError(w, r, err, "A known user is required.")
 			return
 		}
-		if isUserToken && !strings.EqualFold(row.Email, verifiedEmail) {
+		if hasVerifiedIdentity && !row.HasIdentity(verifiedIdentity) {
+			if row.IdentityIssuer != "" || !strings.EqualFold(row.Email, verifiedEmail) || !users.MayBindLegacyAccount(verifiedIdentity, row.Email) {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "Access denied."})
+				return
+			}
+			identities, ok := directory.(users.IdentityDirectory)
+			if !ok {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Nori could not check your account. Try again shortly."})
+				return
+			}
+			resolved, err := identities.ResolveIdentity(r.Context(), verifiedIdentity, verifiedEmail, "", "manual", "")
+			if err != nil || resolved.ID != row.ID {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "Access denied."})
+				return
+			}
+			row = resolved
+		} else if isUserToken && !hasVerifiedIdentity && !strings.EqualFold(row.Email, verifiedEmail) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "Access denied."})
 			return
 		}
 		ctx := observability.BindHTTPUser(r.Context(), row.ID)
+		if isService && r.Method == http.MethodPost && r.URL.Path == "/v1/settings/account/delete" {
+			identity := users.Identity{Issuer: r.Header.Get("X-Nori-Identity-Issuer"), Subject: r.Header.Get("X-Nori-Identity-Subject")}
+			email, decodeErr := url.PathUnescape(r.Header.Get("X-Nori-Identity-Email"))
+			email = users.Email(email)
+			address, emailErr := mail.ParseAddress(email)
+			if identity.Validate() == nil && row.HasIdentity(identity) && decodeErr == nil && emailErr == nil && address.Address == email {
+				ctx = serviceauth.WithVerifiedIdentity(ctx, email, identity)
+			}
+		}
 		if limiter != nil {
 			cat, isSSE := classifyUserRequest(r.Method, r.URL.Path)
 			if ok, retryAfter := limiter.Allow(cat, row.ID); !ok {
@@ -274,6 +315,52 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 		}
 		routes.Handler.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func serveIdentityResolve(w http.ResponseWriter, r *http.Request, directory users.Directory, mode settings.UserProvisioningMode, identity users.Identity, email, name, inviteCode string) {
+	if identity.Validate() != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "A verified sign-in is required."})
+		return
+	}
+	identities, ok := directory.(users.IdentityDirectory)
+	if !ok {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Nori could not check your account. Try again shortly."})
+		return
+	}
+	row, err := identities.ResolveIdentity(r.Context(), identity, email, name, string(mode), inviteCode)
+	if err != nil {
+		switch {
+		case errors.Is(err, users.ErrInviteRequired):
+			if r.URL.Path == "/api/users/redeem" {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invite code is required.", "code": "invite_code_required"})
+			} else {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "An invite code is required to access Nori.", "code": inviteRequiredCode})
+			}
+		case errors.Is(err, users.ErrIdentityUnbound):
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "Your account requires identity verification.", "code": "identity_unbound"})
+		case errors.Is(err, users.ErrIdentityConflict), errors.Is(err, users.ErrIdentityNotFound), errors.Is(err, users.ErrIdentityInvalid):
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "No user for this sign-in."})
+		case errors.Is(err, users.ErrInviteNotFound):
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "Invalid invite code.", "code": "invalid_invite"})
+		case errors.Is(err, users.ErrInviteExpired):
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "This invite code has expired.", "code": "invite_expired"})
+		case errors.Is(err, users.ErrInviteExhausted):
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "This invite code has already been used.", "code": "invite_exhausted"})
+		case errors.Is(err, users.ErrInviteRevoked):
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "This invite code has been revoked.", "code": "invite_revoked"})
+		case errors.Is(err, users.ErrInviteEmailMismatch):
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "This invite code cannot be used with this email address.", "code": "invite_email_mismatch"})
+		case strings.Contains(err.Error(), "user email must be"):
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "A valid sign-in email is required."})
+		default:
+			slog.WarnContext(r.Context(), "identity resolution failed", "err", err)
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Nori could not check your account. Try again shortly."})
+		}
+		return
+	}
+	observability.BindHTTPUser(r.Context(), row.ID)
+	w.Header().Set("X-Nori-Identity-Bound", "1")
+	writeJSON(w, http.StatusOK, map[string]string{"id": row.ID})
 }
 
 func serveUserResolve(w http.ResponseWriter, r *http.Request, directory users.Directory, mode settings.UserProvisioningMode, email, name, inviteCode string) {

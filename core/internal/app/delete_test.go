@@ -177,3 +177,83 @@ func TestAccountDeletePostgres(t *testing.T) {
 		t.Fatalf("bob preferences after alice delete: status=%d body=%s", bobAfter.Code, bobAfter.Body.String())
 	}
 }
+
+func TestAccountDeleteAcceptsVerifiedCurrentIdentityEmail(t *testing.T) {
+	dsn := os.Getenv("NORI_TEST_POSTGRES_URL")
+	if dsn == "" {
+		t.Skip("NORI_TEST_POSTGRES_URL is unset")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	backend, err := postgres.OpenBackend(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	storage := platform.NewStorage(backend, func(u users.User) state.ArtifactStore {
+		files, err := localfs.Open(filepath.Join(root, u.FilePrefix()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return files
+	})
+	svc := app.OpenServiceWithStorage(storage, nil, settings.Settings{
+		Cloud: "local", Role: "all", TaskBudgetUSD: 1,
+		Features: settings.Features{DisableJev: true}, Models: settings.Models{BYOKRequired: true},
+		Connections: settings.Connections{CredentialStore: "database", CredentialKey: strings.Repeat("42", 32)},
+	})
+	t.Cleanup(svc.Close)
+	createUser := func() (users.User, users.Identity) {
+		t.Helper()
+		id := uuid.NewString()
+		identity := users.Identity{Issuer: "https://accounts.google.com", Subject: "subject-" + id}
+		row := users.User{
+			ID: id, Email: "old-" + id + "@example.com", TimeZone: "UTC",
+			IdentityIssuer: identity.Issuer, IdentitySubject: identity.Subject,
+		}
+		if err := svc.Users.Create(ctx, row); err != nil {
+			t.Fatal(err)
+		}
+		return row, identity
+	}
+	deleteRequest := func(row users.User, confirmation string) *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/users/"+row.ID+"/v1/settings/account/delete", strings.NewReader(`{"confirmation":"`+confirmation+`"}`))
+		req.Header.Set("Content-Type", "application/json")
+		return req
+	}
+	assertStatus := func(rec *httptest.ResponseRecorder, want int) {
+		t.Helper()
+		if rec.Code != want {
+			t.Fatalf("status = %d, want %d: %s", rec.Code, want, rec.Body.String())
+		}
+	}
+
+	native, nativeIdentity := createUser()
+	currentEmail := "current-" + native.ID + "@example.com"
+	req := deleteRequest(native, currentEmail)
+	req = req.WithContext(serviceauth.WithVerifiedIdentity(req.Context(), currentEmail, nativeIdentity))
+	rec := httptest.NewRecorder()
+	svc.Handler(false).ServeHTTP(rec, req)
+	assertStatus(rec, http.StatusNoContent)
+
+	web, webIdentity := createUser()
+	webEmail := "current-" + web.ID + "@example.com"
+	auth := serviceauth.Config{Key: strings.Repeat("x", 32), Audience: "nori-test"}
+	token, err := auth.Token()
+	if err != nil {
+		t.Fatal(err)
+	}
+	serviceDelete := func(subject string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := deleteRequest(web, webEmail)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-Nori-Identity-Issuer", webIdentity.Issuer)
+		req.Header.Set("X-Nori-Identity-Subject", subject)
+		req.Header.Set("X-Nori-Identity-Email", webEmail)
+		rec := httptest.NewRecorder()
+		auth.Protect(svc.Handler(false)).ServeHTTP(rec, req)
+		return rec
+	}
+	assertStatus(serviceDelete("different-subject"), http.StatusBadRequest)
+	assertStatus(serviceDelete(webIdentity.Subject), http.StatusNoContent)
+}

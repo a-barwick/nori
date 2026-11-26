@@ -10,7 +10,7 @@ Storage sits behind contracts. `internal/state` defines records, `ConversationSt
 | --- | --- | --- |
 | `nori` | `cmd/nori` | Unified hosted runtime (`NORI_CLOUD=aws` default, `--role=all\|api\|worker` / `NORI_ROLE`). Runs the HTTP API (`api`), the Postgres-native worker pool (`worker`), or both (`all`). |
 | `nori-local` | `cmd/nori-local` | Loopback development runtime (`NORI_CLOUD=local` default, binds `127.0.0.1`). Runs both the HTTP API and the unified Postgres-native worker pool in-process. |
-| `nori-user` | `cmd/nori-user` | Provisions a user row in Postgres (`--id`, `--email`, `--name`, `--timezone`). |
+| `nori-user` | `cmd/nori-user` | Provisions users, manages invites, and binds an existing user to a verified sign-in identity. |
 | `contracts-check` | `cmd/contracts-check` | Validates `contracts/assistant` JSON Schema 2020-12 definitions, fixtures (with strict Go round-trips), and scenarios. |
 
 ## Local development
@@ -40,13 +40,21 @@ Commands load the monorepo-root `.env` without overriding existing environment v
 
 ## Users
 
-The `users` collection stores each user's sign-in email, display name, and IANA time zone. In hosted deployments, the web server verifies OIDC ID tokens (`NORI_OIDC_ISSUER`, `NORI_OIDC_AUDIENCE`), resolves the verified email through `POST /api/users/resolve` using a signed service token, and prefixes upstream requests with `/users/<id>/`; browser-supplied IDs never select a user. Loopback development uses `NORI_LOCAL_EMAIL` and requires a matching provisioned user row.
+The user directory stores each user's sign-in email, display name, IANA time zone, and verified sign-in identity. The hosted web server verifies the user's signed assertion, resolves the issuer and subject through `POST /api/users/resolve` using a signed service token, and prefixes upstream requests with `/users/<id>/`. Native Google sign-ins resolve against the same Google Account identifier. Loopback development uses `NORI_LOCAL_EMAIL` and requires a matching provisioned user row.
 
 Provision a user from `core/`:
 
 ```sh
 go run ./cmd/nori-user --email user@example.com --name 'User' --timezone America/Los_Angeles
 ```
+
+Existing Gmail accounts can bind automatically at sign-in with a verified Google identity. For other existing accounts, verify the original account owner through a trusted channel and obtain the issuer and subject from the verified identity provider. Run the binding command from `core/` with the existing Nori user ID.
+
+```sh
+go run ./cmd/nori-user bind-identity --id "$nori_user_id" --issuer "$verified_issuer" --subject "$verified_subject"
+```
+
+Use `https://accounts.google.com` as the issuer for Google Account identities. The command rejects an identity already associated with another account and preserves an existing binding. An email address alone is insufficient to establish ownership of a legacy account.
 
 Each user gets an isolated Postgres record scope, `users/<id>/` artifact prefix, and user-keyed lease/wake rows in `nori_task_leases` and `nori_user_wakes`. (`owner` is reserved for legacy unprefixed data paths.) Worker reconciliation enumerates users and opens bounded LRU-cached per-user `App` scopes.
 

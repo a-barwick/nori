@@ -61,8 +61,8 @@ outer conversation/scheduler wakes (`nori_user_wakes`) live in Postgres:
 
 Hosted AWS deployments use OIDC (`NORI_OIDC_ISSUER` and `NORI_OIDC_AUDIENCE`).
 The web server discovers the issuer's HTTPS JWKS and verifies the signature, exact
-issuer, audience, expiry, subject and verified email. The email must match a
-provisioned Nori user. Unsigned identity headers are never accepted. Key fetching
+issuer, audience, expiry, subject and verified email. The issuer and subject identify
+the provisioned Nori user. Key fetching
 and verification use [jose](https://github.com/panva/jose).
 
 A login gateway or host supplies an OIDC **ID token**, either as a Bearer token to
@@ -72,7 +72,7 @@ CSRF for its own login flow. Cookie delivery supports browser navigation and SSE
 This adapter verifies tokens; it does not implement a new OAuth login UI or
 callback. Providers must include `email` and boolean `email_verified=true`.
 
-The trusted web server resolves the email at the API and supplies the resulting
+The trusted web server resolves the verified identity at the API and supplies the resulting
 user ID. Hosted API entrypoints require HS256 service tokens with the configured
 audience, `nori-service` issuer and a one-minute lifetime. Only `/healthz` is
 unauthenticated. The signing secret belongs only to trusted services, not browsers.

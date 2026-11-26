@@ -1,4 +1,5 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { GOOGLE_ISSUER, googleEmailAuthoritative, validSubject, type VerifiedIdentity } from "./identity";
 
 const IAP_ISSUER = "https://cloud.google.com/iap";
 const IAP_JWKS_URI = new URL("https://www.gstatic.com/iap/verify/public_key-jwk");
@@ -10,7 +11,7 @@ function iapKeys() {
   return cachedKeys;
 }
 
-export async function iapIdentity(headers: Headers): Promise<{ email: string } | null> {
+export async function iapIdentity(headers: Headers): Promise<VerifiedIdentity | null> {
   try {
     const audience = process.env.IAP_AUDIENCE?.trim();
     const token = headers.get("x-goog-iap-jwt-assertion")?.trim();
@@ -23,8 +24,7 @@ export async function iapIdentity(headers: Headers): Promise<{ email: string } |
       algorithms: ["ES256"],
     });
     if (
-      typeof payload.sub !== "string" ||
-      !payload.sub ||
+      !validSubject(payload.sub) ||
       typeof payload.email !== "string" ||
       !payload.email.trim() ||
       typeof payload.iat !== "number" ||
@@ -34,7 +34,18 @@ export async function iapIdentity(headers: Headers): Promise<{ email: string } |
     ) {
       return null;
     }
-    return { email: payload.email.trim().toLowerCase() };
+    const email = payload.email.trim().toLowerCase();
+    const googlePrefix = "accounts.google.com:";
+    const googleSubject = payload.sub.startsWith(googlePrefix) && payload.gcip === undefined && payload.identity_source !== "WORKFORCE_IDENTITY"
+      ? payload.sub.slice(googlePrefix.length)
+      : undefined;
+    if (googleSubject !== undefined && !validSubject(googleSubject)) return null;
+    return {
+      email,
+      issuer: googleSubject === undefined ? IAP_ISSUER : GOOGLE_ISSUER,
+      subject: googleSubject ?? payload.sub,
+      emailAuthoritative: googleSubject !== undefined && googleEmailAuthoritative(email, payload.hd),
+    };
   } catch {
     return null;
   }

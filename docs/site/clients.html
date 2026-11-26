@@ -43,7 +43,7 @@
 <tr><td>Operations &amp; approvals</td><td>Enforces deny-wins rules, computes <code>action_digest</code> and records receipts.</td><td>Renders typed approval cards and submits <code>{request_id, expected_revision, value}</code>.</td></tr>
 <tr><td>Live updates</td><td>Serves snapshots and resumable SSE streams (<code>?after=N</code> / <code>Last-Event-ID</code>).</td><td>Merges events by ID, refreshes Work/interactions on reconnect and handles <code>reset</code>.</td></tr>
 </table></div>
-<p>For hosted standalone web deployments on AWS, <code>NORI_CLOUD=aws</code> verifies OIDC ID tokens via <code>jose</code> JWKS discovery (<code>NORI_OIDC_ISSUER</code>, <code>NORI_OIDC_AUDIENCE</code>, <code>NORI_OIDC_COOKIE</code>) and resolves the verified email to a provisioned Nori user. See <code>core/infrastructure/aws/README.md</code>.</p>
+<p>For hosted standalone web deployments on AWS, <code>NORI_CLOUD=aws</code> verifies OIDC ID tokens via <code>jose</code> JWKS discovery (<code>NORI_OIDC_ISSUER</code>, <code>NORI_OIDC_AUDIENCE</code>, <code>NORI_OIDC_COOKIE</code>) and resolves the verified issuer and subject to a provisioned Nori user. See <code>core/infrastructure/aws/README.md</code>.</p>
 </section>
 <details class="sources"><summary>Sources</summary><p><code>integrations/embed/README.md</code> · <code>integrations/embed/adapter.mjs</code> · <code>core/internal/app/app.go</code> · <code>core/internal/serviceauth/auth.go</code> · <code>core/infrastructure/aws/README.md</code> · <code>web/src/components/runtime/NoriApp.tsx</code> · <code>web/src/lib/runtime/auth.ts</code> · <code>web/src/lib/runtime/oidc.ts</code> · <code>web/src/lib/runtime/forward.ts</code> · <code>web/src/lib/contracts/assistant.ts</code></p></details>
 </body>

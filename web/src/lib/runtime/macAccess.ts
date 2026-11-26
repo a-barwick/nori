@@ -2,10 +2,32 @@ const policyLifetimeMs = 30_000;
 const failureLifetimeMs = 5_000;
 const policyPath = /^projects\/\d+\/iap_web\/cloud_run-[a-z0-9-]+\/services\/[a-z0-9-]+$/;
 const namedUser = /^user:([a-z0-9+_.-]+@[a-z0-9.-]+)$/i;
+const subjectID = /^[\x21-\x7e]{1,255}$/;
+const normalizedEmail = /^[a-z0-9+_.-]+@[a-z0-9.-]+$/;
 
 type Snapshot = { resource: string; expiresAt: number; allowed: Set<string> | null };
 let snapshot: Snapshot | undefined;
 let pending: { resource: string; result: Promise<Set<string> | null> } | undefined;
+
+export function macAllowedIdentities(raw: string | undefined): Map<string, string> | null {
+  if (!raw) return null;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const entries = Object.entries(value);
+    if (entries.length === 0) return null;
+    const identities = new Map<string, string>();
+    const emails = new Set<string>();
+    for (const [subject, email] of entries) {
+      if (!subjectID.test(subject) || typeof email !== "string" || !normalizedEmail.test(email) || emails.has(email)) return null;
+      identities.set(subject, email);
+      emails.add(email);
+    }
+    return identities;
+  } catch {
+    return null;
+  }
+}
 
 export function directIAPUsers(policy: { bindings?: { role?: string; condition?: unknown; members?: string[] }[] }): Set<string> {
   const allowed = new Set<string>();

@@ -15,11 +15,23 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"nori/internal/users"
 )
 
 const defaultGoogleJWKSURL = "https://www.googleapis.com/oauth2/v3/certs"
 
 type verifiedEmailKey struct{}
+type verifiedIdentityKey struct{}
+
+func VerifiedIdentity(ctx context.Context) (users.Identity, bool) {
+	identity, ok := ctx.Value(verifiedIdentityKey{}).(users.Identity)
+	return identity, ok && identity.Validate() == nil
+}
+
+func WithVerifiedIdentity(ctx context.Context, email string, identity users.Identity) context.Context {
+	ctx = WithVerifiedEmail(ctx, email)
+	return context.WithValue(ctx, verifiedIdentityKey{}, identity)
+}
 
 func WithVerifiedEmail(ctx context.Context, email string) context.Context {
 	return context.WithValue(ctx, verifiedEmailKey{}, strings.ToLower(strings.TrimSpace(email)))
@@ -31,8 +43,10 @@ func VerifiedEmail(ctx context.Context) (string, bool) {
 }
 
 type googleIDClaims struct {
-	Email         string `json:"email"`
-	EmailVerified bool   `json:"email_verified"`
+	Email           string `json:"email"`
+	EmailVerified   bool   `json:"email_verified"`
+	HostedDomain    string `json:"hd"`
+	AuthorizedParty string `json:"azp"`
 	jwt.RegisteredClaims
 }
 
@@ -145,9 +159,9 @@ func (c *jwksCache) fetch(ctx context.Context) (map[string]*rsa.PublicKey, error
 	return out, nil
 }
 
-func verifyGoogleIDToken(ctx context.Context, cache *jwksCache, raw string, clientIDs, allowedEmails []string) (string, bool) {
+func verifyGoogleIDToken(ctx context.Context, cache *jwksCache, raw string, clientIDs, allowedEmails []string) (string, users.Identity, bool) {
 	if len(clientIDs) == 0 || len(raw) == 0 || len(raw) > 8192 {
-		return "", false
+		return "", users.Identity{}, false
 	}
 	claims := &googleIDClaims{}
 	token, err := jwt.ParseWithClaims(
@@ -163,10 +177,10 @@ func verifyGoogleIDToken(ctx context.Context, cache *jwksCache, raw string, clie
 		jwt.WithLeeway(30*time.Second),
 	)
 	if err != nil || !token.Valid {
-		return "", false
+		return "", users.Identity{}, false
 	}
 	if claims.Issuer != "https://accounts.google.com" && claims.Issuer != "accounts.google.com" {
-		return "", false
+		return "", users.Identity{}, false
 	}
 	audOK := false
 	for _, aud := range claims.Audience {
@@ -175,15 +189,23 @@ func verifyGoogleIDToken(ctx context.Context, cache *jwksCache, raw string, clie
 			break
 		}
 	}
-	if !audOK || !claims.EmailVerified {
-		return "", false
+	if !audOK || !claims.EmailVerified || claims.IssuedAt == nil || claims.ExpiresAt == nil ||
+		!claims.ExpiresAt.After(claims.IssuedAt.Time) ||
+		(len(claims.Audience) > 1 && !slices.Contains(clientIDs, claims.AuthorizedParty)) {
+		return "", users.Identity{}, false
 	}
 	email := strings.ToLower(strings.TrimSpace(claims.Email))
 	if email == "" {
-		return "", false
+		return "", users.Identity{}, false
 	}
 	if len(allowedEmails) > 0 && !slices.Contains(allowedEmails, email) {
-		return "", false
+		return "", users.Identity{}, false
 	}
-	return email, true
+	_, domain, found := strings.Cut(email, "@")
+	authoritative := found && (domain == "gmail.com" || (claims.HostedDomain != "" && strings.EqualFold(claims.HostedDomain, domain)))
+	identity := users.Identity{Issuer: "https://accounts.google.com", Subject: claims.Subject, EmailAuthoritative: authoritative}
+	if identity.Validate() != nil {
+		return "", users.Identity{}, false
+	}
+	return email, identity, true
 }

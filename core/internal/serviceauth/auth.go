@@ -1,6 +1,7 @@
 package serviceauth
 
 import (
+	"context"
 	"errors"
 	"github.com/golang-jwt/jwt/v5"
 	"net/http"
@@ -9,6 +10,13 @@ import (
 )
 
 const issuer = "nori-service"
+
+type serviceKey struct{}
+
+func IsService(ctx context.Context) bool {
+	verified, _ := ctx.Value(serviceKey{}).(bool)
+	return verified
+}
 
 type Config struct {
 	Key, Audience   string
@@ -54,12 +62,13 @@ func (c Config) Protect(next http.Handler) http.Handler {
 			return
 		}
 		if c.Valid(token) {
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), serviceKey{}, true)))
 			return
 		}
 		if jwks != nil {
-			if email, ok := verifyGoogleIDToken(r.Context(), jwks, token, c.GoogleClientIDs, c.AllowedEmails); ok {
-				next.ServeHTTP(w, r.WithContext(WithVerifiedEmail(r.Context(), email)))
+			if email, identity, ok := verifyGoogleIDToken(r.Context(), jwks, token, c.GoogleClientIDs, c.AllowedEmails); ok {
+				ctx := WithVerifiedIdentity(r.Context(), email, identity)
+				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
 		}

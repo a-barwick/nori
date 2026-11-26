@@ -7,7 +7,7 @@ registry="$region-docker.pkg.dev/$project/${GCP_AR_REPO:-nori-poc}"
 service="nori-web-mac"
 
 usage() {
-  echo "Usage: NORI_MAC_GOOGLE_CLIENT_ID=... $0 [--dry-run]"
+  echo "Usage: NORI_MAC_GOOGLE_CLIENT_ID=... NORI_MAC_GOOGLE_IDENTITIES_SECRET=name:version $0 [--dry-run]"
 }
 case "${1:-}" in
   "") dry_run=0 ;;
@@ -19,6 +19,11 @@ esac
 
 : "${NORI_MAC_GOOGLE_CLIENT_ID:?Set the dedicated Google Desktop OAuth client ID}"
 [[ "$NORI_MAC_GOOGLE_CLIENT_ID" =~ ^[a-zA-Z0-9_-]+\.apps\.googleusercontent\.com$ ]] || exit 2
+: "${NORI_MAC_GOOGLE_IDENTITIES_SECRET:?Set the verified Google subject and email allowlist secret and version}"
+if [[ ! "$NORI_MAC_GOOGLE_IDENTITIES_SECRET" =~ ^[a-zA-Z0-9_-]{1,255}:[1-9][0-9]*$ ]]; then
+  echo "NORI_MAC_GOOGLE_IDENTITIES_SECRET must be a secret name and numeric version." >&2
+  exit 2
+fi
 cd "$(dirname "$0")/.."
 if [[ "$dry_run" -eq 0 && -n "$(git status --porcelain -- web scripts/deploy-gcp-mac-web.sh)" ]]; then
   echo "Commit the Web source and deployment script before deploying." >&2
@@ -31,7 +36,7 @@ tag="release-$sha"
 cloud() { gcloud run "$@" --project="$project" --region="$region"; }
 
 if [[ "$dry_run" -eq 1 ]]; then
-  echo "Build $image, grant the Mac service read access to the existing IAP policy, and deploy a tagged $service revision."
+  echo "Build $image, grant the Mac service access to the IAP policy and the identity allowlist secret, and deploy a tagged $service revision."
   echo "Verify health and anonymous rejection before promoting the tagged revision."
   exit 0
 fi
@@ -71,6 +76,8 @@ audience="$(read_environment NORI_SERVICE_AUDIENCE)"
 token_secret="$(jq -er '.spec.template.spec.containers[0].env[] | select(.name=="NORI_SERVICE_TOKEN_KEY") | .valueFrom.secretKeyRef | "\(.name):\(.key)"' <<< "$web")"
 gcloud secrets add-iam-policy-binding "${token_secret%:*}" --project="$project" \
   --member="serviceAccount:$account" --role=roles/secretmanager.secretAccessor --quiet >/dev/null
+gcloud secrets add-iam-policy-binding "${NORI_MAC_GOOGLE_IDENTITIES_SECRET%:*}" --project="$project" \
+  --member="serviceAccount:$account" --role=roles/secretmanager.secretAccessor --quiet >/dev/null
 
 docker buildx build --platform linux/amd64 -f web/Dockerfile --build-arg "SENTRY_RELEASE=$sha" -t "$image" --push .
 env_vars="^|^NORI_CLOUD=gcp|NORI_AUTH_PROVIDER=oidc|NORI_OIDC_ISSUER=https://accounts.google.com|NORI_OIDC_AUDIENCE=$NORI_MAC_GOOGLE_CLIENT_ID|NORI_OIDC_IAP_POLICY_RESOURCE=$policy_resource|NORI_RUNTIME_URL=$core|NORI_SERVICE_AUDIENCE=$audience"
@@ -85,7 +92,8 @@ else
 fi
 cloud deploy "$service" --image="$image" --service-account="$account" --ingress=all \
   "${traffic_flags[@]}" --min-instances=0 --max-instances=2 --tag="$tag" --quiet \
-  --set-env-vars="$env_vars" --set-secrets="NORI_SERVICE_TOKEN_KEY=$token_secret"
+  --set-env-vars="$env_vars" \
+  --set-secrets="NORI_SERVICE_TOKEN_KEY=$token_secret,NORI_OIDC_IAP_ALLOWED_IDENTITIES=$NORI_MAC_GOOGLE_IDENTITIES_SECRET"
 
 candidate="$(cloud services describe "$service" --flatten='status.traffic[]' \
   --format='value(status.traffic.tag,status.traffic.revisionName,status.traffic.url)' | awk -F '\t' -v tag="$tag" '$1==tag {print $2 "\t" $3}')"

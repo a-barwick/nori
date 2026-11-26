@@ -3,12 +3,14 @@ package platform
 import (
 	"fmt"
 	"net/http"
+
+	"nori/internal/httpserver"
 	"nori/internal/settings"
 )
 
 func ServiceHandler(s settings.Settings, h http.Handler, local bool) (http.Handler, error) {
 	if local {
-		return h, nil
+		return httpserver.RequireLoopbackHost(h), nil
 	}
 	if s.Cloud == "local" {
 		return nil, fmt.Errorf("NORI_CLOUD=local requires the loopback nori-local entrypoint")

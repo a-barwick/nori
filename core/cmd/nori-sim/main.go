@@ -250,7 +250,7 @@ func main() {
 
 	simMux := buildSimHandler(svc, simBackend, clock, scopedUserID)
 	addr := net.JoinHostPort("127.0.0.1", cmp.Or(s.Port, "8080"))
-	server := httpserver.New(ctx, addr, simMux)
+	server := httpserver.New(ctx, addr, httpserver.RequireLoopbackHost(simMux))
 	slog.InfoContext(runCtx, "nori-sim listening",
 		"addr", server.Addr,
 		"model", s.Models.Outer,

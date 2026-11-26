@@ -5,6 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"time"
@@ -100,7 +101,7 @@ func (s *Store) Get(ctx context.Context, connectionID string) (secret.Credential
 	if err != nil {
 		return secret.Credential{}, errors.New("the credential could not be decrypted")
 	}
-	return secret.Credential{Version: r.Revision, Data: data}, nil
+	return secret.Credential{Version: r.Revision, Data: data, VersionTag: sha256.Sum256(r.Body)}, nil
 }
 
 func (s *Store) Replace(ctx context.Context, connectionID string, expected int64, data []byte) (int64, error) {
@@ -148,6 +149,17 @@ func (s *Store) Replace(ctx context.Context, connectionID string, expected int64
 }
 
 func (s *Store) Delete(ctx context.Context, connectionID string) error {
+	return s.delete(ctx, connectionID, nil)
+}
+
+func (s *Store) DeleteVersion(ctx context.Context, connectionID string, expected secret.Credential) error {
+	if expected.Version <= 0 || expected.VersionTag == ([32]byte{}) {
+		return errors.New("credential version must be positive")
+	}
+	return s.delete(ctx, connectionID, &expected)
+}
+
+func (s *Store) delete(ctx context.Context, connectionID string, expected *secret.Credential) error {
 	if !state.ValidResourceID(connectionID) {
 		return errors.New("invalid connection id")
 	}
@@ -155,6 +167,9 @@ func (s *Store) Delete(ctx context.Context, connectionID string) error {
 		RequestID: uuid.NewString(), Method: "DELETE", Target: "credential:" + connectionID, Payload: connectionID,
 		Collection: Collection, ID: connectionID, SkipRevisionCheck: true,
 		Apply: func(current *state.Resource, _ func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
+			if expected != nil && (current == nil || current.Revision != expected.Version || sha256.Sum256(current.Body) != expected.VersionTag) {
+				return state.MutationResult{}, secret.ErrCredentialConflict
+			}
 			if current == nil {
 				return state.MutationResult{Receipt: state.MutationReceipt{Status: "applied"}}, nil
 			}

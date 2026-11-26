@@ -110,4 +110,36 @@ func TestGoogleOIDCProtect(t *testing.T) {
 	if rec3.Code != http.StatusUnauthorized {
 		t.Fatalf("wrong audience should be 401, got %d", rec3.Code)
 	}
+
+	for _, test := range []struct {
+		name   string
+		change func(jwt.MapClaims)
+	}{
+		{"missing subject", func(c jwt.MapClaims) { delete(c, "sub") }},
+		{"missing issued-at", func(c jwt.MapClaims) { delete(c, "iat") }},
+		{"invalid lifetime", func(c jwt.MapClaims) { c["exp"] = c["iat"] }},
+		{"multiple audiences without authorized party", func(c jwt.MapClaims) {
+			c["aud"] = []string{"ios-client-id.apps.googleusercontent.com", "another-client"}
+		}},
+		{"multiple audiences with different authorized party", func(c jwt.MapClaims) {
+			c["aud"] = []string{"ios-client-id.apps.googleusercontent.com", "another-client"}
+			c["azp"] = "another-client"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			claims := jwt.MapClaims{
+				"iss": "https://accounts.google.com", "aud": "ios-client-id.apps.googleusercontent.com", "sub": "12345",
+				"email": "austinbarwickdavis@gmail.com", "email_verified": true,
+				"iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(),
+			}
+			test.change(claims)
+			req := httptest.NewRequest(http.MethodGet, "/users/u1/v1/capabilities", nil)
+			req.Header.Set("Authorization", "Bearer "+sign(claims, "k1"))
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("invalid claims received status %d", rec.Code)
+			}
+		})
+	}
 }

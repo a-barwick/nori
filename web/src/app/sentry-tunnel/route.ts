@@ -1,6 +1,7 @@
 import { POST as forwardEnvelope } from "@sentry/nextjs/tunnel";
 import { accessFailureResponse, resolveUser, sameOrigin } from "@/lib/runtime/auth";
 import { createIpRateLimiterFromEnv, rateLimitResponse } from "@/lib/runtime/rate-limit";
+import { readBytesLimited } from "@/lib/runtime/read-body";
 
 const tunnelRateLimiter = createIpRateLimiterFromEnv();
 
@@ -18,14 +19,13 @@ export async function POST(request: Request) {
   if (!Number.isSafeInteger(length) || length <= 0 || length > 1_048_576) {
     return new Response("Invalid envelope size.", { status: 413 });
   }
-  let body: ArrayBuffer;
-  try { body = await request.arrayBuffer(); }
-  catch { return new Response("Incomplete envelope.", { status: 400 }); }
-  if (body.byteLength !== length) return new Response("Incomplete envelope.", { status: 400 });
+  const body = await readBytesLimited(request, 1_048_576);
+  if (!body.ok) return new Response(body.status === 413 ? "Invalid envelope size." : "Incomplete envelope.", { status: body.status });
+  if (body.value.byteLength !== length) return new Response("Incomplete envelope.", { status: 400 });
   const envelope = new Request(request.url, {
     method: "POST",
     headers: { "content-length": String(length) },
-    body,
+    body: body.value,
   });
   return forwardEnvelope(envelope);
 }
