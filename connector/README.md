@@ -27,6 +27,7 @@ The release URL is set with `NORI_CONNECTOR_RELAY_URL` at build time. Use `NORI_
 ~~~sh
 NORI_CONNECTOR_RELAY_URL=https://relay.example \
   NORI_CONNECTOR_VERSION=1.0.0 \
+  NORI_MAC_SIGNING_IDENTITY="Developer ID Application: <name> (<team-id>)" \
   connector/macos/build.sh /tmp/nori-macos
 
 NORI_CONNECTOR_RELAY_URL=https://relay.example \
@@ -34,6 +35,6 @@ NORI_CONNECTOR_RELAY_URL=https://relay.example \
   connector/linux/build.sh /tmp/nori-linux
 ~~~
 
-The Linux build requires Go and nFPM v2.49.0. The macOS build requires Xcode command-line tools and Go. For a distributable macOS build, set `NORI_MAC_SIGNING_IDENTITY` to a Developer ID Application identity, set `NORI_CONNECTOR_DMG=1`, and provide a notarytool keychain profile as `NORI_MAC_NOTARY_PROFILE`. The script submits and staples the disk image. Without a signing identity, the app uses an ad hoc signature for local development.
+The Linux build requires Go and nFPM v2.49.0. The macOS build requires Xcode command-line tools and Go. For a distributable macOS build, set `NORI_MAC_SIGNING_IDENTITY` to a Developer ID Application identity, set `NORI_CONNECTOR_DMG=1`, and provide a notarytool keychain profile as `NORI_MAC_NOTARY_PROFILE`. The script submits and staples the disk image. Ad hoc signing is available for a local HTTP loopback relay.
 
 The Go CLI accepts `--url`, `--state-dir`, and `--ollama-url` after the command. The relay URL must use HTTPS, with HTTP permitted only on loopback for local tests. The Ollama URL must use a numeric loopback address. `NORI_CONNECTOR_STATE_DIR`, `NORI_CONNECTOR_RELAY_URL`, and `NORI_CONNECTOR_OLLAMA_URL` provide corresponding environment defaults. Pairing uses the built-in relay URL when no override is provided.

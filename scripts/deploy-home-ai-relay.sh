@@ -33,6 +33,11 @@ project="${GCP_PROJECT:-bot-111549}"
 region="${GCP_REGION:-us-central1}"
 repo="${GCP_AR_REPO:-nori-poc}"
 service="${NORI_HOME_AI_RELAY_SERVICE:-nori-connector-relay}"
+max_instances="${NORI_HOME_AI_RELAY_MAX_INSTANCES:-1}"
+if ! [[ "$max_instances" =~ ^[1-9][0-9]*$ ]]; then
+  echo "NORI_HOME_AI_RELAY_MAX_INSTANCES must be a positive integer." >&2
+  exit 2
+fi
 sha="$(git rev-parse --short HEAD)"
 if [[ -n "$(git status --porcelain -- core scripts/deploy-home-ai-relay.sh)" && "$dry_run" != 1 ]]; then
   echo "Commit the relay changes before deploying." >&2
@@ -85,7 +90,8 @@ args=(
   --image="$image" "${traffic_flags[@]}" --tag="$tag" --quiet
   --ingress=internal-and-cloud-load-balancing --no-default-url
   --service-account="$NORI_HOME_AI_RELAY_ACCOUNT"
-  --timeout=3600 --concurrency="${NORI_HOME_AI_RELAY_CONCURRENCY:-40}" --max-instances="${NORI_HOME_AI_RELAY_MAX_INSTANCES:-1}"
+  --timeout=3600 --concurrency="${NORI_HOME_AI_RELAY_CONCURRENCY:-40}"
+  --max="$max_instances" --max-instances="$max_instances"
   --startup-probe=httpGet.path=/readyz,periodSeconds=3,timeoutSeconds=3,failureThreshold=40
   --update-secrets="$relay_secrets"
   --update-env-vars="NORI_HOME_AI_VERIFY_URL=$NORI_HOME_AI_VERIFY_URL,NORI_HOME_AI_MAX_CONNS=${NORI_HOME_AI_RELAY_PG_MAX_CONNS:-4}"

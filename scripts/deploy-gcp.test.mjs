@@ -45,8 +45,11 @@ case " $* " in
     [ "$(cat)" = "$expected" ] || exit 1 ;;
 esac
 case "$*" in
-  *nori-core.example/readyz) exit "$CORE_READY_EXIT" ;;
-  *nori-api.example/readyz) exit "$API_READY_EXIT" ;;
+  *nori-core.example/readyz) [ "$CORE_READY_EXIT" = 0 ] || exit "$CORE_READY_EXIT" ;;
+  *nori-api.example/readyz) [ "$API_READY_EXIT" = 0 ] || exit "$API_READY_EXIT" ;;
+esac
+case " $* " in
+  *" --write-out %{http_code} "*) printf '200' ;;
 esac`);
   const token = join(dir, "smoke-token");
   if (smoke) writeFileSync(token, "fixture-identity-token\n", { mode: 0o600 });

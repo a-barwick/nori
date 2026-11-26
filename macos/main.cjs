@@ -262,7 +262,10 @@ async function signIn() {
       if (!config.local && !(resumeSession && await account.restore())) {
         const result = await home.disconnect();
         scheduleRevocationRetry(result);
-        await account.signIn((url) => shell.openExternal(url));
+        await account.signIn((url) => {
+          updateWelcome({ message: "Continue in your browser." });
+          return shell.openExternal(url);
+        });
       }
       connected = true;
       showWeb();
