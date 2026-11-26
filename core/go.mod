@@ -10,6 +10,7 @@ require (
 	github.com/aws/smithy-go v1.28.8
 	github.com/coder/websocket v1.8.14
 	github.com/felixge/httpsnoop v1.1.0
+	github.com/getkin/kin-openapi v0.153.0
 	github.com/getsentry/sentry-go v0.50.0
 	github.com/getsentry/sentry-go/otel v0.50.0
 	github.com/getsentry/sentry-go/otel/otlp v0.50.0
@@ -28,9 +29,11 @@ require (
 
 require (
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
-	github.com/getkin/kin-openapi v0.153.0 // indirect
+	github.com/go-openapi/jsonpointer v1.0.0 // indirect
+	github.com/gorilla/mux v1.8.0 // indirect
 	github.com/ledongthuc/pdf v0.0.0-20261125152515-e8918f005efa // indirect
 	go.opentelemetry.io/otel/log v1.47.0 // indirect
+	go.yaml.in/yaml/v4 v4.0.0 // indirect
 	google.golang.org/grpc v1.84.0 // indirect
 )
 

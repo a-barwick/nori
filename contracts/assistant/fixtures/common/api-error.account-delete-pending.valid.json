@@ -1,6 +1,0 @@
-{
-  "error": "Your account deletion is incomplete. Finish deleting your account to continue.",
-  "code": "account_delete_pending",
-  "retryable": true,
-  "accepted": false
-}

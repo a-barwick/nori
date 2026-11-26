@@ -37,4 +37,4 @@ Keep local configuration in the ignored repository-root `.env`, mode 600. Never 
 
 - `bun --cwd web run build` produces Next.js standalone output (`web/Dockerfile` builds from the repository root `.`).
 - `bun --cwd web test src` runs unit tests; `bun --cwd web run test:browser` runs Playwright E2E regression tests.
-- `make check` runs core checks, contract validation, `next typegen`, `tsc --noEmit`, `eslint src`, web unit tests, macOS tests, script tests, and persona-sim checks.
+- `make check` runs core checks, OpenAPI validation (`make api-check`), `next typegen`, `tsc --noEmit`, `eslint src`, web unit tests, macOS tests, script tests, and persona-sim checks.

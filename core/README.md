@@ -11,7 +11,6 @@ Storage sits behind contracts. `internal/state` defines records, `ConversationSt
 | `nori` | `cmd/nori` | Unified hosted runtime (`NORI_CLOUD=gcp\|aws`, `--role=all\|api\|worker` / `NORI_ROLE`, `--migrate-only`). Runs the HTTP API (`api`), the Postgres-native worker pool (`worker`), or both (`all`). |
 | `nori-local` | `cmd/nori-local` | Loopback development runtime (`NORI_CLOUD=local` default, binds `127.0.0.1`). Runs both the HTTP API and the unified Postgres-native worker pool in-process. |
 | `nori-user` | `cmd/nori-user` | Provisions users, manages invites, and binds an existing user to a verified sign-in identity. |
-| `contracts-check` | `cmd/contracts-check` | Validates `contracts/assistant` JSON Schema 2020-12 definitions, fixtures (with strict Go round-trips), and scenarios. |
 | `nori-sim` | `cmd/nori-sim` | Local-only virtual-clock simulation server (`/_sim/*` control, drain, snapshot, invariant checks) used by the persona simulation suite. |
 | `nori-gateway` | `cmd/nori-gateway` | Local loopback guarded LLM proxy with hard spend/call caps for isolated test and simulation runs. |
 | `nori-connector` | `cmd/nori-connector` | Home AI connector daemon and CLI (`pair`, `serve`, `status`, `doctor`, `unpair`) bridging local Ollama to the relay. |
@@ -36,7 +35,7 @@ From `core/`, run binaries directly:
 ```sh
 go run ./cmd/nori-local
 go run ./cmd/nori --role=all
-go run ./cmd/contracts-check -strict
+go test ./internal/api -run TestOpenAPI
 ```
 
 `make -C core run` starts `cmd/nori` (hosted mode), `make -C core build` builds `bin/nori`, and `make -C core check` runs `go vet ./...`, `gofmt`, and `go test ./...`.

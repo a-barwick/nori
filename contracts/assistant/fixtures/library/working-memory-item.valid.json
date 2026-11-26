@@ -1,7 +1,0 @@
-{
-  "id": "si_0123456789abcdef",
-  "kind": "constraint",
-  "quote": "Never book flights before 9am.",
-  "input_id": "in_7",
-  "note": "Flight time window"
-}

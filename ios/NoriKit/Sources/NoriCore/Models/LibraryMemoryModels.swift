@@ -579,7 +579,6 @@ public struct MemoryLogEntry: Sendable, Codable, Hashable, Identifiable {
         case runID = "run_id"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
-        case promoted
     }
 
     public init(
@@ -620,7 +619,7 @@ public struct MemoryLogEntry: Sendable, Codable, Hashable, Identifiable {
         self.runID = try c.decodeIfPresent(String.self, forKey: .runID)
         self.createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt) ?? ""
         self.updatedAt = try c.decodeIfPresent(String.self, forKey: .updatedAt)
-        self.promoted = try c.decodeIfPresent(Bool.self, forKey: .promoted) ?? false
+        self.promoted = false
     }
 }
 

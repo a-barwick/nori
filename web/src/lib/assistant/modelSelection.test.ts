@@ -8,7 +8,7 @@ import { normalizeModelSelection } from "./modelSelection";
 const fixture: {
   catalog: Capabilities["model_profiles"];
   cases: { name: string; catalogAvailable: boolean; selection: ModelSelection; expected: ModelSelection }[];
-} = JSON.parse(readFileSync(new URL("../../../../contracts/assistant/client/model-selections.json", import.meta.url), "utf8"));
+} = JSON.parse(readFileSync(new URL("../../../../api/test-vectors/model-selections.json", import.meta.url), "utf8"));
 
 for (const item of fixture.cases) {
   test(item.name, () => {

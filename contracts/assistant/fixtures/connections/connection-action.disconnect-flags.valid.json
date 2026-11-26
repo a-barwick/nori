@@ -1,9 +1,0 @@
-{
-  "request_id": "6f1c2a8e-4b7d-4c1e-9a2f-0d3e5b7c9a11",
-  "expected_revision": 5,
-  "value": {
-    "action": "disconnect",
-    "purge_cache": true,
-    "delete_imported_content": false
-  }
-}

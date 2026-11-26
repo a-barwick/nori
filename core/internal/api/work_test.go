@@ -437,8 +437,11 @@ func TestWorkDetailWebSearchOperationsProjection(t *testing.T) {
 	wantOutcomes := []string{"confirmed", "failed", "confirmed"}
 
 	for i, raw := range payload.Operations {
-		if _, err := RoundTrip("execution.schema.json#/$defs/OperationProjection", raw); err != nil {
-			t.Fatalf("op[%d] contract RoundTrip failed: %v (raw=%s)", i, err, string(raw))
+		var op operationProjection
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&op); err != nil {
+			t.Fatalf("op[%d] strict decode into operationProjection failed: %v (raw=%s)", i, err, string(raw))
 		}
 		var m map[string]any
 		if err := json.Unmarshal(raw, &m); err != nil {
