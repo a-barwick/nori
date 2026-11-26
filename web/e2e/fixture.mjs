@@ -12,6 +12,7 @@ await cp(".next/static", ".next/standalone/.next/static", { recursive: true });
 const fixture = await mkdtemp(join(tmpdir(), "nori-browser-"));
 const sessions = new Map();
 const streams = new Map();
+const preferences = new Map();
 const pendingApproval = JSON.parse(await readFile("../contracts/assistant/fixtures/permissions/interaction.approval.valid.json", "utf8"));
 pendingApproval.expires_at = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 const approvals = new Map([[identity, pendingApproval]]);
@@ -49,6 +50,38 @@ const upstream = createServer(async (req, res) => {
   const [, , id, ...parts] = url.pathname.split("/");
   const path = parts.join("/");
   const state = snapshot(id);
+  if (!preferences.has(id)) preferences.set(id, {
+    revision: 1, timezone: "UTC", working_hours: [], default_destination_ids: [], account_defaults: {},
+    budgets: { task_usd: 5 }, onboarding_completed_at: "2026-01-01T00:00:00Z",
+  });
+  if (path === "v1/preferences") {
+    if (req.method === "PUT") {
+      const change = await input();
+      const current = preferences.get(id);
+      const updated = { ...change.value, revision: current.revision + 1, ...(current.data_reset_at ? { data_reset_at: current.data_reset_at } : {}) };
+      preferences.set(id, updated);
+      return json({ request_id: change.request_id, accepted: true, status: "applied", resource: updated });
+    }
+    return json(preferences.get(id));
+  }
+  if (path === "v1/settings/reset" && req.method === "POST") {
+    const body = await input();
+    if (body.confirmation !== "RESET") return json({ error: "Type RESET to confirm." }, 400);
+    const position = state.position + 1;
+    sessions.delete(id);
+    const cleared = snapshot(id);
+    cleared.position = position;
+    cleared.messages.push({ id: "intro", role: "assistant", text: "Hello from Nori", created_at: new Date().toISOString() });
+    const dataResetAt = new Date().toISOString();
+    preferences.set(id, {
+      revision: 1, timezone: "UTC", working_hours: [], default_destination_ids: [], account_defaults: {},
+      budgets: { task_usd: 5 }, data_reset_at: dataResetAt,
+    });
+    for (const stream of streams.get(id) ?? []) stream.write(`id: ${position}\nevent: reset\ndata: ${JSON.stringify({ position })}\n\n`);
+    res.writeHead(204).end();
+    return;
+  }
+  if (path === "v1/settings/model-keys") return json({ byok_required: false, providers: [] });
   if (path === "v1/capabilities") return json({
     contract: "nori-chat-2", service: "nori", conversationModes: ["assistant"], features: { backgroundTasks: true },
     assistant_features: { work: true, interactions: true, library: true, automations: true },

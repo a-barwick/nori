@@ -14,7 +14,7 @@ button{margin-top:14px;font:inherit;font-weight:500;border:1px solid var(--line)
 </style></head><body><main role="status" aria-live="polite">
 <h1><span class="dot" aria-hidden="true"></span>${busy ? "Nori is busy" : "Reconnecting to Nori"}</h1>
 <p id="note">${busy ? "Nori has a lot to do right now." : "Nori's service isn't answering right now."} This page opens by itself when it is back.</p>
-<button type="button" id="now">Try now</button></main><script>
+<button type="button" id="now">Try now</button><form method="post" action="/api/auth/sign-out"><button type="submit">Sign out</button></form></main><script>
 (function(){
   var key="nori-reconnect", attempt=0, timer, checking=false;
   try{var s=JSON.parse(sessionStorage.getItem(key)||"null");if(s&&Date.now()-s.at<120000)attempt=s.attempt}catch(e){}

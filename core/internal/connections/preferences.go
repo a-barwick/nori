@@ -20,6 +20,7 @@ type Preferences struct {
 	Budgets               Budgets           `json:"budgets"`
 	Input                 *InputPreferences `json:"input,omitempty"`
 	OnboardingCompletedAt *time.Time        `json:"onboarding_completed_at,omitempty"`
+	DataResetAt           string            `json:"data_reset_at,omitempty"`
 	UpdatedAt             *time.Time        `json:"updated_at,omitempty"`
 }
 
@@ -78,7 +79,9 @@ func defaultPreferences(zone string) Preferences {
 func (s *Service) Preferences(ctx context.Context) (Preferences, state.Resource, error) {
 	r, err := s.Store.Resource(ctx, CollectionPreferences, PreferencesID)
 	if errors.Is(err, state.ErrNotFound) {
-		return defaultPreferences(s.UserTimezone), state.Resource{}, nil
+		prefs := defaultPreferences(s.UserTimezone)
+		prefs.DataResetAt = s.DataResetAt
+		return prefs, state.Resource{}, nil
 	}
 	if err != nil {
 		return Preferences{}, r, err
@@ -88,6 +91,7 @@ func (s *Service) Preferences(ctx context.Context) (Preferences, state.Resource,
 		return Preferences{}, r, err
 	}
 	prefs.Revision = r.Revision
+	prefs.DataResetAt = s.DataResetAt
 	updated := r.UpdatedAt
 	prefs.UpdatedAt = &updated
 	if prefs.AccountDefaults == nil {
@@ -151,6 +155,7 @@ func (s *Service) SavePreferences(ctx context.Context, requestID string, expecte
 				return state.MutationResult{}, err
 			}
 			now := time.Now().UTC()
+			prefs.DataResetAt = s.DataResetAt
 			prefs.UpdatedAt = &now
 			data, _ := json.Marshal(prefs)
 			return state.MutationResult{Writes: []state.Resource{r}, Receipt: state.MutationReceipt{Status: "applied", Resource: data, HTTPStatus: 200}}, nil

@@ -17,6 +17,7 @@ public enum MoreRoute: Hashable, Sendable {
 public struct MoreHubView: View {
     @AppStorage(NoriAppearance.storageKey) private var appearanceRawValue: String = NoriAppearance.system.rawValue
     @Bindable private var store: NoriStore
+    @State private var showingResetData = false
 
     public init(store: NoriStore) {
         self.store = store
@@ -83,7 +84,7 @@ public struct MoreHubView: View {
                 NoriSectionHeader("Workspace")
                 workspaceRows
 
-                NoriSectionHeader("Controls")
+                NoriSectionHeader("Settings")
                 controlsRows
 
                 NoriSectionHeader("Account")
@@ -102,6 +103,13 @@ public struct MoreHubView: View {
             _ = await (summaryTask, appsTask, memoryTask, permsPrefsTask, modelKeysTask)
         }
         .background(NoriColors.canvas.ignoresSafeArea())
+        .sheet(isPresented: $showingResetData) {
+            ResetDataSheet(store: store)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(NoriColors.sheetBackground)
+                .presentationCornerRadius(NoriRadius.sheet)
+        }
         .navigationTitle("More")
         #if os(iOS)
         .toolbar(.hidden, for: .navigationBar)
@@ -190,6 +198,19 @@ public struct MoreHubView: View {
                     detail: appearance.displayLabel,
                     systemImage: appearance.systemImage,
                     iconTone: .neutral,
+                    showChevron: true,
+                    showDivider: true
+                )
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                showingResetData = true
+            } label: {
+                NoriRow(
+                    title: "Reset data",
+                    systemImage: "arrow.counterclockwise",
+                    iconTone: .danger,
                     showChevron: true,
                     showDivider: false
                 )

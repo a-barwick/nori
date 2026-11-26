@@ -153,6 +153,9 @@ type Manager struct {
 	// Cache, when non-nil, shares unwrapped DEKs across Manager instances for
 	// the same owner with a short TTL and immediate eviction on Shred.
 	Cache *Cache
+	// CacheScope separates cached keys across a data reset while keeping the
+	// account ID used to authenticate encrypted payloads stable.
+	CacheScope string
 
 	mu   sync.RWMutex
 	dek  []byte
@@ -317,7 +320,7 @@ func (m *Manager) Shred(ctx context.Context) error {
 
 func (m *Manager) evictCache() {
 	if m.Cache != nil {
-		m.Cache.Evict(m.Owner)
+		m.Cache.Evict(m.cacheScope())
 	}
 	m.mu.Lock()
 	clear(m.dek)
@@ -326,9 +329,16 @@ func (m *Manager) evictCache() {
 	m.mu.Unlock()
 }
 
+func (m *Manager) cacheScope() string {
+	if m.CacheScope != "" {
+		return m.CacheScope
+	}
+	return m.Owner
+}
+
 func (m *Manager) cachedAEAD() (cipher.AEAD, bool) {
 	if m.Cache != nil {
-		return m.Cache.get(m.Owner, m.now())
+		return m.Cache.get(m.cacheScope(), m.now())
 	}
 	m.mu.RLock()
 	gcm := m.aead
@@ -344,7 +354,7 @@ func (m *Manager) loadAEAD(ctx context.Context) (cipher.AEAD, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.Cache != nil {
-		if gcm, ok := m.Cache.get(m.Owner, m.now()); ok {
+		if gcm, ok := m.Cache.get(m.cacheScope(), m.now()); ok {
 			return gcm, nil
 		}
 	} else if m.aead != nil {
@@ -361,7 +371,7 @@ func (m *Manager) ensureAEAD(ctx context.Context) (cipher.AEAD, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.Cache != nil {
-		if gcm, ok := m.Cache.get(m.Owner, m.now()); ok {
+		if gcm, ok := m.Cache.get(m.cacheScope(), m.now()); ok {
 			return gcm, nil
 		}
 	} else if m.aead != nil {
@@ -449,7 +459,7 @@ func (m *Manager) cacheLocked(dek []byte) (cipher.AEAD, error) {
 		return nil, err
 	}
 	if m.Cache != nil {
-		m.Cache.put(m.Owner, dek, gcm, m.now())
+		m.Cache.put(m.cacheScope(), dek, gcm, m.now())
 		clear(dek)
 		return gcm, nil
 	}

@@ -1,0 +1,63 @@
+package app
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"nori/internal/state/docstore"
+	"nori/internal/users"
+)
+
+type userActivityKey struct{}
+
+func (s *Service) userDataActivity(ctx context.Context, row users.User) (context.Context, users.User, func(), error) {
+	if current, ok := ctx.Value(userActivityKey{}).(users.User); ok && current.ID == row.ID {
+		return ctx, current, func() {}, nil
+	}
+	store, ok := s.Backend().(docstore.UserDataResetter)
+	if !ok {
+		return ctx, row, func() {}, nil
+	}
+	release, err := store.LockUserData(ctx, row.ID, false)
+	if err != nil {
+		return ctx, row, nil, err
+	}
+	current, err := s.Users.Get(ctx, row.ID)
+	if err != nil {
+		release()
+		return ctx, row, nil, err
+	}
+	return context.WithValue(ctx, userActivityKey{}, current), current, release, nil
+}
+
+func (s *Service) resetUserData(ctx context.Context, row users.User) error {
+	store, ok := s.Backend().(docstore.UserDataResetter)
+	if !ok {
+		return fmt.Errorf("user data reset requires a reset-capable store")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	release, err := store.LockUserData(ctx, row.ID, true)
+	if err != nil {
+		return err
+	}
+	defer release()
+	row, err = s.Users.Get(ctx, row.ID)
+	if err != nil {
+		return err
+	}
+	if err := store.BeginUserDataReset(ctx, row.ID); err != nil {
+		return err
+	}
+	if err := s.storage.PurgeUserArtifacts(ctx, s.cfg, row); err != nil {
+		return fmt.Errorf("purge user artifacts: %w", err)
+	}
+	if err := store.FinishUserDataReset(users.WithID(ctx, row.DataOwner()), row.ID, row.DataOwner()); err != nil {
+		return err
+	}
+	s.storage.EvictUserArtifactKey(row)
+	release()
+	store.PublishUserDataReset(ctx, row.DataOwner())
+	return nil
+}

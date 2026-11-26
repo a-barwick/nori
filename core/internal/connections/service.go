@@ -51,6 +51,7 @@ type Service struct {
 	order        []string
 	RedirectURL  string
 	UserTimezone string
+	DataResetAt  string
 	Now          func() time.Time
 	Transport    http.RoundTripper
 	Cleanup      []func(ctx context.Context, connectionID string, purgeCache, deleteImported bool) error

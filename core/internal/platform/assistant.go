@@ -115,6 +115,7 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 	adapters := invoke.NewRegistry()
 	conn := connections.New(store, credentials, s.Connections.RedirectURL)
 	conn.UserTimezone = user.TimeZone
+	conn.DataResetAt = user.DataResetAt
 	perms := &permissions.Service{Store: store, UnattendedWrites: s.Connections.UnattendedWrites, UserSends: s.Connections.UserSends}
 	sched := &scheduler.Service{Store: store, Tasks: tasks, Permissions: perms,
 		Results: func(ctx context.Context, taskID string) []string {

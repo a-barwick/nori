@@ -47,6 +47,8 @@ type App struct {
 	Assistant      *api.Assistant
 	Deltas         *api.DeltaBroker
 	Scheduler      *scheduler.Service
+
+	guardWakeRepair func(context.Context) (func(), error)
 }
 
 type openOptions struct {
@@ -619,6 +621,13 @@ func hasActiveOrUncleanChild(parent state.Run, activeRuns map[string]state.Run) 
 func (a *App) RepairWake(ctx context.Context) error {
 	if a.WakeRepair == nil {
 		return nil
+	}
+	if a.guardWakeRepair != nil {
+		done, err := a.guardWakeRepair(ctx)
+		if err != nil {
+			return err
+		}
+		defer done()
 	}
 	return a.WakeRepair.Repair(ctx)
 }

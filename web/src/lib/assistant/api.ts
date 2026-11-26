@@ -122,3 +122,19 @@ export async function deleteModelKey(provider: string): Promise<ModelKeyProvider
   });
   return readJSON<ModelKeyProvider>(response);
 }
+
+export async function resetUserData(): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(assistantURL("/settings/reset"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmation: "RESET" }),
+      cache: "no-store",
+      redirect: "error",
+    });
+  } catch {
+    throw new APIError("Nori could not confirm the reset. Reload to check whether onboarding starts.", 0);
+  }
+  if (!response.ok) await readJSON(response);
+}

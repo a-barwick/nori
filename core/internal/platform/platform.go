@@ -130,6 +130,17 @@ func (p *Storage) getDEKCache() *tenantkey.Cache {
 	return p.dekCache
 }
 
+func userArtifactKeyScope(user users.User) string {
+	if user.DataResetAt == "" {
+		return user.ID
+	}
+	return user.ID + "/" + user.DataResetAt
+}
+
+func (p *Storage) EvictUserArtifactKey(user users.User) {
+	p.getDEKCache().Evict(userArtifactKeyScope(user))
+}
+
 func (p *Storage) wrapUserArtifacts(s settings.Settings, user users.User, resources state.ResourceStore, inner state.ArtifactStore) (state.ArtifactStore, error) {
 	if s.Connections.CredentialStore != "database" {
 		return inner, nil
@@ -143,6 +154,7 @@ func (p *Storage) wrapUserArtifacts(s settings.Settings, user users.User, resour
 		return nil, err
 	}
 	mgr.Cache = p.getDEKCache()
+	mgr.CacheScope = userArtifactKeyScope(user)
 	if p.Now != nil {
 		mgr.Now = p.Now
 	}

@@ -178,4 +178,39 @@ func (s *Store) DeleteFile(ctx context.Context, key string) error {
 	return nil
 }
 
+func (s *Store) Purge(ctx context.Context) error {
+	return s.purge(ctx, false)
+}
+
+// PurgeLegacy keeps the directories holding other users' artifacts.
+func (s *Store) PurgeLegacy(ctx context.Context) error {
+	return s.purge(ctx, true)
+}
+
+func (s *Store) purge(ctx context.Context, preserveUsers bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	dir, err := s.root.Open(".")
+	if err != nil {
+		return err
+	}
+	entries, readErr := dir.ReadDir(-1)
+	if err := errors.Join(readErr, dir.Close()); err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if preserveUsers && entry.Name() == "users" {
+			continue
+		}
+		if err := s.root.RemoveAll(entry.Name()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) Close() error { return s.root.Close() }

@@ -386,6 +386,85 @@ public struct AccountSettingsView: View {
     }
 }
 
+struct ResetDataSheet: View {
+    @Bindable var store: NoriStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmation = ""
+    @State private var isResetting = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("This permanently clears your chats, memories, work, files, schedules, preferences, and API keys from Nori and disconnects your apps. You’ll stay signed in with Google and start onboarding again.")
+                        .font(NoriTypography.body)
+                        .foregroundStyle(NoriColors.ink2)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Type RESET to confirm")
+                            .font(NoriTypography.metaSemibold)
+                            .foregroundStyle(NoriColors.ink)
+                        TextField("RESET", text: $confirmation)
+                            .textFieldStyle(.plain)
+                            .foregroundStyle(NoriColors.ink)
+                            .tint(NoriColors.accent)
+                            .autocorrectionDisabled()
+                            #if os(iOS)
+                            .textInputAutocapitalization(.characters)
+                            #endif
+                            .padding(.horizontal, 12)
+                            .frame(height: 44)
+                            .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                    }
+
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(NoriTypography.meta)
+                            .foregroundStyle(NoriTone.danger.foreground)
+                    }
+
+                    Button {
+                        isResetting = true
+                        errorMessage = nil
+                        Task {
+                            do {
+                                try await store.resetUserData(confirmation: confirmation)
+                                dismiss()
+                            } catch {
+                                errorMessage = error.localizedDescription
+                                isResetting = false
+                            }
+                        }
+                    } label: {
+                        if isResetting {
+                            ProgressView()
+                        } else {
+                            Text("Reset data")
+                        }
+                    }
+                    .buttonStyle(NoriButtonStyle(.danger, fullWidth: true))
+                    .disabled(confirmation != "RESET" || isResetting)
+                }
+                .padding(16)
+            }
+            .background(NoriColors.sheetBackground)
+            .navigationTitle("Reset data")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .disabled(isResetting)
+                }
+            }
+            .interactiveDismissDisabled(isResetting)
+        }
+    }
+}
+
 private struct DiagnosticLogReport: Transferable {
     let metadata: NoriDiagnosticMetadata
 

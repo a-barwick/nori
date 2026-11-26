@@ -12,6 +12,7 @@ import { createResourceCache, ResourceCacheContext, useResource } from "./useRes
 type Runtime = ReturnType<typeof useRuntime>;
 type Assistant = {
   localMode: boolean;
+  scope: string;
   runtime: Runtime;
   capabilities?: Capabilities;
   capabilitiesError?: Error;
@@ -73,12 +74,12 @@ function AssistantSession({ localMode, scope, children }: { localMode: boolean; 
   }, [modelKey]);
   const runtime = useRuntime(localMode, modelSelection, scope, refreshCapabilities);
   const value = useMemo<Assistant>(() => ({
-    localMode, runtime, capabilities, capabilitiesError, refreshCapabilities, debug, ready,
+    localMode, scope, runtime, capabilities, capabilitiesError, refreshCapabilities, debug, ready,
     has: (feature) => !!capabilities?.assistant_features?.[feature],
     setDebug: (on) => { setDebugState(on); try { if (on) localStorage.setItem(DEBUG_KEY, "1"); else localStorage.removeItem(DEBUG_KEY); } catch {  } },
     modelSelection,
     setModelSelection,
-  }), [localMode, runtime, capabilities, capabilitiesError, refreshCapabilities, debug, ready, modelSelection, setModelSelection]);
+  }), [localMode, scope, runtime, capabilities, capabilitiesError, refreshCapabilities, debug, ready, modelSelection, setModelSelection]);
   return <AssistantContext.Provider value={value}>{children}</AssistantContext.Provider>;
 }
 

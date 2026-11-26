@@ -356,6 +356,7 @@ export type Preferences = {
     dictation_language?: string;
   };
   onboarding_completed_at?: Instant;
+  data_reset_at?: Instant;
   updated_at?: Instant;
 };
 export type PreferencesEditable = {

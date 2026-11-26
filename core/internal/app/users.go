@@ -256,10 +256,24 @@ func (s *Service) AcquireByID(ctx context.Context, userID string) (*App, func(),
 	if err != nil {
 		return nil, nil, err
 	}
+	if row.ResetPending {
+		return nil, nil, docstore.ErrUserDataResetPending
+	}
 	return s.acquire(ctx, row)
 }
 
 func (s *Service) RepairUser(ctx context.Context, row users.User) error {
+	ctx, row, done, err := s.userDataActivity(ctx, row)
+	if err != nil {
+		if errors.Is(err, docstore.ErrUserDataBusy) {
+			return nil
+		}
+		return err
+	}
+	defer done()
+	if row.ResetPending {
+		return nil
+	}
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -363,13 +377,24 @@ func (s *Service) openUserApp(ctx context.Context, row users.User, done chan str
 		}
 	}()
 	opened, collapsed, err := openWithResources(ctx, s.waker, s.cfg, row, s.storage, openOptions{
-		skipCollapseDuplicates: alreadyCollapsed,
+		skipCollapseDuplicates: alreadyCollapsed || row.ResetPending,
 	})
 	if err != nil {
 		return nil, err
 	}
 	if s.ConfigureApp != nil {
 		s.ConfigureApp(row, opened)
+	}
+	opened.guardWakeRepair = func(ctx context.Context) (func(), error) {
+		_, current, done, err := s.userDataActivity(ctx, row)
+		if err != nil {
+			return nil, err
+		}
+		if current.ResetPending || current.DataResetAt != row.DataResetAt {
+			done()
+			return nil, docstore.ErrUserDataResetPending
+		}
+		return done, nil
 	}
 	opened.handler = api.Handler(opened.apiDeps())
 	var toClose []*App
@@ -421,8 +446,10 @@ func (s *Service) Handler(local bool) http.Handler {
 		}
 		return api.UserRoutes{Handler: userApp.handler, Resume: userApp.Resume}, release, nil
 	}, local, s.cfg.Models.Outer, api.UserHandlerOptions{
-		ReadyCheck: s.Ping,
-		Metrics:    observability.MetricsHandler(),
+		ReadyCheck:   s.Ping,
+		Metrics:      observability.MetricsHandler(),
+		UserActivity: s.userDataActivity,
+		ResetData:    s.resetUserData,
 	})
 }
 

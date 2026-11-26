@@ -89,6 +89,8 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) sendEvent(ctx context.Context, stream eventStream, event state.LogEvent) error {
 	switch event.Kind {
+	case state.EventDataReset:
+		return stream.send("reset", event.Seq, map[string]int64{"position": event.Seq})
 	case state.EventMessage:
 		message, err := s.Tasks.Store.ConversationMessage(ctx, event.Ref)
 		if err != nil {

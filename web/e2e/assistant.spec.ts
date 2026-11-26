@@ -199,3 +199,38 @@ test.describe("routine scheduling", () => {
     expect((await saved).request().postDataJSON().value).toEqual(preview);
   });
 });
+
+test("sign out closes other tabs and sign in restores the workspace", async ({ page, context }) => {
+  await page.goto(signInURL("first", "/settings/account"));
+  const secondTab = await context.newPage();
+  await secondTab.goto(`${app}/more`);
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("heading", { name: "Signed out" })).toBeVisible();
+  await expect(secondTab.getByRole("heading", { name: "Signed out" })).toBeVisible();
+  expect(await page.evaluate(async () => (await fetch("/api/v1/preferences")).status)).toBe(403);
+
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.goto(signInURL("first", "/more"));
+  await expect(page.getByRole("link", { name: "Reset data" })).toBeVisible();
+  await secondTab.close();
+});
+
+test("reset clears the browser session and opens onboarding in both tabs", async ({ page, context }) => {
+  await page.goto(signInURL("first", "/more"));
+  const secondTab = await context.newPage();
+  await secondTab.goto(`${app}/more`);
+  await expect(secondTab.getByText("Settings", { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Reset data" }).click();
+  const confirm = page.getByLabel("Type RESET to confirm");
+  const reset = page.getByRole("button", { name: "Reset data" });
+  await expect(reset).toBeDisabled();
+  await confirm.fill("reset");
+  await expect(reset).toBeDisabled();
+  await confirm.fill("RESET");
+  await reset.click();
+  await expect(page.getByRole("button", { name: "Get started" })).toBeVisible();
+  await expect(secondTab.getByRole("button", { name: "Get started" })).toBeVisible();
+  await expect(page.getByLabel("Step 1 of 4")).toBeVisible();
+  await expect(secondTab.getByLabel("Step 1 of 4")).toBeVisible();
+  await secondTab.close();
+});

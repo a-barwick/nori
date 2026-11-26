@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"nori/internal/httpjson"
 	"nori/internal/observability"
 	"nori/internal/serviceauth"
+	"nori/internal/state/docstore"
 	"nori/internal/users"
 )
 
@@ -24,6 +26,15 @@ type UserHandlerOptions struct {
 	ReadyCheck   func(context.Context) error
 	ReadyTimeout time.Duration
 	Metrics      http.Handler
+	UserActivity func(context.Context, users.User) (context.Context, users.User, func(), error)
+	ResetData    func(context.Context, users.User) error
+}
+
+type userDataResetPendingKey struct{}
+
+func userDataResetPending(ctx context.Context) bool {
+	pending, _ := ctx.Value(userDataResetPendingKey{}).(bool)
+	return pending
 }
 
 func UserHandler(directory users.Directory, open func(context.Context, users.User) (UserRoutes, func(), error), local bool, model string) http.Handler {
@@ -126,13 +137,24 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 			}
 			failed := false
 			for _, row := range rows {
-				routes, release, err := open(r.Context(), row)
+				ctx, row, done, err := startUserActivity(r.Context(), row, opts)
 				if err != nil {
 					failed = true
 					continue
 				}
-				err = routes.Resume(r.Context())
+				if row.ResetPending {
+					done()
+					continue
+				}
+				routes, release, err := open(ctx, row)
+				if err != nil {
+					done()
+					failed = true
+					continue
+				}
+				err = routes.Resume(ctx)
 				release()
+				done()
 				if err != nil {
 					failed = true
 				}
@@ -158,14 +180,73 @@ func UserHandlerWithOptions(directory users.Directory, open func(context.Context
 			return
 		}
 		ctx := observability.BindHTTPUser(r.Context(), row.ID)
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/settings/reset" && opts.ResetData != nil {
+			jsonBody(func(w http.ResponseWriter, r *http.Request) {
+				resetUserData(w, r, row, opts.ResetData)
+			})(w, r.WithContext(ctx))
+			return
+		}
+		requestCtx := ctx
+		ctx, row, done, err := startUserActivity(ctx, row, opts)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		defer func() { done() }()
+		if row.ResetPending {
+			path := r.URL.Path
+			if (r.Method != http.MethodGet && r.Method != http.MethodHead) ||
+				path == "/v1/connections/oauth/callback" ||
+				(strings.HasPrefix(path, "/v1/connections/") && strings.HasSuffix(path, "/resources")) {
+				writeError(w, docstore.ErrUserDataResetPending)
+				return
+			}
+			ctx = context.WithValue(ctx, userDataResetPendingKey{}, true)
+		}
 		routes, release, err := open(ctx, row)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
 		defer release()
+		if r.URL.Path == "/v1/events" || r.URL.Path == "/v1/conversations/assistant/events" {
+			done()
+			done = func() {}
+			ctx = requestCtx
+		}
 		routes.Handler.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func resetUserData(w http.ResponseWriter, r *http.Request, user users.User, reset func(context.Context, users.User) error) {
+	var body struct {
+		Confirmation string `json:"confirmation"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if body.Confirmation != "RESET" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Type RESET to confirm."})
+		return
+	}
+	if err := reset(r.Context(), user); err != nil {
+		if errors.Is(err, docstore.ErrUserDataBusy) {
+			writeError(w, err)
+			return
+		}
+		slog.ErrorContext(r.Context(), "user data reset failed", "err", err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "Nori could not finish your data reset. Try again."})
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func startUserActivity(ctx context.Context, row users.User, opts UserHandlerOptions) (context.Context, users.User, func(), error) {
+	if opts.UserActivity == nil {
+		return ctx, row, func() {}, nil
+	}
+	return opts.UserActivity(ctx, row)
 }
 
 func OpsHandler(local bool, model string, opts UserHandlerOptions) http.Handler {

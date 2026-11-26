@@ -55,6 +55,20 @@ describe("shouldShowOnboarding", () => {
     );
   });
 
+  test("shows after a reset even if a new intro message exists", () => {
+    assert.equal(
+      shouldShowOnboarding({
+        forceReplay: false,
+        preferences: { ...basePreferences, data_reset_at: "2026-11-25T18:50:00Z" },
+        preferencesLoaded: true,
+        messageCount: 1,
+        sessionLoaded: true,
+        localCompleted: false,
+      }),
+      true,
+    );
+  });
+
   test("shows when forceReplay is requested", () => {
     assert.equal(
       shouldShowOnboarding({

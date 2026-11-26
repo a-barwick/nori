@@ -19,6 +19,9 @@ type User struct {
 	Email       string `json:"email" firestore:"email"`
 	DisplayName string `json:"display_name" firestore:"display_name"`
 	TimeZone    string `json:"time_zone" firestore:"time_zone"`
+
+	DataResetAt  string `json:"data_reset_at,omitempty" firestore:"data_reset_at,omitempty"`
+	ResetPending bool   `json:"reset_pending,omitempty" firestore:"reset_pending,omitempty"`
 }
 
 func ValidID(id string) bool {

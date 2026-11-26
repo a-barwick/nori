@@ -10,6 +10,7 @@ const (
 	EventResult       = "result"
 	EventReadPosition = "read_position"
 	EventMemory       = "memory"
+	EventDataReset    = "reset"
 )
 
 const EventReplayLimit = 1000

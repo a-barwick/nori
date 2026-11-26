@@ -144,9 +144,10 @@ func openBackend(ctx context.Context, url string, opts Options) (*backend, error
 		return nil, errors.New("Postgres is unavailable")
 	}
 	b := &backend{
-		pool:      pool,
-		connURL:   url,
-		listenURL: cmp.Or(strings.TrimSpace(opts.ListenURL), url),
+		pool:          pool,
+		connURL:       url,
+		listenURL:     cmp.Or(strings.TrimSpace(opts.ListenURL), url),
+		userDataLocks: make(chan struct{}, max(1, cfg.MaxConns/2)),
 	}
 	for i := range b.ownerWriteLocks {
 		b.ownerWriteLocks[i] = make(chan struct{}, 1)
@@ -202,6 +203,7 @@ type backend struct {
 	txExhausted atomic.Int64
 
 	ownerWriteLocks [shardLockShards]chan struct{}
+	userDataLocks   chan struct{}
 
 	wakeReconnects  atomic.Int64
 	wakeErrors      atomic.Int64
@@ -522,8 +524,12 @@ func (t *transaction) NextSequence(ctx context.Context, path string, count int) 
 			return 0, err
 		}
 	}
+	return advanceSequence(ctx, t.q, path, count)
+}
+
+func advanceSequence(ctx context.Context, q executor, path string, count int) (int64, error) {
 	var end int64
-	err := t.q.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		"INSERT INTO nori_sequences(path,seq) VALUES($1,$2) ON CONFLICT(path) DO UPDATE SET seq=nori_sequences.seq+$2 RETURNING seq",
 		path, int64(count),
 	).Scan(&end)

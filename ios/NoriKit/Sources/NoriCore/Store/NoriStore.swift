@@ -170,12 +170,21 @@ public final class NoriStore {
     public var pendingDeepLink: NoriDeepLink?
     public var hasLoadedSnapshot: Bool = false
     public var isShowingOnboardingReplay: Bool = false
+    private var hasLoadedSession = false
+    private var isAwaitingResetMarker = false
+    private var dataResetGeneration: UInt64 = 0
 
     private static let onboardingDoneKeyPrefix = "nori.onboarding.done."
+    private static let observedResetKeyPrefix = "nori.data-reset.observed."
 
     private var onboardingDoneKey: String? {
         guard case .signedIn(let email) = authState else { return nil }
         return Self.onboardingDoneKeyPrefix + email.lowercased()
+    }
+
+    private var observedResetKey: String? {
+        guard case .signedIn(let email) = authState else { return nil }
+        return Self.observedResetKeyPrefix + email.lowercased()
     }
 
     public var isOnboardingLocallyCompleted: Bool {
@@ -186,6 +195,9 @@ public final class NoriStore {
     public var shouldShowOnboarding: Bool {
         if isShowingOnboardingReplay { return true }
         guard authState.isSignedIn, hasLoadedSnapshot else { return false }
+        if let resetAt = preferences.dataResetAt, !resetAt.isEmpty {
+            return preferences.onboardingCompletedAt?.isEmpty != false
+        }
         if isOnboardingLocallyCompleted { return false }
         if let completedAt = preferences.onboardingCompletedAt, !completedAt.isEmpty { return false }
         if !session.messages.isEmpty { return false }
@@ -480,7 +492,66 @@ public final class NoriStore {
         await authProvider.clearSession()
     }
 
-    private func clearUserState() {
+    public func resetUserData(confirmation: String) async throws {
+        let generation = sessionGeneration
+        let resetGeneration = dataResetGeneration
+        let signedInState = authState
+        try await transport.resetUserData(confirmation: confirmation)
+        guard generation == sessionGeneration else {
+            if signedInState == authState && resetGeneration != dataResetGeneration { return }
+            throw CancellationError()
+        }
+        guard authState.isSignedIn else { throw CancellationError() }
+
+        clearLocalDataForReset()
+        isAwaitingResetMarker = true
+        preferences = Preferences(dataResetAt: "pending")
+        hasLoadedSnapshot = true
+        startChatSession()
+        Task { [weak self] in
+            await self?.refreshAll()
+        }
+    }
+
+    private func clearLocalDataForReset() {
+        let signedInState = authState
+        let currentConnectionState = connectionState
+        if let key = onboardingDoneKey { UserDefaults.standard.removeObject(forKey: key) }
+        if let key = modelSelectionKey { UserDefaults.standard.removeObject(forKey: key) }
+        UserDefaults.standard.removeObject(forKey: "nori.appearance")
+        dataResetGeneration &+= 1
+        sessionGeneration &+= 1
+        clearUserState(preserveIdentity: true)
+        authState = signedInState
+        connectionState = currentConnectionState
+    }
+
+    @discardableResult
+    private func applyPreferences(_ latest: Preferences) -> Bool {
+        var detectedReset = false
+        if let resetAt = latest.dataResetAt, !resetAt.isEmpty,
+           let key = observedResetKey,
+           UserDefaults.standard.string(forKey: key) != resetAt {
+            if !isAwaitingResetMarker {
+                clearLocalDataForReset()
+                detectedReset = true
+            }
+            UserDefaults.standard.set(resetAt, forKey: key)
+        }
+        isAwaitingResetMarker = false
+        preferences = latest
+        hasLoadedPreferences = true
+        if detectedReset {
+            hasLoadedSnapshot = true
+            startChatSession()
+            Task { [weak self] in
+                await self?.refreshAll()
+            }
+        }
+        return detectedReset
+    }
+
+    private func clearUserState(preserveIdentity: Bool = false) {
         stopEventStream()
         chatContextTask?.cancel()
         chatContextTask = nil
@@ -489,11 +560,15 @@ public final class NoriStore {
             finishSubmitSpan(turnID: turnID, outcome: "cancelled", status: .cancelled)
         }
         reportedFailedTaskIDs.removeAll()
-        NoriTelemetryRuntime.shared.setUser(id: nil)
+        if !preserveIdentity {
+            NoriTelemetryRuntime.shared.setUser(id: nil)
+        }
         authState = .signedOut
         authError = nil
         connectionState = .offline
         hasLoadedSnapshot = false
+        hasLoadedSession = false
+        isAwaitingResetMarker = false
         isShowingOnboardingReplay = false
         capabilities = nil
         assistantSummary = nil
@@ -560,7 +635,8 @@ public final class NoriStore {
         async let summaryTask: Void = refreshSummary()
         async let sessionTask: Void = refreshSession()
         async let workTask: Void = refreshWorkAndInteractions()
-        _ = await (summaryTask, sessionTask, workTask)
+        async let onboardingTask: Void = refreshOnboardingStatus()
+        _ = await (summaryTask, sessionTask, workTask, onboardingTask)
         if authState.isSignedIn {
             startEventStream()
         }
@@ -584,6 +660,9 @@ public final class NoriStore {
             let freshSession = try await transport.fetchSession(before: nil)
             guard generation == sessionGeneration, !Task.isCancelled else { return }
             applySession(freshSession)
+            if !hasLoadedPreferences {
+                await refreshOnboardingStatus()
+            }
         } catch {
             guard generation == sessionGeneration else { return }
             if !(await handleAuthFailureIfNeeded(error)) {
@@ -750,8 +829,20 @@ public final class NoriStore {
             self.permissions = perms
         }
         if case .success(let prefs) = prefsRes {
-            preferences = prefs
-            hasLoadedPreferences = true
+            applyPreferences(prefs)
+        }
+    }
+
+    private func refreshOnboardingStatus() async {
+        let generation = sessionGeneration
+        do {
+            let latest = try await transport.fetchPreferences()
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
+            applyPreferences(latest)
+            if hasLoadedSession { hasLoadedSnapshot = true }
+        } catch {
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
+            _ = await handleAuthFailureIfNeeded(error)
         }
     }
 
@@ -778,6 +869,9 @@ public final class NoriStore {
     }
 
     private func applySnapshot(_ snapshot: NoriFullSnapshot) {
+        if snapshot.didLoadPreferences, applyPreferences(snapshot.preferences) {
+            return
+        }
         self.capabilities = snapshot.capabilities
         self.assistantSummary = nil
         applySession(snapshot.session)
@@ -805,17 +899,16 @@ public final class NoriStore {
         self.automations = snapshot.automations
         self.goals = snapshot.goals
         self.permissions = snapshot.permissions
-        hasLoadedPreferences = snapshot.didLoadPreferences
-        if snapshot.didLoadPreferences {
-            preferences = snapshot.preferences
-        }
         self.modelKeys = snapshot.modelKeys
-        self.hasLoadedSnapshot = true
+        if hasLoadedPreferences && hasLoadedSession {
+            hasLoadedSnapshot = true
+        }
         reportFailedWorkItemsIfNeeded(workItems)
     }
 
     private func applySession(_ snapshot: Session) {
         session = snapshot
+        hasLoadedSession = true
         isThinking = snapshot.conversation?.processing == true
         finishObservedReplies(in: snapshot.messages)
     }
@@ -881,7 +974,8 @@ public final class NoriStore {
             async let capabilitiesTask: Void = self.refreshCapabilities()
             async let summaryTask: Void = self.refreshSummary()
             async let interactionsTask: Void = self.refreshInteractions()
-            _ = await (capabilitiesTask, summaryTask, interactionsTask)
+            async let onboardingTask: Void = self.refreshOnboardingStatus()
+            _ = await (capabilitiesTask, summaryTask, interactionsTask, onboardingTask)
         }
     }
 

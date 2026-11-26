@@ -4,11 +4,17 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"net/url"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	sdk "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"nori/internal/state"
 	"nori/internal/users"
 )
@@ -16,6 +22,7 @@ import (
 type Store struct {
 	api            *sdk.Client
 	bucket, prefix string
+	legacy         bool
 }
 
 var _ state.ArtifactStore = (*Store)(nil)
@@ -48,7 +55,7 @@ func New(api *sdk.Client, bucket string, user users.User) (*Store, error) {
 	if err := user.Validate(); err != nil {
 		return nil, err
 	}
-	return &Store{api: api, bucket: bucket, prefix: "artifacts/" + user.FilePrefix()}, nil
+	return &Store{api: api, bucket: bucket, prefix: "artifacts/" + user.FilePrefix(), legacy: user.ID == users.LegacyID}, nil
 }
 func code(err error, want string) bool {
 	var e smithy.APIError
@@ -93,5 +100,80 @@ func (s *Store) GetFile(ctx context.Context, key string) ([]byte, error) {
 func (s *Store) DeleteFile(ctx context.Context, key string) error {
 	_, err := s.api.DeleteObject(ctx, &sdk.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(s.prefix + key)})
 	return err
+}
+
+func googleStorageListVersions(options *sdk.Options) {
+	options.APIOptions = append(options.APIOptions, func(stack *middleware.Stack) error {
+		return stack.Build.Add(middleware.BuildMiddlewareFunc("GoogleStorageListVersions", func(ctx context.Context, input middleware.BuildInput, next middleware.BuildHandler) (middleware.BuildOutput, middleware.Metadata, error) {
+			request, ok := input.Request.(*smithyhttp.Request)
+			if !ok {
+				return middleware.BuildOutput{}, middleware.Metadata{}, errors.New("unexpected object storage request")
+			}
+			request.Header.Set("x-goog-interop-list-objects-format", "enabled")
+			return next.HandleBuild(ctx, input)
+		}), middleware.After)
+	})
+}
+
+func (s *Store) Purge(ctx context.Context) error {
+	if s.bucket == "" {
+		return errors.New("ARTIFACT_BUCKET must be configured")
+	}
+	pages := sdk.NewListObjectVersionsPaginator(s.api, &sdk.ListObjectVersionsInput{
+		Bucket: aws.String(s.bucket),
+		Prefix: aws.String(s.prefix),
+	})
+	var listOptions []func(*sdk.Options)
+	endpoint, err := url.Parse(aws.ToString(s.api.Options().BaseEndpoint))
+	if err == nil && (endpoint.Hostname() == "storage.googleapis.com" || strings.HasSuffix(endpoint.Hostname(), ".storage.googleapis.com")) {
+		listOptions = append(listOptions, googleStorageListVersions)
+	}
+	var versions, markers []types.ObjectIdentifier
+	appendObject := func(objects *[]types.ObjectIdentifier, key, version *string) error {
+		if !strings.HasPrefix(aws.ToString(key), s.prefix) {
+			return errors.New("object listing returned a key outside the user's prefix")
+		}
+		if s.legacy && strings.HasPrefix(aws.ToString(key), s.prefix+"users/") {
+			return nil
+		}
+		if aws.ToString(version) == "" {
+			return errors.New("object listing returned a missing version ID")
+		}
+		*objects = append(*objects, types.ObjectIdentifier{Key: key, VersionId: version})
+		return nil
+	}
+	for pages.HasMorePages() {
+		page, err := pages.NextPage(ctx, listOptions...)
+		if err != nil {
+			return err
+		}
+		for _, version := range page.Versions {
+			if err := appendObject(&versions, version.Key, version.VersionId); err != nil {
+				return err
+			}
+		}
+		for _, marker := range page.DeleteMarkers {
+			if err := appendObject(&markers, marker.Key, marker.VersionId); err != nil {
+				return err
+			}
+		}
+	}
+	for _, objects := range [][]types.ObjectIdentifier{versions, markers} {
+		for len(objects) > 0 {
+			count := min(len(objects), 1000)
+			result, err := s.api.DeleteObjects(ctx, &sdk.DeleteObjectsInput{
+				Bucket: aws.String(s.bucket),
+				Delete: &types.Delete{Objects: objects[:count], Quiet: aws.Bool(true)},
+			})
+			if err != nil {
+				return err
+			}
+			if len(result.Errors) > 0 {
+				return fmt.Errorf("artifact deletion failed: %s", aws.ToString(result.Errors[0].Code))
+			}
+			objects = objects[count:]
+		}
+	}
+	return nil
 }
 func (s *Store) Close() error { return nil }

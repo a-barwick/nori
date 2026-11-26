@@ -93,6 +93,20 @@ public struct NoriRootView: View {
                 scheduleRefresh(for: selectedTab)
             }
         }
+        .onChange(of: store.shouldShowOnboarding) { _, showingOnboarding in
+            if showingOnboarding {
+                tabRefreshTask?.cancel()
+                tabRefreshTask = nil
+                selectedTab = .chat
+                workPath = []
+                morePath = []
+                workTabFilter = .tasks
+                didApplyInitialWorkTab = false
+                selectedWorkTabExplicitly = false
+                isActivitySheetPresented = false
+                presentedDocument = nil
+            }
+        }
         .onChange(of: selectedTab) { _, nextTab in
             scheduleRefresh(for: nextTab)
         }

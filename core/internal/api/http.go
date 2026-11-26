@@ -14,6 +14,7 @@ import (
 	"nori/internal/modelprofiles"
 	"nori/internal/settings"
 	"nori/internal/state"
+	"nori/internal/state/docstore"
 	"nori/internal/wake"
 )
 
@@ -138,7 +139,8 @@ func writeError(w http.ResponseWriter, err error) {
 		status = 400
 	case errors.Is(err, state.ErrBusy), errors.Is(err, state.ErrDuplicate), errors.Is(err, state.ErrQuestionStale),
 		errors.Is(err, state.ErrSuperseded), errors.Is(err, state.ErrCancelled), errors.Is(err, state.ErrConversationBusy),
-		errors.Is(err, state.ErrConversationConflict), errors.Is(err, state.ErrConversationStale):
+		errors.Is(err, state.ErrConversationConflict), errors.Is(err, state.ErrConversationStale),
+		errors.Is(err, docstore.ErrUserDataBusy), errors.Is(err, docstore.ErrUserDataResetPending):
 		status = 409
 	}
 	if status >= 500 {

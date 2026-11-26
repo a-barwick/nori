@@ -34,7 +34,7 @@ func (s *server) writeSession(w http.ResponseWriter, r *http.Request, before str
 		writeError(w, err)
 		return
 	}
-	if before == "" && session.Conversation.Revision == 0 && len(session.Messages) == 0 {
+	if before == "" && session.Conversation.Revision == 0 && len(session.Messages) == 0 && !userDataResetPending(r.Context()) {
 		if err := s.Runner.EnsureIntroduction(r.Context()); err != nil {
 			writeError(w, err)
 			return

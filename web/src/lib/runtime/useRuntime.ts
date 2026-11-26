@@ -7,6 +7,9 @@ import type { Attachment, DraftFile, Message, ModelSelection, PendingTaskCommand
 import { taskControlKinds } from "@/lib/types";
 import { parseModelSelection } from "@/lib/assistant/modelSelection";
 import { useResourceInvalidation } from "@/lib/assistant/useResource";
+import { getJSON } from "@/lib/assistant/api";
+import { browserResetChanged, syncBrowserReset } from "@/lib/assistant/resetState";
+import type { Preferences } from "@/lib/contracts/assistant";
 import { hasSubmission, messageTooLong } from "@/lib/submission";
 import { useDraftFiles, type UploadContext } from "@/lib/useDraftFiles";
 import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "./messages";
@@ -181,6 +184,7 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection, s
   const requestSerial = useRef(0);
   const minimumSerial = useRef(0);
   const replacingSnapshot = useRef(false);
+  const checkingReset = useRef(false);
   const appliedSerial = useRef(0);
   const appliedRevision = useRef(-1);
   const activeTasks = session?.runs.filter((run) => run.status === "running") ?? [];
@@ -345,13 +349,22 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection, s
   }, [refresh, updateTaskCommands, invalidate]);
 
   const refreshAndRetry = useCallback(async (signal: AbortSignal) => {
+    const preferences = await getJSON<Preferences>("/preferences", signal);
+    if (signal.aborted) return;
+    if (browserResetChanged(scope, preferences.data_reset_at)) {
+      for (const request of controllers.current) request.abort();
+      syncBrowserReset(scope, preferences.data_reset_at);
+      window.dispatchEvent(new Event("nori:data-reset"));
+      return;
+    }
+    checkingReset.current = false;
     const wasReplacing = replacingSnapshot.current;
     const epoch = minimumSerial.current;
     const data = await refresh(signal);
-    if (!data || signal.aborted || wasReplacing || epoch !== minimumSerial.current) return;
+    if (!data || signal.aborted || checkingReset.current || wasReplacing || epoch !== minimumSerial.current) return;
     for (const item of pendingRef.current) if (!item.retryManually && !acknowledged(data, item.id)) void submit(item);
     for (const item of taskCommandsRef.current) if (!item.retryManually && !item.rejected && !commandApplied(item, data.runs)) void submitTaskCommand(item);
-  }, [refresh, submit, submitTaskCommand]);
+  }, [scope, refresh, submit, submitTaskCommand]);
 
   useEffect(() => {
     if (!hydratedStorage.current) {
@@ -557,26 +570,40 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection, s
       listen<Presence>("presence", applyPresence);
       listen<unknown>("unknown", () => undefined);
       listen<{ position: number }>("reset", (value) => {
-        const rewind = value.position < streamPosition;
-        if (rewind) {
-          minimumSerial.current = requestSerial.current + 1;
-          replacingSnapshot.current = true;
-          wasConversationBusy.current = false;
-          for (const request of controllers.current) request.abort();
-          updatePending((items) => items.map((item) => ({ ...item, retryManually: true, error: TURN_ACCEPTANCE_UNKNOWN })));
-          updateTaskCommands((items) => items.map((item) => item.rejected ? item : {
-            ...item, sending: false, accepted: false, position: undefined, retryManually: true, error: COMMAND_ACCEPTANCE_UNKNOWN,
-          }));
-          reported.current = new Set();
-          setShownMessageIDs(new Set());
-          invalidateUploads();
-          setLoadingOlder(false);
-          setLoading(true);
-        }
-        position.current = rewind ? value.position : Math.max(position.current, value.position);
+        checkingReset.current = true;
         source = undefined;
         stream.close();
-        reload();
+        const checkReset = () => {
+          void getJSON<Preferences>("/preferences", controller.signal).then((preferences) => {
+            if (stopped) return;
+            if (browserResetChanged(scope, preferences.data_reset_at)) {
+              for (const request of controllers.current) request.abort();
+              syncBrowserReset(scope, preferences.data_reset_at);
+              window.dispatchEvent(new Event("nori:data-reset"));
+              return;
+            }
+            checkingReset.current = false;
+            const rewind = value.position < streamPosition;
+            if (rewind) {
+              minimumSerial.current = requestSerial.current + 1;
+              replacingSnapshot.current = true;
+              wasConversationBusy.current = false;
+              for (const request of controllers.current) request.abort();
+              updatePending((items) => items.map((item) => ({ ...item, retryManually: true, error: TURN_ACCEPTANCE_UNKNOWN })));
+              updateTaskCommands((items) => items.map((item) => item.rejected ? item : {
+                ...item, sending: false, accepted: false, position: undefined, retryManually: true, error: COMMAND_ACCEPTANCE_UNKNOWN,
+              }));
+              reported.current = new Set();
+              setShownMessageIDs(new Set());
+              invalidateUploads();
+              setLoadingOlder(false);
+              setLoading(true);
+            }
+            position.current = rewind ? value.position : Math.max(position.current, value.position);
+            reload();
+          }, () => { if (!stopped) timer = setTimeout(checkReset, 5000); });
+        };
+        checkReset();
       });
       stream.onerror = () => {
         if (stream !== source || stopped || stream.readyState !== EventSource.CLOSED) return;
@@ -587,7 +614,7 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection, s
     }
     open();
     return () => { stopped = true; controller.abort(); source?.close(); clearTimeout(timer); clearTimeout(taskRefreshTimer); };
-  }, [started, visible, streamAwake, refresh, updatePending, updateTaskCommands, invalidateUploads, invalidate]);
+  }, [started, visible, streamAwake, scope, refresh, updatePending, updateTaskCommands, invalidateUploads, invalidate]);
 
   async function refreshHistory() {
     setError(""); setStreamError(""); setLoading(true);

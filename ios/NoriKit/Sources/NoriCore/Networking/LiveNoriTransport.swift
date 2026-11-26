@@ -1138,6 +1138,20 @@ public actor LiveNoriTransport: NoriTransport {
         try await getJSON("/v1/preferences")
     }
 
+    public func resetUserData(confirmation: String) async throws {
+        let path = "/v1/settings/reset"
+        try await withRequestSpan(route: path, method: "POST") { span in
+            let userID = try await ensureUserID()
+            span.setTag("nori.user.id", value: userID)
+            let url = try router.scopedURL(path: path, userID: userID)
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 90
+            request.httpBody = try encoder.encode(["confirmation": confirmation])
+            _ = try await authenticatedData(request, contentType: "application/json", span: span)
+        }
+    }
+
     public func savePreferences(_ preferences: Preferences, requestID: String) async throws -> MutationReceipt<Preferences> {
         struct PrefVal: Encodable {
             let timezone: String

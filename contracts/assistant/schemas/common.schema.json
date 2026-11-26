@@ -741,6 +741,10 @@
         "onboarding_completed_at": {
           "$ref": "common.schema.json#/$defs/Instant"
         },
+        "data_reset_at": {
+          "$ref": "common.schema.json#/$defs/Instant",
+          "description": "Server timestamp of the most recent account data reset."
+        },
         "updated_at": {
           "$ref": "common.schema.json#/$defs/Instant"
         }

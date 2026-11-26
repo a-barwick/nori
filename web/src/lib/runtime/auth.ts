@@ -3,6 +3,7 @@ import { iapIdentity } from "./iap";
 import { oidcIdentity } from "./oidc";
 import { localDevelopment, runtimeMode, runtimeTarget, type RuntimeTarget } from "./target";
 import { SERVICE_UNAVAILABLE } from "./messages";
+import { isSignedOut } from "./session";
 
 const LOCAL_EMAIL = (process.env.NORI_LOCAL_EMAIL?.trim() || process.env.OWNER_EMAIL?.trim() || "").toLowerCase();
 type Identity = { email: string };
@@ -37,6 +38,7 @@ const RESOLVED_TTL_MS = 5 * 60_000;
 const resolved = new Map<string, { userID: string; expires: number }>();
 
 export async function resolveUser(headers: Headers, target = runtimeTarget(runtimeMode(headers))): Promise<ScopedRuntime | AccessFailure> {
+  if (isSignedOut(headers)) return denied;
   if (target instanceof Response) return unavailable;
   if (target.mode === "local" && !localDevelopment(headers)) return denied;
   const identity = await identify(headers);

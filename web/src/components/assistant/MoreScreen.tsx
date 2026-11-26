@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Activity, Brain, History, KeyRound, LayoutGrid, Monitor, Moon, ShieldCheck, SlidersHorizontal, Sun, UserCircle } from "lucide-react";
+import { Activity, Brain, History, KeyRound, LayoutGrid, Monitor, Moon, RotateCcw, ShieldCheck, SlidersHorizontal, Sun, UserCircle } from "lucide-react";
 import { appearanceLabel, useAppearance, type NoriAppearance } from "@/lib/appearance";
 import type { ModelKeysResponse } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
@@ -103,8 +103,8 @@ export function MoreScreen() {
         </Rows>
       </Section>
 
-      <Section title="Controls">
-        <Rows label="Controls">
+      <Section title="Settings">
+        <Rows label="Settings">
           <Row
             href="/settings/permissions"
             leading={
@@ -145,6 +145,11 @@ export function MoreScreen() {
             title="API Keys"
             detail={configuredKeysCount > 0 ? plural(configuredKeysCount, "configured") : undefined}
             trailing={requiresByok ? <Pill tone="warning">Required</Pill> : undefined}
+          />
+          <Row
+            href="/settings/reset"
+            leading={<span className="grid size-9 place-items-center rounded-[10px] bg-danger-bg text-danger"><RotateCcw size={18} strokeWidth={1.85} aria-hidden /></span>}
+            title="Reset data"
           />
         </Rows>
       </Section>

@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Activity, Brain, History, KeyRound, Monitor, Moon, ShieldCheck, SlidersHorizontal, Sun, UserCircle } from "lucide-react";
+import { Activity, Brain, History, KeyRound, Monitor, Moon, RotateCcw, ShieldCheck, SlidersHorizontal, Sun, UserCircle } from "lucide-react";
 import { NoriMark } from "@/components/mark/NoriMark";
 import { Button } from "@/components/ui/primitives";
 import { APPEARANCE_OPTIONS, useAppearance, type NoriAppearance } from "@/lib/appearance";
-import { APIError, mutate, newRequestID } from "@/lib/assistant/api";
+import { APIError, mutate, newRequestID, resetUserData } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
+import { markBrowserReset } from "@/lib/assistant/resetState";
 import { EFFECT_LABEL, when } from "@/lib/assistant/format";
 import {
   buildPermissionRuleEditable,
@@ -30,13 +31,14 @@ import { OperationRows, shownOperations } from "./WorkScreen";
 import { Confirm, Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, Row, Rows, Screen, Section, Tabs } from "./ui";
 
 type List<T> = { items: T[] };
-export type SettingsSection = "permissions" | "preferences" | "appearance" | "api-keys" | "account" | "history" | "diagnostics";
+export type SettingsSection = "permissions" | "preferences" | "appearance" | "api-keys" | "reset" | "account" | "history" | "diagnostics";
 
 const SECTIONS: { id: SettingsSection | "memory"; title: string; icon: typeof ShieldCheck; href?: string; feature?: Parameters<ReturnType<typeof useAssistant>["has"]>[0] }[] = [
   { id: "permissions", title: "Standing Permissions", icon: ShieldCheck, feature: "permissions" },
   { id: "preferences", title: "Preferences & Budgets", icon: SlidersHorizontal, feature: "preferences" },
   { id: "appearance", title: "Appearance", icon: Monitor },
   { id: "api-keys", title: "API Keys", icon: KeyRound },
+  { id: "reset", title: "Reset data", icon: RotateCcw },
   { id: "memory", title: "Memory", icon: Brain, href: "/memory", feature: "memory" },
   { id: "account", title: "Account", icon: UserCircle },
   { id: "history", title: "Action History", icon: History, feature: "operations" },
@@ -64,11 +66,13 @@ export function SettingsScreen({ section }: { section: SettingsSection }) {
           ? <AppearanceSettings />
           : section === "api-keys"
             ? <ApiKeysSettings />
-            : section === "account"
-              ? <AccountSettings />
-              : section === "history"
-                ? <ActionHistory />
-                : <Diagnostics />}
+            : section === "reset"
+              ? <ResetData />
+              : section === "account"
+                ? <AccountSettings />
+                : section === "history"
+                  ? <ActionHistory />
+                  : <Diagnostics />}
   </Screen>;
 }
 
@@ -328,6 +332,7 @@ function AccountSettings() {
       : { tone: "ok" as const, label: "Live" };
 
   return (
+    <>
     <Rows label="Account">
       <Row
         leading={
@@ -339,7 +344,40 @@ function AccountSettings() {
         trailing={<Pill tone={statusPill.tone}>{statusPill.label}</Pill>}
       />
     </Rows>
+    {!localMode && <Section><form action="/api/auth/sign-out" method="post"><Button type="submit" variant="quiet">Sign out</Button></form></Section>}
+    </>
   );
+}
+
+function ResetData() {
+  const { scope } = useAssistant();
+  const [confirmation, setConfirmation] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+
+  const reset = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (confirmation !== "RESET" || pending) return;
+    setPending(true);
+    setError("");
+    try {
+      await resetUserData();
+      markBrowserReset(scope);
+      window.location.replace("/");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The reset could not be completed.");
+      setPending(false);
+    }
+  };
+
+  return <form onSubmit={(event) => void reset(event)} className="max-w-xl space-y-5">
+    <p className="text-body text-ink-2">This permanently clears your chats, memories, work, files, schedules, preferences, and API keys from Nori and disconnects your apps. You’ll stay signed in with Google and start onboarding again.</p>
+    <Field label="Type RESET to confirm">
+      <input autoComplete="off" className={inputClass} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={pending} />
+    </Field>
+    {error && <Notice tone="danger">{error}</Notice>}
+    <Button type="submit" variant="danger" disabled={confirmation !== "RESET" || pending}>{pending ? "Resetting…" : "Reset data"}</Button>
+  </form>;
 }
 
 function Diagnostics() {

@@ -36,6 +36,9 @@ func (s *server) assistantEvents(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) assistantEvent(ctx context.Context, e state.LogEvent) (conversationEvent, error) {
 	v := conversationEvent{Seq: e.Seq, Kind: e.Kind, Conversation: assistantHeader(nil, e.Seq), Messages: []messageView{}}
+	if e.Kind == state.EventDataReset {
+		return v, nil
+	}
 	store := s.Tasks.Store
 	presence, err := s.Runner.Presence(ctx)
 	if err != nil {

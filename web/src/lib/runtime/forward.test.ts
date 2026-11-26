@@ -522,11 +522,11 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     ]);
   });
 
-  test("settings route only exports GET/PUT/DELETE and restricts first segment to model-keys", async () => {
+  test("settings route allows model keys and only POST to reset", async () => {
     assert.equal(typeof settingsRoute.GET, "function");
     assert.equal(typeof settingsRoute.PUT, "function");
     assert.equal(typeof settingsRoute.DELETE, "function");
-    assert.equal("POST" in settingsRoute, false);
+    assert.equal(typeof settingsRoute.POST, "function");
 
     const headers = { "sec-fetch-site": "same-origin" };
     const rootRes = await settingsRoute.GET(
@@ -541,6 +541,12 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     );
     assert.equal(otherRes.status, 404);
 
+    const resetRead = await settingsRoute.GET(
+      new Request(`${APP_ORIGIN}/api/v1/settings/reset`, { method: "GET", headers }),
+      { params: Promise.resolve({ path: ["reset"] }) },
+    );
+    assert.equal(resetRead.status, 404);
+
     const email = "settings-route-user@example.test";
     const userID = "22222222-2222-4222-8222-222222222210";
     await mockUpstream({ [email]: userID }, () =>
@@ -554,5 +560,24 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
       { params: Promise.resolve({ path: ["model-keys"] }) },
     );
     assert.equal(okRes.status, 200);
+  });
+
+  test("settings reset forwards the confirmation to the signed-in user and relays 204", async () => {
+    const email = "settings-reset-user@example.test";
+    const userID = "22222222-2222-4222-8222-222222222211";
+    let seen: { path: string; body?: string } | undefined;
+    await mockUpstream({ [email]: userID }, (url, init) => {
+      seen = { path: url.pathname, body: typeof init?.body === "string" ? init.body : undefined };
+      return new Response(null, { status: 204 });
+    });
+    const response = await settingsRoute.POST(
+      new Request(`${APP_ORIGIN}/api/v1/settings/reset`, {
+        method: "POST", headers: await authHeaders(email, { "content-type": "application/json" }),
+        body: JSON.stringify({ confirmation: "RESET" }),
+      }),
+      { params: Promise.resolve({ path: ["reset"] }) },
+    );
+    assert.equal(response.status, 204);
+    assert.deepEqual(seen, { path: `/users/${userID}/v1/settings/reset`, body: JSON.stringify({ confirmation: "RESET" }) });
   });
 });
