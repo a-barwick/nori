@@ -228,9 +228,11 @@ public struct ModelsSettingsView: View {
         _ title: String, lane: String, profiles: [ModelProfile], selectedID: Binding<String>
     ) -> some View {
         let available = profiles.filter { $0.lanes.contains(lane) }
+        let isWork = lane == "task"
+        let homeOnly = selection.homeOnly == true
         let selectedLabel: String = {
             if selectedID.wrappedValue.isEmpty {
-                return lane == "task" ? "No Work model" : "Select model"
+                return isWork ? "No Work model" : "Select model"
             }
             if let match = available.first(where: { $0.id == selectedID.wrappedValue }) {
                 return profileLabel(match)
@@ -242,7 +244,7 @@ public struct ModelsSettingsView: View {
                 .font(NoriTypography.metaSemibold)
                 .foregroundStyle(NoriColors.ink2)
             Menu {
-                if lane == "task" {
+                if isWork {
                     Button {
                         selectedID.wrappedValue = ""
                     } label: {
@@ -252,24 +254,45 @@ public struct ModelsSettingsView: View {
                             Text("No Work model")
                         }
                     }
-                }
-                ForEach(available) { profile in
-                    Button {
-                        selectedID.wrappedValue = profile.id
-                    } label: {
-                        if profile.id == selectedID.wrappedValue {
-                            Label(profileLabel(profile), systemImage: "checkmark")
-                        } else {
-                            Text(profileLabel(profile))
-                        }
+                    profileOptions(available, selectedID: selectedID)
+                } else {
+                    let workProfiles = available.filter { $0.lanes.contains("task") }
+                    let chatProfiles = available.filter { !$0.lanes.contains("task") }
+                    if !workProfiles.isEmpty {
+                        Section("Chat and Work") { profileOptions(workProfiles, selectedID: selectedID) }
                     }
-                    .disabled(selection.homeOnly == true && profile.backend != "home")
+                    if !chatProfiles.isEmpty {
+                        Section("Chat only") { profileOptions(chatProfiles, selectedID: selectedID) }
+                    }
                 }
             } label: {
                 pickerFieldLabel(selectedLabel, isPlaceholder: selectedID.wrappedValue.isEmpty)
             }
             .buttonStyle(.plain)
-            .disabled(isSaving || (available.isEmpty && (lane != "task" || selectedID.wrappedValue.isEmpty)))
+            .disabled(isSaving || (available.isEmpty && (!isWork || selectedID.wrappedValue.isEmpty)))
+            if isWork {
+                let hasWorkModels = available.contains { !homeOnly || $0.backend == "home" }
+                Text(hasWorkModels
+                     ? "These models can run web searches and use connected apps in Work."
+                     : homeOnly ? "No home models are available for Work." : "No models are available for Work yet.")
+                    .font(NoriTypography.meta)
+                    .foregroundStyle(NoriColors.ink2)
+            }
+        }
+    }
+
+    private func profileOptions(_ profiles: [ModelProfile], selectedID: Binding<String>) -> some View {
+        ForEach(profiles) { profile in
+            Button {
+                selectedID.wrappedValue = profile.id
+            } label: {
+                if profile.id == selectedID.wrappedValue {
+                    Label(profileLabel(profile), systemImage: "checkmark")
+                } else {
+                    Text(profileLabel(profile))
+                }
+            }
+            .disabled(selection.homeOnly == true && profile.backend != "home")
         }
     }
 

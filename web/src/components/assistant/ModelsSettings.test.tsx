@@ -14,6 +14,45 @@ describe("account model settings", () => {
   beforeEach(() => { restoreDOM = installTestDOM(); });
   afterEach(() => { globalThis.fetch = originalFetch; restoreDOM(); });
 
+  test("shows which Chat models can run Work and explains the Work picker", async () => {
+    const settings: ModelSettings = {
+      model_profiles: { profiles: [
+        { id: "home-chat", version: "1", label: "Chat model on Mac", backend: "home", model: "chat", lanes: ["chat"], paid: false },
+        { id: "home-work", version: "1", label: "Work model on Mac", backend: "home", model: "work", lanes: ["chat", "task"], paid: false },
+      ] },
+      selection: { chat_profile_id: "home-chat" },
+      revision: 1,
+      recommendations: {},
+    };
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/settings/home-connectors")) return Response.json({ enabled: true, devices: [] });
+      if (url.endsWith("/settings/model-keys")) return Response.json({ byok_required: true, providers: [] });
+      return Response.json(settings);
+    }) as typeof fetch;
+
+    const target = document.createElement("div");
+    document.body.append(target);
+    const root = createRoot(target);
+    try {
+      await act(async () => root.render(
+        <ResourceCacheContext.Provider value={createResourceCache()}><ModelsSettings /></ResourceCacheContext.Provider>,
+      ));
+      await settleTestDOM();
+      const chat = target.querySelector<HTMLSelectElement>('select[aria-label="Chat model"]');
+      assert.equal(chat?.querySelector('optgroup[label="Chat and Work"] option')?.getAttribute("value"), "home-work");
+      assert.equal(chat?.querySelector('optgroup[label="Chat only"] option')?.getAttribute("value"), "home-chat");
+      const work = target.querySelector<HTMLSelectElement>('select[aria-label="Work model"]');
+      assert.deepEqual(Array.from(work?.options ?? [], (option) => option.value), ["", "home-work"]);
+      const hintId = work?.getAttribute("aria-describedby");
+      assert.ok(hintId);
+      assert.equal(document.getElementById(hintId)?.textContent, "These models can run web searches and use connected apps in Work.");
+    } finally {
+      await act(async () => root.unmount());
+      target.remove();
+    }
+  });
+
   test("offers a replacement for an unavailable model and saves both lanes with the current revision", async () => {
     let settings: ModelSettings = {
       model_profiles: { profiles: [{

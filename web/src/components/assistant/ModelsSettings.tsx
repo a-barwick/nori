@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { AlertDialog } from "radix-ui";
 import { Button } from "@/components/ui/primitives";
 import { APIError, errorText, getJSON, saveModelSettings, type HomeConnectors, type ModelProfile, type ModelSettings } from "@/lib/assistant/api";
@@ -140,30 +140,45 @@ function LaneSelector({ label, profiles, selectedId, reasoning, disabled, homeOn
   homeOnly: boolean;
   onChange: (id: string, effort?: string) => void;
 }) {
+  const hintId = useId();
+  const isWork = label === "Work";
   const selected = profiles.find((profile) => profile.id === selectedId);
   const unavailable = !!selectedId && !selected;
   const efforts = selected?.supported_reasoning ?? [];
+  const workHint = profiles.some((profile) => !homeOnly || profile.backend === "home")
+    ? "These models can run web searches and use connected apps in Work."
+    : homeOnly ? "No home models are available for Work." : "No models are available for Work yet.";
+  const option = (profile: ModelProfile) => (
+    <option key={profile.id} value={profile.id} disabled={homeOnly && profile.backend !== "home"}>
+      {profile.label}{profile.availability && profile.availability !== "online" ? " · " + (profile.availability === "offline" ? "Offline" : "Ollama unavailable") : ""}
+    </option>
+  );
 
   return (
     <div className="space-y-3">
-      <Field label={`${label} model`}>
+      <Field label={`${label} model`} hint={isWork ? <span id={hintId}>{workHint}</span> : undefined}>
         <select
           aria-label={`${label} model`}
+          aria-describedby={isWork ? hintId : undefined}
           className={inputClass}
-          disabled={disabled || (!profiles.length && (label !== "Work" || !selectedId))}
+          disabled={disabled || (!profiles.length && (!isWork || !selectedId))}
           value={selectedId ?? ""}
           onChange={(event) => {
             const next = profiles.find((profile) => profile.id === event.target.value);
-            if (!next) { if (label === "Work") onChange(""); return; }
+            if (!next) { if (isWork) onChange(""); return; }
             const nextEffort = reasoning && next.supported_reasoning?.includes(reasoning)
               ? reasoning
               : next.default_reasoning;
             onChange(next.id, nextEffort);
           }}
         >
-          {(label === "Work" || !selectedId) && <option value="">{label === "Work" ? "No Work model" : "Choose a model"}</option>}
+          {(isWork || !selectedId) && <option value="">{isWork ? "No Work model" : "Choose a model"}</option>}
           {unavailable && <option value={selectedId}>Unavailable — choose a model</option>}
-          {profiles.map((profile) => <option key={profile.id} value={profile.id} disabled={homeOnly && profile.backend !== "home"}>{profile.label}{profile.availability && profile.availability !== "online" ? " · " + (profile.availability === "offline" ? "Offline" : "Ollama unavailable") : ""}</option>)}
+          {isWork ? profiles.map(option) : [true, false].map((supportsWork) => {
+            const choices = profiles.filter((profile) => profile.lanes.includes("task") === supportsWork);
+            const group = supportsWork ? "Chat and Work" : "Chat only";
+            return choices.length > 0 && <optgroup key={group} label={group}>{choices.map(option)}</optgroup>;
+          })}
         </select>
       </Field>
       {unavailable && <Notice tone="warning">Choose an available model.</Notice>}
