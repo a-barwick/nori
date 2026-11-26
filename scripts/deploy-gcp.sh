@@ -79,6 +79,10 @@ Environment variables:
                               Postgres pool cap per nori-worker instance (default: NORI_POSTGRES_MAX_CONNS or 10)
   NORI_POSTGRES_LISTEN_URL_SECRET
                               Optional Secret Manager ref (e.g. nori-postgres-listen-url:latest) for LISTEN/NOTIFY
+  NORI_GOOGLE_WORKSPACE_CLIENT_SECRET_REF
+                              Optional Secret Manager ref for the private Google Workspace beta.
+                              Set NORI_GOOGLE_WORKSPACE_CLIENT_ID, NORI_GOOGLE_WORKSPACE_REDIRECT_URL,
+                              and NORI_GOOGLE_WORKSPACE_TEST_USERS alongside it.
   NORI_DEPLOY_SMOKE_TOKEN_FILE
                               Optional file with ID token for post-deploy authenticated web smoke check
   NORI_HOME_AI_KEY_SECRET    Shared Home AI encryption key secret, in name:version form.
@@ -133,6 +137,11 @@ fi
 if [[ "$DEPLOY_WEB" -eq 1 && -n "${NORI_DEPLOY_SMOKE_TOKEN_FILE:-}" && ! -s "$NORI_DEPLOY_SMOKE_TOKEN_FILE" ]]; then
   echo "NORI_DEPLOY_SMOKE_TOKEN_FILE must contain an ID token for a provisioned account." >&2
   exit 1
+fi
+if [[ "$DEPLOY_CORE" -eq 1 && -n "${NORI_GOOGLE_WORKSPACE_CLIENT_SECRET_REF:-}" ]]; then
+  : "${NORI_GOOGLE_WORKSPACE_CLIENT_ID:?Set the beta Google OAuth client ID}"
+  : "${NORI_GOOGLE_WORKSPACE_REDIRECT_URL:?Set the beta Google OAuth redirect URL}"
+  : "${NORI_GOOGLE_WORKSPACE_TEST_USERS:?Set the beta tester email allowlist}"
 fi
 
 if [[ "$DEPLOY_CORE" -eq 1 && -n "${NORI_HOME_AI_KEY_SECRET:-}" ]]; then
@@ -271,10 +280,10 @@ if [[ "$DEPLOY_CORE" -eq 1 ]]; then
     --remove-env-vars=NORI_MODEL_PROVIDER,NORI_MODEL_GATEWAY_URL,NORI_MODEL_PICKER_USERS,NORI_BYOK_REQUIRED,NORI_AGENT_MODEL,MODEL_NAME,NORI_OUTER_REASONING_EFFORT,NORI_INNER_REASONING_EFFORT
   )
   secret_updates=()
+  core_env=("NORI_CLOUD=$CLOUD")
   if [[ -n "${NORI_POSTGRES_LISTEN_URL_SECRET:-}" ]]; then
     secret_updates+=("NORI_POSTGRES_LISTEN_URL=$NORI_POSTGRES_LISTEN_URL_SECRET")
   fi
-  home_env=""
   if [[ -n "${NORI_HOME_AI_KEY_SECRET:-}" ]]; then
     secret_updates+=("NORI_HOME_AI_KEY=$NORI_HOME_AI_KEY_SECRET")
     for name in NORI_HOME_AI_CORE_DB_SECRET NORI_HOME_AI_CORE_DB_LISTEN_SECRET; do
@@ -284,11 +293,21 @@ if [[ "$DEPLOY_CORE" -eq 1 ]]; then
         secret_updates+=("$key=${!name}")
       fi
     done
-    home_env=",NORI_HOME_AI_VERIFY_URL=$NORI_HOME_AI_VERIFY_URL,NORI_HOME_AI_WORK_ENABLED=${NORI_HOME_AI_WORK_ENABLED:-false}"
+    core_env+=("NORI_HOME_AI_VERIFY_URL=$NORI_HOME_AI_VERIFY_URL" "NORI_HOME_AI_WORK_ENABLED=${NORI_HOME_AI_WORK_ENABLED:-false}")
     for name in NORI_HOME_AI_DOWNLOAD_MACOS NORI_HOME_AI_DOWNLOAD_LINUX_AMD64 NORI_HOME_AI_DOWNLOAD_LINUX_ARM64; do
-      if [[ -n "${!name:-}" ]]; then home_env+=",$name=${!name}"; fi
+      if [[ -n "${!name:-}" ]]; then core_env+=("$name=${!name}"); fi
     done
   fi
+  if [[ -n "${NORI_GOOGLE_WORKSPACE_CLIENT_SECRET_REF:-}" ]]; then
+    secret_updates+=("NORI_GOOGLE_WORKSPACE_CLIENT_SECRET=$NORI_GOOGLE_WORKSPACE_CLIENT_SECRET_REF")
+    core_env+=(
+      "NORI_GOOGLE_WORKSPACE_CLIENT_ID=$NORI_GOOGLE_WORKSPACE_CLIENT_ID"
+      "NORI_GOOGLE_WORKSPACE_REDIRECT_URL=$NORI_GOOGLE_WORKSPACE_REDIRECT_URL"
+      "NORI_GOOGLE_WORKSPACE_TEST_USERS=$NORI_GOOGLE_WORKSPACE_TEST_USERS"
+    )
+  fi
+  # The alternate delimiter preserves comma-separated values such as the tester allowlist.
+  joined_core_env="^|^$(IFS='|'; printf '%s' "${core_env[*]}")"
   if [[ "${#secret_updates[@]}" -gt 0 ]]; then
     common_core_hygiene+=(--update-secrets="$(IFS=,; printf '%s' "${secret_updates[*]}")")
   fi
@@ -299,7 +318,7 @@ if [[ "$DEPLOY_CORE" -eq 1 ]]; then
       --min-instances="${API_MIN_INSTANCES}"
       --max-instances="${API_MAX_INSTANCES}"
       --concurrency="${API_CONCURRENCY}"
-      --update-env-vars="NORI_ROLE=api,NORI_CLOUD=${CLOUD},NORI_POSTGRES_MAX_CONNS=${API_POSTGRES_MAX_CONNS}${home_env}"
+      --update-env-vars="${joined_core_env}|NORI_ROLE=api|NORI_POSTGRES_MAX_CONNS=${API_POSTGRES_MAX_CONNS}"
     )
     deploy_checked "$API_SERVICE" "$CORE_IMAGE" /readyz "${api_args[@]}"
 
@@ -312,12 +331,12 @@ if [[ "$DEPLOY_CORE" -eq 1 ]]; then
       --no-cpu-throttling
       --min-instances="${WORKER_MIN_INSTANCES}"
       --max-instances="${WORKER_MAX_INSTANCES}"
-      --update-env-vars="NORI_ROLE=worker,NORI_CLOUD=${CLOUD},NORI_POSTGRES_MAX_CONNS=${WORKER_POSTGRES_MAX_CONNS}${home_env}"
+      --update-env-vars="${joined_core_env}|NORI_ROLE=worker|NORI_POSTGRES_MAX_CONNS=${WORKER_POSTGRES_MAX_CONNS}"
     )
     deploy_checked "$WORKER_SERVICE" "$CORE_IMAGE" revision-ready "${worker_args[@]}"
   else
-    combined_env="NORI_CLOUD=${CLOUD}${home_env}"
-    if [[ -n "${NORI_POSTGRES_MAX_CONNS:-}" ]]; then combined_env+=",NORI_POSTGRES_MAX_CONNS=$NORI_POSTGRES_MAX_CONNS"; fi
+    combined_env="$joined_core_env"
+    if [[ -n "${NORI_POSTGRES_MAX_CONNS:-}" ]]; then combined_env+="|NORI_POSTGRES_MAX_CONNS=$NORI_POSTGRES_MAX_CONNS"; fi
     core_args=(
       "${common_core_hygiene[@]}"
       --update-env-vars="$combined_env"
