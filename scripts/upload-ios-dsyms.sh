@@ -39,6 +39,24 @@ if [[ "$TARGET_PATH" == *.xcarchive ]]; then
     exit 1
   fi
   echo "Verified Nori dSYM UUIDs against the archived app"
+
+  APP_DEPENDENCIES=$(xcrun otool -L "$APP/Nori")
+  if [[ "$APP_DEPENDENCIES" == *'@rpath/Sentry.framework/Sentry'* ]]; then
+    SENTRY_BINARY="$APP/Frameworks/Sentry.framework/Sentry"
+    SENTRY_DSYM="$DSYM_PATH/Sentry.framework.dSYM"
+    if [[ ! -f "$SENTRY_BINARY" || ! -d "$SENTRY_DSYM" ]]; then
+      echo "error: the archive is missing the linked Sentry framework or its dSYM" >&2
+      exit 1
+    fi
+    SENTRY_UUIDS=$(uuid_list "$SENTRY_BINARY")
+    SENTRY_DSYM_UUIDS=$(uuid_list "$SENTRY_DSYM")
+    if [[ -z "$SENTRY_UUIDS" || -n "$(comm -23 <(printf '%s\n' "$SENTRY_UUIDS") <(printf '%s\n' "$SENTRY_DSYM_UUIDS"))" ]]; then
+      echo "error: the archive's Sentry dSYM does not cover every linked Sentry architecture" >&2
+      exit 1
+    fi
+    echo "Verified Sentry dSYM UUIDs against the archived framework"
+  fi
+
   if [[ "$VERIFY_ONLY" == 1 ]]; then
     exit 0
   fi

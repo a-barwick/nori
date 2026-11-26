@@ -13,7 +13,7 @@
 		A10000040000000000000001 /* NoriCore in Frameworks */ = {isa = PBXBuildFile; productRef = A90000020000000000000001 /* NoriCore */; };
 		A10000050000000000000001 /* NoriDesign in Frameworks */ = {isa = PBXBuildFile; productRef = A90000030000000000000001 /* NoriDesign */; };
 		A10000060000000000000001 /* SentryNoriTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000050000000000000001 /* SentryNoriTelemetry.swift */; };
-		A10000070000000000000001 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = A90000040000000000000001 /* Sentry */; };
+		A10000070000000000000001 /* Sentry-Dynamic in Frameworks */ = {isa = PBXBuildFile; productRef = A90000040000000000000001 /* Sentry-Dynamic */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -35,7 +35,7 @@
 				A10000030000000000000001 /* NoriFeatures in Frameworks */,
 				A10000040000000000000001 /* NoriCore in Frameworks */,
 				A10000050000000000000001 /* NoriDesign in Frameworks */,
-				A10000070000000000000001 /* Sentry in Frameworks */,
+				A10000070000000000000001 /* Sentry-Dynamic in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -100,7 +100,7 @@
 				A90000010000000000000001 /* NoriFeatures */,
 				A90000020000000000000001 /* NoriCore */,
 				A90000030000000000000001 /* NoriDesign */,
-				A90000040000000000000001 /* Sentry */,
+				A90000040000000000000001 /* Sentry-Dynamic */,
 			);
 			productName = Nori;
 			productReference = A20000040000000000000001 /* Nori.app */;
@@ -402,10 +402,10 @@
 			package = AA0000010000000000000001 /* XCLocalSwiftPackageReference "NoriKit" */;
 			productName = NoriDesign;
 		};
-		A90000040000000000000001 /* Sentry */ = {
+		A90000040000000000000001 /* Sentry-Dynamic */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = AA0000020000000000000001 /* XCRemoteSwiftPackageReference "sentry-cocoa" */;
-			productName = Sentry;
+			productName = "Sentry-Dynamic";
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

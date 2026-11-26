@@ -101,7 +101,7 @@ The `ios-testflight` GitHub environment is restricted to `main` and holds `ASC_K
 The Developer-role API key authenticates the upload. Signing uses the base64-encoded Apple Distribution `.p12` in `APPLE_DISTRIBUTION_P12`, its password in `APPLE_DISTRIBUTION_P12_PASSWORD`, and the base64-encoded **Nori TestFlight CI** provisioning profile in `APPLE_NORI_PROFILE`. Rotate the certificate and provisioning profile together when either expires.
 
 ### Uploading dSYMs for TestFlight / App Store Releases
-The **iOS Archive** GitHub Actions workflow builds a Release archive and checks that its dSYM UUID matches the app. The shared Xcode scheme can upload symbols from the archive you actually distribute. To enable that upload for local archives, add these settings to `ios/Config/Local.xcconfig`:
+The archive and TestFlight workflows verify that the dSYMs match the Nori executable and its linked Sentry framework. The TestFlight export sends both sets of symbols to Apple with the build. The shared Xcode scheme can also upload symbols to your Sentry project. To enable that upload for local archives, add these settings to `ios/Config/Local.xcconfig`:
 
 ```xcconfig
 NORI_UPLOAD_IOS_DSYMS = YES
