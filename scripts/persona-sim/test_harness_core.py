@@ -468,12 +468,19 @@ class TestRunnerUnitHelpers(unittest.TestCase):
             self.assertTrue(len(fc_args["summary_items"]) >= 1)
             self.assertTrue(bool(fc_args["gist"]))
 
-            st_t1, r_t1 = _http_call(base, "POST", "/v1/responses", {
-                "tools": [{"name": "complete"}, {"name": "mcp_ws__email_send"}, {"name": "request_input"}],
-                "input": [{"role": "user", "content": "Send an email to wlin@apex.example about the order."}],
-            })
-            self.assertEqual(st_t1, 200)
-            self.assertEqual(r_t1["output"][0]["name"], "mcp_ws__email_send")
+            for prompt, recipient in (
+                ("Email wlin+orders@apex.example and bob@example.com.", "wlin+orders@apex.example"),
+                ("Send an email about the order.", "colleague@example.com"),
+            ):
+                with self.subTest(prompt=prompt):
+                    status, response = _http_call(base, "POST", "/v1/responses", {
+                        "tools": [{"name": "complete"}, {"name": "mcp_ws__email_send"}, {"name": "request_input"}],
+                        "input": [{"role": "user", "content": prompt}],
+                    })
+                    self.assertEqual(status, 200)
+                    call = response["output"][0]
+                    self.assertEqual(call["name"], "mcp_ws__email_send")
+                    self.assertEqual(json.loads(call["arguments"])["to"], [recipient])
 
             st_t2, r_t2 = _http_call(base, "POST", "/v1/responses", {
                 "tools": [{"name": "complete"}, {"name": "mcp_ws__email_send"}],

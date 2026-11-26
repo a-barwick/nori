@@ -191,6 +191,18 @@ def _extract_responses_text(items: list[Any]) -> str:
     return "\n".join(parts)
 
 
+def _extract_stub_email(text: str) -> str | None:
+    domain_pattern = re.compile(r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+    for local in re.finditer(r"[A-Za-z0-9._%+-]+", text):
+        separator = local.end()
+        if not text.startswith("@", separator):
+            continue
+        domain = domain_pattern.match(text, separator + 1)
+        if domain:
+            return text[local.start():domain.end()]
+    return None
+
+
 def build_stub_model_server() -> ThreadingHTTPServer:
     """OpenAI Chat + Responses loopback stub for `--stub-models` runs and harness tests."""
     call_seq = itertools.count(1)
@@ -404,8 +416,7 @@ def build_stub_model_server() -> ThreadingHTTPServer:
 
                     if email_send_tool and any(k in low for k in ("email", "send", "autoreview", "exfiltrat")):
                         _inc("tool_calls")
-                        m_addr = re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", prompt_text)
-                        recip = m_addr.group(0) if m_addr else "colleague@example.com"
+                        recip = _extract_stub_email(prompt_text) or "colleague@example.com"
                         output = [{
                             "type": "function_call",
                             "call_id": cid,
