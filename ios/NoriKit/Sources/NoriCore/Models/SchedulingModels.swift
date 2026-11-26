@@ -1,6 +1,5 @@
 import Foundation
 
-// MARK: - Automations
 
 public enum AutomationStatus: String, Sendable, Codable, Hashable {
     case enabled
@@ -31,7 +30,6 @@ public struct AutomationTrigger: Sendable, Codable, Hashable {
     public var offsetSeconds: Int?
     public var predicateRef: String?
     public var minIntervalSeconds: Int?
-    /// Human-readable cadence description (used in demo and UI summaries).
     public var displayCadence: String?
 
     enum CodingKeys: String, CodingKey {
@@ -276,7 +274,6 @@ public struct AutomationEditable: Sendable, Codable, Hashable {
     }
 }
 
-// MARK: - Goals
 
 public enum GoalStatus: String, Sendable, Codable, Hashable {
     case active
@@ -420,7 +417,6 @@ public struct Goal: Sendable, Codable, Hashable, Identifiable {
     public var metCriteriaCount: Int { completionCriteria.filter(\.met).count }
 }
 
-// MARK: - Health Check
 
 public struct HealthCheckResult: Sendable, Codable, Hashable {
     public var ok: Bool

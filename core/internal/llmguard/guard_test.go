@@ -47,7 +47,6 @@ func TestGuard_CompactionRateLimitAndDuplicateStorm(t *testing.T) {
 		return okResp(), nil
 	}}, CallMeta{UserID: "u1", Scope: ScopeCompaction})
 
-	// 1. Duplicate storm detector: identical payload rejected on 5th attempt (allows 1 initial + 3 transient retries).
 	for i := range 4 {
 		req, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/responses", strings.NewReader(`{"same":"payload"}`))
 		resp, err := rt.RoundTrip(req)
@@ -61,7 +60,6 @@ func TestGuard_CompactionRateLimitAndDuplicateStorm(t *testing.T) {
 		t.Fatalf("expected ErrDuplicateStorm on 5th identical call, got %v", err)
 	}
 
-	// 2. Scope per-minute rate limit (compaction default = 6/min): 2 more distinct payloads succeed, 7th is rate-limited.
 	for i := range 2 {
 		body := bytes.NewBufferString(`{"distinct":` + string(rune('a'+i)) + `}`)
 		req, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/responses", body)
@@ -79,7 +77,6 @@ func TestGuard_CompactionRateLimitAndDuplicateStorm(t *testing.T) {
 		t.Fatalf("expected exactly 6 admitted upstream calls, got %d", calls.Load())
 	}
 
-	// Advancing > 1 minute restores per-minute rate budget.
 	now = now.Add(61 * time.Second)
 	reqAfter, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/responses", strings.NewReader(`{"distinct":"after"}`))
 	respAfter, err := rt.RoundTrip(reqAfter)
@@ -102,7 +99,6 @@ func TestGuard_ConsecutiveAbortCircuitBreakerAndUnknownCost(t *testing.T) {
 		return nil, context.Canceled
 	}}, CallMeta{UserID: "u-abort", Scope: ScopeCompaction})
 
-	// 3 consecutive aborted calls trip the circuit breaker (mirrors the 500ms cancel storm).
 	for i := range 3 {
 		body := strings.NewReader(`{"prompt":"` + strings.Repeat("x", 4000) + `","seq":` + string(rune('0'+i)) + `}`)
 		req, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/responses", body)
@@ -111,7 +107,6 @@ func TestGuard_ConsecutiveAbortCircuitBreakerAndUnknownCost(t *testing.T) {
 		}
 	}
 
-	// 4th call is blocked BEFORE reaching the upstream transport!
 	req4, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/responses", strings.NewReader(`{"seq":4}`))
 	if _, err := rt.RoundTrip(req4); !errors.Is(err, ErrCircuitOpen) {
 		t.Fatalf("expected ErrCircuitOpen after 3 consecutive aborts, got %v", err)
@@ -124,7 +119,6 @@ func TestGuard_ConsecutiveAbortCircuitBreakerAndUnknownCost(t *testing.T) {
 		t.Fatalf("expected UnknownAborts=3, BlockedCircuit=1, EstimatedUnknownUSD>0; got %+v", st)
 	}
 
-	// After cooldown elapses, a healthy response resets the breaker.
 	now = now.Add(31 * time.Second)
 	okRT := g.Transport(fakeRT{fn: func(*http.Request) (*http.Response, error) {
 		return okResp(), nil
@@ -139,14 +133,13 @@ func TestGuard_EstimatedBudgetCountsUnknownAborts(t *testing.T) {
 	now := time.Date(2026, 11, 25, 16, 0, 0, 0, time.UTC)
 	g := New(Config{
 		Now:                   func() time.Time { return now },
-		AbortBreakerThreshold: 100, // isolate budget cap
+		AbortBreakerThreshold: 100,
 		MaxEstimatedUSD:       0.025,
 	})
 	rt := g.Transport(fakeRT{fn: func(*http.Request) (*http.Response, error) {
 		return nil, context.Canceled
 	}}, CallMeta{UserID: "u-budget", Scope: ScopeTask})
 
-	// Each aborted call reserves ~$0.01+ conservative exposure; budget must trip quickly.
 	var budgetHit bool
 	for i := range 10 {
 		req, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/responses", strings.NewReader(`{"n":`+string(rune('0'+i))+`}`))
@@ -197,7 +190,6 @@ func TestGuard_ConcurrencyLimitAndRedirectRefusal(t *testing.T) {
 		t.Fatal("timed out waiting for first call to start")
 	}
 
-	// Second concurrent compaction for same user must be rejected (MaxInFlight=1).
 	req2, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/responses", strings.NewReader(`{"req":2}`))
 	_, err := client.Do(req2)
 	if !errors.Is(err, ErrConcurrencyLimited) {
@@ -208,7 +200,6 @@ func TestGuard_ConcurrencyLimitAndRedirectRefusal(t *testing.T) {
 		t.Fatalf("first call failed: %v", err)
 	}
 
-	// Redirects must not be followed.
 	reqRedir, _ := http.NewRequest(http.MethodGet, "http://127.0.0.1:9999/redirect", nil)
 	resp, err := client.Do(reqRedir)
 	if err != nil {
@@ -226,7 +217,7 @@ func TestGuard_MaxTotalCallsAndInFlightEstimatedUSD(t *testing.T) {
 	release := make(chan struct{})
 	g := New(Config{
 		Now:             func() time.Time { return now },
-		MaxEstimatedUSD: 0.015, // enough for 1 in-flight (~$0.0108), blocks 2nd concurrent call
+		MaxEstimatedUSD: 0.015,
 		MaxTotalCalls:   2,
 	})
 	rt := g.Transport(fakeRT{fn: func(r *http.Request) (*http.Response, error) {
@@ -248,7 +239,6 @@ func TestGuard_MaxTotalCallsAndInFlightEstimatedUSD(t *testing.T) {
 	}()
 	<-started
 
-	// Concurrent 2nd call sees in-flight worst-case USD reservation and is blocked immediately.
 	req2, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/fast", strings.NewReader(`{"a":2}`))
 	if _, err := rt.RoundTrip(req2); !errors.Is(err, ErrBudgetExceeded) {
 		t.Fatalf("expected ErrBudgetExceeded while 1st call is in flight, got %v", err)
@@ -258,7 +248,6 @@ func TestGuard_MaxTotalCallsAndInFlightEstimatedUSD(t *testing.T) {
 		t.Fatalf("1st call failed: %v", err)
 	}
 
-	// Raise USD cap via SetMaxEstimatedUSD; 2nd admitted call succeeds, 3rd hits MaxTotalCalls=2.
 	g.SetMaxEstimatedUSD(5.0)
 	req3, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/fast", strings.NewReader(`{"a":3}`))
 	resp3, err := rt.RoundTrip(req3)
@@ -269,5 +258,58 @@ func TestGuard_MaxTotalCallsAndInFlightEstimatedUSD(t *testing.T) {
 	req4, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/fast", strings.NewReader(`{"a":4}`))
 	if _, err := rt.RoundTrip(req4); !errors.Is(err, ErrCallLimitExceeded) {
 		t.Fatalf("expected ErrCallLimitExceeded on 3rd call, got %v", err)
+	}
+}
+
+type interruptedResponse struct{}
+
+func (interruptedResponse) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+func (interruptedResponse) Close() error             { return nil }
+
+func TestSuccessfulHeadersSettleExactlyOneOutcome(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		body  io.ReadCloser
+		known bool
+		abort bool
+	}{
+		{"interrupted stream", interruptedResponse{}, false, true},
+		{"completed response without usage", io.NopCloser(strings.NewReader("{}")), false, false},
+		{"reported zero cost", io.NopCloser(strings.NewReader("{}")), true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			guard := New(DefaultConfig())
+			client := guard.WrapClient(&http.Client{Transport: fakeRT{fn: func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: 200, Body: tc.body}, nil
+			}}}, time.Second, CallMeta{Model: "gpt-6.1-sol"})
+			req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1/model", strings.NewReader("{}"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			exposure := guard.Stats().InFlightEstimatedUSD
+			if exposure <= 0 {
+				t.Fatalf("missing reservation: %+v", guard.Stats())
+			}
+			_, err = io.ReadAll(resp.Body)
+			if (err != nil) != tc.abort {
+				t.Fatalf("unexpected response error: %v", err)
+			}
+			if tc.known {
+				RecordResponseCost(resp, 0)
+			}
+			_ = resp.Body.Close()
+			_ = resp.Body.Close()
+			st := guard.Stats()
+			if tc.known {
+				exposure = 0
+			}
+			if st.InFlightEstimatedUSD != 0 || st.EstimatedUnknownUSD != exposure || (st.UnknownAborts == 1) != tc.abort {
+				t.Fatalf("incorrect settlement: %+v, want estimated USD %g", st, exposure)
+			}
+		})
 	}
 }

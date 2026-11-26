@@ -122,14 +122,12 @@ public struct WorkDetailView: View {
         }
     }
 
-    // MARK: - Detail Content
 
     private func detailScrollView(item: WorkItem) -> some View {
         let isRunning = item.status == .running
 
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                // 1. Task Title & Progress / Status Line
                 Text(item.title)
                     .font(.system(size: 19, weight: .bold))
                     .foregroundStyle(NoriColors.ink)
@@ -143,8 +141,6 @@ public struct WorkDetailView: View {
                 .padding(.bottom, 14)
 
                 if isRunning {
-                    // Running State Ordering:
-                    // 2. Pending action needed cards
                     if !pendingInteractions.isEmpty {
                         NoriSectionHeader("Action needed")
                         VStack(spacing: 10) {
@@ -159,13 +155,11 @@ public struct WorkDetailView: View {
                         .padding(.bottom, 10)
                     }
 
-                    // 3. Uncertain notice (if any)
                     if item.operations.uncertain > 0 {
                         uncertainNotice
                             .padding(.bottom, 14)
                     }
 
-                    // 4. Steer & Stop controls (or Stopping notice)
                     if !item.cancelRequested {
                         steerSection(item: item)
                     } else {
@@ -178,16 +172,12 @@ public struct WorkDetailView: View {
                         .padding(.bottom, 4)
                     }
 
-                    // 5. Actions audit & Activity timeline
                     actionsAuditSection
                     activityTimelineSection
 
-                    // Preserve early result / artifacts if already generated while running
                     resultSection(item: item)
                     savedArtifactsSection
                 } else {
-                    // Finished State Ordering:
-                    // 2. Continue card (if failed / budget-capped / incomplete)
                     if shouldShowContinueCard(for: item) {
                         continueCard(item: item)
                             .padding(.bottom, 6)
@@ -199,20 +189,15 @@ public struct WorkDetailView: View {
                             .padding(.bottom, 6)
                     }
 
-                    // 3. Result
                     resultSection(item: item)
 
-                    // 4. Saved artifacts
                     savedArtifactsSection
 
-                    // 5. Actions audit
                     actionsAuditSection
 
-                    // 6. Activity timeline
                     activityTimelineSection
                 }
 
-                // Bottom Footer: Task budget & origin demoted to a compact single strip
                 taskFooterStrip(item: item)
                     .padding(.top, 18)
             }
@@ -233,7 +218,6 @@ public struct WorkDetailView: View {
         }
     }
 
-    // MARK: - Subsections
 
     private func shouldShowContinueCard(for item: WorkItem) -> Bool {
         item.status == .failed || item.isBudgetExhausted
@@ -644,7 +628,6 @@ public struct WorkDetailView: View {
         }
     }
 
-    // MARK: - Actions
 
     private func loadDetail() async {
         isLoadingDetail = true
@@ -689,7 +672,6 @@ public struct WorkDetailView: View {
     }
 }
 
-// MARK: - Vertical Hairline Activity Timeline
 
 private struct ActivityTimelineView: View {
     let events: [RunEvent]

@@ -38,8 +38,6 @@ type stagedWakeOp struct {
 	wakeAt time.Time
 }
 
-// WithClock configures the time source used by Backend for lease and wake timestamps.
-// Defaults to time.Now().UTC() when omitted or nil.
 func WithClock(now func() time.Time) Option {
 	return func(b *Backend) {
 		b.nowFn = now
@@ -119,16 +117,12 @@ func compareUserWakeKeyOrder(a, b docstore.UserWake) int {
 	return strings.Compare(a.Lane, b.Lane)
 }
 
-// SetDropWakeEvents toggles dropping post-commit wake notifications (simulating
-// lost pg_notify packets or a temporarily disconnected LISTEN channel).
 func (b *Backend) SetDropWakeEvents(drop bool) {
 	b.mu.Lock()
 	b.dropWakeEvents = drop
 	b.mu.Unlock()
 }
 
-// EmitResync delivers a WakePayloadResync event to all active ListenWakes subscribers
-// (simulating a LISTEN connection reconnect).
 func (b *Backend) EmitResync() {
 	b.emitWakeEventsForce([]docstore.WakeEvent{{
 		Channel: docstore.WakeChannel,
@@ -136,8 +130,6 @@ func (b *Backend) EmitResync() {
 	}}, true)
 }
 
-// WaitForWakeSubscribers blocks until at least minCount ListenWakes subscribers are
-// registered or ctx is canceled.
 func (b *Backend) WaitForWakeSubscribers(ctx context.Context, minCount int) error {
 	for {
 		b.mu.Lock()
@@ -187,14 +179,11 @@ func (b *Backend) emitWakeEventsForce(events []docstore.WakeEvent, force bool) {
 			select {
 			case ch <- ev:
 			default:
-				// Non-blocking fan-out: slow subscribers fall back to polling
-				// and never deadlock transaction commits.
 			}
 		}
 	}
 }
 
-// ListenWakes delivers post-commit wake events in order until ctx is canceled.
 func (b *Backend) ListenWakes(ctx context.Context, onEvent func(docstore.WakeEvent)) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -288,9 +277,6 @@ func (b *Backend) applyWakeTaskLocked(userID, runID string, wakeAt, now time.Tim
 }
 
 func (b *Backend) applyWakeWaitingTasksLocked(userID, reason string, now time.Time) []docstore.WakeEvent {
-	// Match both parked rows for this waiting_reason AND any runnable row (owned or
-	// still unclaimed) so memstore matches Postgres wakeWaitingTasksSQL and a
-	// concurrent wake arriving around ClaimTask -> ParkTask always bumps wake_seq.
 	var matched []docstore.TaskKey
 	for key, row := range b.taskLeases {
 		if userID != "" && row.UserID != userID {
@@ -383,8 +369,6 @@ func (b *Backend) applyWakeUserLocked(userID, lane string, wakeAt, now time.Time
 	return nil
 }
 
-// Standalone READ COMMITTED WakeWriter methods on *Backend.
-
 func (b *Backend) WakeTask(ctx context.Context, userID, runID string, wakeAt time.Time) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -440,8 +424,6 @@ func (b *Backend) NotifyPause(ctx context.Context) error {
 	}})
 	return nil
 }
-
-// Inner task discovery (nori_task_leases), READ COMMITTED semantics.
 
 func (b *Backend) ClaimTask(ctx context.Context, owner string, lease time.Duration) (docstore.TaskLease, bool, error) {
 	if err := ctx.Err(); err != nil {
@@ -751,8 +733,6 @@ func (b *Backend) ListTaskLeases(ctx context.Context, userID string) ([]docstore
 	return out, nil
 }
 
-// Outer conversation & scheduler discovery (nori_user_wakes), READ COMMITTED semantics.
-
 func (b *Backend) ClaimUserWake(ctx context.Context, lane, owner string, lease time.Duration) (docstore.UserWake, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return docstore.UserWake{}, false, err
@@ -935,10 +915,6 @@ func (b *Backend) ListUserWakes(ctx context.Context, userID string) ([]docstore.
 	slices.SortFunc(out, compareUserWakeKeyOrder)
 	return out, nil
 }
-
-// Transactional WakeWriter methods on *transaction.
-// All wake mutations and notifications are buffered and applied atomically
-// ONLY when commitTx succeeds; WakeEvents are emitted ONLY AFTER b.mu unlocks.
 
 func (t *transaction) WakeTask(ctx context.Context, userID, runID string, wakeAt time.Time) error {
 	if err := ctx.Err(); err != nil {

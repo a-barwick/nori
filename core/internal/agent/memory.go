@@ -19,8 +19,6 @@ var conversationNote = prompts.Runtime("conversation-source-note", nil)
 
 const conversationPages = 6
 
-// memoryRead returns Core Memory and the Working Memory summary of conversation older than the outer loop's
-// recent window. Both are what the outer model already sees, so a task can follow the same preferences.
 func (s *Service) memoryRead(ctx context.Context) (map[string]any, error) {
 	memories, err := s.Store.Memories(ctx)
 	if err != nil {
@@ -79,7 +77,6 @@ func (s *Service) memoryRead(ctx context.Context) (map[string]any, error) {
 	return out, nil
 }
 
-// memorySearch searches Core Memory and Daily Logs via the store's FTS MemoryIndex, enforcing ContextFrom.
 func (s *Service) memorySearch(ctx context.Context, query, layer string, limit int) (map[string]any, error) {
 	query = strings.TrimSpace(query)
 	if query == "" || len(query) > maxSearchQuery {
@@ -149,8 +146,6 @@ func (s *Service) memorySearch(ctx context.Context, query, layer string, limit i
 	return map[string]any{"query": query, "results": results, "note": memoryNote}, nil
 }
 
-// memoryGet reads full Core Memory or a specific Daily Log (optionally filtered to one entry_id),
-// enforcing ContextFrom isolation (INV-MEM-07) on Daily Log entries.
 func (s *Service) memoryGet(ctx context.Context, target, date, entryID string) (map[string]any, error) {
 	target = strings.TrimSpace(target)
 	date = strings.TrimSpace(date)
@@ -351,8 +346,6 @@ func (s *Service) conversationFind(ctx context.Context, query string) (map[strin
 	return map[string]any{"messages": found, "note": conversationNote}, nil
 }
 
-// loadedCapabilities lists the capabilities a task loaded with capability_load. The transcript is the record, so the
-// set survives a restart and lasts for the rest of the task.
 func loadedCapabilities(results []map[string]any) map[string]bool {
 	loaded := map[string]bool{}
 	for _, output := range results {
@@ -372,8 +365,6 @@ func loadedCapabilities(results []map[string]any) map[string]bool {
 	return loaded
 }
 
-// capabilityLoad checks the names against the catalog and reports each one's account and availability. Loading grants
-// nothing: every call is still checked when it runs.
 func (s *Service) capabilityLoad(ctx context.Context, names []string) (map[string]any, error) {
 	byName := map[string]Capability{}
 	valid := []string{}

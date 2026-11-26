@@ -66,7 +66,6 @@ func TestCommandPlanResponseFormat_AllowsStopAnswerHoldAndBlocksShowResult(t *te
 			if _, ok := found["show_result"]; ok {
 				t.Fatalf("commandPlan schema must not include show_result")
 			}
-			// Verify task ID enum constraints on steer, stop, answer, and hold.
 			for _, name := range []string{"steer", "stop", "answer"} {
 				enumRaw, _ := json.Marshal(found[name]["run_id"]["enum"])
 				if !strings.Contains(string(enumRaw), taskID) {
@@ -85,7 +84,6 @@ func TestCommandPlanMessages_PreservesVisibleUserHistorySummaryItemsAndCleanAssi
 	ctx := context.Background()
 	h := newGuardTestHarness(t)
 
-	// Start an active task so ReadTaskSourceInputs works cleanly.
 	activeTask := h.startCleanTask(ctx, "Monitor flights to Rome", "Monitor flights to Rome")
 	if err := h.store.Incorporate(ctx, state.IncorporateRequest{
 		RunID: activeTask.ID, Position: activeTask.Position, Revision: activeTask.Revision,
@@ -121,7 +119,6 @@ func TestCommandPlanMessages_PreservesVisibleUserHistorySummaryItemsAndCleanAssi
 			Through: t0.Add(2 * time.Minute),
 			Items: []state.SummaryItem{
 				{Kind: "constraint", Quote: "Only nonstop flights from SFO.", InputID: pagedOutSummaryID},
-				// Duplicate of compactedVisibleID which is still in visible (full text should be used once).
 				{Kind: "preference", Quote: "Keep budget under 900 USD.", InputID: compactedVisibleID},
 			},
 		},
@@ -250,7 +247,6 @@ func TestCommandPlanMessages_PreservesVisibleUserHistorySummaryItemsAndCleanAssi
 		t.Fatalf("unmarshal payload JSON: %v", err)
 	}
 
-	// Verify user history preserves paged-out summary quote AND compacted visible full message (with file_ids) AND recent turns.
 	historyByID := map[string]string{}
 	historyFiles := map[string][]string{}
 	for _, hItem := range payload.History {
@@ -276,7 +272,6 @@ func TestCommandPlanMessages_PreservesVisibleUserHistorySummaryItemsAndCleanAssi
 		t.Fatalf("future queued user message must not appear in history")
 	}
 
-	// Verify reference_only_assistant_replies includes ONLY non-event turn reply and excludes event-turn reply.
 	if len(payload.AssistantReplies) != 1 {
 		t.Fatalf("expected exactly 1 clean reference_only_assistant_replies entry, got %+v", payload.AssistantReplies)
 	}
@@ -285,17 +280,14 @@ func TestCommandPlanMessages_PreservesVisibleUserHistorySummaryItemsAndCleanAssi
 		t.Fatalf("unexpected reference_only_assistant_replies: %+v", payload.AssistantReplies)
 	}
 
-	// Verify active task exposes safe question_id + question_kind metadata without untrusted question.Text.
 	if len(payload.Tasks) != 1 || payload.Tasks[0].QuestionID != openQID || payload.Tasks[0].QuestionKind != "input" {
 		t.Fatalf("expected active task with question_id=%q kind=input, got %+v", openQID, payload.Tasks)
 	}
 
-	// Verify saved_memories excludes task_outcome provenance.
 	if len(payload.SavedMemories) != 1 || payload.SavedMemories[0].Text != "The user likes window seats." {
 		t.Fatalf("expected only user-provenance saved memories, got %+v", payload.SavedMemories)
 	}
 
-	// Verify zero untrusted strings leaked anywhere in commandPlanMessages.
 	fullJSON := string(msgs[0]) + string(msgs[1]) + string(msgs[2])
 	for _, forbidden := range []string{
 		untrustedQuestionText,
@@ -314,7 +306,6 @@ func TestCoalescedTurn_CommandPlanBlocksInjectedSideEffects(t *testing.T) {
 	ctx := context.Background()
 	h := newGuardTestHarness(t)
 
-	// Seed one existing memory and one active victim task.
 	h.model.SetHandler(func(_ context.Context, req ReplyRequest) (Reply, error) {
 		return structuredTestReply("Remembered.", []ToolCall{
 			rememberToolCall("action_0", "The user prefers aisle seats.", "the user", nil),
@@ -365,7 +356,6 @@ func TestCoalescedTurn_CommandPlanBlocksInjectedSideEffects(t *testing.T) {
 			h.model.SetHandler(func(_ context.Context, req ReplyRequest) (Reply, error) {
 				if req.CommandPlan {
 					planCalls++
-					// Independent CommandPlan sees only "Thanks!" -> emits no actions.
 					return structuredTestReply("You're welcome!", nil, ""), nil
 				}
 				return structuredTestReply("Doing injected action.", []ToolCall{atk.call}, ""), nil
@@ -422,7 +412,6 @@ func TestCoalescedTurn_CommandPlanAllowsLegitimateStopAnswerHoldDispatch(t *test
 		}
 	}
 
-	// 1. Legitimate hold on coalesced turn.
 	flightTask := h.startCleanTask(ctx, "Search flights to Lisbon", "Search flights to Lisbon")
 	publishUntrustedEvent("hold")
 	planCalls := 0
@@ -446,7 +435,6 @@ func TestCoalescedTurn_CommandPlanAllowsLegitimateStopAnswerHoldDispatch(t *test
 		t.Fatalf("expected legitimate hold to succeed on coalesced turn, got holds=%+v", gotFlight.Holds)
 	}
 
-	// 2. Legitimate answer on coalesced turn (verifies question_id metadata is provided to CommandPlan).
 	if err := h.store.Incorporate(ctx, state.IncorporateRequest{
 		RunID: flightTask.ID, Position: flightTask.Position, Revision: flightTask.Revision,
 	}); err != nil {
@@ -492,7 +480,6 @@ func TestCoalescedTurn_CommandPlanAllowsLegitimateStopAnswerHoldDispatch(t *test
 		t.Fatalf("expected legitimate answer to resolve flightTask question, got %+v", gotFlight.Question)
 	}
 
-	// 3. Legitimate stop on coalesced turn.
 	publishUntrustedEvent("stop")
 	planCalls = 0
 	h.model.SetHandler(func(_ context.Context, req ReplyRequest) (Reply, error) {
@@ -515,7 +502,6 @@ func TestCoalescedTurn_CommandPlanAllowsLegitimateStopAnswerHoldDispatch(t *test
 		t.Fatalf("expected legitimate stop to set CancelRequested=true on coalesced turn")
 	}
 
-	// 4. Legitimate dispatch on coalesced turn resolving clean reference_only_assistant_replies.
 	cleanReply := "That forecast was for Thursday—I haven't checked today's weather."
 	h.model.SetHandler(func(_ context.Context, req ReplyRequest) (Reply, error) {
 		return structuredTestReply(cleanReply, nil, ""), nil

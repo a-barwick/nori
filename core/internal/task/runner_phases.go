@@ -33,8 +33,6 @@ func (s *runSession) maxModelAttemptsFor(subtask bool) int {
 	if subtask {
 		return defaultMaxSubtaskModelAttempts
 	}
-	// Preserve balanced 24-attempt cap for normal tasks (default $1 budget), while
-	// allowing explicitly high-budget long-running tasks (>= $5) up to 64 attempts.
 	if s.acct.budget >= 5.0 {
 		return 64
 	}
@@ -131,7 +129,6 @@ func (s *runSession) stepSync() stepResult {
 	next.Inherited = synced.ReadOnly
 	clearPendingWork(&next)
 
-	// Enforce shared family budget ceiling (including unknown-cost exposure) and max model attempts before starting any model call.
 	effectiveSpend := s.acct.spent + s.acct.others + next.EstimatedUnknownUSD
 	if next.Question == nil && s.acct.budget > 0 && effectiveSpend >= s.acct.budget {
 		detail := prompts.Runtime("spending-limit", map[string]any{"Budget": s.acct.budget})
@@ -173,7 +170,6 @@ func (s *runSession) stepSync() stepResult {
 			next.Phase = state.TaskPhaseAsk
 			return s.saveCtrl(next)
 		}
-		// Question already published and still unresolved: save any sync progress and park.
 		next.Phase = state.TaskPhaseSync
 		if res := s.saveCtrl(next); res.done {
 			return res
@@ -241,7 +237,6 @@ func (s *runSession) stepModel() stepResult {
 		Subtask: s.ctrl.Subtask,
 	})
 	mCancel()
-	// Keep PendingModelID intact for the next owner's recoverModelRef if lease/context ended.
 	if res, stopped := s.checkStopped(); stopped {
 		return res
 	}
@@ -251,8 +246,6 @@ func (s *runSession) stepModel() stepResult {
 	return s.commitModelOutcome(model)
 }
 
-// prepareModelStep persists PendingModelID + ModelStepStartedAt BEFORE calling ModelRef
-// so a crash mid-ModelRef recovers the exact checkpoint ID via recoverModelRef.
 func (s *runSession) prepareModelStep() (proceed bool, res stepResult) {
 	if s.ctrl.PendingModelID == "" {
 		pCtx, pCancel := s.stepCtx(stepTimeoutQuick)
@@ -345,14 +338,11 @@ func (s *runSession) handleModelErr(model RefModelOutcome, err error) stepResult
 			}
 			return s.transitionFailure(state.RunFailed, err.Error(), false, failSpend)
 		}
-		// Transient storage or 240s step timeout: preserve PendingModelID so the next
-		// attempt enters recoverModelRef and reuses or D-053-retries safely.
 		return s.backoff(err)
 	}
 }
 
 func (s *runSession) commitModelOutcome(model RefModelOutcome) stepResult {
-	// ModelRef succeeded (receipt committed in TaskModelCheckpoint).
 	newSpent := s.acct.spent + model.Cost
 	newCostUnknown := s.acct.costUnknown || (!model.CostKnown && !model.NotSent)
 	spend := &state.SpendUpdate{
@@ -373,7 +363,6 @@ func (s *runSession) commitModelOutcome(model RefModelOutcome) stepResult {
 	next.Ref = model.Ref
 	next.PendingModelID = ""
 
-	// D-053 retry after an interrupted model request while within 9m deadline.
 	started := s.now()
 	if s.ctrl.ModelStepStartedAt != nil {
 		started = *s.ctrl.ModelStepStartedAt
@@ -424,7 +413,6 @@ func (s *runSession) commitModelOutcome(model RefModelOutcome) stepResult {
 	}
 	next.ConsecutiveInvalid = 0
 
-	// Account and retain every model response before checking newer instructions.
 	pCtx, pCancel := s.stepCtx(stepTimeoutQuick)
 	current, posErr := s.act.CurrentPosition(pCtx, s.runID)
 	pCancel()
@@ -455,7 +443,6 @@ func (s *runSession) handleModelPositionErr(
 	}
 	switch {
 	case errors.Is(posErr, state.ErrSuperseded), errors.Is(posErr, state.ErrPaused):
-		// Close each abandoned call explicitly to preserve the exact Responses prefix.
 		for _, call := range model.Calls {
 			aCtx, aCancel := s.stepCtx(stepTimeoutQuick)
 			ref, appErr := s.act.AppendToolResult(aCtx, AppendResult{
@@ -501,8 +488,6 @@ func (s *runSession) handleModelPositionErr(
 		}
 		return s.handleBusy()
 	default:
-		// Transient error on CurrentPosition: keep PendingModelID uncommitted so the
-		// next retry reuses the saved checkpoint (zero duplicate LLM call or spend).
 		return s.backoff(posErr)
 	}
 }
@@ -528,7 +513,6 @@ func (s *runSession) stepCalls() stepResult {
 	call := s.ctrl.PendingCalls[s.ctrl.CallIndex]
 	step := Step{RunID: s.runID, Revision: s.ctrl.Revision}
 
-	// 1. Input changed or an earlier call revised task state: close remaining calls unrun.
 	if s.ctrl.CallsChanged || s.ctrl.CallsRevised {
 		return s.appendSkippedCall(step, call, map[string]any{
 			"skipped": true,
@@ -536,7 +520,6 @@ func (s *runSession) stepCalls() stepResult {
 		}, s.ctrl, false, false)
 	}
 
-	// 2. Shared family budget ceiling (including unknown-cost exposure) and paid-tool cap check before every non-complete call.
 	if call.Name != "complete" && s.acct.budget > 0 && s.acct.spent+s.acct.others+s.ctrl.EstimatedUnknownUSD >= s.acct.budget {
 		return s.appendSkippedCall(step, call, map[string]any{
 			"skipped": true,
@@ -550,7 +533,6 @@ func (s *runSession) stepCalls() stepResult {
 		}, s.ctrl, false, false)
 	}
 
-	// 3-5. Dispatch by call type.
 	switch call.Name {
 	case "request_input", "request_work":
 		return s.runInputCall(step, call)
@@ -566,12 +548,6 @@ func (s *runSession) stepCalls() stepResult {
 
 const maxParallelReads = 4
 
-// isParallelSafeReadCall allows ONLY independent, non-control, non-interactive
-// read tools whose cost is zero or fixed/known upfront (built-in runtime reads,
-// web_search, and trusted first-party nori.* read adapters). Third-party MCP tools,
-// external OAuth connectors (which may trigger sign-in/account interactions),
-// custom adapters with dynamic per-call costs, control tools, capability_load,
-// compose, writes, and unknown-cost reads always run serially.
 func isParallelSafeReadCall(call state.TaskCallRef) bool {
 	switch call.Name {
 	case "complete", "request_input", "request_work", "compose", "capability_load", "upload_inspect":
@@ -665,7 +641,6 @@ func (s *runSession) runParallelReadBatch(step Step, batch []state.TaskCallRef) 
 	if err != nil {
 		switch {
 		case errors.Is(err, state.ErrSuperseded), errors.Is(err, state.ErrPaused):
-			// Fall back to serial skip handling on next loop pass (or mark superseded).
 			next := s.ctrl
 			next.CallsRevised = true
 			if res := s.saveCtrl(next); res.done {
@@ -744,8 +719,6 @@ func (s *runSession) runParallelReadBatch(step Step, batch []state.TaskCallRef) 
 	return s.advanceStep(next, spend)
 }
 
-// appendSkippedCall writes a synthetic skipped/rejected tool result for call,
-// advances the call cursor on next, persists TaskControl, and optionally handles pause.
 func (s *runSession) appendSkippedCall(
 	step Step,
 	call state.TaskCallRef,
@@ -899,8 +872,6 @@ func (s *runSession) runToolCall(step Step, call state.TaskCallRef) stepResult {
 		Exec:        call.Exec,
 	})
 	tCancel()
-	// Keep Tools/CallIndex unchanged on lease/context stop so the next owner computes
-	// the exact same OperationID and recovers/reuses the durable receipt.
 	if res, stopped := s.checkStopped(); stopped {
 		return res
 	}
@@ -932,8 +903,6 @@ func (s *runSession) runToolCall(step Step, call state.TaskCallRef) stepResult {
 				}
 				return s.transitionFailure(state.RunFailed, err.Error(), false, failSpend)
 			}
-			// Transient storage/step error: leave Tools/CallIndex unchanged so next retry
-			// uses the exact same OperationID and durableTool recovers or reuses the receipt.
 			return s.backoff(err)
 		}
 	}
@@ -1002,7 +971,6 @@ func (s *runSession) stepPublish() stepResult {
 	pub := toRefPublication(pending)
 	pubTimeout := stepTimeoutQuick
 	if pub.Ref == "" && !pub.ExpectedIncomplete {
-		// Failure / cancellation terminal publication gets the 200s cleanup/failure deadline.
 		pubTimeout = stepTimeoutCleanup
 	}
 	pCtx, pCancel := s.stepCtx(pubTimeout)
@@ -1014,7 +982,6 @@ func (s *runSession) stepPublish() stepResult {
 		}
 		switch {
 		case errors.Is(err, state.ErrRoutingPending):
-			// Keep Phase=TaskPhasePublish and PendingPublication intact; park until outer routing clears.
 			return s.park(docstore.WaitRoutingPending, true)
 		case errors.Is(err, state.ErrSuperseded):
 			next := s.ctrl
@@ -1043,7 +1010,6 @@ func (s *runSession) stepPublish() stepResult {
 			next.Phase = state.TaskPhaseSync
 			return s.saveCtrl(next)
 		case errors.Is(err, state.ErrCancelled):
-			// Stop arrived before a RunCompleted publication committed; convert to RunCancelled.
 			next := s.ctrl
 			next.PendingPublication = &state.TaskPublication{
 				RunID:         s.runID,
@@ -1100,8 +1066,6 @@ func (s *runSession) stepCleanup() stepResult {
 			return s.classifyControlErr(err)
 		}
 	} else if run.Status == state.RunRunning && run.Finishing != nil {
-		// CleanupPending is already cleared; re-run Publish on Finishing without calling
-		// FinishCleanup again (which would self-wake and bump wake_seq in a loop).
 		pCtx, pCancel := s.stepCtx(stepTimeoutCleanup)
 		run, err = s.store.Publish(pCtx, *run.Finishing)
 		pCancel()

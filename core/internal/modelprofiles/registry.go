@@ -1,5 +1,3 @@
-// Package modelprofiles manages approved model profiles for per-turn and
-// per-task model switching, including optional hot-reloading from disk.
 package modelprofiles
 
 import (
@@ -32,7 +30,6 @@ const (
 	LaneTask = "task"
 )
 
-// Profile describes one deployment-approved model destination and its lane capabilities.
 type Profile struct {
 	ID                 string   `json:"id"`
 	Version            string   `json:"version"`
@@ -45,12 +42,9 @@ type Profile struct {
 	SupportedReasoning []string `json:"supported_reasoning,omitempty"`
 	DefaultReasoning   string   `json:"default_reasoning,omitempty"`
 	Paid               bool     `json:"paid"`
-	// Endpoint optionally overrides the local loopback base URL. Gateway profiles
-	// always bind to the deployment's NORI_MODEL_GATEWAY_URL. Never exposed in PublicProfile.
-	Endpoint string `json:"endpoint,omitempty"`
+	Endpoint           string   `json:"endpoint,omitempty"`
 }
 
-// PublicProfile is the client-facing projection returned by GET /v1/capabilities.
 type PublicProfile struct {
 	ID                 string   `json:"id"`
 	Version            string   `json:"version"`
@@ -63,7 +57,6 @@ type PublicProfile struct {
 	Paid               bool     `json:"paid"`
 }
 
-// PublicCatalog is the client-facing capabilities payload for model switching.
 type PublicCatalog struct {
 	DefaultChatProfileID string          `json:"default_chat_profile_id,omitempty"`
 	DefaultChatReasoning string          `json:"default_chat_reasoning,omitempty"`
@@ -72,7 +65,6 @@ type PublicCatalog struct {
 	Profiles             []PublicProfile `json:"profiles"`
 }
 
-// Catalog is an immutable snapshot of approved profiles.
 type Catalog struct {
 	DefaultChatProfileID string
 	DefaultChatReasoning string
@@ -82,7 +74,6 @@ type Catalog struct {
 	byID                 map[string]Profile
 }
 
-// Public returns the client-safe catalog view.
 func (c Catalog) Public() PublicCatalog {
 	out := PublicCatalog{
 		DefaultChatProfileID: c.DefaultChatProfileID,
@@ -107,18 +98,15 @@ func (c Catalog) Public() PublicCatalog {
 	return out
 }
 
-// Get returns the profile with id.
 func (c Catalog) Get(id string) (Profile, bool) {
 	p, ok := c.byID[id]
 	return p, ok
 }
 
-// SupportsLane reports whether p is approved for lane ("chat" or "task").
 func (p Profile) SupportsLane(lane string) bool {
 	return slices.Contains(p.Lanes, lane)
 }
 
-// SupportsReasoning reports whether effort is allowed for p. Empty effort is always allowed.
 func (p Profile) SupportsReasoning(effort string) bool {
 	if effort == "" {
 		return true
@@ -134,8 +122,6 @@ type filePayload struct {
 	Profiles             []Profile `json:"profiles"`
 }
 
-// Registry serves the approved model catalog, hot-reloading NORI_MODEL_PROFILES_FILE
-// whenever its modification time changes.
 type Registry struct {
 	cloud       string
 	envProfile  string
@@ -150,7 +136,6 @@ type Registry struct {
 	hasMod  bool
 }
 
-// NewRegistry constructs a Registry from startup settings.
 func NewRegistry(cfg settings.Settings) (*Registry, error) {
 	allow := make(map[string]bool, len(cfg.Models.PickerUsers))
 	for _, u := range cfg.Models.PickerUsers {
@@ -183,7 +168,6 @@ func NewRegistry(cfg settings.Settings) (*Registry, error) {
 	return r, nil
 }
 
-// CanSelect reports whether the caller may view and use the model picker.
 func (r *Registry) CanSelect(userID, email string) bool {
 	if r == nil {
 		return false
@@ -200,7 +184,6 @@ func (r *Registry) CanSelect(userID, email string) bool {
 	return false
 }
 
-// Snapshot returns the current approved catalog, hot-reloading ProfilesFile if modified.
 func (r *Registry) Snapshot() Catalog {
 	if r == nil {
 		return Catalog{}
@@ -254,7 +237,6 @@ func (r *Registry) reloadFileLocked(initial bool) error {
 		}
 		return err
 	}
-	// Advance lastMod even on parse failure so a bad file logs once per edit instead of spamming.
 	r.lastMod = info.ModTime()
 	r.hasMod = true
 
@@ -270,9 +252,6 @@ func (r *Registry) reloadFileLocked(initial bool) error {
 	return nil
 }
 
-// ValidateAndResolve validates a client-supplied ModelSelection against the current
-// catalog, stamps resolved profile versions, and pins non-secret execution snapshots
-// so mid-run catalog edits cannot mutate an in-flight turn or task.
 func (r *Registry) ValidateAndResolve(sel *state.ModelSelection) (*state.ModelSelection, error) {
 	if sel.IsEmpty() {
 		return nil, nil
@@ -385,9 +364,6 @@ func (r *Registry) profileFromPin(id, version, lane string, pin *state.PinnedPro
 	return p, nil
 }
 
-// ResolveChat resolves the Profile and effective reasoning effort for a chat turn.
-// Returns (Profile{}, "", false, nil) when no explicit chat selection was made.
-// Returns an error if an explicit selection cannot be honored (never silently falls back).
 func (r *Registry) ResolveChat(sel *state.ModelSelection) (Profile, string, bool, error) {
 	if r == nil || sel == nil || (sel.ChatProfileID == "" && sel.ChatReasoning == "") {
 		return Profile{}, "", false, nil
@@ -421,9 +397,6 @@ func (r *Registry) ResolveChat(sel *state.ModelSelection) (Profile, string, bool
 	return p, reasoning, true, nil
 }
 
-// ResolveTask resolves the Profile and effective reasoning effort for a background task.
-// Returns (Profile{}, "", false, nil) when no explicit task selection was made.
-// Returns an error if an explicit selection cannot be honored (never silently falls back).
 func (r *Registry) ResolveTask(sel *state.ModelSelection) (Profile, string, bool, error) {
 	if r == nil || sel == nil || (sel.TaskProfileID == "" && sel.TaskReasoning == "") {
 		return Profile{}, "", false, nil
@@ -462,7 +435,6 @@ var claudeReasoningLevels = []string{"low", "medium", "high", "xhigh", "max"}
 func buildDefaultCatalog(cloud, envProfile string, m settings.Models) Catalog {
 	var profiles []Profile
 
-	// 1. Local Inkling profile ONLY when NORI_LOCAL_MODEL_URL + NORI_LOCAL_MODEL_TAG are explicitly set in local mode.
 	if cloud == "local" && m.LocalURL != "" && m.LocalModel != "" {
 		profiles = append(profiles, Profile{
 			ID:          "local-inkling-2-mini",
@@ -478,7 +450,6 @@ func buildDefaultCatalog(cloud, envProfile string, m settings.Models) Catalog {
 		})
 	}
 
-	// 2. Cloud Vercel AI Gateway profiles when an HTTPS gateway URL + key are configured.
 	if hasCloudGateway(m) {
 		if envProfile == "prod" {
 			profiles = append(profiles,
@@ -558,7 +529,6 @@ func buildDefaultCatalog(cloud, envProfile string, m settings.Models) Catalog {
 	}
 
 	cat := indexCatalog(profiles)
-	// Match defaults strictly when a catalog profile actually represents the configured Outer/Inner model.
 	for _, p := range cat.Profiles {
 		if cat.DefaultChatProfileID == "" && p.SupportsLane(LaneChat) && p.Model == m.Outer {
 			cat.DefaultChatProfileID = p.ID
@@ -687,8 +657,6 @@ func validateProfile(p Profile, cloud string, m settings.Models) (Profile, error
 		}
 		p.Paid = false
 	case BackendGateway:
-		// Lock gateway profiles strictly to the deployment's configured NORI_MODEL_GATEWAY_URL
-		// so a hot-reloaded profiles file can never exfiltrate NORI_MODEL_GATEWAY_API_KEY.
 		if p.Endpoint != "" && p.Endpoint != m.GatewayURL {
 			return p, fmt.Errorf("gateway profile %q cannot override NORI_MODEL_GATEWAY_URL", p.ID)
 		}

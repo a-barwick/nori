@@ -369,12 +369,10 @@ func TestRunner_HappyPathAndPerStepDeadlines(t *testing.T) {
 		t.Fatalf("Run = (%s, %v), want (done, nil)", outcome, err)
 	}
 
-	// Verify modelRequestDeadline (<= 2m) was enforced inside Model's 240s step context.
 	if seenModelDeadline <= 0 || seenModelDeadline > 2*time.Minute+time.Second {
 		t.Fatalf("model ctx deadline = %v, want in (0, 2m]", seenModelDeadline)
 	}
 
-	// Verify OperationRecord.RecoveryUntil carries the exact 240s step deadline.
 	ops, err := f.store.Operations(ctx, run.ID)
 	if err != nil || len(ops) != 1 {
 		t.Fatalf("Operations: len=%d err=%v", len(ops), err)
@@ -427,7 +425,6 @@ func TestRunner_LateWakeDeletesTerminalCleanLease(t *testing.T) {
 	}
 	callsBefore := f.model.Calls()
 
-	// Simulate a late wake recreating a lease row for an already terminal clean run.
 	if err := f.backend.WakeTask(ctx, f.user.ID, run.ID, f.clock.Now()); err != nil {
 		t.Fatalf("WakeTask: %v", err)
 	}
@@ -602,7 +599,6 @@ func TestRunner_WatchTaskLeaseRenewalAndSelfStop(t *testing.T) {
 		if res.out != task.OutcomeBackoff || !errors.Is(res.err, dbErr) {
 			t.Fatalf("Run = (%s, %v), want (backoff, %v)", res.out, res.err, dbErr)
 		}
-		// PendingModelID MUST remain persisted so the next worker recovers cleanly.
 		ctrl, err := f.store.GetTaskControl(ctx, run.ID)
 		if err != nil || ctrl.PendingModelID == "" {
 			t.Fatalf("expected PendingModelID preserved after renewal failure, got %+v (err=%v)", ctrl, err)
@@ -765,7 +761,6 @@ func TestRunner_WakeDrivenBoundedCancellation(t *testing.T) {
 			t.Fatalf("Run = (%s, %v), want (parked, nil)", res.out, res.err)
 		}
 
-		// Unpause and verify task resumes and completes cleanly (NOT failed!).
 		if err := f.usersDB.SetPaused(ctx, false); err != nil {
 			t.Fatalf("SetPaused(false): %v", err)
 		}
@@ -857,7 +852,6 @@ func TestRunner_CrashMidModelReceiptReuseAndD053Retry(t *testing.T) {
 		})
 		run := f.startTask(ctx, "run-model-reuse", "Crash after SaveTaskModelCheckpoint")
 
-		// Step 1: sync -> TaskPhaseModel.
 		claim1, ok, _ := f.backend.ClaimTaskByID(ctx, f.user.ID, run.ID, "worker-1", state.TaskLease)
 		if !ok {
 			t.Fatal("expected claim1")
@@ -868,8 +862,6 @@ func TestRunner_CrashMidModelReceiptReuseAndD053Retry(t *testing.T) {
 			t.Fatalf("step 1 = (%s, %v), want (released, nil)", out, err)
 		}
 
-		// Simulate worker-1 acquiring TaskControl, persisting PendingModelID, running ModelRef
-		// (which commits TaskModelCheckpoint), and hard-crashing BEFORE AdvanceTaskStep!
 		_, ok, _ = f.backend.ClaimTaskByID(ctx, f.user.ID, run.ID, "worker-1", state.TaskLease)
 		if !ok {
 			t.Fatal("expected claim for worker-1 crash setup")
@@ -899,14 +891,11 @@ func TestRunner_CrashMidModelReceiptReuseAndD053Retry(t *testing.T) {
 			t.Fatalf("expected 1 model call before crash, got %d", f.model.Calls())
 		}
 
-		// Hard crash: worker-1 does NOT release TaskControl or discovery lease.
-		// Advance clock past 30s TaskLease -> worker-2 takes over at Fence+1!
 		f.clock.Advance(state.TaskLease + time.Second)
 		out, err := f.claimAndRun(ctx, run.ID, "worker-2")
 		if err != nil || out != task.OutcomeDone {
 			t.Fatalf("worker-2 Run = (%s, %v), want (done, nil)", out, err)
 		}
-		// ZERO second LLM call! Exact receipt reused!
 		if f.model.Calls() != 1 {
 			t.Fatalf("expected checkpoint reuse (still 1 LLM call), got %d", f.model.Calls())
 		}
@@ -939,7 +928,6 @@ func TestRunner_CrashMidModelReceiptReuseAndD053Retry(t *testing.T) {
 			t.Fatalf("sync step: %v", err)
 		}
 
-		// Simulate worker-1 writing StartTaskModelCheckpoint (in-flight, no outcome) and crashing.
 		_, _, _ = f.backend.ClaimTaskByID(ctx, f.user.ID, run.ID, "worker-1", state.TaskLease)
 		ctrl, fence, err := f.store.AcquireTaskControl(ctx, run.ID, "worker-1")
 		if err != nil {
@@ -961,7 +949,6 @@ func TestRunner_CrashMidModelReceiptReuseAndD053Retry(t *testing.T) {
 			t.Fatalf("StartTaskModelCheckpoint: %v", err)
 		}
 
-		// Advance clock 35s (lease expired; still within 9m D-053 budget after 240s recovery wait).
 		f.clock.Advance(35 * time.Second)
 		out, err := f.claimAndRun(ctx, run.ID, "worker-2")
 		if err != nil || out != task.OutcomeDone {
@@ -1006,7 +993,6 @@ func TestRunner_CrashMidModelReceiptReuseAndD053Retry(t *testing.T) {
 			RecoveryUntil: started.Add(240 * time.Second),
 		})
 
-		// Advance clock 8 minutes (> 9m - 2m15s = 6m45s).
 		f.clock.Advance(8 * time.Minute)
 		out, err := f.claimAndRun(ctx, run.ID, "worker-2")
 		if err != nil || out != task.OutcomeDone {
@@ -1058,7 +1044,6 @@ func TestRunner_CrashMidToolSafeReadRerunVsUncertainWrite(t *testing.T) {
 		})
 		run := f.startTask(ctx, "run-tool-read-crash", "Crash during safe read")
 
-		// Run 2 steps (sync + model) so TaskControl is in TaskPhaseCalls with PendingCalls=[memory_read].
 		claim1, _, _ := f.backend.ClaimTaskByID(ctx, f.user.ID, run.ID, "worker-1", state.TaskLease)
 		r1 := f.newRunner("worker-1")
 		r1.StepBudget = 2
@@ -1066,7 +1051,6 @@ func TestRunner_CrashMidToolSafeReadRerunVsUncertainWrite(t *testing.T) {
 			t.Fatalf("steps 1-2 = (%s, %v), want (released, nil)", out, err)
 		}
 
-		// Simulate worker-1 admitting memory_read (pending, attempt=1) and crashing before settling.
 		ctrl, _ := f.store.GetTaskControl(ctx, run.ID)
 		opID := fmt.Sprintf("%s-m%d-t%d", run.ID, ctrl.Models, ctrl.Tools+1)
 		until := f.clock.Now().Add(240 * time.Second).UTC().Truncate(time.Microsecond)
@@ -1080,7 +1064,6 @@ func TestRunner_CrashMidToolSafeReadRerunVsUncertainWrite(t *testing.T) {
 			t.Fatalf("PutOperation: %v", err)
 		}
 
-		// Worker-2 takes over and reruns safe read immediately!
 		out, err := f.claimAndRun(ctx, run.ID, "worker-2")
 		if err != nil || out != task.OutcomeDone {
 			t.Fatalf("worker-2 Run = (%s, %v), want (done, nil)", out, err)
@@ -1138,7 +1121,6 @@ func TestRunner_CrashMidToolSafeReadRerunVsUncertainWrite(t *testing.T) {
 			t.Fatalf("steps 1-2 = (%s, %v), want (released, nil)", out, err)
 		}
 
-		// Simulate worker-1 admitting mock_write (attempt=1) and crashing mid-write!
 		ctrl, _ := f.store.GetTaskControl(ctx, run.ID)
 		opID := fmt.Sprintf("%s-m%d-t%d", run.ID, ctrl.Models, ctrl.Tools+1)
 		until := f.clock.Now().Add(240 * time.Second).UTC().Truncate(time.Microsecond)
@@ -1153,7 +1135,6 @@ func TestRunner_CrashMidToolSafeReadRerunVsUncertainWrite(t *testing.T) {
 			t.Fatalf("PutOperation: %v", err)
 		}
 
-		// Worker-2 takes over: MUST NOT call adapter.Execute, MUST settle uncertain and park WaitQuestion!
 		out, err := f.claimAndRun(ctx, run.ID, "worker-2")
 		if err != nil || out != task.OutcomeParked {
 			t.Fatalf("worker-2 Run = (%s, %v), want (parked, nil)", out, err)
@@ -1339,7 +1320,6 @@ func TestRunner_GracefulDrainAndCtxCancel(t *testing.T) {
 		if err != nil || out1 != task.OutcomeReleased {
 			t.Fatalf("replica-1 Run = (%s, %v), want (released, nil)", out1, err)
 		}
-		// Verify TaskControl and discovery lease are BOTH released cleanly for immediate takeover.
 		ctrl, _ := f.store.GetTaskControl(ctx, run.ID)
 		if ctrl.Owner != "" || ctrl.Phase != state.TaskPhaseCalls {
 			t.Fatalf("expected released TaskControl in calls phase, got %+v", ctrl)
@@ -1349,7 +1329,6 @@ func TestRunner_GracefulDrainAndCtxCancel(t *testing.T) {
 			t.Fatalf("expected immediately claimable unowned lease, got %+v", leases)
 		}
 
-		// Replica 2 immediately takes over and completes!
 		out2, err := f.claimAndRun(ctx, run.ID, "replica-2")
 		if err != nil || out2 != task.OutcomeDone {
 			t.Fatalf("replica-2 Run = (%s, %v), want (done, nil)", out2, err)
@@ -1419,7 +1398,6 @@ func TestRunner_GlobalPauseAndStopPaused(t *testing.T) {
 		t.Fatalf("expected lease parked as paused, got %+v", leases)
 	}
 
-	// Stop during pause wakes the task; Runner completes via StopPaused without calling LLM!
 	if _, err := f.store.AcceptCommandBatch(ctx, []state.Command{{
 		ID: "cmd-stop-paused", RunID: run.ID, Kind: state.CommandStop,
 	}}, nil); err != nil {
@@ -1446,7 +1424,6 @@ func TestRunner_ParentFinishingSubtaskDrainNoLivelock(t *testing.T) {
 	ctx := context.Background()
 	f := newRunnerFixture(t, func(_ context.Context, callNum int, _ agent.Request) (agent.Response, error) {
 		if callNum == 1 {
-			// Parent does a read (sets CleanupPending=true via Admit!) then requests work.
 			return toolCallResponse("p-read", "memory_read", map[string]any{}, 0.05), nil
 		}
 		if callNum == 2 {
@@ -1467,7 +1444,6 @@ func TestRunner_ParentFinishingSubtaskDrainNoLivelock(t *testing.T) {
 		t.Fatalf("expected parent parked on QuestionWork with CleanupPending=true, got %+v", gotParent)
 	}
 
-	// Spawn child subtask.
 	_, err := f.store.AcceptCommandBatch(ctx, []state.Command{{
 		ID: "cmd-child-start", RunID: "run-child-fin", ParentID: parent.ID,
 		QuestionID: gotParent.Question.ID, Kind: state.CommandStart, Text: "Do child work",
@@ -1476,7 +1452,6 @@ func TestRunner_ParentFinishingSubtaskDrainNoLivelock(t *testing.T) {
 		t.Fatalf("spawn child: %v", err)
 	}
 
-	// Stop parent while child is still running!
 	_, err = f.store.AcceptCommandBatch(ctx, []state.Command{{
 		ID: "cmd-parent-stop", RunID: parent.ID, Kind: state.CommandStop,
 	}}, nil)
@@ -1484,7 +1459,6 @@ func TestRunner_ParentFinishingSubtaskDrainNoLivelock(t *testing.T) {
 		t.Fatalf("stop parent: %v", err)
 	}
 
-	// Parent MUST clean up and park cleanly as WaitFinishing (NO infinite FinishCleanup wake_seq livelock!).
 	out, err := f.claimAndRun(ctx, parent.ID, "worker-a")
 	if err != nil || out != task.OutcomeParked {
 		t.Fatalf("parent finishing Run = (%s, %v), want (parked, nil)", out, err)
@@ -1504,7 +1478,6 @@ func TestRunner_ParentFinishingSubtaskDrainNoLivelock(t *testing.T) {
 		t.Fatalf("expected parent lease parked as WaitFinishing, got %+v", leases)
 	}
 
-	// Now run child: child cancels and wakes parent -> parent finishes and deletes lease!
 	if outC, err := f.claimAndRun(ctx, "run-child-fin", "worker-b"); err != nil || outC != task.OutcomeDone {
 		t.Fatalf("child Run = (%s, %v), want (done, nil)", outC, err)
 	}
@@ -1545,7 +1518,6 @@ func TestRunner_StaleWorkerFencedOut(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("ClaimTaskByID worker-1: ok=%v err=%v", ok, err)
 	}
-	// Disable ticker on worker-1 so its lease expires while stalled inside Decide.
 	r1 := f.newRunner("worker-1")
 	r1.NewTicker = func(time.Duration) (<-chan time.Time, func()) {
 		return make(chan time.Time), func() {}
@@ -1569,12 +1541,8 @@ func TestRunner_StaleWorkerFencedOut(t *testing.T) {
 		t.Fatalf("expected worker-1 to hold fence, got %+v (err=%v)", ctrlBefore, err)
 	}
 
-	// Expire worker-1's lease (35s) and let worker-2 take over at Fence+1.
 	f.clock.Advance(state.TaskLease + 5*time.Second)
 
-	// Start worker-2; worker-2 takes over at Fence+1, sees worker-1's uncommitted PendingModelID,
-	// waits through RecoveryUntil (advancing clock via virtual sleep+renew), settles interrupted,
-	// D-053 retries with LLM call #2 ($0.10), and completes the task!
 	out2, err := f.claimAndRun(ctx, run.ID, "worker-2")
 	if err != nil || out2 != task.OutcomeDone {
 		t.Fatalf("worker-2 Run = (%s, %v), want (done, nil)", out2, err)
@@ -1588,14 +1556,12 @@ func TestRunner_StaleWorkerFencedOut(t *testing.T) {
 		t.Fatalf("expected Fence+1 on takeover: %d -> %d", ctrlBefore.Fence, finalCtrlBeforeStale.Fence)
 	}
 
-	// Now wake stalled worker-1: its AdvanceTaskStep MUST be fenced out with ErrTaskBusy!
 	close(worker1Resume)
 	res1 := <-done1
 	if res1.out != task.OutcomeBusy || res1.err != nil {
 		t.Fatalf("stalled worker-1 Run = (%s, %v), want (busy, nil)", res1.out, res1.err)
 	}
 
-	// Verify ZERO overwrite of TaskControl progress and ZERO double-counted spend!
 	finalRunAfterStale, _ := f.store.GetRun(ctx, run.ID)
 	finalCtrlAfterStale, _ := f.store.GetTaskControl(ctx, run.ID)
 	if finalRunAfterStale.Spent != finalRunBeforeStale.Spent {

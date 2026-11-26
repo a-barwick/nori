@@ -1,5 +1,3 @@
-// Package worker runs Nori's unified Postgres-native worker pool across inner
-// task execution (task.Runner) and outer conversation/scheduler lanes.
 package worker
 
 import (
@@ -23,29 +21,22 @@ import (
 )
 
 const (
-	DefaultTaskConcurrency         = 64
-	DefaultConversationConcurrency = 32
-	DefaultSchedulerConcurrency    = 16
-	DefaultPollInterval            = 2 * time.Second
-	DefaultRepairInterval          = 60 * time.Second
-	DefaultRenewInterval           = 10 * time.Second
-	DefaultDrainTimeout            = 25 * time.Second
-	DefaultCancelGrace             = 5 * time.Second
-	DefaultBackoff                 = 2 * time.Second
-	userWakeRenewTimeout           = 5 * time.Second
-	// repairAdvisoryLockKey is a dedicated Postgres session advisory lock key
-	// used to leader-elect RepairOnce sweeps across worker replicas (distinct
-	// from migration lock key 7162384101).
-	repairAdvisoryLockKey int64 = 7162384102
+	DefaultTaskConcurrency               = 64
+	DefaultConversationConcurrency       = 32
+	DefaultSchedulerConcurrency          = 16
+	DefaultPollInterval                  = 2 * time.Second
+	DefaultRepairInterval                = 60 * time.Second
+	DefaultRenewInterval                 = 10 * time.Second
+	DefaultDrainTimeout                  = 25 * time.Second
+	DefaultCancelGrace                   = 5 * time.Second
+	DefaultBackoff                       = 2 * time.Second
+	userWakeRenewTimeout                 = 5 * time.Second
+	repairAdvisoryLockKey          int64 = 7162384102
 )
 
-// Options configures a Pool. Zero values select production defaults.
 type Options struct {
-	// Owner identifies this worker replica in nori_task_leases, nori_user_wakes, and TaskControl.
 	Owner string
 
-	// UserID optionally scopes this Pool to a single user across claiming, wake
-	// filtering, and RepairOnce. When non-empty, leases must implement docstore.ScopedLeaseStore.
 	UserID string
 
 	TaskConcurrency         int
@@ -59,18 +50,14 @@ type Options struct {
 	CancelGrace    time.Duration
 	Backoff        time.Duration
 
-	// Now optionally supplies a deterministic clock (defaults to time.Now).
 	Now func() time.Time
 
-	// Optional execution hooks for unit/simulation tests. Nil uses production implementations.
 	RunTask              func(ctx context.Context, userApp *app.App, claim docstore.TaskLease, drain <-chan struct{}) (task.RunOutcome, error)
 	RunConversation      func(ctx context.Context, userApp *app.App) error
 	NextConversationWake func(ctx context.Context, userApp *app.App) (time.Time, error)
 	RunScheduler         func(ctx context.Context, userApp *app.App) (*time.Time, error)
 }
 
-// LaneStats reports current in-flight worker count and configured concurrency
-// capacity across the Pool's three execution lanes.
 type LaneStats struct {
 	TaskActive           int64
 	TaskCapacity         int64
@@ -80,8 +67,6 @@ type LaneStats struct {
 	SchedulerCapacity    int64
 }
 
-// Pool coordinates one dedicated wake listener, bounded claim loops for inner tasks
-// and outer conversation/scheduler lanes, periodic lease repair, and graceful drain.
 type Pool struct {
 	service      *app.Service
 	leases       docstore.LeaseStore
@@ -109,7 +94,6 @@ type Pool struct {
 
 var _ task.WakeNotifier = (*Pool)(nil)
 
-// New constructs a Pool over svc's shared storage, leases, and wake listener.
 func New(svc *app.Service, opts Options) (*Pool, error) {
 	if svc == nil {
 		return nil, errors.New("worker pool requires app.Service")
@@ -176,11 +160,8 @@ func New(svc *app.Service, opts Options) (*Pool, error) {
 	}, nil
 }
 
-// Owner returns the worker replica ID used for lease claims.
 func (p *Pool) Owner() string { return p.owner }
 
-// LaneStats returns current in-flight worker counts and configured concurrency
-// capacities across the task, conversation, and scheduler lanes.
 func (p *Pool) LaneStats() LaneStats {
 	if p == nil {
 		return LaneStats{}
@@ -215,9 +196,6 @@ func signalChan(ch chan struct{}) {
 	}
 }
 
-// Subscribe registers an in-memory wake channel for (userID, runID) that fires on
-// matching task wakes, user-wide task wakes ("t:<user>:*"), global task wakes ("t:*"),
-// global pause ("pause"), or listener resync ("resync").
 func (p *Pool) Subscribe(userID, runID string) (<-chan struct{}, func()) {
 	key := docstore.TaskKey{UserID: userID, RunID: runID}
 	ch := make(chan struct{}, 1)
@@ -272,7 +250,6 @@ func (p *Pool) notifyTaskSubscribers(userID, runID string) {
 	}
 }
 
-// HandleWake fans out one post-commit WakeEvent to claim loops and active task subscribers.
 func (p *Pool) HandleWake(ev docstore.WakeEvent) {
 	parsed := docstore.ParseWakePayload(ev.Payload)
 	switch parsed.Kind {
@@ -302,8 +279,6 @@ func (p *Pool) HandleWake(ev docstore.WakeEvent) {
 	}
 }
 
-// Run starts the wake listener, periodic repair sweep, and all three worker lanes,
-// blocking until ctx is canceled and all in-flight workers have drained cleanly.
 func (p *Pool) Run(ctx context.Context) error {
 	claimCtx, cancelClaim := context.WithCancel(ctx)
 	defer cancelClaim()
@@ -346,13 +321,10 @@ func (p *Pool) Run(ctx context.Context) error {
 
 	<-ctx.Done()
 
-	// Graceful shutdown:
-	// 1. Stop claiming new work immediately and signal in-flight task.Runners to stop at the next checkpoint.
 	cancelClaim()
 	p.closeDrain()
 	claimWG.Wait()
 
-	// 2. Wait up to DrainTimeout (25s) for in-flight workers to finish cleanly.
 	workDone := make(chan struct{})
 	go func() {
 		workWG.Wait()
@@ -366,8 +338,6 @@ func (p *Pool) Run(ctx context.Context) error {
 		cancelWork()
 		return nil
 	case <-timer.C:
-		// 3. Cancel remaining in-flight work contexts; workers still get CancelGrace (5s) via detached contexts
-		// to commit receipts and release leases before returning.
 		slog.WarnContext(ctx, "worker drain timeout reached; canceling remaining in-flight work", "owner", p.owner, "drain_timeout", p.opts.DrainTimeout)
 		cancelWork()
 		<-workDone
@@ -408,14 +378,6 @@ func repairAdvisoryLockKeyForUser(userID string) int64 {
 	return key
 }
 
-// RepairOnce reconciles nori_task_leases and nori_user_wakes against authoritative nori_records
-// state for every known user (or only p.userID when scoped), and deletes orphan task leases for removed users.
-//
-// When the underlying backend supports docstore.AdvisoryLocker, RepairOnce acquires
-// a per-sweep non-blocking advisory lock so concurrent sweeps across replicas collapse
-// to a single leader without pinning a pooled database connection across idle intervals.
-// Trade-off: staggered replicas whose ticks do not overlap may still sweep sequentially
-// in the same RepairInterval window, while overlapping concurrent sweeps are strictly prevented.
 func (p *Pool) RepairOnce(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -461,7 +423,6 @@ func (p *Pool) RepairOnce(ctx context.Context) error {
 		}
 	}
 
-	// Clean up orphan task leases referencing deleted/unknown users.
 	if allLeases, err := p.leases.ListTaskLeases(ctx, p.userID); err != nil {
 		failures = append(failures, err)
 	} else {
@@ -751,7 +712,6 @@ func (p *Pool) handleConversation(workCtx context.Context, uw docstore.UserWake)
 			return
 		}
 		if !parked {
-			// Concurrent wake arrived after claim; release immediately so another pass picks it up.
 			_ = p.leases.ReleaseUserWake(fCtx, uw.UserID, docstore.LaneConversation, p.owner, 0, time.Time{})
 			signalChan(p.convWakeCh)
 		}

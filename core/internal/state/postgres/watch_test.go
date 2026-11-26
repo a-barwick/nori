@@ -166,29 +166,24 @@ func TestLogLimiterRateLimitingAndRecovery(t *testing.T) {
 	lim := newLogLimiter(30 * time.Second)
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	// Recover when healthy is a no-op.
 	if wasFailing, suppressed := lim.recover(); wasFailing || suppressed != 0 {
 		t.Fatalf("initial recover = (%v, %d), want (false, 0)", wasFailing, suppressed)
 	}
 
-	// First error logs immediately.
 	if emit, suppressed := lim.allowWarn(t0); !emit || suppressed != 0 {
 		t.Fatalf("first allowWarn = (%v, %d), want (true, 0)", emit, suppressed)
 	}
 
-	// Next 50 errors within 30s are suppressed.
 	for i := 1; i <= 50; i++ {
 		if emit, suppressed := lim.allowWarn(t0.Add(time.Duration(i) * 500 * time.Millisecond)); emit || suppressed != 0 {
 			t.Fatalf("suppressed allowWarn %d = (%v, %d), want (false, 0)", i, emit, suppressed)
 		}
 	}
 
-	// Error at t0 + 30s emits with suppressed=50.
 	if emit, suppressed := lim.allowWarn(t0.Add(30 * time.Second)); !emit || suppressed != 50 {
 		t.Fatalf("post-interval allowWarn = (%v, %d), want (true, 50)", emit, suppressed)
 	}
 
-	// Three more suppressed errors, then recover reports suppressed=3.
 	for i := 0; i < 3; i++ {
 		if emit, _ := lim.allowWarn(t0.Add(35 * time.Second)); emit {
 			t.Fatalf("expected suppression during second interval")
@@ -198,7 +193,6 @@ func TestLogLimiterRateLimitingAndRecovery(t *testing.T) {
 		t.Fatalf("recover = (%v, %d), want (true, 3)", wasFailing, suppressed)
 	}
 
-	// New failure episode starts cleanly with immediate warn and suppressed=0.
 	if emit, suppressed := lim.allowWarn(t0.Add(36 * time.Second)); !emit || suppressed != 0 {
 		t.Fatalf("new episode allowWarn = (%v, %d), want (true, 0)", emit, suppressed)
 	}
@@ -237,7 +231,6 @@ func TestListenEndpointFallback(t *testing.T) {
 }
 
 func TestWatchAndWakeListenersRateLimitErrorLogsAndCountErrors(t *testing.T) {
-	// Reserve and immediately close a local TCP listener to get a guaranteed refused port.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Skipf("unable to allocate local port: %v", err)
@@ -262,7 +255,6 @@ func TestWatchAndWakeListenersRateLimitErrorLogsAndCountErrors(t *testing.T) {
 	badURL := fmt.Sprintf("postgres://nori:%s@%s/nori?sslmode=disable&connect_timeout=1", secret, addr)
 	b := &backend{connURL: badURL, listenURL: badURL}
 
-	// 1. Test ListenWakes error counter + rate-limited slog warning (no credential leak).
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
 	_ = b.ListenWakes(ctx, nil)
@@ -290,7 +282,6 @@ func TestWatchAndWakeListenersRateLimitErrorLogsAndCountErrors(t *testing.T) {
 		t.Fatalf("wake listener warning count = %d, want 1 (rate-limited across %d errors)", wakeWarns, stats.WakeErrors)
 	}
 
-	// 2. Test watchHub error counter + rate-limited slog warning.
 	sub, _, err := b.subscribeWatch("owners/u1/events")
 	if err != nil {
 		t.Fatalf("subscribeWatch: %v", err)
@@ -346,7 +337,6 @@ func TestWatchIdleQPSAndSingleListenConnection(t *testing.T) {
 		}
 	}
 
-	// Reset counter right before starting watchers so we count ONLY Watch queries.
 	counter.recordsSelects.Store(0)
 
 	watchCtx, cancel := context.WithCancel(ctx)
@@ -380,7 +370,6 @@ func TestWatchIdleQPSAndSingleListenConnection(t *testing.T) {
 		}()
 	}
 
-	// Wait for all 50 watchers to complete their initial catch-up query.
 	initDone := make(chan struct{})
 	go func() {
 		initialWG.Wait()
@@ -392,7 +381,6 @@ func TestWatchIdleQPSAndSingleListenConnection(t *testing.T) {
 		t.Fatalf("timed out waiting for %d watchers to receive initial batch", numWatchers)
 	}
 
-	// Verify active watcher count and single shared LISTEN nori_watch connection.
 	if got := b.ListenStats().ActiveWatchers; got != numWatchers {
 		t.Fatalf("ActiveWatchers = %d, want %d", got, numWatchers)
 	}
@@ -405,8 +393,6 @@ func TestWatchIdleQPSAndSingleListenConnection(t *testing.T) {
 		t.Fatalf("initial nori_records queries = %d, want exactly %d (1 per watcher)", queriesAfterInit, numWatchers)
 	}
 
-	// Stay idle for 2 seconds: old 250ms polling would fire ~400 queries (8 per watcher);
-	// shared LISTEN fan-out must execute 0 idle queries!
 	time.Sleep(2 * time.Second)
 	queriesAfterIdle := counter.recordsSelects.Load()
 	idleQueries := queriesAfterIdle - queriesAfterInit
@@ -437,7 +423,6 @@ func TestWatchLiveNotifyLatencyFanoutAndDrain(t *testing.T) {
 	watchCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Start 15 idle watchers on unrelated collections to verify collection isolation.
 	var otherWG sync.WaitGroup
 	for i := 0; i < idleOthers; i++ {
 		col := fmt.Sprintf("%s/other-%02d/events", prefix, i)
@@ -452,7 +437,6 @@ func TestWatchLiveNotifyLatencyFanoutAndDrain(t *testing.T) {
 		}()
 	}
 
-	// Start 2 watchers on the SAME target collection to verify fan-out.
 	type watcherState struct {
 		mu   sync.Mutex
 		seqs []int64
@@ -488,7 +472,6 @@ func TestWatchLiveNotifyLatencyFanoutAndDrain(t *testing.T) {
 		}()
 	}
 
-	// Wait until all 17 watchers are registered and have completed their initial query.
 	deadline := time.Now().Add(3 * time.Second)
 	for (b.ListenStats().ActiveWatchers < idleOthers+2 || counter.recordsSelectsDone.Load() < idleOthers+2) && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -500,10 +483,8 @@ func TestWatchLiveNotifyLatencyFanoutAndDrain(t *testing.T) {
 		t.Fatalf("initial completed queries = %d, want %d", done, idleOthers+2)
 	}
 
-	// Snapshot query count before live write so we prove ONLY the 2 target watchers wake!
 	queriesBefore := counter.recordsSelects.Load()
 
-	// Write seq 1 (b.Apply emits post-commit nori_watch automatically); measure wake latency.
 	sentAt := time.Now()
 	if err := b.Apply(ctx, docstore.Mutation{
 		Kind:   "create",
@@ -529,13 +510,11 @@ func TestWatchLiveNotifyLatencyFanoutAndDrain(t *testing.T) {
 		}
 	}
 
-	// Give any stray queries a brief window; only the 2 target watchers should have queried!
 	time.Sleep(50 * time.Millisecond)
 	if delta := counter.recordsSelects.Load() - queriesBefore; delta != 2 {
 		t.Fatalf("nori_records queries on single-collection notify = %d, want 2 (15 unrelated watchers must stay idle)", delta)
 	}
 
-	// Insert 230 more rows (seq 2..231) to prove >200 batch draining on a single notify.
 	err := b.RunTransaction(ctx, false, 3, func(tb docstore.TransactionBackend) error {
 		for i := int64(2); i <= 231; i++ {
 			if err := tb.Apply(ctx, docstore.Mutation{
@@ -551,7 +530,6 @@ func TestWatchLiveNotifyLatencyFanoutAndDrain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bulk insert 230 rows: %v", err)
 	}
-	// Trigger via raw pg_notify to verify direct SQL NOTIFY compatibility as well.
 	if _, err := b.pool.Exec(ctx, "SELECT pg_notify($1, $2)", watchChannel, targetCol); err != nil {
 		t.Fatalf("raw pg_notify: %v", err)
 	}
@@ -641,8 +619,6 @@ func TestWatchHubReconnectBroadcastsAndCountsMetrics(t *testing.T) {
 		t.Fatalf("timed out waiting for initial seq 1")
 	}
 
-	// Insert seq 2 via direct SQL WITHOUT sending NOTIFY, then kill the LISTEN nori_watch backend
-	// to simulate a dropped LISTEN connection where events were missed while disconnected.
 	if _, err := b.pool.Exec(ctx,
 		"INSERT INTO nori_records(shard, collection, id, data) VALUES($1, $2, $3, $4::jsonb)",
 		recordShard(col), col, fmt.Sprintf("%020d", 2), `{"seq":2,"kind":"during-disconnect"}`,
@@ -655,8 +631,6 @@ func TestWatchHubReconnectBroadcastsAndCountsMetrics(t *testing.T) {
 		t.Fatalf("terminated %d LISTEN %s connections, want 1", killed, watchChannel)
 	}
 
-	// Reconnect must broadcast to all active watchers so seq 2 arrives immediately
-	// (NOT waiting for the 20s fallback timer!).
 	select {
 	case s := <-gotSeq:
 		if s != 2 {
@@ -671,7 +645,6 @@ func TestWatchHubReconnectBroadcastsAndCountsMetrics(t *testing.T) {
 		t.Fatalf("ListenStats after reconnect = %+v, want WatchErrors>=1 and WatchReconnects>=1", stats)
 	}
 
-	// Verify live notifications resume normally after reconnect (emitted automatically by b.Apply).
 	if err := b.Apply(ctx, docstore.Mutation{
 		Kind:   "create",
 		Path:   fmt.Sprintf("%s/%020d", col, 3),
@@ -704,7 +677,6 @@ func TestWatchHubIdleTeardownRestartAndSlowClient(t *testing.T) {
 	ctx := context.Background()
 	col := prefix + "/lifecycle/events"
 
-	// 1. Start watcher -> 1 LISTEN conn. Cancel -> after idle grace, 0 LISTEN conns.
 	w1Ctx, w1Cancel := context.WithCancel(ctx)
 	w1Done := make(chan error, 1)
 	go func() {
@@ -734,7 +706,6 @@ func TestWatchHubIdleTeardownRestartAndSlowClient(t *testing.T) {
 		t.Fatalf("LISTEN conns after idle grace = %d, want 0", got)
 	}
 
-	// 2. Restart hub with a slow watcher + fast watcher on the same collection.
 	if err := b.Apply(ctx, docstore.Mutation{
 		Kind:   "create",
 		Path:   fmt.Sprintf("%s/%020d", col, 1),
@@ -791,8 +762,6 @@ func TestWatchHubIdleTeardownRestartAndSlowClient(t *testing.T) {
 		t.Fatalf("fast initial seq = %d, want 1", got)
 	}
 
-	// Emit 2 live updates while slow watcher is blocked inside deliver():
-	// fast watcher must receive both immediately, and slow watcher must catch up once unblocked!
 	for seq := int64(2); seq <= 3; seq++ {
 		if err := b.Apply(ctx, docstore.Mutation{
 			Kind:   "create",
@@ -834,7 +803,6 @@ func TestWatchHubIdleTeardownRestartAndSlowClient(t *testing.T) {
 	<-slowDone
 	<-fastDone
 
-	// 3. Close() cleanly tears down hub and rejects subsequent Watch() calls without leaking goroutines.
 	_, _ = b.pool.Exec(ctx, "DELETE FROM nori_records WHERE collection LIKE $1", prefix+"%")
 	if err := b.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -871,7 +839,6 @@ func TestWatchFallbackSafetyNet(t *testing.T) {
 		})
 	}()
 
-	// Wait briefly for initial empty poll, then write WITHOUT emitting pg_notify.
 	time.Sleep(50 * time.Millisecond)
 	if err := b.Apply(ctx, docstore.Mutation{
 		Kind:   "create",

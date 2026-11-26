@@ -53,7 +53,6 @@ export function posOf(index: number, length: number): Pos {
   return "middle";
 }
 
-/** Corner radii TL TR BR BL; the sender's side pinches where items touch. */
 export function corners(sender: Sender, pos: Pos) {
   const R = "22px";
   const P = "6px";

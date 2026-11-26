@@ -10,7 +10,6 @@ import (
 	"nori/internal/prompts"
 )
 
-// Keep unavailable capabilities visible so the model can explain why they cannot run.
 type Capabilities struct {
 	SearchKey string
 	Location  *time.Location
@@ -56,8 +55,6 @@ func (s *Service) catalog(dynamic []extensions.CapabilityState, snapshot *extens
 		{Name: resultCapability, Tools: tools[resultCapability], Account: prompts.Runtime("catalog-result-save-account", nil), Availability: prompts.Runtime("capability-available", nil), OnFailure: prompts.Runtime("catalog-result-save-onfailure", nil), Verify: prompts.Runtime("catalog-result-save-verify", nil), Default: true},
 		{Name: memoryCapability, Tools: tools[memoryCapability], Account: prompts.Runtime("catalog-memory-read-account", nil), Availability: prompts.Runtime("capability-available", nil), OnFailure: prompts.Runtime("catalog-memory-read-onfailure", nil), Verify: prompts.Runtime("catalog-memory-read-verify", nil), Default: true},
 	}
-	// Connected apps, MCP servers and plugins. Their text comes from connection metadata only, never from reading
-	// the account's content.
 	byCapability := map[string][]string{}
 	for _, d := range snapshot.Definitions() {
 		if !d.Builtin() && d.Exposure != extensions.ExposureDisabled && d.Exposure != extensions.ExposureProgrammatic {
@@ -90,9 +87,6 @@ func (s *Service) currentTime() time.Time {
 
 func (s *Service) now() time.Time { return s.currentTime().In(s.location()) }
 
-// catalogInstruction changes at most daily unless an account changes, so it doesn't
-// disturb the provider's prompt cache between model calls.
-// location is the user's current zone (see Profile); nil means the zone the worker opened the user with.
 func (s *Service) catalogInstruction(catalog []Capability, location *time.Location) string {
 	if location == nil {
 		location = s.location()
@@ -102,7 +96,6 @@ func (s *Service) catalogInstruction(catalog []Capability, location *time.Locati
 	})
 }
 
-// A failed paid call can still return its cost with the error.
 func (s *Service) CallRuntimeTool(ctx context.Context, run, name string, args map[string]any) (map[string]any, error) {
 	text := func(key string) string { value, _ := args[key].(string); return value }
 	switch name {

@@ -21,9 +21,6 @@ import (
 	"nori/internal/users"
 )
 
-// crashSimStore wraps state.TaskStore to simulate hard worker crashes (dropping
-// ReleaseTaskControl calls when crashed so the authoritative fence stays held
-// until the 30s TaskLease expires) and to inject faults on specific store calls.
 type crashSimStore struct {
 	state.TaskStore
 	mu                sync.Mutex
@@ -198,15 +195,11 @@ func (s *crashSimStore) FinishCleanup(ctx context.Context, runID, failed string)
 
 func (s *crashSimStore) ReleaseTaskControl(ctx context.Context, runID string, f state.TaskFence) error {
 	if s.isCrashed(f.Owner) {
-		// Hard crash: process died before releasing TaskControl!
 		return nil
 	}
 	return s.TaskStore.ReleaseTaskControl(ctx, runID, f)
 }
 
-// crashSimLeases wraps docstore.LeaseStore to simulate hard crashes (dropping
-// ReleaseTask when crashed so the discovery lease stays held until expiry) and
-// to hook ParkTask / RenewTaskLeases for deterministic fault & race tests.
 type crashSimLeases struct {
 	docstore.LeaseStore
 	mu           sync.Mutex
@@ -261,14 +254,12 @@ func (l *crashSimLeases) ParkTask(ctx context.Context, userID, runID, owner stri
 
 func (l *crashSimLeases) ReleaseTask(ctx context.Context, userID, runID, owner string, wakeSeq int64, nextWake time.Time) error {
 	if l.isCrashed(owner) {
-		// Hard crash: process died before releasing discovery lease!
 		return nil
 	}
 	return l.LeaseStore.ReleaseTask(ctx, userID, runID, owner, wakeSeq, nextWake)
 }
 
 func (l *crashSimLeases) DeleteTaskLease(ctx context.Context, userID, runID string, wakeSeq int64) (bool, error) {
-	// If any worker is marked crashed for this test scenario and called DeleteTaskLease on its way out, drop it!
 	l.mu.Lock()
 	drop := len(l.crashed) > 0 && l.crashed["drop-delete"]
 	l.mu.Unlock()
@@ -278,8 +269,6 @@ func (l *crashSimLeases) DeleteTaskLease(ctx context.Context, userID, runID stri
 	return l.LeaseStore.DeleteTaskLease(ctx, userID, runID, wakeSeq)
 }
 
-// runWithVirtualLeaseRenewal runs real task.Runner against leases and advances virtual
-// lease renewals synchronously whenever Activities.Sleep advances the virtual clock.
 func runWithVirtualLeaseRenewal(
 	t *testing.T,
 	ctx context.Context,
@@ -397,7 +386,6 @@ func TestMultiWorkerCrashMidModelTakeover(t *testing.T) {
 
 		run := h.startTaskRecord(ctx, "Crash right after SaveTaskModelCheckpoint")
 
-		// Worker 1 hard-crashes immediately after SaveTaskModelCheckpoint commits (before AdvanceTaskStep).
 		w1Ctx, w1Cancel := context.WithCancel(ctx)
 		defer w1Cancel()
 		crashedOnce := false
@@ -425,20 +413,17 @@ func TestMultiWorkerCrashMidModelTakeover(t *testing.T) {
 			t.Fatal("expected PendingModelID persisted before Worker 1 crash")
 		}
 
-		// Before 30s lease expiry, Worker 2 MUST NOT steal the task.
 		h.clock.Advance(15 * time.Second)
 		if _, ok, err := cLeases.ClaimTaskByID(ctx, h.user.ID, run.ID, "worker-2", state.TaskLease); err != nil || ok {
 			t.Fatalf("expected task leased until 30s expiry, got ok=%v err=%v", ok, err)
 		}
 
-		// After 30s lease expiry, Worker 2 takes over with Fence+1 and reuses the saved receipt!
 		h.clock.Advance(state.TaskLease + time.Second)
 		outcome, err := runWithVirtualLeaseRenewal(t, ctx, h, cStore, cLeases, run.ID, "worker-2")
 		if err != nil || outcome != task.OutcomeDone {
 			t.Fatalf("worker-2: expected OutcomeDone, got outcome=%s err=%v", outcome, err)
 		}
 
-		// Total LLM calls MUST be 2 (turn 1 reused from receipt, turn 2 complete) — ZERO duplicate turn-1 call!
 		if len(h.model.ModelCalls()) != 2 {
 			t.Fatalf("expected exactly 2 total LLM calls (1 reused + 1 complete), got %d", len(h.model.ModelCalls()))
 		}
@@ -468,7 +453,6 @@ func TestMultiWorkerCrashMidModelTakeover(t *testing.T) {
 		cStore := newCrashSimStore(h.store)
 		cLeases := newCrashSimLeases(h.backend)
 
-		// Worker 1 crashes right after StartTaskModelCheckpoint (mid-LLM call, no saved response).
 		w1Ctx, w1Cancel := context.WithCancel(ctx)
 		defer w1Cancel()
 		crashedMidLLM := false
@@ -498,8 +482,6 @@ func TestMultiWorkerCrashMidModelTakeover(t *testing.T) {
 			t.Fatal("expected Worker 1 to crash right after StartTaskModelCheckpoint")
 		}
 
-		// Expire Worker 1's lease -> Worker 2 waits until RecoveryUntil (240s, renewing leases!),
-		// sees Interrupted=true, retries within 9m D-053 deadline, and completes!
 		h.clock.Advance(state.TaskLease + time.Second)
 		outcome, err := runWithVirtualLeaseRenewal(t, ctx, h, cStore, cLeases, run.ID, "worker-2")
 		if err != nil || outcome != task.OutcomeDone {
@@ -539,7 +521,6 @@ func TestMultiWorkerCrashMidToolTakeover(t *testing.T) {
 
 		run := h.startTaskRecord(ctx, "Crash mid safe read")
 
-		// Crash Worker 1 right inside Execute (after op.Attempt=1 is persisted, before SettleOperation!).
 		w1Ctx, w1Cancel := context.WithCancel(ctx)
 		defer w1Cancel()
 		crashed := false
@@ -561,7 +542,6 @@ func TestMultiWorkerCrashMidToolTakeover(t *testing.T) {
 			t.Fatal("expected Worker 1 to crash after safe read Execute")
 		}
 
-		// After 30s expiry, Worker 2 reruns safe read immediately and completes!
 		h.clock.Advance(state.TaskLease + time.Second)
 		outcome, err := runWithVirtualLeaseRenewal(t, ctx, h, cStore, cLeases, run.ID, "worker-2")
 		if err != nil || outcome != task.OutcomeDone {
@@ -610,7 +590,6 @@ func TestMultiWorkerCrashMidToolTakeover(t *testing.T) {
 			}, 0.10), nil, true
 		})
 
-		// Wrap sim adapter to crash Worker 1 right AFTER side-effecting Execute returns (before SettleOperation!).
 		w1Ctx, w1Cancel := context.WithCancel(ctx)
 		defer w1Cancel()
 		crashedAfterExec := false
@@ -625,7 +604,6 @@ func TestMultiWorkerCrashMidToolTakeover(t *testing.T) {
 				}
 			},
 		})
-		// Prevent Worker 1's receiptContext from settling the write after crash!
 		cStore.TaskStore = &dropSettleWhenCrashedStore{TaskStore: h.store, crashed: cStore}
 
 		run := h.startTaskRecord(ctx, "Crash right after write side effect applied")
@@ -634,14 +612,12 @@ func TestMultiWorkerCrashMidToolTakeover(t *testing.T) {
 			t.Fatal("expected Worker 1 to crash right after Execute")
 		}
 
-		// Worker 2 takes over after 30s expiry, waits for RecoveryUntil, reconciles, and completes!
 		h.clock.Advance(state.TaskLease + time.Second)
 		outcome, err := runWithVirtualLeaseRenewal(t, ctx, h, cStore, cLeases, run.ID, "worker-2")
 		if err != nil || outcome != task.OutcomeDone {
 			t.Fatalf("worker-2: expected OutcomeDone after reconcile, got outcome=%s err=%v", outcome, err)
 		}
 
-		// Write MUST have executed EXACTLY ONCE!
 		if len(h.adapter.Executed()) != 1 {
 			t.Fatalf("expected exactly 1 write execution (zero duplicates), got %d: %+v", len(h.adapter.Executed()), h.adapter.Executed())
 		}
@@ -710,7 +686,6 @@ func TestMultiWorkerCrashMidToolTakeover(t *testing.T) {
 			t.Fatal("expected Worker 1 to crash right after Execute")
 		}
 
-		// Worker 2 takes over after 30s; provider reconcile misses -> settles uncertain -> parks on WaitQuestion!
 		h.adapter.QueueForcedOutcome(inner.ForcedOutcome{ReconcileMiss: true})
 		h.clock.Advance(state.TaskLease + time.Second)
 		outcome, err := runWithVirtualLeaseRenewal(t, ctx, h, cStore, cLeases, run.ID, "worker-2")
@@ -725,7 +700,6 @@ func TestMultiWorkerCrashMidToolTakeover(t *testing.T) {
 			t.Fatalf("expected uncertain question with Clears, got %+v", midRun.Question)
 		}
 
-		// User answers -> clears uncertain op -> Worker 3 completes cleanly!
 		h.acceptCommands(ctx, state.Command{
 			ID:         h.ids.Next(),
 			RunID:      run.ID,
@@ -750,7 +724,6 @@ type dropSettleWhenCrashedStore struct {
 }
 
 func (s *dropSettleWhenCrashedStore) SettleOperation(ctx context.Context, runID string, op state.OperationRecord) error {
-	// While worker-1 is marked crashed and no worker-2 has acquired the fence yet, simulate hard process kill before settle.
 	if ctrl, err := s.TaskStore.GetTaskControl(ctx, runID); err == nil && s.crashed.isCrashed(ctrl.Owner) {
 		return context.Canceled
 	}
@@ -776,7 +749,6 @@ func TestMultiWorkerStaleFenceRejectedAndNoDoubleSpend(t *testing.T) {
 
 	run := h.startTaskRecord(ctx, "Verify stale fence cannot overwrite progress or double-count spend")
 
-	// Worker 1 acquires authoritative TaskControl (Fence = 1) and stalls past 30s expiry.
 	ctrl1, fence1, err := h.store.AcquireTaskControl(ctx, run.ID, "stale-worker-1")
 	if err != nil {
 		t.Fatalf("AcquireTaskControl worker-1: %v", err)
@@ -785,14 +757,12 @@ func TestMultiWorkerStaleFenceRejectedAndNoDoubleSpend(t *testing.T) {
 		t.Fatalf("expected initial fence=1, got %d", fence1.Fence)
 	}
 
-	// Expire Worker 1's lease -> Worker 2 takes over and completes the entire task.
 	h.clock.Advance(state.TaskLease + time.Second)
 	outcome, err := h.runTask(ctx, run.ID, "worker-2", nil)
 	if err != nil || outcome != task.OutcomeDone {
 		t.Fatalf("worker-2: expected OutcomeDone, got outcome=%s err=%v", outcome, err)
 	}
 
-	// Stale Worker 1 wakes up and tries SaveTaskControl and AdvanceTaskStep with expired Fence=1!
 	ctrl1.Phase = state.TaskPhaseModel
 	ctrl1.Models = 99
 	if _, err := h.store.SaveTaskControl(ctx, fence1, ctrl1); !errors.Is(err, state.ErrTaskBusy) {
@@ -806,7 +776,6 @@ func TestMultiWorkerStaleFenceRejectedAndNoDoubleSpend(t *testing.T) {
 		t.Fatalf("expected AdvanceTaskStep with stale fence to fail with ErrTaskBusy, got %v", err)
 	}
 
-	// Verify Worker 2's committed progress and exact spend were completely preserved.
 	finalRun, err := h.store.GetRun(ctx, run.ID)
 	if err != nil {
 		t.Fatalf("GetRun: %v", err)
@@ -909,7 +878,6 @@ func TestMultiWorkerLeaseRenewalFailureImmediateSelfStop(t *testing.T) {
 				t.Fatal("timed out waiting for Worker 1 to enter ModelRef")
 			}
 
-			// Fire 10s lease renewal tick -> MUST immediately cancel in-flight ModelRef!
 			renewTick <- h.clock.Now().Add(10 * time.Second)
 
 			select {
@@ -921,7 +889,6 @@ func TestMultiWorkerLeaseRenewalFailureImmediateSelfStop(t *testing.T) {
 				t.Fatal("watchTaskLease failed to cancel in-flight ModelRef immediately on renewal failure")
 			}
 
-			// Clear fault, advance past short backoff + RecoveryUntil, and let Worker 2 finish cleanly!
 			cStore.onRenewControl = nil
 			cLeases.onRenewLease = nil
 			h.clock.Advance(5 * time.Minute)
@@ -978,7 +945,6 @@ func TestMultiWorkerWakeDrivenCancelAndLegacyDataOwner(t *testing.T) {
 	for idx, tc := range modes {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			// Explicitly exercise users.LegacyID ("owner") where user.ID != user.DataOwner()!
 			h := newWFHarness(t, int64(3020+idx), wfHarnessOpts{
 				budgetUSD:   2.0,
 				costPerCall: 0.10,
@@ -988,7 +954,6 @@ func TestMultiWorkerWakeDrivenCancelAndLegacyDataOwner(t *testing.T) {
 				t.Fatalf("expected user.ID (%q) != user.DataOwner() (%q)", h.user.ID, h.user.DataOwner())
 			}
 
-			// Wire real memstore.Backend.ListenWakes -> WakeHub.Deliver so post-commit wakes drive bounded()!
 			listenCtx, listenCancel := context.WithCancel(ctx)
 			defer listenCancel()
 			listenReady := make(chan struct{})
@@ -997,7 +962,6 @@ func TestMultiWorkerWakeDrivenCancelAndLegacyDataOwner(t *testing.T) {
 				_ = h.backend.ListenWakes(listenCtx, h.wakes.Deliver)
 			}()
 			<-listenReady
-			// Brief pause so ListenWakes registers its subscriber before firing commands.
 			time.Sleep(10 * time.Millisecond)
 
 			inModel := make(chan struct{}, 1)
@@ -1027,8 +991,6 @@ func TestMultiWorkerWakeDrivenCancelAndLegacyDataOwner(t *testing.T) {
 			}
 			doneCh := make(chan runRes, 1)
 			go func() {
-				// Activities.NewTicker is a never-firing noopTicker in newWFHarness, proving
-				// cancellation came purely from ListenWakes -> WakeHub -> bounded()!
 				out, err := h.runTask(ctx, run.ID, "worker-1", nil)
 				doneCh <- runRes{outcome: out, err: err}
 			}()
@@ -1118,7 +1080,6 @@ func TestMultiWorkerWakeSeqRaceNoLostWake(t *testing.T) {
 					t.Errorf("expected Question before ParkTask, got %+v err=%v", cur.Question, err)
 					return
 				}
-				// Concurrent answer bumps wake_seq right BEFORE ParkTask executes!
 				h.acceptCommands(pCtx, state.Command{
 					ID:         h.ids.Next(),
 					RunID:      runID,
@@ -1129,7 +1090,6 @@ func TestMultiWorkerWakeSeqRaceNoLostWake(t *testing.T) {
 			}
 		}
 
-		// Runner MUST NOT park — ParkTask returns parked=false, Runner calls RefreshTaskClaim and finishes in ONE Run()!
 		outcome, err := runWithVirtualLeaseRenewal(t, ctx, h, h.store, cLeases, run.ID, "worker-1")
 		if err != nil || outcome != task.OutcomeDone {
 			t.Fatalf("expected OutcomeDone in single Run without parking, got outcome=%s err=%v", outcome, err)
@@ -1166,14 +1126,12 @@ func TestMultiWorkerWakeSeqRaceNoLostWake(t *testing.T) {
 		cLeases.onBeforePark = func(pCtx context.Context, _, _, _ string, _ int64, reason string) {
 			if reason == docstore.WaitRoutingPending && !racedOnce {
 				racedOnce = true
-				// Routing clears right BEFORE ParkTask -> atomically bumps wake_seq via WakeWaitingTasks!
 				if !h.routeOneConversationTurn(pCtx, "Routed just before park.") {
 					t.Errorf("expected routeOneConversationTurn to succeed")
 				}
 			}
 		}
 
-		// Runner MUST NOT park — loops immediately and publishes in ONE Run()!
 		outcome, err := runWithVirtualLeaseRenewal(t, ctx, h, h.store, cLeases, run.ID, "worker-1")
 		if err != nil || outcome != task.OutcomeDone {
 			t.Fatalf("expected OutcomeDone in single Run without parking, got outcome=%s err=%v", outcome, err)
@@ -1280,7 +1238,6 @@ func TestMultiWorkerLeaseLossDoesNotPoisonSafeReadOrCompose(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("timed out waiting for safe read Execute to start")
 		}
-		// Trigger lease renewal failure -> cancels safe read ctx -> MUST NOT settle op as "failed"!
 		renewTick <- h.clock.Now().Add(10 * time.Second)
 		select {
 		case out := <-doneCh:
@@ -1291,7 +1248,6 @@ func TestMultiWorkerLeaseLossDoesNotPoisonSafeReadOrCompose(t *testing.T) {
 			t.Fatal("worker-1 did not self-stop after lease renewal failure")
 		}
 
-		// Verify OperationRecord stayed "pending" (NOT poisoned as "failed")!
 		opsMid, err := h.store.Operations(ctx, run.ID)
 		if err != nil || len(opsMid) != 1 {
 			t.Fatalf("expected 1 in-flight operation, got %+v (err=%v)", opsMid, err)
@@ -1300,7 +1256,6 @@ func TestMultiWorkerLeaseLossDoesNotPoisonSafeReadOrCompose(t *testing.T) {
 			t.Fatalf("expected unsettled pending op after lease loss, got %q (%+v)", opsMid[0].Outcome, opsMid[0])
 		}
 
-		// Clear renewal fault; Worker 2 takes over and completes cleanly with Attempt=2, Outcome="confirmed"!
 		cStore.onRenewControl = nil
 		h.clock.Advance(state.TaskLease + time.Second)
 		outcome, err := runWithVirtualLeaseRenewal(t, ctx, h, cStore, cLeases, run.ID, "worker-2")
@@ -1382,7 +1337,6 @@ func TestMultiWorkerLeaseLossDoesNotPoisonSafeReadOrCompose(t *testing.T) {
 			t.Fatal("worker-1 did not self-stop after compose lease loss")
 		}
 
-		// Verify compose operation was NOT settled as "failed" or "partial"!
 		opsMid, err := h.store.Operations(ctx, run.ID)
 		if err != nil {
 			t.Fatalf("Operations: %v", err)
@@ -1393,7 +1347,6 @@ func TestMultiWorkerLeaseLossDoesNotPoisonSafeReadOrCompose(t *testing.T) {
 			}
 		}
 
-		// Clear renewal fault; Worker 2 takes over and completes cleanly!
 		cStore.onRenewControl = nil
 		h.clock.Advance(state.TaskLease + time.Second)
 		outcome, err := runWithVirtualLeaseRenewal(t, ctx, h, cStore, cLeases, run.ID, "worker-2")
@@ -1410,8 +1363,6 @@ func TestMultiWorkerLeaseLossDoesNotPoisonSafeReadOrCompose(t *testing.T) {
 
 func TestMultiWorkerAppendSkippedPermanentFailurePreservesPublishPhase(t *testing.T) {
 	ctx := context.Background()
-	// Model call costs 0.10 and call 0 (sim_paid_read) costs 0.15 -> spent reaches budget (0.25)
-	// after call 0 without changing run.Revision, so call 1 enters appendSkipped (spending-limit)!
 	h := newWFHarness(t, 3045, wfHarnessOpts{budgetUSD: 0.25, costPerCall: 0.10, paidCostUSD: 0.15})
 	cStore := newCrashSimStore(h.store)
 	cLeases := newCrashSimLeases(h.backend)
@@ -1429,8 +1380,6 @@ func TestMultiWorkerAppendSkippedPermanentFailurePreservesPublishPhase(t *testin
 
 	run := h.startTaskRecord(ctx, "Verify appendSkipped permanent failure preserves TaskPhasePublish")
 
-	// Corrupt the transcript read ONCE right when TaskPhaseCalls enters appendSkipped for call 1 ("as-2"),
-	// triggering errTranscriptBlockInvalid (a permanent task error -> transitionFailure -> TaskPhasePublish)!
 	var corruptNextRead atomic.Bool
 	var injected atomic.Bool
 	cStore.onReadHistory = func(_ context.Context, _ string, _ string) ([][]byte, error, bool) {
@@ -1529,7 +1478,6 @@ func TestMultiWorkerPhaseBoundaryCrashes(t *testing.T) {
 		if err != nil || outcome != task.OutcomeDone {
 			t.Fatalf("worker-2: expected OutcomeDone, got outcome=%s err=%v", outcome, err)
 		}
-		// Total tool executions MUST be 2 (call 0 was NOT re-executed; call 1 ran once) and total model calls MUST be 2!
 		if len(h.adapter.Executed()) != 2 {
 			t.Fatalf("expected exactly 2 tool executions total (zero duplicate call 0), got %d", len(h.adapter.Executed()))
 		}
@@ -1619,7 +1567,6 @@ func TestMultiWorkerPhaseBoundaryCrashes(t *testing.T) {
 			t.Fatal("expected Worker 1 to crash right after ProjectQuestion")
 		}
 
-		// Worker 2 takes over after lease expiry -> idempotently re-checks Question and parks on WaitQuestion!
 		h.clock.Advance(state.TaskLease + time.Second)
 		outcome, err := runWithVirtualLeaseRenewal(t, ctx, h, cStore, cLeases, run.ID, "worker-2")
 		if err != nil || outcome != task.OutcomeParked {
@@ -1673,13 +1620,11 @@ func TestMultiWorkerPhaseBoundaryCrashes(t *testing.T) {
 		if !crashed {
 			t.Fatal("expected Worker 1 to crash right after Publish")
 		}
-		// Lease must still exist while run is already RunCompleted & clean!
 		leasesBefore, _ := h.backend.ListTaskLeases(ctx, h.user.ID)
 		if len(leasesBefore) != 1 {
 			t.Fatalf("expected stale lease remaining after post-publish crash, got %+v", leasesBefore)
 		}
 
-		// Clear drop-delete and advance past lease expiry -> Worker 2 sees terminal clean run and deletes lease!
 		cLeases.mu.Lock()
 		delete(cLeases.crashed, "drop-delete")
 		cLeases.mu.Unlock()
@@ -1701,7 +1646,6 @@ func TestMultiWorkerPhaseBoundaryCrashes(t *testing.T) {
 		h.model.SetScript(func(_ context.Context, _ string, _ agent.Request) (agent.Response, error, bool) {
 			turn++
 			if turn == 1 {
-				// First perform a read so parent Admit() sets CleanupPending=true (requiring FinishCleanup on cancel).
 				return scriptedCall("fp-read", inner.ToolNameRead, map[string]any{"key": "key-1"}, 0.10), nil, true
 			}
 			if turn == 2 {
@@ -1718,12 +1662,10 @@ func TestMultiWorkerPhaseBoundaryCrashes(t *testing.T) {
 		})
 
 		parent := h.startTaskRecord(ctx, "Parent task stopped while child runs")
-		// Parent runs until parked on QuestionWork.
 		out, err := runWithVirtualLeaseRenewal(t, ctx, h, cStore, cLeases, parent.ID, "worker-p1")
 		if err != nil || out != task.OutcomeParked {
 			t.Fatalf("parent worker-p1: expected OutcomeParked on QuestionWork, got %s err=%v", out, err)
 		}
-		// Spawn child linked to parent's QuestionWork.
 		pSnap, _ := h.store.GetRun(ctx, parent.ID)
 		childID := h.ids.Next()
 		h.acceptCommands(ctx, state.Command{
@@ -1734,8 +1676,6 @@ func TestMultiWorkerPhaseBoundaryCrashes(t *testing.T) {
 			ParentID:   parent.ID,
 			QuestionID: pSnap.Question.ID,
 		})
-		// Stop parent while child is still running -> parent transitions to Finishing, runs FinishCleanup,
-		// and crashes right after FinishCleanup commits!
 		h.acceptCommands(ctx, state.Command{
 			ID:    h.ids.Next(),
 			RunID: parent.ID,
@@ -1756,24 +1696,20 @@ func TestMultiWorkerPhaseBoundaryCrashes(t *testing.T) {
 		if !crashedOnCleanup {
 			t.Fatal("expected worker-p2 to crash right after parent FinishCleanup")
 		}
-		// Worker p2b takes over after lease expiry and parks cleanly on WaitFinishing while child runs!
 		h.clock.Advance(state.TaskLease + time.Second)
 		out, err = runWithVirtualLeaseRenewal(t, ctx, h, cStore, cLeases, parent.ID, "worker-p2b")
 		if err != nil || out != task.OutcomeParked {
 			t.Fatalf("parent worker-p2b: expected OutcomeParked on WaitFinishing, got %s err=%v", out, err)
 		}
 
-		// Run child to completion/cancellation -> wakes parent and triggers finishPending!
 		out, err = runWithVirtualLeaseRenewal(t, ctx, h, cStore, cLeases, childID, "worker-c1")
 		if err != nil || out != task.OutcomeDone {
 			t.Fatalf("child worker-c1: expected OutcomeDone, got %s err=%v", out, err)
 		}
 
-		// Simulate worker-p3 failing right at DeleteTaskLease (transient lease drop), then worker-p4 finishing cleanly!
 		cLeases.markCrashed("drop-delete")
 		_, _ = runWithVirtualLeaseRenewal(t, ctx, h, cStore, cLeases, parent.ID, "worker-p3")
 
-		// Clear drop-delete and advance past backoff/lease expiry -> Worker p4 deletes parent lease cleanly!
 		cLeases.mu.Lock()
 		delete(cLeases.crashed, "drop-delete")
 		cLeases.mu.Unlock()

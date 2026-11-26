@@ -26,8 +26,6 @@ var (
 
 type persistFunc func(outcome string, output map[string]any, cause error) (map[string]any, error)
 
-// durableTool records authority and outcomes independently of best-effort debug
-// traces. Retrying a step is never a substitute for an operation receipt.
 func (a *Activities) durableTool(parent context.Context, in ToolInput) (result map[string]any, err error) {
 	evidence := a.Store
 	policy := agent.PolicyFor(in.Call.Name, in.Exec)
@@ -60,7 +58,6 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		if err != nil || saved != nil {
 			return saved, err
 		}
-		// A correction waits for paid model reads because interruption can lose the reported cost. Stop still cancels them.
 		ctx, done, run, err = a.bounded(parent, in.Step, effect == "read" && !policy.InterruptedCostUnknown)
 		if err != nil {
 			return nil, err
@@ -78,7 +75,6 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 			var stop map[string]any
 			plan, stop, err = a.planExternal(ctx, in, recovering)
 			if recovering != nil && (err != nil || stop != nil) {
-				// The account or implementation is no longer usable; recovery can only settle what is known.
 				plan, err = &externalPlan{}, nil
 			} else if err != nil || stop != nil {
 				span.End()
@@ -103,7 +99,6 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 				span.End()
 				done()
 				if errors.Is(err, docstore.ErrExists) && admitAttempt == 0 {
-					// A timed-out attempt may have committed admission just before this one.
 					continue
 				}
 				return nil, err
@@ -123,7 +118,6 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		op.Tool = &state.DefinitionRef{ID: in.Exec.Tool.ID, Version: in.Exec.Tool.Version, Digest: in.Exec.Tool.Digest}
 	}
 	if plan != nil {
-		// The whole prepared action is saved before the first attempt, so recovery can settle from it.
 		op.Action = &state.Action{Digest: plan.digest, Text: clip(plan.prepared.Summary, 2000), Spec: plan.prepared.Spec,
 			Intent: true, Precondition: plan.prepared.Precondition, Keys: plan.prepared.Keys}
 		op.AuthorityRef = plan.authority.AuthorityRef
@@ -137,7 +131,6 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 	}
 	if recovering != nil {
 		op = *recovering
-		// Old admission-only records have no descriptive evidence yet.
 		if op.CallID == "" {
 			op.CallID = in.Call.ID
 			op.EffectClass = effect
@@ -196,7 +189,6 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		}
 		e = evidence.SettleOperation(save, in.RunID, op)
 		if errors.Is(e, docstore.ErrExists) {
-			// Another attempt won the settlement. Use that same result in the transcript.
 			_, settled, readErr := a.savedOperation(save, in)
 			if readErr != nil || settled != nil {
 				return settled, readErr
@@ -215,7 +207,6 @@ func (a *Activities) durableTool(parent context.Context, in ToolInput) (result m
 		return a.runExternal(ctx, in, &op, recovering != nil, plan, persist)
 	}
 	if policy.Runtime && in.Call.Name == "compose" {
-		// Running a compose call again is safe: nested calls reuse their saved results.
 		return a.composeTool(ctx, in, persist)
 	}
 	if policy.Runtime {
@@ -270,7 +261,6 @@ func (a *Activities) unresolvedWriteBlock(ctx context.Context, runID, effect str
 	return nil, nil
 }
 
-// toolOutcome maps what a tool returned to its operation record.
 func toolOutcome(output map[string]any) string {
 	if available, ok := output["available"].(bool); ok && !available {
 		return "failed"
@@ -305,7 +295,6 @@ func (a *Activities) runtimeTool(ctx context.Context, in ToolInput, op *state.Op
 	var output map[string]any
 	var err error
 	if in.Call.Name == "operation_read" {
-		// The saved outputs belong to the task's evidence, which only the activities hold.
 		id, _ := in.Call.Args["operation_id"].(string)
 		offset := parseNonNegativeIntArg(in.Call.Args["offset"])
 		limit := parseNonNegativeIntArg(in.Call.Args["limit"])
@@ -343,9 +332,6 @@ func nativeWebSearchOutcome(status string) string {
 	}
 }
 
-// recordNativeWebSearches records provider-executed native web_search_call items
-// (such as OpenAI Responses API built-in web_search) as read-only operations on the
-// run so Work Actions and operation_read reflect every search query cleanly.
 func (a *Activities) recordNativeWebSearches(
 	ctx context.Context,
 	runID string,

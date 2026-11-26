@@ -1,105 +1,144 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { createContext, useCallback, useContext, useRef, useState, useEffect, useSyncExternalStore } from "react";
 import { announce } from "./announce";
-import { APIError, getJSON } from "./api";
+import { getJSON } from "./api";
 
-type Entry = { data?: unknown; error?: APIError | Error; loading: boolean; serial: number; revision: number };
-const cache = new Map<string, Entry>();
-const listeners = new Map<string, Set<() => void>>();
-let serials = 0;
+type Snapshot = { data?: unknown; error?: Error; loading: boolean; serial: number; revision: number };
+type Subscription = { listener: () => void; poll: number };
+type Resource = {
+  snapshot?: Snapshot;
+  subscriptions: Set<Subscription>;
+  versioned: boolean;
+  controller?: AbortController;
+  inflight?: Promise<void>;
+  refetch: boolean;
+  timer?: ReturnType<typeof setInterval>;
+};
 
-const revisionOf = (data: unknown) => (data && typeof data === "object" && typeof (data as { revision?: unknown }).revision === "number" ? (data as { revision: number }).revision : -1);
+export function createResourceCache() {
+  const resources = new Map<string, Resource>();
+  let serial = 0;
 
-function emit(path: string) { listeners.get(path)?.forEach((listener) => listener()); }
-function set(path: string, entry: Entry) { cache.set(path, entry); emit(path); }
-
-/**
- * Store a newer value for a path. For versioned resources, a response carrying a lower
- * resource revision than the one already shown is dropped so a slow GET never overwrites
- * a newer mutation result. Derived projections (versioned: false) order by request serial.
- */
-export function store(path: string, data: unknown, serial = ++serials, versioned = true) {
-  const current = cache.get(path);
-  const revision = versioned ? revisionOf(data) : -1;
-  if (current?.data !== undefined && revision >= 0 && revision < current.revision) return;
-  if (current && revision < 0 && serial < current.serial) return;
-  set(path, { data, loading: false, serial, revision: Math.max(revision, revision >= 0 ? revision : -1) });
-}
-
-const inflight = new Map<string, Promise<void>>();
-const refetchAfter = new Set<string>();
-const unversioned = new Set<string>();
-async function load(path: string, forceRefetch = false): Promise<void> {
-  if (inflight.has(path)) {
-    if (forceRefetch) refetchAfter.add(path);
-    return inflight.get(path);
+  function update(resource: Resource, snapshot: Snapshot) {
+    resource.snapshot = snapshot;
+    for (const { listener } of resource.subscriptions) listener();
   }
-  const serial = ++serials;
-  const current = cache.get(path);
-  const versioned = !unversioned.has(path);
-  set(path, { ...(current ?? { serial: 0, revision: -1 }), loading: true });
-  const run = getJSON<unknown>(path).then((data) => store(path, data, serial, versioned)).catch((error: APIError | Error) => {
-    const latest = cache.get(path);
-    set(path, { ...(latest ?? { serial, revision: -1 }), loading: false, error });
-  }).finally(() => {
-    inflight.delete(path);
-    if (refetchAfter.delete(path)) void load(path);
-  });
-  inflight.set(path, run);
-  return run;
-}
 
-/** Re-fetch every cached path that starts with one of the prefixes (after a mutation or a stream event). */
-export function invalidate(...prefixes: string[]) {
-  for (const path of cache.keys()) if (prefixes.some((prefix) => path.startsWith(prefix))) void load(path, true);
-}
+  function store(path: string, data: unknown, request = ++serial, versioned = true) {
+    const resource = resources.get(path);
+    if (!resource) return;
+    const current = resource.snapshot;
+    const revision = versioned && data && typeof data === "object" && "revision" in data && typeof data.revision === "number"
+      ? data.revision : -1;
+    if (current && (revision >= 0 ? revision < current.revision || (revision === current.revision && request < current.serial) : request < current.serial)) return;
+    update(resource, { data, serial: request, revision, loading: !!resource.inflight });
+  }
 
-/**
- * Reads a management resource. Fetches on mount, on focus, when the network returns and on
- * an interval while the tab is visible. Returns the last good value with any newer error.
- */
-export function useResource<T>(path: string | null, { poll = 15_000, versioned = true }: { poll?: number; versioned?: boolean } = {}) {
-  const subscribe = useCallback((listener: () => void) => {
-    if (!path) return () => {};
-    if (!versioned) unversioned.add(path);
-    const set = listeners.get(path) ?? new Set();
-    set.add(listener);
-    listeners.set(path, set);
-    return () => { set.delete(listener); };
-  }, [path, versioned]);
-  const entry = useSyncExternalStore(subscribe, () => (path ? cache.get(path) : undefined), () => undefined);
-  const reload = useCallback(() => (path ? load(path, true) : Promise.resolve()), [path]);
+  function load(path: string, force = false): Promise<void> {
+    const resource = resources.get(path);
+    if (!resource) return Promise.resolve();
+    if (resource.inflight) {
+      resource.refetch ||= force;
+      return resource.inflight;
+    }
+    const request = ++serial;
+    const controller = new AbortController();
+    resource.controller = controller;
+    const previous = resource.snapshot ?? { serial: 0, revision: -1, loading: false };
+    const run = getJSON<unknown>(path, controller.signal).then((data) => {
+      if (!controller.signal.aborted) store(path, data, request, resource.versioned);
+    }).catch((error: Error) => {
+      const latest = resource.snapshot ?? previous;
+      if (!controller.signal.aborted && latest.serial <= request) update(resource, { ...latest, error });
+    }).finally(() => {
+      if (controller.signal.aborted) return;
+      resource.inflight = undefined;
+      resource.controller = undefined;
+      const refetch = resource.refetch;
+      resource.refetch = false;
+      if (refetch) void load(path);
+      else if (resource.snapshot?.loading) update(resource, { ...resource.snapshot, loading: false });
+    });
+    resource.inflight = run;
+    update(resource, { ...previous, loading: true });
+    return run;
+  }
 
-  useEffect(() => {
-    if (!path) return;
-    if (!versioned) unversioned.add(path);
-    void load(path);
-    const onFocus = () => { if (document.visibilityState === "visible") void load(path); };
-    window.addEventListener("focus", onFocus);
-    window.addEventListener("online", onFocus);
-    document.addEventListener("visibilitychange", onFocus);
-    const timer = poll > 0 ? setInterval(() => { if (document.visibilityState === "visible") void load(path); }, poll) : undefined;
+  function invalidate(...prefixes: string[]) {
+    for (const path of resources.keys()) {
+      if (prefixes.some((prefix) => path.startsWith(prefix))) void load(path, true);
+    }
+  }
+
+  function refreshVisible() {
+    if (document.visibilityState === "visible") {
+      for (const path of resources.keys()) void load(path);
+    }
+  }
+
+  function schedule(path: string, resource: Resource) {
+    clearInterval(resource.timer);
+    const poll = Math.min(...[...resource.subscriptions].map((item) => item.poll).filter((ms) => ms > 0));
+    if (Number.isFinite(poll)) {
+      resource.timer = setInterval(() => {
+        if (document.visibilityState === "visible") void load(path);
+      }, poll);
+    }
+  }
+
+  function subscribe(path: string, listener: () => void, poll: number, versioned: boolean) {
+    if (resources.size === 0) {
+      window.addEventListener("focus", refreshVisible);
+      window.addEventListener("online", refreshVisible);
+      document.addEventListener("visibilitychange", refreshVisible);
+    }
+    const existing = resources.get(path);
+    const resource: Resource = existing ?? { subscriptions: new Set(), refetch: false, versioned };
+    const subscription = { listener, poll };
+    resource.subscriptions.add(subscription);
+    resources.set(path, resource);
+    schedule(path, resource);
+    if (!existing) void load(path);
     return () => {
-      window.removeEventListener("focus", onFocus);
-      window.removeEventListener("online", onFocus);
-      document.removeEventListener("visibilitychange", onFocus);
-      if (timer) clearInterval(timer);
+      resource.subscriptions.delete(subscription);
+      if (resource.subscriptions.size) schedule(path, resource);
+      else {
+        clearInterval(resource.timer);
+        resource.controller?.abort();
+        resources.delete(path);
+      }
+      if (resources.size === 0) {
+        window.removeEventListener("focus", refreshVisible);
+        window.removeEventListener("online", refreshVisible);
+        document.removeEventListener("visibilitychange", refreshVisible);
+      }
     };
-  }, [path, poll, versioned]);
+  }
 
-  const apply = useCallback((data: T) => { if (path) store(path, data, undefined, versioned); }, [path, versioned]);
+  return { subscribe, load, store, invalidate, snapshot: (path: string) => resources.get(path)?.snapshot };
+}
+
+export const ResourceCacheContext = createContext(createResourceCache());
+
+export function useResourceInvalidation() {
+  return useContext(ResourceCacheContext).invalidate;
+}
+
+export function useResource<T>(path: string | null, { poll = 15_000, versioned = true }: { poll?: number; versioned?: boolean } = {}) {
+  const cache = useContext(ResourceCacheContext);
+  const subscribe = useCallback((listener: () => void) => path ? cache.subscribe(path, listener, poll, versioned) : () => {}, [cache, path, poll, versioned]);
+  const entry = useSyncExternalStore(subscribe, () => path ? cache.snapshot(path) : undefined, () => undefined);
+  const reload = useCallback(() => path ? cache.load(path, true) : Promise.resolve(), [cache, path]);
+  const apply = useCallback((data: T) => { if (path) cache.store(path, data, undefined, versioned); }, [cache, path, versioned]);
   return { data: entry?.data as T | undefined, error: entry?.error, loading: !entry || (entry.loading && entry.data === undefined), refreshing: !!entry?.loading, reload, apply };
 }
 
-/** Run an async action and keep its pending/error state. */
 export function useAction() {
   const [state, setState] = useState<{ pending?: string; error?: string }>({});
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const run = useCallback(async <T,>(name: string, action: () => Promise<T>, done?: string): Promise<T | undefined> => {
-    // Controls are disabled while an action runs, which drops keyboard focus to the page; put it back after.
-    // A control that swaps for another (Pause → Resume) is replaced by the one in the same place.
     const control = typeof document !== "undefined" && document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : undefined;
     const parent = control?.parentElement;
     const index = parent ? [...parent.children].indexOf(control!) : -1;

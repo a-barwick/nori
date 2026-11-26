@@ -1,4 +1,3 @@
-// Package contextview bounds derived model input without changing saved history.
 package contextview
 
 import (
@@ -8,9 +7,6 @@ import (
 	"regexp"
 )
 
-// These are conservative application budgets, not claims about a provider's
-// advertised context window. The wire cap includes instructions and tool schemas;
-// output tokens are reserved separately by each adapter.
 const (
 	ReplyBytes = 96 << 10
 	TaskBytes  = 128 << 10
@@ -26,8 +22,6 @@ func Check(size int) error {
 	return nil
 }
 
-// Refusal recognizes only explicit context errors. An ordinary 400, rate limit,
-// network failure or interrupted stream must never authorize another paid call.
 var overflowMessage = regexp.MustCompile(`(?i)(maximum context length is [0-9,]+ tokens|exceeds (the )?(model.s )?(maximum context length|context window)|prompt is too long|input is too long for requested model)`)
 
 func Refusal(body io.Reader) bool {
@@ -52,7 +46,5 @@ func Refusal(body io.Reader) bool {
 			return true
 		}
 	}
-	// OpenRouter wraps provider errors with a numeric HTTP code. Only explicit
-	// context-length wording in the error envelope qualifies for a reduced retry.
 	return overflowMessage.MatchString(response.Error.Message) || overflowMessage.MatchString(response.Error.Metadata.Raw)
 }

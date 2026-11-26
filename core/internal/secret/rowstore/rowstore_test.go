@@ -49,8 +49,6 @@ func mustParseHexKey(t *testing.T, fill byte) *MasterKey {
 	return k
 }
 
-// rotatingKeyWrapper mimics key rotation: Wrap always uses primary, while Unwrap
-// dispatches by keyID across primary and any retired keys.
 type rotatingKeyWrapper struct {
 	primary *MasterKey
 	all     []*MasterKey
@@ -75,7 +73,6 @@ func TestRoundTripConflictAndDelete(t *testing.T) {
 	key := mustParseHexKey(t, 0x11)
 	store := &Store{Resources: res, Keys: key, Owner: "alice"}
 
-	// Missing credential returns ErrCredentialNotFound.
 	if _, err := store.Get(ctx, "conn-1"); !errors.Is(err, secret.ErrCredentialNotFound) {
 		t.Fatalf("Get missing = %v, want ErrCredentialNotFound", err)
 	}
@@ -86,7 +83,6 @@ func TestRoundTripConflictAndDelete(t *testing.T) {
 		t.Fatalf("Replace create = (%d, %v), want (1, nil)", ver, err)
 	}
 
-	// Stored resource must not contain plaintext material and must record AADVersion=2.
 	rawRes, err := res.Resource(ctx, Collection, "conn-1")
 	if err != nil {
 		t.Fatalf("Resource: %v", err)
@@ -102,7 +98,6 @@ func TestRoundTripConflictAndDelete(t *testing.T) {
 		t.Fatalf("unexpected row metadata: owner=%v aad_version=%d", storedRow.Owner, storedRow.AADVersion)
 	}
 
-	// Round-trip decrypt matches exact bytes and version.
 	got, err := store.Get(ctx, "conn-1")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -111,12 +106,10 @@ func TestRoundTripConflictAndDelete(t *testing.T) {
 		t.Fatalf("Get = (ver=%d, data=%q), want (1, %q)", got.Version, got.Data, plaintext)
 	}
 
-	// Stale expected version returns ErrCredentialConflict.
 	if _, err := store.Replace(ctx, "conn-1", 0, []byte("stale")); !errors.Is(err, secret.ErrCredentialConflict) {
 		t.Fatalf("Replace stale = %v, want ErrCredentialConflict", err)
 	}
 
-	// Update with matching expected version succeeds.
 	updated := []byte(`{"access_token":"rotated-token"}`)
 	ver2, err := store.Replace(ctx, "conn-1", 1, updated)
 	if err != nil || ver2 != 2 {
@@ -127,7 +120,6 @@ func TestRoundTripConflictAndDelete(t *testing.T) {
 		t.Fatalf("Get updated = (%+v, %v)", got2, err)
 	}
 
-	// Delete removes row and is idempotent on missing row.
 	if err := store.Delete(ctx, "conn-1"); err != nil {
 		t.Fatalf("Delete existing: %v", err)
 	}
@@ -138,7 +130,6 @@ func TestRoundTripConflictAndDelete(t *testing.T) {
 		t.Fatalf("Get after delete = %v, want ErrCredentialNotFound", err)
 	}
 
-	// Invalid connection IDs and empty owner are rejected cleanly.
 	if _, err := store.Replace(ctx, "../bad", 0, []byte("x")); err == nil {
 		t.Fatalf("Replace accepted invalid connection id")
 	}
@@ -164,7 +155,6 @@ func TestCrossOwnerAndCrossResourceAADIsolation(t *testing.T) {
 		t.Fatalf("Replace: %v", err)
 	}
 
-	// 1. Different Owner reading the exact same underlying resource fails AAD authentication.
 	bobOverAlice := &Store{Resources: resAlice, Keys: key, Owner: "bob"}
 	if _, err := bobOverAlice.Get(ctx, "conn-1"); err == nil {
 		t.Fatalf("cross-owner Get succeeded, want decryption error")
@@ -174,7 +164,6 @@ func TestCrossOwnerAndCrossResourceAADIsolation(t *testing.T) {
 		t.Fatalf("empty-owner Get succeeded, want decryption error")
 	}
 
-	// 2. Copying the exact encrypted row to another connectionID under the same owner fails AAD.
 	rawRow, err := resAlice.Resource(ctx, Collection, "conn-1")
 	if err != nil {
 		t.Fatalf("Resource: %v", err)
@@ -189,7 +178,6 @@ func TestCrossOwnerAndCrossResourceAADIsolation(t *testing.T) {
 		t.Fatalf("cross-resource Get succeeded, want decryption error")
 	}
 
-	// 3. Delimiter-ambiguity safety: (owner="a", id="b:c") vs (owner="a:b", id="c").
 	if bytes.Equal(ownerAAD("a", "b:c"), ownerAAD("a:b", "c")) {
 		t.Fatalf("v2 ownerAAD collided across colon boundary")
 	}
@@ -215,7 +203,6 @@ func TestCrossOwnerAndCrossResourceAADIsolation(t *testing.T) {
 		t.Fatalf("delimiter-boundary transplant decrypted under (owner=a:b, id=c)")
 	}
 
-	// 4. Legacy AADVersion=0 row remains readable via fallback while v2 rows never fall back.
 	dataKey := bytes.Repeat([]byte{0x55}, 32)
 	wrapped, keyID, err := key.Wrap(ctx, dataKey)
 	if err != nil {
@@ -302,7 +289,6 @@ func TestMalformedAndShortNoncesDoNotPanic(t *testing.T) {
 		})
 	}
 
-	// Direct MasterKey.Unwrap malformed/short wrapped bytes must return error without panicking.
 	for _, wrapped := range [][]byte{nil, {}, {1, 2, 3, 4, 5}, make([]byte, 11), make([]byte, 12)} {
 		if _, err := key.Unwrap(ctx, wrapped, key.id); err == nil {
 			t.Errorf("Unwrap(len=%d) succeeded, want error", len(wrapped))
@@ -320,23 +306,19 @@ func TestMultiKeyRotation(t *testing.T) {
 
 	res := newTestResourceStore(t, "rotate")
 
-	// Phase 1: Write row under oldKey.
 	oldStore := &Store{Resources: res, Keys: oldKey, Owner: "rotate"}
 	if _, err := oldStore.Replace(ctx, "conn-old", 0, []byte("secret-v1")); err != nil {
 		t.Fatalf("oldStore.Replace: %v", err)
 	}
 
-	// Phase 2: Rotate to rotating wrapper with primary=newKey and fallback=oldKey.
 	rotator := &rotatingKeyWrapper{primary: newKey, all: []*MasterKey{newKey, oldKey}}
 	rotatedStore := &Store{Resources: res, Keys: rotator, Owner: "rotate"}
 
-	// Existing row encrypted with oldKey still decrypts.
 	gotOld, err := rotatedStore.Get(ctx, "conn-old")
 	if err != nil || !bytes.Equal(gotOld.Data, []byte("secret-v1")) {
 		t.Fatalf("rotatedStore.Get(conn-old) = (%+v, %v), want secret-v1", gotOld, err)
 	}
 
-	// New row encrypts with primary (newKey).
 	if _, err := rotatedStore.Replace(ctx, "conn-new", 0, []byte("secret-v2")); err != nil {
 		t.Fatalf("rotatedStore.Replace(conn-new): %v", err)
 	}
@@ -352,7 +334,6 @@ func TestMultiKeyRotation(t *testing.T) {
 		t.Fatalf("conn-new KeyID = %q, want primary %q", newRow.KeyID, newKey.id)
 	}
 
-	// Old key alone cannot decrypt rows encrypted after rotation; newKey alone CAN.
 	if _, err := oldStore.Get(ctx, "conn-new"); err == nil {
 		t.Fatalf("oldKey decrypted row written by newKey")
 	}
@@ -362,7 +343,6 @@ func TestMultiKeyRotation(t *testing.T) {
 		t.Fatalf("newOnlyStore.Get(conn-new) = (%+v, %v), want secret-v2", gotNew, err)
 	}
 
-	// Re-writing conn-old re-wraps it under primary (newKey).
 	if _, err := rotatedStore.Replace(ctx, "conn-old", gotOld.Version, []byte("secret-v1-rewrapped")); err != nil {
 		t.Fatalf("re-wrap conn-old: %v", err)
 	}
@@ -397,7 +377,6 @@ func TestOpenLocalKeyAndParseMasterKey(t *testing.T) {
 			t.Fatalf("k1.Wrap: %v", err)
 		}
 
-		// Second open reuses the exact same key material and unwraps k1's ciphertext.
 		k2, err := OpenLocalKey(keyPath)
 		if err != nil {
 			t.Fatalf("OpenLocalKey #2: %v", err)

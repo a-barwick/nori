@@ -2,7 +2,6 @@ import SwiftUI
 import NoriCore
 import NoriDesign
 
-// MARK: - Work Tab Filter
 
 public enum WorkTabFilter: String, Sendable, Hashable, CaseIterable {
     case tasks
@@ -13,7 +12,6 @@ public enum WorkTabFilter: String, Sendable, Hashable, CaseIterable {
 
 public typealias WorkSegment = WorkTabFilter
 
-// MARK: - Work Status Presentation Helper
 
 enum WorkStatusPresentation {
     struct PillInfo {
@@ -47,7 +45,6 @@ enum WorkStatusPresentation {
     }
 }
 
-// MARK: - WorkView
 
 public struct WorkView: View {
     @Bindable private var store: NoriStore
@@ -154,7 +151,6 @@ public struct WorkView: View {
         #endif
     }
 
-    // MARK: - Header
 
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -167,7 +163,6 @@ public struct WorkView: View {
         )
     }
 
-    // MARK: - Tasks Tab
 
     private var tasksContent: some View {
         let pending = pendingInteractions
@@ -184,7 +179,6 @@ public struct WorkView: View {
 
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                // 1. Action needed
                 if needsYouTotal > 0 {
                     NoriSectionHeader("Action needed · \(needsYouTotal)")
                     VStack(spacing: 12) {
@@ -207,14 +201,12 @@ public struct WorkView: View {
                     .padding(.bottom, 6)
                 }
 
-                // 2. Calm All clear hero card when nothing needs you and nothing is running
                 if isAllClear {
                     allClearCard
                         .padding(.top, 4)
                         .padding(.bottom, 8)
                 }
 
-                // 3. Running
                 if !active.isEmpty {
                     NoriSectionHeader(active.count > 1 ? "Running · \(active.count)" : "Running")
                     VStack(spacing: 10) {
@@ -225,7 +217,6 @@ public struct WorkView: View {
                     .padding(.bottom, 6)
                 }
 
-                // 4. Recent
                 if !finished.isEmpty {
                     NoriSectionHeader("Recent")
                     NoriRows {
@@ -256,7 +247,6 @@ public struct WorkView: View {
                     }
                 }
 
-                // 5. Recently resolved interactions (collapsed by default)
                 if !resolved.isEmpty {
                     recentlyResolvedSection(resolved)
                         .padding(.top, 14)
@@ -272,7 +262,6 @@ public struct WorkView: View {
         }
     }
 
-    // MARK: - Task Components
 
     private var allClearCard: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -445,7 +434,6 @@ public struct WorkView: View {
         }
     }
 
-    // MARK: - Helpers
 
     private func applySmartDefaultTabIfNeeded() {
         guard !didApplyInitialDefaultTab else { return }

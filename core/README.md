@@ -134,6 +134,14 @@ New background tasks record `NORI_TASK_BUDGET_USD` (default `$1`) at acceptance,
 
 `internal/settings` loads every setting once at startup; see [`.env.example`](../.env.example) for the full list.
 
+Keep credentials in a private `.env` file or the deployment's secret manager. From a worktree, set `NORI_ENV_FILE` to the absolute path of the private file. `NORI_TASK_ENV_FILE` defaults to the same file. With `make deps`, the local Postgres URL is `postgres://nori@127.0.0.1:15432/nori?sslmode=disable`. If the main connection uses a transaction pooler, set `NORI_POSTGRES_LISTEN_URL` to a direct Postgres connection for wake notifications.
+
+`NORI_ENV_PROFILE` selects provider keys. `prod` and `dev` prefer their matching `*_PROD_API_KEY` or `*_DEV_API_KEY` for OpenAI, Anthropic, and OpenRouter, with the unprefixed provider key as a fallback. `test` requires `*_TEST_API_KEY` for live provider calls. `NORI_MODEL_PROVIDER` sets both model lanes. `NORI_OUTER_PROVIDER` and `NORI_INNER_PROVIDER` override their respective lanes.
+
+The Diagnostics model picker is available to local users and to hosted user IDs or emails listed in `NORI_MODEL_PICKER_USERS`. Set both `NORI_LOCAL_MODEL_URL` and `NORI_LOCAL_MODEL_TAG` for a loopback model in local mode. Use `NORI_MODEL_PROFILES` for inline JSON overrides or `NORI_MODEL_PROFILES_FILE` for a file watched by the runtime.
+
+Postgres records migrations by filename and checksum. Applied migrations keep their original filenames, including `002_indexes.sql` and `002_sequences.sql`, which run in lexical order. Run `nori --migrate-only` before rolling out a new image when using an explicit migration job. Existing ledgers receive their first checksums on upgrade. New unattached uploads expire after seven days and incomplete uploads are eligible for cleanup after one day. Attached files and uploads saved before this change retain their existing lifecycle.
+
 | Configuration | Purpose |
 | --- | --- |
 | `NORI_CLOUD`, `NORI_ROLE`, `AWS_REGION` | `aws` (default for `cmd/nori`) or `local` (default for `nori-local`); `NORI_ROLE` (`all`\|`api`\|`worker`); see [AWS adapters](infrastructure/aws/README.md). |

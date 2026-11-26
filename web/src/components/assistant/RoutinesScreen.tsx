@@ -8,9 +8,9 @@ import { DropdownMenu } from "radix-ui";
 import { Button } from "@/components/ui/primitives";
 import { APIError, assistantURL, mutate, newRequestID } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
-import { cadence, money, relative, when } from "@/lib/assistant/format";
+import { cadence, scheduleDate, scheduleDayEnd, money, relative, when } from "@/lib/assistant/format";
 import { RULE_EFFECT_META } from "@/lib/assistant/permissions";
-import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
+import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant/useResource";
 import type {
   Automation,
   AutomationEditable,
@@ -101,8 +101,8 @@ function stateOf(item: Automation, long = false) {
   return STATUS[item.status];
 }
 
-/** Embeddable Routines view used inside Work -> Routines and standalone /routines. */
 export function RoutinesContent() {
+  const invalidate = useResourceInvalidation();
   const { has } = useAssistant();
   const list = useResource<List<Automation>>(has("automations") ? "/automations" : null, { poll: 30_000 });
   const action = useAction();
@@ -220,6 +220,7 @@ export function RoutinesScreen() {
 }
 
 export function RoutineDetailScreen({ id }: { id: string }) {
+  const invalidate = useResourceInvalidation();
   const routine = useResource<Automation>(`/automations/${encodeURIComponent(id)}`, { poll: 15_000 });
   const occurrences = useResource<List<Occurrence>>(`/automations/${encodeURIComponent(id)}/occurrences`, { poll: 15_000 });
   const action = useAction();
@@ -539,7 +540,10 @@ export function RoutineEditorScreen({ id }: { id?: string }) {
   return <Editor key={existing.data?.revision ?? "new"} existing={existing.data} held={held} />;
 }
 
+const NO_DESTINATIONS: string[] = [];
+
 function Editor({ existing, held }: { existing?: Automation; held?: Set<Effect> }) {
+  const invalidate = useResourceInvalidation();
   const router = useRouter();
   const connections = useResource<List<Connection>>("/connections", { poll: 0 });
   const preferences = useResource<Preferences>("/preferences", { poll: 0 });
@@ -556,40 +560,35 @@ function Editor({ existing, held }: { existing?: Automation; held?: Set<Effect> 
   const [sends, setSends] = useState(!!held?.has("sensitive_send"));
   const [missed, setMissed] = useState<MissedRun>(existing?.missed_run ?? "latest");
   const [budget, setBudget] = useState(String(existing?.budget_usd ?? 0.5));
-  const [endAt, setEndAt] = useState(existing?.end_at?.slice(0, 10) ?? "");
+  const zone = timezone || preferences.data?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const [endAt, setEndAt] = useState(() => scheduleDate(existing?.end_at, zone));
   const [preview, setPreview] = useState<AutomationPreview>();
   const [previewError, setPreviewError] = useState("");
   const action = useAction();
-  const zone = timezone || preferences.data?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const chosenTargets = existing?.destination_ids ?? preferences.data?.default_destination_ids ?? [];
-  const trigger = triggerFrom(frequency, date, time, days, zone);
-  const special = existing && (existing.trigger.kind === "event_relative" || existing.trigger.kind === "watch");
-  const classes: Effect[] = [
-    "read",
-    ...(writes ? ["reversible_write" as const] : []),
-    ...(sends ? ["sensitive_send" as const] : []),
-  ];
-  const triggerKey = JSON.stringify(trigger);
-  const targetsKey = chosenTargets.join();
-  const value = useMemo<AutomationEditable | undefined>(
-    () =>
-      (special ? existing!.trigger : trigger) && missed
-        ? {
-            title: title.trim() || "Routine",
-            instruction: instruction.trim(),
-            trigger: special ? existing!.trigger : trigger!,
-            connection_ids: accounts,
-            requested_authority: { action_classes: classes },
-            budget_usd: Number(budget) || 0,
-            max_active_runs: 1,
-            missed_run: missed,
-            execution_window_seconds: 3600,
-            destination_ids: chosenTargets,
-            ...(endAt ? { end_at: new Date(`${endAt}T23:59:59`).toISOString() } : {}),
-          }
-        : undefined,
-    [title, instruction, triggerKey, accounts, writes, sends, missed, budget, endAt, targetsKey], // eslint-disable-line react-hooks/exhaustive-deps
-  );
+  const chosenTargets = existing?.destination_ids ?? preferences.data?.default_destination_ids ?? NO_DESTINATIONS;
+  const originalTrigger = existing?.trigger;
+  const special = originalTrigger?.kind === "event_relative" || originalTrigger?.kind === "watch";
+  const value = useMemo<AutomationEditable | undefined>(() => {
+    const trigger = special ? originalTrigger : triggerFrom(frequency, date, time, days, zone);
+    const end = endAt ? scheduleDayEnd(endAt, zone) : undefined;
+    if (!trigger || !missed || (endAt && !end)) return undefined;
+    const classes: Effect[] = ["read"];
+    if (writes) classes.push("reversible_write");
+    if (sends) classes.push("sensitive_send");
+    return {
+      title: title.trim() || "Routine",
+      instruction: instruction.trim(),
+      trigger,
+      connection_ids: accounts,
+      requested_authority: { action_classes: classes },
+      budget_usd: Number(budget) || 0,
+      max_active_runs: 1,
+      missed_run: missed,
+      execution_window_seconds: 3600,
+      destination_ids: chosenTargets,
+      ...(end ? { end_at: end } : {}),
+    };
+  }, [special, originalTrigger, frequency, date, time, days, zone, endAt, missed, writes, sends, title, instruction, accounts, budget, chosenTargets]);
 
   useEffect(() => {
     if (!value || !value.instruction) return;
@@ -604,8 +603,10 @@ function Editor({ existing, held }: { existing?: Automation; held?: Set<Effect> 
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data?.error ?? "Preview unavailable.");
-        setPreview(data);
-        setPreviewError("");
+        if (!controller.signal.aborted) {
+          setPreview(data);
+          setPreviewError("");
+        }
       } catch (error) {
         if (!controller.signal.aborted) setPreviewError(error instanceof Error ? error.message : "Preview unavailable.");
       }

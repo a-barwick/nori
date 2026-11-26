@@ -948,7 +948,6 @@ func TestPermissionsDenyAskAllowPrecedenceAndRememberRule(t *testing.T) {
 	runSeed := func(seed int64) string {
 		h := newPermSimHarness(t, seed, "ask", "confirm_writes")
 
-		// 1. Broad "allow" rule for mail.send on conn_1.
 		if _, err := h.svc.SaveRule(ctx, "", h.nextReqID(), 0, permissions.RuleEditable{
 			Effect:        "allow",
 			ToolIDs:       []string{"mail.send"},
@@ -961,7 +960,6 @@ func TestPermissionsDenyAskAllowPrecedenceAndRememberRule(t *testing.T) {
 			t.Fatalf("seed=%d SaveRule allow: %v", seed, err)
 		}
 
-		// 2. "ask" rule for board@example.com MUST beat wildcard "allow" (ask > allow).
 		askReceipt, err := h.svc.SaveRule(ctx, "", h.nextReqID(), 0, permissions.RuleEditable{
 			Effect:        "ask",
 			ToolIDs:       []string{"mail.send"},
@@ -979,7 +977,6 @@ func TestPermissionsDenyAskAllowPrecedenceAndRememberRule(t *testing.T) {
 			t.Fatalf("seed=%d unmarshal askRule: %v", seed, err)
 		}
 
-		// 3. "deny" rule for leak@evil.test MUST beat both "ask" and "allow" (deny > ask > allow).
 		if _, err := h.svc.SaveRule(ctx, "", h.nextReqID(), 0, permissions.RuleEditable{
 			Effect:        "deny",
 			ToolIDs:       []string{"mail.send"},
@@ -992,7 +989,6 @@ func TestPermissionsDenyAskAllowPrecedenceAndRememberRule(t *testing.T) {
 			t.Fatalf("seed=%d SaveRule deny: %v", seed, err)
 		}
 
-		// Ordinary recipient matches wildcard allow.
 		allowDec, err := h.svc.Check(ctx, permissions.Request{
 			RunID: "run_p1", Revision: 1, Origin: "user", ToolID: "mail.send",
 			Effect: "sensitive_send", ConnectionID: "conn_1",
@@ -1002,7 +998,6 @@ func TestPermissionsDenyAskAllowPrecedenceAndRememberRule(t *testing.T) {
 			t.Fatalf("seed=%d expected wildcard allow for teammate, got dec=%+v err=%v", seed, allowDec, err)
 		}
 
-		// Mixed case board@example.com triggers "ask" overriding wildcard "allow".
 		boardVariant := randomizeCase(h.rng, "board@example.com")
 		askDec, err := h.svc.Check(ctx, permissions.Request{
 			RunID: "run_p1", Revision: 1, Origin: "user", ToolID: "mail.send",
@@ -1013,7 +1008,6 @@ func TestPermissionsDenyAskAllowPrecedenceAndRememberRule(t *testing.T) {
 			t.Fatalf("seed=%d expected ask to beat allow for %q, got dec=%+v err=%v", seed, boardVariant, askDec, err)
 		}
 
-		// Combined board + leak@evil.test triggers "deny" overriding both "ask" and "allow".
 		denyDec, err := h.svc.Check(ctx, permissions.Request{
 			RunID: "run_p1", Revision: 1, Origin: "user", ToolID: "mail.send",
 			Effect: "sensitive_send", ConnectionID: "conn_1",
@@ -1023,8 +1017,6 @@ func TestPermissionsDenyAskAllowPrecedenceAndRememberRule(t *testing.T) {
 			t.Fatalf("seed=%d expected deny > ask > allow, got dec=%+v err=%v", seed, denyDec, err)
 		}
 
-		// Explicit human approval for exact (run_p1, rev=1, dig_board_1) overrides "ask" without re-prompting,
-		// while a different digest STILL asks.
 		rev := int64(1)
 		exp := h.clock.Now().Add(30 * time.Minute)
 		boardCard, err := h.svc.Open(ctx, permissions.Interaction{
@@ -1058,8 +1050,6 @@ func TestPermissionsDenyAskAllowPrecedenceAndRememberRule(t *testing.T) {
 			t.Fatalf("seed=%d expected unapproved digest to still ask, got dec=%+v err=%v", seed, otherDigestDec, err)
 		}
 
-		// 4. Atomic "Always allow" (remember_rule: true) on a fresh tool (slack.post) + idempotent retry (0 duplicates)
-		// + ignored/rejected on decline + overridden by subsequent "ask" rule.
 		slackCard, err := h.svc.Open(ctx, permissions.Interaction{
 			ID: "int_slack_always", TaskID: "run_slack_1", InstructionRevision: &rev,
 			Kind: "approval", Prompt: "Post to #general", ActionDigest: "dig_slack_1",
@@ -1076,7 +1066,6 @@ func TestPermissionsDenyAskAllowPrecedenceAndRememberRule(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("seed=%d Respond always allow: %v", seed, err)
 		}
-		// Idempotent retry with identical requestID must NOT create a duplicate rule.
 		if _, _, err := h.svc.Respond(ctx, slackCard.ID, alwaysReqID, slackCard.Revision, permissions.Response{
 			Kind: "approve", ActionDigest: "dig_slack_1", RememberRule: true,
 		}); err != nil {
@@ -1087,7 +1076,6 @@ func TestPermissionsDenyAskAllowPrecedenceAndRememberRule(t *testing.T) {
 			t.Fatalf("seed=%d expected exactly 1 rule added by Always allow + retry, before=%d after=%d",
 				seed, len(rulesBefore), len(rulesAfter))
 		}
-		// Subsequent fresh call to slack.post on conn_slack auto-allows!
 		slackFollowDec, err := h.svc.Check(ctx, permissions.Request{
 			RunID: "run_slack_2", Revision: 1, Origin: "user", ToolID: "slack.post",
 			Effect: "sensitive_send", ConnectionID: "conn_slack",
@@ -1097,7 +1085,6 @@ func TestPermissionsDenyAskAllowPrecedenceAndRememberRule(t *testing.T) {
 			t.Fatalf("seed=%d expected Always allow rule to authorize follow-up slack.post, got dec=%+v err=%v", seed, slackFollowDec, err)
 		}
 
-		// Decline with remember_rule: true must NEVER create a rule!
 		decCard, err := h.svc.Open(ctx, permissions.Interaction{
 			ID: "int_decline_rem", TaskID: "run_dec_rem", InstructionRevision: &rev,
 			Kind: "approval", Prompt: "Post to #secret", ActionDigest: "dig_dec_rem",
@@ -1117,7 +1104,6 @@ func TestPermissionsDenyAskAllowPrecedenceAndRememberRule(t *testing.T) {
 				seed, len(rulesPreDecline), len(rulesPostDecline))
 		}
 
-		// Adding an "ask" rule for slack.post overrides the standing "Always allow" rule.
 		if _, err := h.svc.SaveRule(ctx, "", h.nextReqID(), 0, permissions.RuleEditable{
 			Effect:        "ask",
 			ToolIDs:       []string{"slack.post"},

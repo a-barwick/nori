@@ -47,15 +47,7 @@ public enum ImageUploadNormalizationError: Error, LocalizedError, Sendable, Equa
     }
 }
 
-/// Hardware-accelerated on-device photo normalizer using ImageIO/CoreGraphics.
-///
-/// - Preserves small PNG screenshots (≤ `maxBytes`) as real `image/png` with `.png` extension.
-/// - Preserves small JPEG and WebP images (≤ `maxBytes`) with matching media types and extensions.
-/// - Transcodes HEIC/HEIF, other decodable image formats, and any oversized image (> `maxBytes`)
-///   to orientation-baked JPEG with `image/jpeg` + `.jpg`, downscaling/compressing to fit cleanly
-///   under `maxBytes`.
 public enum ImageUploadNormalizer: Sendable {
-    /// Matches backend `state.MaxUploadBytes` (`10 << 20` = 10 MiB).
     public static let defaultMaxBytes: Int = 10 * 1024 * 1024
 
     private static let maxInitialPixelDimension: Int = 4096
@@ -108,7 +100,6 @@ public enum ImageUploadNormalizer: Sendable {
         let effectiveMaxBytes = max(1024, maxBytes)
         let format = detectFormat(of: data)
 
-        // Preserve already-supported formats without re-encoding when within size limits.
         if data.count <= effectiveMaxBytes {
             switch format {
             case .png:
@@ -190,7 +181,6 @@ public enum ImageUploadNormalizer: Sendable {
         return "\(stem).\(cleanExt)"
     }
 
-    // MARK: - Private Helpers
 
     private static func hasPNGMagicBytes(_ data: Data) -> Bool {
         let sig: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
@@ -206,14 +196,14 @@ public enum ImageUploadNormalizer: Sendable {
 
     private static func hasWebPMagicBytes(_ data: Data) -> Bool {
         guard data.count >= 12 else { return false }
-        let riff: [UInt8] = [0x52, 0x49, 0x46, 0x46] // "RIFF"
-        let webp: [UInt8] = [0x57, 0x45, 0x42, 0x50] // "WEBP"
+        let riff: [UInt8] = [0x52, 0x49, 0x46, 0x46]
+        let webp: [UInt8] = [0x57, 0x45, 0x42, 0x50]
         return data.prefix(4).elementsEqual(riff) && data.dropFirst(8).prefix(4).elementsEqual(webp)
     }
 
     private static func hasHEIFMagicBytes(_ data: Data) -> Bool {
         guard data.count >= 12 else { return false }
-        let ftyp: [UInt8] = [0x66, 0x74, 0x79, 0x70] // "ftyp"
+        let ftyp: [UInt8] = [0x66, 0x74, 0x79, 0x70]
         guard data.dropFirst(4).prefix(4).elementsEqual(ftyp) else { return false }
         guard let brand = String(data: data.dropFirst(8).prefix(4), encoding: .ascii)?.lowercased() else {
             return false

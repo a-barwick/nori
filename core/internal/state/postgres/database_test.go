@@ -11,7 +11,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"nori/internal/state"
 	"nori/internal/state/docstore"
+	"nori/internal/state/records"
+	"nori/internal/users"
 )
 
 func TestParsePoolConfigDefaults(t *testing.T) {
@@ -50,7 +53,6 @@ func TestParsePoolConfigDefaults(t *testing.T) {
 }
 
 func TestParsePoolConfigCustomOptions(t *testing.T) {
-	// Explicit Options take precedence over URL query overrides and defaults.
 	raw := "postgres://nori@127.0.0.1:15432/nori?sslmode=disable&pool_max_conns=10&pool_min_conns=1&pool_max_conn_lifetime=10m&pool_max_conn_idle_time=1m&pool_health_check_period=5s&statement_timeout=5000"
 	opts := Options{
 		MaxConns:          40,
@@ -83,7 +85,6 @@ func TestParsePoolConfigCustomOptions(t *testing.T) {
 		t.Errorf("statement_timeout = %q, want %q", got, "12000")
 	}
 
-	// MinConns clamps to <= MaxConns when MaxConns < defaultMinConns or MinConns > MaxConns.
 	cfgClamp, err := parsePoolConfig("postgres://nori@127.0.0.1:15432/nori?sslmode=disable", Options{
 		MaxConns:         1,
 		StatementTimeout: 500 * time.Microsecond,
@@ -111,7 +112,6 @@ func TestParsePoolConfigCustomOptions(t *testing.T) {
 }
 
 func TestParsePoolConfigURLOverridePrecedence(t *testing.T) {
-	// URL query params take precedence over Nori defaults when Options fields are zero.
 	raw := "postgres://nori@127.0.0.1:15432/nori?sslmode=disable&pool_max_conns=12&pool_min_conns=0&pool_max_conn_lifetime=15m&pool_max_conn_idle_time=2m&pool_health_check_period=10s&statement_timeout=7500"
 	cfg, err := parsePoolConfig(raw, Options{})
 	if err != nil {
@@ -136,7 +136,6 @@ func TestParsePoolConfigURLOverridePrecedence(t *testing.T) {
 		t.Errorf("statement_timeout = %q, want %q", got, "7500")
 	}
 
-	// URL pool_max_conns=1 clamps default MinConns=2 down to 1.
 	cfgOne, err := parsePoolConfig("postgres://nori@127.0.0.1:15432/nori?sslmode=disable&pool_max_conns=1", Options{})
 	if err != nil {
 		t.Fatalf("parsePoolConfig pool_max_conns=1: %v", err)
@@ -145,7 +144,6 @@ func TestParsePoolConfigURLOverridePrecedence(t *testing.T) {
 		t.Errorf("pool_max_conns=1 MaxConns/MinConns = (%d, %d), want (1, 1)", cfgOne.MaxConns, cfgOne.MinConns)
 	}
 
-	// Libpq DSN keyword/value overrides also work.
 	dsn := "host=127.0.0.1 port=15432 user=nori dbname=nori pool_max_conns=9 pool_min_conns=3 statement_timeout=4500"
 	cfgDSN, err := parsePoolConfig(dsn, Options{})
 	if err != nil {
@@ -156,7 +154,6 @@ func TestParsePoolConfigURLOverridePrecedence(t *testing.T) {
 			cfgDSN.MaxConns, cfgDSN.MinConns, cfgDSN.ConnConfig.RuntimeParams["statement_timeout"])
 	}
 
-	// Libpq options=-c statement_timeout=... is not clobbered by default statement_timeout.
 	cfgOpt, err := parsePoolConfig("postgres://nori@127.0.0.1:15432/nori?sslmode=disable&options=-c%20statement_timeout%3D9000", Options{})
 	if err != nil {
 		t.Fatalf("parsePoolConfig options: %v", err)
@@ -223,7 +220,6 @@ func TestPostgresPingPoolStatsAndTxStats(t *testing.T) {
 		t.Fatalf("PoolStats.TotalConns = %d, want >= 1", ps.TotalConns)
 	}
 
-	// Verify statement_timeout applied on pool connections (and migrate didn't break).
 	var stmtTimeout string
 	if err := b.pool.QueryRow(ctx, "SHOW statement_timeout").Scan(&stmtTimeout); err != nil {
 		t.Fatalf("SHOW statement_timeout: %v", err)
@@ -232,7 +228,6 @@ func TestPostgresPingPoolStatsAndTxStats(t *testing.T) {
 		t.Fatalf("SHOW statement_timeout = %q, want %q", stmtTimeout, "30s")
 	}
 
-	// Verify standalone Apply runs in READ COMMITTED (does NOT increment serializable TxStats).
 	before := b.TxStats()
 	docPath := "owners/" + prefix + "u1/steps/s1"
 	if err := b.Apply(ctx, docstore.Mutation{Kind: "create", Path: docPath, Fields: map[string]any{"n": 1}}); err != nil {
@@ -255,7 +250,6 @@ func TestPostgresPingPoolStatsAndTxStats(t *testing.T) {
 		t.Fatalf("standalone Apply incremented serializable TxStats: before=%+v after=%+v", before, afterApply)
 	}
 
-	// Verify RunTransaction DOES increment serializable TxStats.
 	if err := b.RunTransaction(ctx, true, 5, func(tx docstore.TransactionBackend) error {
 		_, err := tx.Get(ctx, "system/control")
 		return err
@@ -267,7 +261,6 @@ func TestPostgresPingPoolStatsAndTxStats(t *testing.T) {
 		t.Fatalf("RunTransaction TxStats = %+v, want Total=%d Attempts>=%d", afterTx, before.Total+1, before.Attempts+1)
 	}
 
-	// Verify custom Options through OpenBackendWithOptions.
 	url := os.Getenv("NORI_TEST_POSTGRES_URL")
 	customB, err := OpenBackendWithOptions(ctx, url, Options{
 		MaxConns:         6,
@@ -301,17 +294,14 @@ func TestPostgresTryAdvisoryLock(t *testing.T) {
 		t.Fatalf("first TryAdvisoryLock = (unlock=%v, acquired=%v, err=%v), want acquired=true", unlock1 != nil, acquired1, err)
 	}
 
-	// Second concurrent attempt must fail non-blockingly while first holds the session lock.
 	unlock2, acquired2, err := b.TryAdvisoryLock(ctx, lockKey)
 	if err != nil || acquired2 || unlock2 != nil {
 		t.Fatalf("competing TryAdvisoryLock = (unlock=%v, acquired=%v, err=%v), want acquired=false", unlock2 != nil, acquired2, err)
 	}
 
-	// Release and verify double-unlock idempotency.
 	unlock1()
 	unlock1()
 
-	// After release, another caller can acquire the same lock cleanly.
 	unlock3, acquired3, err := b.TryAdvisoryLock(ctx, lockKey)
 	if err != nil || !acquired3 || unlock3 == nil {
 		t.Fatalf("re-acquire TryAdvisoryLock = (unlock=%v, acquired=%v, err=%v), want acquired=true", unlock3 != nil, acquired3, err)
@@ -324,7 +314,6 @@ func TestPostgresStandaloneApplyConcurrencyAndWatchNotify(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	// 1. Concurrent Set(MergeAll) on a missing doc must merge both writers without losing keys.
 	mergePath := "owners/" + prefix + "u1/runs/merge_race"
 	var wg sync.WaitGroup
 	start := make(chan struct{})
@@ -358,7 +347,6 @@ func TestPostgresStandaloneApplyConcurrencyAndWatchNotify(t *testing.T) {
 		}
 	}
 
-	// 2. Standalone Apply and tx.Apply on watchable collections emit NOTIFY nori_watch post-commit.
 	conn, err := pgx.Connect(ctx, b.listenURL)
 	if err != nil {
 		t.Fatalf("pgx.Connect listen: %v", err)
@@ -410,7 +398,6 @@ func TestPostgresMigration004IndexesAndPartitionedSequences(t *testing.T) {
 	b, prefix := openTestBackend(t)
 	ctx := context.Background()
 
-	// Dead indexes must be dropped.
 	for _, dead := range []string{
 		"nori_users_email",
 		"nori_records_attention",
@@ -428,8 +415,6 @@ func TestPostgresMigration004IndexesAndPartitionedSequences(t *testing.T) {
 		}
 	}
 
-	// Partial indexes must use STORED generated columns with planner-provable WHERE predicates,
-	// and NO index on nori_records may reference the raw data column (which would block HOT updates).
 	for idxName, wantSubstr := range map[string]string{
 		"nori_records_sequence":            "idx_seq IS NOT NULL",
 		"nori_records_created":             "idx_created_at IS NOT NULL",
@@ -459,8 +444,6 @@ func TestPostgresMigration004IndexesAndPartitionedSequences(t *testing.T) {
 		}
 	}
 
-	// Verify concurrent SERIALIZABLE updates to disjoint rows in the same collection execute as
-	// HOT updates without false leaf-page SIREAD 40001 conflicts.
 	hotCol := "owners/" + prefix + "u1/runs"
 	if err := b.Apply(ctx, docstore.Mutation{Kind: "set", Path: hotCol + "/r1", Fields: map[string]any{"status": "running", "started_at": "2026-11-22T00:00:00Z", "progress": "a"}}); err != nil {
 		t.Fatalf("seed r1: %v", err)
@@ -501,8 +484,6 @@ func TestPostgresMigration004IndexesAndPartitionedSequences(t *testing.T) {
 		t.Fatalf("tx2.Commit (expected HOT update with zero leaf-page 40001): %v", err)
 	}
 
-	// nori_records is LIST(shard)-partitioned into system, users, and owners (32 hash subpartitions);
-	// nori_sequences is HASH(path)-partitioned into 32 partitions.
 	for _, tc := range []struct {
 		table string
 		want  int
@@ -538,7 +519,6 @@ func TestPostgresMigration004IndexesAndPartitionedSequences(t *testing.T) {
 		}
 	}
 
-	// Verify NextSequence and CurrentSequence on the partitioned table.
 	seqPath := "owners/" + prefix + "u1/event_head/head"
 	t.Cleanup(func() {
 		_, _ = b.pool.Exec(context.Background(), "DELETE FROM nori_sequences WHERE path = $1", seqPath)
@@ -588,7 +568,6 @@ func TestPostgresListenWithPoolParamsAndApplyMergeUniqueViolation(t *testing.T) 
 	}
 	pooledURL := url + sep + "pool_max_conns=12&pool_min_conns=1&statement_timeout=15000"
 
-	// Verify connectListen succeeds against real Postgres when connURL carries pool_* and statement_timeout params.
 	conn, err := connectListen(ctx, pooledURL)
 	if err != nil {
 		t.Fatalf("connectListen with pool_* params: %v", err)
@@ -599,7 +578,6 @@ func TestPostgresListenWithPoolParamsAndApplyMergeUniqueViolation(t *testing.T) 
 	}
 	closeConn(conn)
 
-	// Verify standalone READ COMMITTED merge/update maps unique constraint violations (23505) to docstore.ErrExists.
 	b, prefix := openTestBackend(t)
 	email := prefix + "dup@example.test"
 	u1 := "users/" + prefix + "u1"
@@ -610,15 +588,196 @@ func TestPostgresListenWithPoolParamsAndApplyMergeUniqueViolation(t *testing.T) 
 	if err := b.Apply(ctx, docstore.Mutation{Kind: "create", Path: u1, Fields: map[string]any{"email": email}}); err != nil {
 		t.Fatalf("create u1: %v", err)
 	}
-	// Merge insert hitting nori_users_email_jsonb unique constraint.
 	if err := b.Apply(ctx, docstore.Mutation{Kind: "set", Merge: true, Path: u2, Fields: map[string]any{"email": email}}); !errors.Is(err, docstore.ErrExists) {
 		t.Fatalf("merge insert duplicate email: got %v, want docstore.ErrExists", err)
 	}
-	// Update hitting nori_users_email_jsonb unique constraint.
 	if err := b.Apply(ctx, docstore.Mutation{Kind: "create", Path: u2, Fields: map[string]any{"email": prefix + "other@example.test"}}); err != nil {
 		t.Fatalf("create u2: %v", err)
 	}
 	if err := b.Apply(ctx, docstore.Mutation{Kind: "update", Path: u2, Updates: []docstore.Update{{Path: "email", Value: email}}}); !errors.Is(err, docstore.ErrExists) {
 		t.Fatalf("update duplicate email: got %v, want docstore.ErrExists", err)
 	}
+}
+
+func TestPostgresMigrationLedgerUpgradeAndDrift(t *testing.T) {
+	b := openIsolatedTestBackend(t)
+	ctx := context.Background()
+	var count int
+	if err := b.pool.QueryRow(ctx, "SELECT count(*) FROM nori_migrations WHERE length(checksum)=64").Scan(&count); err != nil || count == 0 {
+		t.Fatalf("fresh ledger has %d checksums, error %v", count, err)
+	}
+	if _, err := b.pool.Exec(ctx, "ALTER TABLE nori_migrations DROP COLUMN checksum"); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.migrate(ctx); err != nil {
+		t.Fatalf("upgrade legacy ledger: %v", err)
+	}
+	var upgraded int
+	if err := b.pool.QueryRow(ctx, "SELECT count(*) FROM nori_migrations WHERE length(checksum)=64").Scan(&upgraded); err != nil || upgraded != count {
+		t.Fatalf("upgraded ledger has %d checksums, want %d, error %v", upgraded, count, err)
+	}
+	if _, err := b.pool.Exec(ctx, "UPDATE nori_migrations SET checksum='changed' WHERE name='001_records.sql'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.migrate(ctx); err == nil || !strings.Contains(err.Error(), "001_records.sql: applied migration checksum differs") {
+		t.Fatalf("migrate with drift = %v", err)
+	}
+}
+
+func TestPostgresUsageWindowBoundaries(t *testing.T) {
+	b, prefix := openTestBackend(t)
+	ctx := context.Background()
+	collection := "owners/" + prefix + "usage/usage"
+	hour := time.Date(2026, 11, 25, 6, 0, 0, 0, time.FixedZone("PST", -8*60*60))
+	day := hour.Add(-23*time.Hour + 123*time.Millisecond)
+	rows := []struct {
+		at     time.Time
+		fields map[string]any
+	}{
+		{day.Add(-time.Nanosecond), map[string]any{"cost_usd": 64}},
+		{day, map[string]any{"cost_usd": 1.5}},
+		{hour.Add(-time.Nanosecond), map[string]any{"estimated_exposure_usd": .75}},
+		{hour, map[string]any{"estimated_exposure_usd": -1.0}},
+		{hour, map[string]any{"cost_status": "calculated", "cost_usd": 0}},
+		{hour, map[string]any{"request_status": "not_sent", "cost_usd": 64}},
+	}
+	for i, row := range rows {
+		row.fields["created_at"] = row.at
+		if err := b.Apply(ctx, docstore.Mutation{Kind: "set", Path: fmt.Sprintf("%s/%d", collection, i), Fields: row.fields}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := docstore.UsageWindow{Calls: 2, ActualUSD: 1.5, ExposureUSD: 1, Unknown: 2}
+	window, err := b.ReadUsageWindow(ctx, collection, hour, day, .25)
+	if err != nil || window != want {
+		t.Fatalf("window = %+v, %v; want %+v", window, err, want)
+	}
+}
+
+func TestPostgresMemoryLogsPreserveDaysAcrossPages(t *testing.T) {
+	b := openIsolatedTestBackend(t)
+	ctx := context.Background()
+	user := users.User{ID: users.LegacyID}
+	store := docstore.New(b).Collection("owners").Doc(user.DataOwner()).Collection("memory_logs")
+	for day, count := range map[string]int{"2026-11-24": 67, "2026-11-23": 3, "2026-11-22": 1} {
+		for shard := 1; shard <= count; shard++ {
+			id := fmt.Sprintf("%s#%04d", day, shard)
+			log := state.MemoryLog{
+				Date: day, Shard: shard, Entries: []state.MemoryLogEntry{{ID: id, Text: "fixture entry"}},
+			}
+			if _, err := store.Doc(id).Set(ctx, log); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	db := records.NewShared(b, user, 0)
+	logs, err := db.MemoryLogs(ctx, "", 2)
+	if err != nil || len(logs) != 2 || logs[0].Date != "2026-11-24" || len(logs[0].Entries) != 67 || logs[1].Date != "2026-11-23" || len(logs[1].Entries) != 3 {
+		t.Fatalf("unexpected grouped days: days=%d, err=%v", len(logs), err)
+	}
+	if logs[0].Entries[0].ID != "2026-11-24#0001" || logs[0].Entries[66].ID != "2026-11-24#0067" {
+		t.Fatal("newest day's entries are out of shard order")
+	}
+	logs, err = db.MemoryLogs(ctx, "2026-11-24", 0)
+	if err != nil || len(logs) != 1 || len(logs[0].Entries) != 67 {
+		t.Fatalf("inclusive cutoff returned %d days, err=%v", len(logs), err)
+	}
+}
+
+func BenchmarkPostgresUsageWindow(b *testing.B) {
+	db, prefix := openTestBackend(b)
+	ctx := context.Background()
+	collection := "owners/" + prefix + "usage-bench/model_usage"
+	hour := time.Date(2026, 11, 25, 23, 0, 0, 0, time.UTC)
+	day := hour.Add(-23 * time.Hour)
+	if err := db.RunTransaction(ctx, false, 1, func(tx docstore.TransactionBackend) error {
+		for i := 0; i < 5000; i++ {
+			row := docstore.Mutation{Kind: "set", Path: fmt.Sprintf("%s/%d", collection, i), Fields: map[string]any{
+				"created_at": day.Add(time.Duration(i) * 20 * time.Second), "cost_usd": .125, "cost_status": "provider",
+			}}
+			if err := tx.Apply(ctx, row); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		b.Fatal(err)
+	}
+	b.Run("fetch_and_decode", func(b *testing.B) {
+		q := docstore.QuerySpec{Collection: collection, Filters: []docstore.Filter{{Field: "created_at", Op: ">=", Value: day}}}
+		b.ReportAllocs()
+		for b.Loop() {
+			rows, err := db.Query(ctx, q)
+			if err != nil || len(rows) != 5000 {
+				b.Fatalf("got %d usage rows, error %v", len(rows), err)
+			}
+			total := 0.0
+			for _, row := range rows {
+				var entry state.Usage
+				if err := docstore.Decode(row.Fields, &entry); err != nil {
+					b.Fatal(err)
+				}
+				total += *entry.CostUSD
+			}
+			if total != 625 {
+				b.Fatalf("got %v total USD, want 625", total)
+			}
+		}
+	})
+	b.Run("aggregate", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			window, err := db.ReadUsageWindow(ctx, collection, hour, day, .25)
+			if err != nil || window.ActualUSD != 625 {
+				b.Fatalf("unexpected usage summary %+v, error %v", window, err)
+			}
+		}
+	})
+}
+
+func BenchmarkPostgresMemoryLogs(b *testing.B) {
+	db, prefix := openTestBackend(b)
+	ctx := context.Background()
+	user := users.User{ID: users.LegacyID, Email: prefix + "memory@example.test"}
+	collection := "owners/" + user.DataOwner() + "/memory_logs"
+	today := time.Date(2026, 11, 25, 0, 0, 0, 0, time.UTC)
+	if err := db.RunTransaction(ctx, false, 1, func(tx docstore.TransactionBackend) error {
+		for offset := range 730 {
+			date := today.AddDate(0, 0, -offset).Format(time.DateOnly)
+			for shard := range 3 {
+				id := fmt.Sprintf("%s#%04d", date, shard+1)
+				fields, err := docstore.Encode(state.MemoryLog{
+					Date: date, Shard: shard + 1, Entries: []state.MemoryLogEntry{{ID: id, Text: "Fixture memory"}},
+				})
+				if err != nil {
+					return err
+				}
+				if err := tx.Apply(ctx, docstore.Mutation{Kind: "set", Path: collection + "/" + id, Fields: fields}); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		b.Fatal(err)
+	}
+	store := records.NewShared(db, user, 0)
+	b.Run("whole_history", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			days, err := store.MemoryLogs(ctx, "", 0)
+			if err != nil || len(days) != 730 {
+				b.Fatalf("got %d days, error %v", len(days), err)
+			}
+		}
+	})
+	b.Run("latest_seven_days", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			days, err := store.MemoryLogs(ctx, "", 7)
+			if err != nil || len(days) != 7 {
+				b.Fatalf("got %d days, error %v", len(days), err)
+			}
+		}
+	})
 }

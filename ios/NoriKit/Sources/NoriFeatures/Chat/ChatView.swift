@@ -7,7 +7,6 @@ import NoriDesign
 import UIKit
 #endif
 
-// MARK: - ChatView
 
 public struct ChatView: View {
     @Bindable private var store: NoriStore
@@ -171,7 +170,6 @@ public struct ChatView: View {
         #endif
     }
 
-    // MARK: - Thread
 
     private func latestNoriMessageID(in units: [ChatThreadUnit]) -> String? {
         for unit in units.reversed() {
@@ -469,7 +467,6 @@ public struct ChatView: View {
         )
     }
 
-    // MARK: - Floating Frosted Glass Composer
 
     private var floatingComposer: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -586,7 +583,6 @@ public struct ChatView: View {
         )
     }
 
-    // MARK: - Actions
 
     private func consumePendingComposerDraft() {
         guard let pending = store.pendingComposerDraft else { return }
@@ -777,7 +773,6 @@ public struct ChatView: View {
     }
 }
 
-// MARK: - Banners
 
 private struct ReconnectingBanner: View {
     let onRetry: () -> Void
@@ -897,7 +892,6 @@ private struct InlineNeedsYouBanner: View {
     }
 }
 
-// MARK: - Thread Units & Bubbles
 
 private enum BubblePosition {
     case single
@@ -1148,7 +1142,6 @@ private struct MessageReceiptView: View {
     }
 }
 
-// MARK: - Inline Reminder Confirmation Card & Edit Sheet
 
 private struct ReminderEditTarget: Identifiable, Hashable {
     var id: String { automationID }
@@ -1371,7 +1364,6 @@ private struct EditReminderSheet: View {
     }
 }
 
-// MARK: - Inline Chat Error Card
 
 private struct ChatErrorCard: View {
     let message: Message
@@ -1437,7 +1429,6 @@ private struct ChatErrorCard: View {
     }
 }
 
-// MARK: - Inline PageBlock Card
 
 private struct PageBlockCard: View {
     let message: Message
@@ -1538,7 +1529,6 @@ private struct PageBlockCard: View {
     }
 }
 
-// MARK: - Inline WorkLine
 
 private struct InlineWorkLine: View {
     let label: String
@@ -1566,7 +1556,6 @@ private struct InlineWorkLine: View {
     }
 }
 
-// MARK: - Draft Attachments & Attach Sheet
 
 private struct DraftAttachment: Identifiable, Sendable {
     let id: String
@@ -1772,7 +1761,6 @@ private struct AttachSheetView: View {
     }
 }
 
-// MARK: - Pulsing Status Dot (Shared within NoriFeatures)
 
 struct PulsingStatusDot: View {
     let color: Color

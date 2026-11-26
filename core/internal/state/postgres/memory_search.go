@@ -262,7 +262,6 @@ func (b *backend) SearchMemory(ctx context.Context, query docstore.MemorySearchQ
 		return []docstore.MemorySearchHit{}, nil
 	}
 
-	// Deterministic sort before MMR: score DESC, chunk_id ASC.
 	slices.SortFunc(candidates, func(a, b docstore.MemorySearchHit) int {
 		if a.Score != b.Score {
 			if a.Score > b.Score {
@@ -297,7 +296,6 @@ func rerankMemoryMMR(candidates []docstore.MemorySearchHit, limit int, lambda fl
 	selectedIdx := make([]int, 0, limit)
 	used := make([]bool, len(candidates))
 
-	// First hit is always the highest-scoring candidate (already tie-broken by chunk_id ASC).
 	selectedIdx = append(selectedIdx, 0)
 	used[0] = true
 
@@ -401,8 +399,6 @@ func buildMemorySnippet(body, query string, maxBytes int) string {
 	if matchPos < 0 || matchPos < maxBytes/2 {
 		return docstore.ClipUTF8(text, maxBytes)
 	}
-	// Center window around matchPos, aligned strictly to UTF-8 rune boundaries.
-	// Note: strings.ToLower can rarely change byte lengths for exotic Unicode, so clamp matchPos.
 	if matchPos > len(text) {
 		matchPos = len(text)
 	}

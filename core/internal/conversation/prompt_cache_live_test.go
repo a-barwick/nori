@@ -12,9 +12,6 @@ import (
 	"nori/internal/state"
 )
 
-// TestLivePromptCacheHits sends consecutive outer-model turns through the real request builder and OpenAI, and checks
-// that each turn reads the previous turn's prefix from the prompt cache, including after a new Core Memory (and so a
-// new memory ID) appears. Opt-in: NORI_LIVE_CACHE_TEST=1 and OPENAI_API_KEY. Costs a few cents.
 func TestLivePromptCacheHits(t *testing.T) {
 	key := os.Getenv("OPENAI_API_KEY")
 	if os.Getenv("NORI_LIVE_CACHE_TEST") != "1" || key == "" {
@@ -89,9 +86,6 @@ func TestLivePromptCacheHits(t *testing.T) {
 	}
 }
 
-// TestLiveAnthropicPromptCacheHits sends consecutive outer-model turns through the real request builder and Anthropic,
-// reporting exact input/cached/cache_write/output tokens, latency, and cost for Before/After comparison.
-// Opt-in: NORI_LIVE_CACHE_TEST=1 and ANTHROPIC_API_KEY (or ANTHROPIC_DEV_API_KEY).
 func TestLiveAnthropicPromptCacheHits(t *testing.T) {
 	key := os.Getenv("ANTHROPIC_API_KEY")
 	if key == "" {

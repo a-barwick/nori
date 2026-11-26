@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// TestNoRawLLMCallsOutsideGuardedAdapters enforces at test time that:
-//  1. No non-test Go source file outside the approved model adapter files talks
-//     directly to LLM provider hosts (api.openai.com, openrouter.ai,
-//     api.anthropic.com, api.typesafe.ai).
-//  2. Every approved model adapter routes its HTTP client through llmguard
-//     instead of constructing raw &http.Client{...} instances.
 func TestNoRawLLMCallsOutsideGuardedAdapters(t *testing.T) {
 	coreRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {

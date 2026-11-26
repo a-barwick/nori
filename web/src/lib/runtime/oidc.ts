@@ -25,8 +25,6 @@ async function keysFor(issuer: string) {
 function assertion(headers: Headers): string | undefined {
   const authorization = headers.get("authorization");
   if (authorization?.startsWith("Bearer ")) return authorization.slice(7);
-  // An OIDC login gateway may put the ID token in a secure, HttpOnly cookie.
-  // The app verifies the token itself; it never trusts an email header.
   const name = process.env.NORI_OIDC_COOKIE;
   if (!name) return;
   const entry = headers.get("cookie")?.split(";").map(v => v.trim()).find(v => v.startsWith(`${name}=`));

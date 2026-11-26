@@ -10,8 +10,6 @@ import (
 	"nori/internal/transcript"
 )
 
-// builtinVersion versions the engine's own tool definitions. Bump it when a built-in's schema, binding or policy
-// changes so pinned calls keep identifying what they ran against.
 const builtinVersion = "1"
 
 var builtinCapabilityIDs = map[string]string{
@@ -19,7 +17,6 @@ var builtinCapabilityIDs = map[string]string{
 	resultCapability: "results", memoryCapability: "memory",
 }
 
-// BuiltinDefinitions are the engine's tools as registry definitions, in the stable order models see them.
 var BuiltinDefinitions = func() []extensions.Definition {
 	definitions := make([]extensions.Definition, 0, len(taskToolDefinitions))
 	for _, tool := range taskToolDefinitions {
@@ -30,14 +27,6 @@ var BuiltinDefinitions = func() []extensions.Definition {
 		definitions = append(definitions, d)
 	}
 	return definitions
-}()
-
-var builtinsByName = func() map[string]extensions.Definition {
-	byName := map[string]extensions.Definition{}
-	for _, d := range BuiltinDefinitions {
-		byName[d.ModelName] = d
-	}
-	return byName
 }()
 
 func builtinDefinition(tool taskToolDefinition) extensions.Definition {
@@ -73,7 +62,6 @@ func builtinDefinition(tool taskToolDefinition) extensions.Definition {
 	}
 }
 
-// jsonSchema writes the engine's restricted schema as JSON Schema in the strict form the model already receives.
 func jsonSchema(schema *transcript.Schema) map[string]any {
 	if schema == nil {
 		return map[string]any{"type": "object", "properties": map[string]any{}, "required": []string{}, "additionalProperties": false}
@@ -102,8 +90,6 @@ func jsonSchema(schema *transcript.Schema) map[string]any {
 	return result
 }
 
-// PolicyFor returns the policy a call runs under: its pinned execution metadata when the call carries one, and the
-// name-based engine policy for calls recorded before pinning existed.
 func PolicyFor(name string, exec *extensions.Exec) ToolPolicy {
 	if exec == nil {
 		return TaskToolPolicy(name)
@@ -114,8 +100,6 @@ func PolicyFor(name string, exec *extensions.Exec) ToolPolicy {
 	}
 }
 
-// Tools returns the definitions this task can choose from now: built-ins first, then the user's current inventory.
-// A failing source leaves the built-ins usable and is logged; it never blocks the engine's own tools.
 func (s *Service) Tools(ctx context.Context) (*extensions.Snapshot, []extensions.CapabilityState) {
 	if s.Extensions == nil {
 		return extensions.NewSnapshot(BuiltinDefinitions), nil
@@ -132,8 +116,6 @@ func (s *Service) Tools(ctx context.Context) (*extensions.Snapshot, []extensions
 	return snapshot, inventory.Capabilities
 }
 
-// modelTool turns a definition into the model-facing declaration. Built-ins keep their strict restricted schema;
-// other definitions send their projected canonical schema.
 func modelTool(d extensions.Definition) (transcript.Tool, bool) {
 	if d.Builtin() {
 		for _, tool := range taskToolDefinitions {

@@ -11,8 +11,6 @@ import (
 	"nori/internal/state"
 )
 
-// Goals are explicitly adopted outcomes. They reuse tasks and automation triggers; they never schedule on their own.
-
 func decodeGoal(r state.Resource) (Goal, error) {
 	var g Goal
 	if err := r.Decode(&g); err != nil {
@@ -24,7 +22,6 @@ func decodeGoal(r state.Resource) (Goal, error) {
 	return g, nil
 }
 
-// Goal returns a goal with its linked work refreshed from tasks and automations.
 func (s *Service) Goal(ctx context.Context, id string) (Goal, error) {
 	r, err := s.Store.Resource(ctx, CollectionGoals, id)
 	if err != nil {
@@ -108,7 +105,6 @@ func criteria(value GoalEditable, previous []Criterion) ([]Criterion, error) {
 	return out, nil
 }
 
-// SaveGoal creates (id empty) or edits a goal. Editing a criterion's text clears its met state.
 func (s *Service) SaveGoal(ctx context.Context, id, requestID string, expected int64, value GoalEditable) (state.MutationReceipt, error) {
 	if strings.TrimSpace(value.Title) == "" || strings.TrimSpace(value.Outcome) == "" {
 		return state.MutationReceipt{}, fmt.Errorf("%w: a goal needs a title and an outcome", state.ErrInvalidResource)
@@ -155,8 +151,6 @@ func (s *Service) goalWrite(g Goal, revision int64, status int) (state.MutationR
 	return state.MutationResult{Writes: []state.Resource{resource}, Receipt: state.MutationReceipt{Status: "applied", Resource: data, HTTPStatus: status}}, nil
 }
 
-// ActGoal pauses, resumes, completes or abandons a goal. Completing or abandoning stops its monitors unless the
-// user asked to keep them; a failed attempt never changes the goal.
 func (s *Service) ActGoal(ctx context.Context, id, requestID string, expected int64, action GoalAction) (state.MutationReceipt, error) {
 	now := s.now()
 	stopMonitors := false
@@ -206,8 +200,6 @@ func (s *Service) ActGoal(ctx context.Context, id, requestID string, expected in
 	return receipt, nil
 }
 
-// GoalProgress is what a task records about a goal: progress, next actions, blockers and criteria it met with
-// cited results. It is a reversible write made through the Tool executor.
 type GoalProgress struct {
 	Progress    string    `json:"progress,omitempty"`
 	NextActions []string  `json:"next_actions,omitempty"`
@@ -219,8 +211,6 @@ type GoalProgress struct {
 	TaskID string `json:"-"`
 }
 
-// RecordProgress updates a goal's progress. It never completes a goal; completion is the user's action or follows
-// every criterion being met with evidence.
 func (s *Service) RecordProgress(ctx context.Context, id, requestID string, update GoalProgress) (Goal, error) {
 	receipt, err := s.Store.Mutate(ctx, state.Mutation{
 		RequestID: requestID, Method: "PROGRESS", Target: id, Payload: update, Collection: CollectionGoals, ID: id, SkipRevisionCheck: true,

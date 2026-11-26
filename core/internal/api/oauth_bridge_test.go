@@ -242,7 +242,6 @@ func TestAPIOAuthBridgeConnectionsAndMCP(t *testing.T) {
 		return rec
 	}
 
-	// 1. Connections HTTP OAuth flow with nori://oauth/callback.
 	createConnRec := doJSON(http.MethodPost, "/v1/connections", map[string]any{
 		"request_id":        uuid.NewString(),
 		"expected_revision": 0,
@@ -259,7 +258,6 @@ func TestAPIOAuthBridgeConnectionsAndMCP(t *testing.T) {
 	var connProj connections.Projection
 	_ = json.Unmarshal(createConnReceipt.Resource, &connProj)
 
-	// Invalid return_to rejected at API boundary with 400.
 	badConnRec := doJSON(http.MethodPost, "/v1/connections/"+connProj.ID+"/actions", map[string]any{
 		"request_id":        uuid.NewString(),
 		"expected_revision": connProj.Revision,
@@ -272,7 +270,6 @@ func TestAPIOAuthBridgeConnectionsAndMCP(t *testing.T) {
 		t.Fatalf("expected 400 for invalid connection return_to, got %d: %s", badConnRec.Code, badConnRec.Body.String())
 	}
 
-	// Valid nori://oauth/callback starts connection OAuth.
 	startConnRec := doJSON(http.MethodPost, "/v1/connections/"+connProj.ID+"/actions", map[string]any{
 		"request_id":        uuid.NewString(),
 		"expected_revision": connProj.Revision,
@@ -294,7 +291,6 @@ func TestAPIOAuthBridgeConnectionsAndMCP(t *testing.T) {
 	}
 	connState := connAuthURL.Query().Get("state")
 
-	// Direct 303 redirect from GET /v1/connections/oauth/callback.
 	cbReq := httptest.NewRequest(http.MethodGet, "/v1/connections/oauth/callback?state="+url.QueryEscape(connState)+"&code=auth-code-1", nil)
 	cbRec := httptest.NewRecorder()
 	mux.ServeHTTP(cbRec, cbReq)
@@ -306,7 +302,6 @@ func TestAPIOAuthBridgeConnectionsAndMCP(t *testing.T) {
 		t.Fatalf("connection callback Location=%q want %q", got, wantConnLoc)
 	}
 
-	// JSON redirect mode also returns exact nori://oauth/callback location on replay.
 	cbJSONReq := httptest.NewRequest(http.MethodGet, "/v1/connections/oauth/callback?state="+url.QueryEscape(connState)+"&code=auth-code-1&nori_redirect=json", nil)
 	cbJSONRec := httptest.NewRecorder()
 	mux.ServeHTTP(cbJSONRec, cbJSONReq)
@@ -321,7 +316,6 @@ func TestAPIOAuthBridgeConnectionsAndMCP(t *testing.T) {
 		t.Fatalf("connection callback json location=%q want %q", jsonLoc.Location, wantConnLoc)
 	}
 
-	// 2. MCP HTTP OAuth flow with nori://oauth/callback.
 	createMCPRec := doJSON(http.MethodPost, "/v1/mcp", map[string]any{
 		"request_id":        uuid.NewString(),
 		"expected_revision": 0,
@@ -342,7 +336,6 @@ func TestAPIOAuthBridgeConnectionsAndMCP(t *testing.T) {
 	var mcpSrv mcp.Server
 	_ = json.Unmarshal(createMCPReceipt.Resource, &mcpSrv)
 
-	// Invalid return_to rejected at MCP API boundary with 400.
 	badMCPRec := doJSON(http.MethodPost, "/v1/mcp/"+mcpSrv.ID+"/actions", map[string]any{
 		"request_id":        uuid.NewString(),
 		"expected_revision": mcpSrv.Revision,
@@ -355,7 +348,6 @@ func TestAPIOAuthBridgeConnectionsAndMCP(t *testing.T) {
 		t.Fatalf("expected 400 for invalid MCP return_to, got %d: %s", badMCPRec.Code, badMCPRec.Body.String())
 	}
 
-	// Non-sign_in action rejects return_to.
 	badMCPActionRec := doJSON(http.MethodPost, "/v1/mcp/"+mcpSrv.ID+"/actions", map[string]any{
 		"request_id":        uuid.NewString(),
 		"expected_revision": mcpSrv.Revision,
@@ -368,7 +360,6 @@ func TestAPIOAuthBridgeConnectionsAndMCP(t *testing.T) {
 		t.Fatalf("expected 400 for return_to on reconnect, got %d: %s", badMCPActionRec.Code, badMCPActionRec.Body.String())
 	}
 
-	// Valid nori://oauth/callback starts MCP OAuth via POST /v1/mcp/{id}/actions.
 	startMCPRec := doJSON(http.MethodPost, "/v1/mcp/"+mcpSrv.ID+"/actions", map[string]any{
 		"request_id":        uuid.NewString(),
 		"expected_revision": mcpSrv.Revision,
@@ -390,7 +381,6 @@ func TestAPIOAuthBridgeConnectionsAndMCP(t *testing.T) {
 	}
 	mcpState := mcpAuthURL.Query().Get("state")
 
-	// Direct 303 redirect from GET /v1/connections/oauth/callback for MCP attempt.
 	mcpCBReq := httptest.NewRequest(http.MethodGet, "/v1/connections/oauth/callback?state="+url.QueryEscape(mcpState)+"&code=mcp-code-1", nil)
 	mcpCBRec := httptest.NewRecorder()
 	mux.ServeHTTP(mcpCBRec, mcpCBReq)
@@ -402,7 +392,6 @@ func TestAPIOAuthBridgeConnectionsAndMCP(t *testing.T) {
 		t.Fatalf("MCP callback Location=%q want %q", got, wantMCPLoc)
 	}
 
-	// Provider error on MCP OAuth callback redirects cleanly to nori://oauth/callback.
 	startMCPErrRec := doJSON(http.MethodPost, "/v1/mcp/"+mcpSrv.ID+"/actions", map[string]any{
 		"request_id":        uuid.NewString(),
 		"expected_revision": 0,

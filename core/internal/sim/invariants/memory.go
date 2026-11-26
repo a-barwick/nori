@@ -175,9 +175,6 @@ func decodeConversationAttemptsFromSnapshot(snap memstore.BackendSnapshot, owner
 	return out, vs
 }
 
-// extractManualDemotedIDsFromSnapshot scans mutation_receipts for explicit user
-// demote_core operations so INV-MEM-03 can distinguish user-initiated demotion
-// of a pinned item from forbidden background auto-demotion.
 func extractManualDemotedIDsFromSnapshot(snap memstore.BackendSnapshot, owner string) map[string]bool {
 	col := "owners/" + owner + "/mutation_receipts"
 	docs := snap.Collections[col]
@@ -217,8 +214,6 @@ func extractManualDemotedIDsFromSnapshot(snap memstore.BackendSnapshot, owner st
 	return demoted
 }
 
-// checkMemorySafetyFromSnapshotLocked checks INV-MEM-01 through INV-MEM-07 across
-// all users from a single atomic BackendSnapshot.
 func (c *Checker) checkMemorySafetyFromSnapshotLocked(
 	ctx context.Context,
 	dataList []userSnapshotData,
@@ -228,7 +223,6 @@ func (c *Checker) checkMemorySafetyFromSnapshotLocked(
 ) []Violation {
 	var vs []Violation
 
-	// INV-MEM-07: Every indexed MemoryChunk must belong to a known DataOwner.
 	chunksByOwner := make(map[string]map[string]docstore.MemoryChunk, len(dataList))
 	for _, chunk := range snap.MemoryChunks {
 		if _, known := knownOwners[chunk.Owner]; !known {
@@ -295,7 +289,6 @@ func (c *Checker) checkMemorySafetyFromSnapshotLocked(
 		ms.attempts, dVs = decodeConversationAttemptsFromSnapshot(snap, u.owner)
 		vs = append(vs, tagUser(u.userID, dVs)...)
 
-		// Register authoritative user-input ownership for cross-user isolation (INV-MEM-07).
 		for _, inID := range sortedKeys(ms.inputs) {
 			in := ms.inputs[inID]
 			if in.IsUser() && inID != state.IntroductionInputID() {
@@ -320,12 +313,10 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 	}
 	prev := c.memoryBaselines[ms.userID]
 
-	// Collect all log entries across all shards, validating uniqueness per date (INV-MEM-05)
-	// and building lookup maps for INV-MEM-02, INV-MEM-03, INV-MEM-04, INV-MEM-06, INV-MEM-07.
 	allLogEntriesByID := map[string]state.MemoryLogEntry{}
 	evictedEntries := []state.MemoryLogEntry{}
 	expectedChunks := map[string]docstore.MemoryChunk{}
-	seenDateEntry := map[string]map[string]string{} // date -> entryID -> docID
+	seenDateEntry := map[string]map[string]string{}
 	var preContextLogEntries []state.MemoryLogEntry
 
 	for _, docID := range sortedKeys(ms.logs) {
@@ -353,7 +344,6 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 				evictedEntries = append(evictedEntries, entry)
 			}
 
-			// INV-MEM-04: Log entry provenance validity & non-user input citation check.
 			if entry.Provenance != "" && !state.ValidMemoryProvenance(entry.Provenance) {
 				vs = append(vs, Violation{
 					Invariant: "INV-MEM-04.invalid_provenance",
@@ -371,11 +361,9 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 						Message:   fmt.Sprintf("Daily Log entry cites non-user conversation_input %q", entry.SourceInputID),
 					})
 				}
-				// INV-MEM-07: Cross-user reference check on log source_input_id.
 				vs = append(vs, c.checkMemoryCrossUserRefLocked(c.inputOwners, "conversation_input", entry.SourceInputID, ms.userID, "memory_log "+docID+"/"+entry.ID)...)
 			}
 			if entry.RunID != "" {
-				// INV-MEM-07: Cross-user reference check on log run_id.
 				vs = append(vs, c.checkMemoryCrossUserRefLocked(c.runOwners, "run", entry.RunID, ms.userID, "memory_log "+docID+"/"+entry.ID)...)
 			}
 			if !ms.conv.ContextFrom.IsZero() && !entry.CreatedAt.IsZero() && entry.CreatedAt.Before(ms.conv.ContextFrom) {
@@ -387,10 +375,9 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 		}
 	}
 
-	// --- INV-MEM-03 & INV-MEM-04 & INV-MEM-05 (Core Memory) ---
 	coreSlice := make([]state.Memory, 0, len(ms.memories))
 	currPinned := map[string]state.Memory{}
-	seenTurnMem := map[string]string{} // "prov\x00sourceInputID\x00text" -> memID
+	seenTurnMem := map[string]string{}
 	for _, id := range sortedKeys(ms.memories) {
 		m := ms.memories[id]
 		coreSlice = append(coreSlice, m)
@@ -398,7 +385,6 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 			currPinned[id] = m
 		}
 
-		// INV-MEM-03: per-item size, valid UTF-8, CreatedAt <= UpdatedAt.
 		if strings.TrimSpace(m.Text) == "" || len(m.Text) < 1 || len(m.Text) > state.MaxMemoryText || !utf8.ValidString(m.Text) {
 			vs = append(vs, Violation{
 				Invariant: "INV-MEM-03.item_bounds",
@@ -432,7 +418,6 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 			})
 		}
 
-		// INV-MEM-04: Provenance & injection isolation.
 		if m.Provenance == state.ProvenanceTaskOutcome {
 			vs = append(vs, Violation{
 				Invariant: "INV-MEM-04.task_outcome_in_core",
@@ -488,7 +473,6 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 			}
 		}
 
-		// INV-MEM-05: No duplicate Core memories for the same (Provenance, SourceInputID, Text).
 		if m.SourceInputID != "" && m.SourceInputID != "ui" {
 			dedupKey := string(m.EffectiveProvenance()) + "\x00" + m.SourceInputID + "\x00" + m.Text
 			if firstID, dup := seenTurnMem[dedupKey]; dup {
@@ -501,7 +485,6 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 			} else {
 				seenTurnMem[dedupKey] = id
 			}
-			// INV-MEM-07: Cross-user reference check on Core SourceInputID.
 			vs = append(vs, c.checkMemoryCrossUserRefLocked(c.inputOwners, "conversation_input", m.SourceInputID, ms.userID, "memory "+id)...)
 		}
 
@@ -509,7 +492,6 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 		expectedChunks[chunk.ChunkID] = chunk
 	}
 
-	// INV-MEM-03: Total Core memory byte budget <= 24 KiB.
 	if totalCore := state.CoreMemorySize(coreSlice); totalCore > state.CoreMemoryBytes {
 		vs = append(vs, Violation{
 			Invariant: "INV-MEM-03.core_budget",
@@ -518,8 +500,6 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 		})
 	}
 
-	// INV-MEM-03: Previously observed Pinned Core memories must never be auto-demoted
-	// by background passes (vanish from Core and appear as demote_<id> without a manual receipt).
 	for _, pinnedID := range sortedKeys(prev.pinnedCore) {
 		if _, stillCore := ms.memories[pinnedID]; stillCore {
 			continue
@@ -537,7 +517,6 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 		}
 	}
 
-	// --- INV-MEM-05: Non-completed/superseded/refused attempts leave zero memory mutations ---
 	committedNewMemIDs := map[string]bool{}
 	allAttempts := make([]state.ConversationAttempt, 0, len(ms.attempts)+len(ms.turns))
 	for _, id := range sortedKeys(ms.attempts) {
@@ -606,7 +585,6 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 		}
 	}
 
-	// --- INV-MEM-06: Exact 1-to-1 bijection between Store (memories U memory_logs) and MemoryIndex ---
 	for _, chunkID := range sortedKeys(expectedChunks) {
 		want := expectedChunks[chunkID]
 		got, exists := ms.chunks[chunkID]
@@ -638,7 +616,6 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 				Message:   fmt.Sprintf("MemoryIndex contains orphan chunk %q with no backing store record", chunkID),
 			})
 		}
-		// INV-MEM-07: Cross-user reference checks on indexed chunks.
 		if got.SourceInput != "" && got.SourceInput != "ui" {
 			vs = append(vs, c.checkMemoryCrossUserRefLocked(c.inputOwners, "conversation_input", got.SourceInput, ms.userID, "memory_chunk "+chunkID)...)
 		}
@@ -647,7 +624,6 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 		}
 	}
 
-	// --- INV-MEM-01, INV-MEM-02, INV-MEM-07 (ConversationSummary & Watermarks) ---
 	nextBase := memoryBaseline{
 		hadSummary:                prev.hadSummary,
 		epoch:                     prev.epoch,
@@ -669,7 +645,6 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 		extracted := sum.EffectiveExtractedThrough()
 		sameEpoch := prev.hadSummary && prev.epoch.Equal(sum.From)
 
-		// Epoch regression check.
 		if prev.hadSummary && !prev.epoch.IsZero() && sum.From.Before(prev.epoch) {
 			vs = append(vs, Violation{
 				Invariant: "INV-MEM-01.watermark_monotonic",
@@ -678,13 +653,6 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 			})
 		}
 
-		// Bounds:
-		//   From <= EffectiveFlushedThrough <= EffectiveExtractedThrough.
-		//   When !Through.IsZero(): EffectiveFlushedThrough <= Through (EffectiveExtractedThrough
-		//   may exceed Through when newer verbatim turns were session-idle extracted without compacting).
-		//   When Through.IsZero(): FlushedThrough and RefinementThrough must remain zero, while
-		//   ExtractedThrough / ExtractFailures / LastDreamAt may be non-zero for an uncompacted
-		//   session-idle summary.
 		if sum.Through.IsZero() {
 			if !sum.FlushedThrough.IsZero() || !sum.RefinementThrough.IsZero() {
 				vs = append(vs, Violation{
@@ -731,7 +699,6 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 			}
 		}
 
-		// ExtractedThrough bounds (valid both when Through.IsZero() and when !Through.IsZero()).
 		if !sum.From.IsZero() && extracted.Before(sum.From) {
 			vs = append(vs, Violation{
 				Invariant: "INV-MEM-01.watermark_bounds",
@@ -768,7 +735,6 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 			}
 		}
 
-		// Monotonicity per ContextFrom epoch & no advance on flush or extraction failure.
 		if sameEpoch {
 			if flushed.Before(prev.flushedThrough) {
 				vs = append(vs, Violation{
@@ -824,7 +790,6 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 			})
 		}
 
-		// Excerpt budget & coverage for every completed turn in (EffectiveFlushedThrough, Through].
 		excerptsBytes := 0
 		if len(sum.Excerpts) > 0 {
 			rawEx, _ := json.Marshal(sum.Excerpts)
@@ -841,7 +806,6 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 			vs = append(vs, checkUnflushedExcerptCoverage(ms.userID, sum, flushed, excerptsBytes, ms.turns)...)
 		}
 
-		// INV-MEM-02: Summary budget, dismissed items, and no silent eviction.
 		if len(sum.Items) > state.MaxSummaryItems {
 			vs = append(vs, Violation{
 				Invariant: "INV-MEM-02.summary_budget",
@@ -877,7 +841,6 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 					Message:   fmt.Sprintf("dismissed summary item %q reappeared in summary.Items", itemID),
 				})
 			}
-			// INV-MEM-07: Cross-user reference & pre-ContextFrom check on SummaryItem.
 			if item.InputID != "" {
 				vs = append(vs, c.checkMemoryCrossUserRefLocked(c.inputOwners, "conversation_input", item.InputID, ms.userID, "summary_item "+itemID)...)
 				if !ms.conv.ContextFrom.IsZero() && sum.From.Equal(ms.conv.ContextFrom) {
@@ -954,7 +917,6 @@ func (c *Checker) checkUserMemorySafetyLocked(ctx context.Context, ms userMemory
 		}
 	}
 
-	// INV-MEM-07: Active ContextFrom read isolation check (fault-free, zero RNG draws).
 	if !ms.conv.ContextFrom.IsZero() && ms.target.Store != nil {
 		vs = append(vs, c.checkContextFromReadIsolationLocked(ctx, ms, preContextLogEntries, now)...)
 	}
@@ -971,7 +933,6 @@ func (c *Checker) checkContextFromReadIsolationLocked(
 ) []Violation {
 	var vs []Violation
 	_ = c.withoutFaults(func() error {
-		// 1. Verify SearchMemory with CreatedAfter=ContextFrom returns zero pre-ContextFrom items or cross-owner chunks.
 		if len(preContextLogEntries) > 0 {
 			qToken := firstSearchableToken(preContextLogEntries[0].Text)
 			if qToken != "" {
@@ -1005,7 +966,6 @@ func (c *Checker) checkContextFromReadIsolationLocked(
 			}
 		}
 
-		// 2. Verify ReadConversationMessage rejects pre-ContextFrom messages.
 		for _, m := range ms.msgs {
 			if m.Role == "user" && !m.CreatedAt.IsZero() && m.CreatedAt.Before(ms.conv.ContextFrom) {
 				if _, err := ms.target.Store.ReadConversationMessage(ctx, m.ID); !errors.Is(err, state.ErrNotFound) {
@@ -1039,7 +999,6 @@ func (c *Checker) checkMemoryCrossUserRefLocked(owners map[string]string, kind, 
 	return nil
 }
 
-// checkMemoryQuiescenceLocked implements INV-MEM-08 inside CheckQuiescence.
 func (c *Checker) checkMemoryQuiescenceLocked(ctx context.Context, sorted []UserTarget, now time.Time) []Violation {
 	var vs []Violation
 
@@ -1075,7 +1034,6 @@ func (c *Checker) checkMemoryQuiescenceLocked(ctx context.Context, sorted []User
 			continue
 		}
 
-		// Wake lease hygiene check on LaneConversation when leases are tracked.
 		w, hasWake := convWakes[userID]
 		if hasSnap && c.checkLeases && hasWake {
 			if w.Owner != "" || w.LeaseUntil != nil {
@@ -1140,10 +1098,6 @@ func (c *Checker) checkMemoryQuiescenceLocked(ctx context.Context, sorted []User
 			}
 		}
 
-		// Session-idle extraction liveness: when the summary/memory pipeline is active
-		// for this user and completed turns in the current ContextFrom epoch remain
-		// unextracted at or after IdleExtractDelay (+2m) with no scheduled future
-		// LaneConversation wake or active retry backoff, flag INV-MEM-08.unextracted_after_idle.
 		if summaryInEpoch || (summaryExists && !conv.ContextFrom.IsZero() && summary.From.Before(conv.ContextFrom)) {
 			effectiveExtracted := conv.ContextFrom
 			if summaryInEpoch {

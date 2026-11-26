@@ -1,14 +1,8 @@
 @import "tailwindcss";
 
-/*
- * Nori Web Design System Tokens
- * Source of truth: docs/design-system.md (base) & web/DESIGN_SYSTEM.md (web).
- * Supports System (default via prefers-color-scheme), Light, and Dark modes.
- */
 :root {
   color-scheme: light;
 
-  /* Foundation surfaces */
   --bg-canvas: #ffffff;
   --bg-surface: #ffffff;
   --bg-sheet: #ffffff;
@@ -20,14 +14,12 @@
   --fill-1: #f7f5fb;
   --fill-2: #eee8fa;
 
-  /* Borders & overlays */
   --border-card: #e7e2ef;
   --hairline: #e7e2ef;
   --hairline-strong: #cfc3e9;
   --lavender-border: #dfd4f6;
   --overlay: rgba(22, 5, 49, 0.26);
 
-  /* Typography */
   --text-primary: #190936;
   --text-secondary: #726d82;
   --text-tertiary: #6e6880;
@@ -35,7 +27,6 @@
   --disabled-bg: #ece9f4;
   --text-on-accent: #ffffff;
 
-  /* Brand & accent purple (WCAG split) */
   --accent: #5000ff;
   --accent-hover: #4200d6;
   --accent-pressed: #3500ae;
@@ -45,7 +36,6 @@
   --accent-muted: #e9dfff;
   --focus-ring: #7943ff;
 
-  /* 6 semantic status pairs */
   --ok-text: #1c7a43;
   --ok-bg: #e9f8ef;
   --working-text: #5000ff;
@@ -59,14 +49,12 @@
   --inactive-text: #6e6880;
   --inactive-bg: #f7f5fb;
 
-  /* Selected chips & inverted surfaces (never bg-ink + text-surface) */
   --chip-selected-bg: #eee8fa;
   --chip-selected-fg: #5000ff;
   --chip-selected-border: #dfd4f6;
   --toast-bg: #190936;
   --toast-fg: #ffffff;
 
-  /* Top chrome, glass & segmented controls */
   --topbar-bg: linear-gradient(180deg, #faf8fe 0%, rgba(255, 255, 255, 0.96) 100%);
   --pill-active-bg: #ffffff;
   --pill-active-shadow: 0 1px 4px rgba(25, 9, 54, 0.08), 0 0 0 1px #e7e2ef;
@@ -75,7 +63,6 @@
   --glass-border: #cfc3e9;
   --chip-border: #cfc3e9;
 
-  /* Mascot tokens (docs/design-system.md §4) */
   --mark-body: #fdfcff;
   --mark-seaweed: #101a30;
   --mark-ink: #190936;
@@ -84,7 +71,6 @@
   --mark-fill: var(--mark-seaweed);
   --mark-fill-soft: var(--mark-body);
 
-  /* Legacy / decorative accents */
   --soul-from: #5000ff;
   --soul-to: #ff4e60;
   --memory-from: #5000ff;
@@ -94,7 +80,6 @@
   --waveform-on-accent: #ffffff;
   --drop-contact: drop-shadow(0 4px 8px rgba(37, 12, 76, 0.08));
 
-  /* Elevation shadows (light mode only — dark uses luminance steps) */
   --shadow-float: 0 2px 6px rgba(48, 40, 24, 0.05), 0 10px 28px rgba(48, 40, 24, 0.08);
   --shadow-pill: 0 1px 2px rgba(48, 40, 24, 0.08), 0 0 0 0.5px rgba(48, 40, 24, 0.06);
   --shadow-pop: 0 2px 6px rgba(25, 9, 54, 0.08), 0 20px 48px rgba(25, 9, 54, 0.14);
@@ -108,7 +93,6 @@
   --panel-w: 440px;
 }
 
-/* Dark Mode tokens — true OLED #000000 canvas, borderless obsidian #0B0B0F cards */
 :root[data-appearance="dark"] {
   color-scheme: dark;
 
@@ -386,7 +370,6 @@
   --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* ── Base ─────────────────────────────────────────────── */
 @layer base {
   html {
     background: var(--bg-canvas);
@@ -427,7 +410,6 @@
   }
 }
 
-/* ── Surface Primitives ───────────────────────────────── */
 .glass {
   background: var(--glass-bg);
   -webkit-backdrop-filter: var(--glass-filter);
@@ -471,7 +453,6 @@
   transition-timing-function: var(--ease-standard);
 }
 
-/* ── Motion ───────────────────────────────────────────── */
 @keyframes arrive {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: none; }
@@ -544,7 +525,6 @@
   .mark[data-blink="true"] .mark-eye { transform: none; }
 }
 
-/* ── Full-bleed Shell (Concept C: Fluid Top Bar) ──────── */
 .nori-shell {
   position: fixed;
   inset: 0;
@@ -596,7 +576,6 @@
   box-shadow: var(--pill-active-shadow);
 }
 
-/* Unified 960px body column across Chat, Work, More, and sub-screens */
 .nori-page-col {
   width: 100%;
   max-width: 960px;
@@ -621,7 +600,6 @@
 .nori-message > div { line-height: 1.58; }
 .nori-message > div.bg-bubble { padding-left: 0; }
 
-/* Mobile bottom 3-tab bar */
 .nori-tab {
   display: flex;
   flex: 1;

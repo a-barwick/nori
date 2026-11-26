@@ -22,8 +22,6 @@ const (
 	drainMaxTicks  = 128
 )
 
-// SimError wraps an invariant or drain failure with seed, step, phase, and
-// recent trace context for instant deterministic reproduction.
 type SimError struct {
 	Seed  int64
 	Step  int
@@ -44,13 +42,9 @@ func (e *SimError) Error() string {
 
 func (e *SimError) Unwrap() error { return e.Err }
 
-// RunSimulation executes steps adversarial chaos operations, checking continuous
-// safety invariants after every single step, and then drains to quiescence and
-// verifies all liveness invariants.
 func (w *World) RunSimulation(ctx context.Context, steps int) error {
 	targets := w.UserTargets()
 
-	// Initial safety check on the fresh world.
 	if err := w.Checker.CheckSafetyAt(ctx, targets, w.Clock.Now()); err != nil {
 		return &SimError{
 			Seed:  w.Seed,
@@ -88,7 +82,6 @@ func (w *World) RunSimulation(ctx context.Context, steps int) error {
 	return nil
 }
 
-// runChaosStep picks one weighted adversarial action purely from w.RNG.
 func (w *World) runChaosStep(ctx context.Context) {
 	roll := w.RNG.IntN(100)
 	switch {
@@ -113,32 +106,9 @@ func (w *World) pickUser() *UserWorld {
 	return w.Users[w.RNG.IntN(len(w.Users))]
 }
 
-func (w *World) pickOtherUser(uw *UserWorld) *UserWorld {
-	if len(w.Users) < 2 {
-		return uw
-	}
-	for range 4 {
-		other := w.Users[w.RNG.IntN(len(w.Users))]
-		if other != uw {
-			return other
-		}
-	}
-	for _, other := range w.Users {
-		if other != uw {
-			return other
-		}
-	}
-	return uw
-}
-
-// -----------------------------------------------------------------------------
-// 1. Command Batches
-// -----------------------------------------------------------------------------
-
 func (w *World) stepCommandBatch(ctx context.Context, uw *UserWorld) {
 	choice := w.RNG.IntN(100)
 
-	// Duplicate retry of a previously submitted command to verify idempotent receipt.
 	if choice < 15 && len(uw.submittedCmds) > 0 {
 		cmd := uw.submittedCmds[w.RNG.IntN(len(uw.submittedCmds))]
 		receipts, err := uw.Store.AcceptCommandBatch(ctx, []state.Command{cmd}, nil)
@@ -160,7 +130,6 @@ func (w *World) stepCommandBatch(ctx context.Context, uw *UserWorld) {
 
 	switch {
 	case choice < 38 || len(open) == 0:
-		// Start 1 or 2 new top-level tasks (or subtask if a parent has an open work question).
 		if parent, ok := pickParentWithWorkQuestion(open, w.RNG); ok && w.RNG.IntN(2) == 0 {
 			actionName = "cmd.start_subtask"
 			nSub := 1 + w.RNG.IntN(2)
@@ -202,7 +171,6 @@ func (w *World) stepCommandBatch(ctx context.Context, uw *UserWorld) {
 		}
 
 	case choice < 58:
-		// Steer an existing open task (supersedes revision & interactions!).
 		actionName = "cmd.steer"
 		target := open[w.RNG.IntN(len(open))]
 		batch = append(batch, state.Command{
@@ -214,7 +182,6 @@ func (w *World) stepCommandBatch(ctx context.Context, uw *UserWorld) {
 		})
 
 	case choice < 76:
-		// Stop an existing open task (works even while paused!).
 		actionName = "cmd.stop"
 		target := open[w.RNG.IntN(len(open))]
 		batch = append(batch, state.Command{
@@ -224,7 +191,6 @@ func (w *World) stepCommandBatch(ctx context.Context, uw *UserWorld) {
 		})
 
 	case choice < 90:
-		// Answer an open question on a running task if one exists; otherwise start a subtask or steer.
 		if qRun, ok := pickRunWithUnresolvedQuestion(open, w.RNG); ok {
 			if qRun.Question.Kind == state.QuestionWork && qRun.ParentID == "" && w.RNG.IntN(2) == 0 {
 				actionName = "cmd.start_subtask"
@@ -259,7 +225,6 @@ func (w *World) stepCommandBatch(ctx context.Context, uw *UserWorld) {
 		}
 
 	default:
-		// Register a Hold on an open or recent run.
 		actionName = "cmd.hold"
 		target := open[w.RNG.IntN(len(open))]
 		batch = append(batch, state.Command{
@@ -314,19 +279,13 @@ func pickRunWithUnresolvedQuestion(open []state.Run, rng interface{ IntN(int) in
 	return cands[rng.IntN(len(cands))], true
 }
 
-// -----------------------------------------------------------------------------
-// 2. Simulated Worker Execution
-// -----------------------------------------------------------------------------
-
 func (w *World) stepWorkerExec(ctx context.Context, uw *UserWorld) {
-	// Respect global pause: never claim paid task execution while paused; repair StopPaused instead.
 	if paused, err := w.Paused(ctx); err == nil && paused {
 		err := w.repairUserLeases(ctx, uw)
 		w.Record(uw.User.ID, "worker", "paused_repair", fmt.Sprintf("err=%v", err))
 		return
 	}
 
-	// Pick a currently claimable runnable task lease for this user.
 	leases, err := w.Backend.ListTaskLeases(ctx, uw.User.ID)
 	if err != nil {
 		w.Record(uw.User.ID, "worker", "list_leases_err", err.Error())
@@ -367,8 +326,6 @@ func (w *World) stepWorkerExec(ctx context.Context, uw *UserWorld) {
 	w.Stats.WorkerSteps++
 
 	actionRoll := w.RNG.IntN(100)
-	// Hard worker crash: abandon both discovery lease and TaskControl without releasing so
-	// another worker must wait for TaskLease (30s) expiry and take over with Fence+1.
 	if actionRoll < 8 {
 		w.Stats.WorkerCrashes++
 		w.Record(uw.User.ID, "worker", "crash_abandon", fmt.Sprintf("run=%s owner=%s fence=%d", runID, owner, fence.Fence))
@@ -407,7 +364,6 @@ func (w *World) stepWorkerExec(ctx context.Context, uw *UserWorld) {
 	}
 	run := snap.Run
 
-	// If run already finished or is finishing, handle cleanup & lease deletion/park.
 	if run.Status != state.RunRunning || run.Finishing != nil {
 		detail := ""
 		if w.RNG.IntN(4) == 0 {
@@ -434,7 +390,6 @@ func (w *World) stepWorkerExec(ctx context.Context, uw *UserWorld) {
 		return
 	}
 
-	// If commands remain unincorporated, incorporate first (most of the time) or test Guard rejection.
 	if run.Incorporated < state.TaskPosition(run) && w.RNG.IntN(10) < 8 {
 		err := uw.Store.Incorporate(ctx, state.IncorporateRequest{
 			RunID:    run.ID,
@@ -463,7 +418,6 @@ func (w *World) stepWorkerExec(ctx context.Context, uw *UserWorld) {
 
 	switch {
 	case actionRoll < 26:
-		// Guard + Atomic AdvanceTaskStep (Spend + parent rollup + TaskControl cursor) + optional Renew & Artifact.
 		_, gerr := uw.Store.Guard(ctx, run.ID, run.Revision)
 		if gerr == nil {
 			if w.RNG.IntN(3) == 0 {
@@ -499,12 +453,10 @@ func (w *World) stepWorkerExec(ctx context.Context, uw *UserWorld) {
 		releaseNormal()
 
 	case actionRoll < 46:
-		// Operations: Admit / PutOperation / SettleOperation / duplicate settle attempt.
 		w.stepWorkerOperation(ctx, uw, run)
 		releaseNormal()
 
 	case actionRoll < 60:
-		// Project / SetProgress
 		if w.RNG.IntN(2) == 0 {
 			err := uw.Store.Project(ctx, state.ProjectRequest{
 				RunID:    run.ID,
@@ -520,7 +472,6 @@ func (w *World) stepWorkerExec(ctx context.Context, uw *UserWorld) {
 		releaseNormal()
 
 	case actionRoll < 74:
-		// ProjectQuestion (either user input question or work request for spawning subtasks) -> park WaitQuestion.
 		qKind := "input"
 		if run.ParentID == "" && w.RNG.IntN(2) == 0 {
 			qKind = state.QuestionWork
@@ -542,7 +493,6 @@ func (w *World) stepWorkerExec(ctx context.Context, uw *UserWorld) {
 		w.Record(uw.User.ID, "worker", "project_question", fmt.Sprintf("run=%s rev=%d kind=%s q=%s err=%v", run.ID, run.Revision, qKind, qID, err))
 
 	case actionRoll < 94:
-		// Publish outcome (completed / failed / cancelled), exercising held publication & finishing with subtasks.
 		status := state.RunCompleted
 		detail := ""
 		text := fmt.Sprintf("completed at step %d", w.step)
@@ -586,7 +536,6 @@ func (w *World) stepWorkerExec(ctx context.Context, uw *UserWorld) {
 			run.ID, status, bypass, pub.Status, pub.Finishing != nil, pub.CleanupPending, err))
 
 	default:
-		// Adversarial FinishCleanup while running & Finishing==nil (must return ErrBusy).
 		err := uw.Store.FinishCleanup(ctx, run.ID, "")
 		releaseNormal()
 		w.Record(uw.User.ID, "worker", "cleanup_while_running", fmt.Sprintf("run=%s err=%v", run.ID, err))
@@ -594,7 +543,6 @@ func (w *World) stepWorkerExec(ctx context.Context, uw *UserWorld) {
 }
 
 func (w *World) stepWorkerOperation(ctx context.Context, uw *UserWorld, run state.Run) {
-	// Find existing tracked ops for this run.
 	var runOps []*trackedOp
 	for _, op := range uw.ops {
 		if op.runID == run.ID {
@@ -602,7 +550,6 @@ func (w *World) stepWorkerOperation(ctx context.Context, uw *UserWorld, run stat
 		}
 	}
 
-	// 1. Adversarial duplicate settlement attempt on an already-settled op.
 	if len(runOps) > 0 && w.RNG.IntN(4) == 0 {
 		op := runOps[w.RNG.IntN(len(runOps))]
 		if op.settled {
@@ -630,7 +577,6 @@ func (w *World) stepWorkerOperation(ctx context.Context, uw *UserWorld, run stat
 		}
 	}
 
-	// 2. Advance or settle an unsettled op for this run.
 	for _, op := range runOps {
 		if !op.settled {
 			var nextOutcome string
@@ -703,7 +649,6 @@ func (w *World) stepWorkerOperation(ctx context.Context, uw *UserWorld, run stat
 		}
 	}
 
-	// 3. Admit and record a brand-new operation on this run.
 	uw.nextOpSeq++
 	opID := fmt.Sprintf("op_%d_%d", w.step, uw.nextOpSeq)
 	callID := fmt.Sprintf("call_%d_%d", w.step, uw.nextOpSeq)
@@ -747,16 +692,11 @@ func (w *World) stepWorkerOperation(ctx context.Context, uw *UserWorld, run stat
 	w.Record(uw.User.ID, "worker", "op.admit_put", fmt.Sprintf("run=%s op=%s outcome=%s err=%v", run.ID, opID, initialOutcome, err))
 }
 
-// -----------------------------------------------------------------------------
-// 3. Permissions & Interactions
-// -----------------------------------------------------------------------------
-
 func (w *World) stepPermissions(ctx context.Context, uw *UserWorld) {
 	roll := w.RNG.IntN(100)
 
 	switch {
 	case roll < 32:
-		// Open an approval or question interaction on an active, guarded running task.
 		open, err := uw.Store.OpenTasks(ctx)
 		if err != nil || len(open) == 0 {
 			w.Record(uw.User.ID, "perms", "open.skip", fmt.Sprintf("open=%d err=%v", len(open), err))
@@ -773,7 +713,6 @@ func (w *World) stepPermissions(ctx context.Context, uw *UserWorld) {
 			return
 		}
 		target := eligible[w.RNG.IntN(len(eligible))]
-		// Mirror real Nori: guard before opening a task-bound interaction so revision is current.
 		if target.Incorporated < state.TaskPosition(target) {
 			if err := uw.Store.Incorporate(ctx, state.IncorporateRequest{
 				RunID: target.ID, Revision: target.Revision, Position: state.TaskPosition(target),
@@ -830,10 +769,8 @@ func (w *World) stepPermissions(ctx context.Context, uw *UserWorld) {
 		w.Record(uw.User.ID, "perms", "open", fmt.Sprintf("id=%s run=%s rev=%d kind=%s status=%s err=%v", interID, target.ID, rev, kind, got.Status, err))
 
 	case roll < 68 && len(uw.interactions) > 0:
-		// Respond to an interaction (valid, stale revision, wrong digest, expired, or exact retry).
 		ti := uw.interactions[w.RNG.IntN(len(uw.interactions))]
 
-		// Retry an earlier response with identical request_id.
 		if ti.hasResponse && w.RNG.IntN(4) == 0 {
 			_, ans, err := uw.Permissions.Respond(ctx, ti.id, ti.lastRequestID, 1, ti.lastResponse)
 			w.Record(uw.User.ID, "perms", "respond.retry", fmt.Sprintf("id=%s req=%s ans=%v err=%v", ti.id, ti.lastRequestID, ans != nil, err))
@@ -858,7 +795,6 @@ func (w *World) stepPermissions(ctx context.Context, uw *UserWorld) {
 			} else {
 				resp.Kind = "decline"
 				if w.RNG.IntN(6) == 0 {
-					// Adversarial remember_rule on decline must never create a rule.
 					resp.RememberRule = true
 				}
 			}
@@ -871,7 +807,6 @@ func (w *World) stepPermissions(ctx context.Context, uw *UserWorld) {
 			resp.Text = fmt.Sprintf("interaction answer step %d", w.step)
 		}
 
-		// Occasionally send a stale expected revision.
 		if w.RNG.IntN(5) == 0 {
 			expectedRev = cur.Revision + 1
 		}
@@ -890,7 +825,6 @@ func (w *World) stepPermissions(ctx context.Context, uw *UserWorld) {
 			ti.id, resp.Kind, expectedRev, cur.Status, ans != nil, err))
 
 	case roll < 82:
-		// SaveRule (create or update) or RevokeRule.
 		if len(uw.ruleIDs) > 0 && w.RNG.IntN(3) == 0 {
 			id := uw.ruleIDs[w.RNG.IntN(len(uw.ruleIDs))]
 			if rule, err := uw.Permissions.Rule(ctx, id); err == nil {
@@ -915,7 +849,6 @@ func (w *World) stepPermissions(ctx context.Context, uw *UserWorld) {
 		w.Record(uw.User.ID, "perms", "rule.create", fmt.Sprintf("req=%s err=%v", reqID, err))
 
 	case roll < 92:
-		// Permissions.Check against current rules & approvals.
 		origins := []string{"user", "automation"}
 		effects := []string{"read", "reversible_write", "sensitive_send", "unknown"}
 		req := permissions.Request{
@@ -934,7 +867,6 @@ func (w *World) stepPermissions(ctx context.Context, uw *UserWorld) {
 		w.Record(uw.User.ID, "perms", "check", fmt.Sprintf("origin=%s effect=%s result=%s err=%v", req.Origin, req.Effect, dec.Result, err))
 
 	default:
-		// Retry undelivered interaction answers (mirrors app.deliverAnswers).
 		err := w.deliverUndeliveredAnswers(ctx, uw)
 		w.Record(uw.User.ID, "perms", "deliver_answers", fmt.Sprintf("err=%v", err))
 	}
@@ -1012,16 +944,11 @@ func (w *World) deliverUndeliveredAnswers(ctx context.Context, uw *UserWorld) er
 	return nil
 }
 
-// -----------------------------------------------------------------------------
-// 4. Scheduler (Automations, Goals, Tick)
-// -----------------------------------------------------------------------------
-
 func (w *World) stepScheduler(ctx context.Context, uw *UserWorld) {
 	roll := w.RNG.IntN(100)
 
 	switch {
 	case roll < 30 && len(uw.automationIDs) < 6:
-		// Create a new automation (once, recurring, or watch).
 		reqID := w.IDs.Next()
 		editable := w.randomAutomationEditable(uw)
 		receipt, err := uw.Scheduler.Save(ctx, "", reqID, 0, editable)
@@ -1038,7 +965,6 @@ func (w *World) stepScheduler(ctx context.Context, uw *UserWorld) {
 		w.Record(uw.User.ID, "sched", "auto.create", fmt.Sprintf("kind=%s missed=%s err=%v", editable.Trigger.Kind, editable.MissedRun, err))
 
 	case roll < 45 && len(uw.automationIDs) > 0:
-		// Edit an existing automation (advances generation!).
 		id := uw.automationIDs[w.RNG.IntN(len(uw.automationIDs))]
 		cur, err := uw.Scheduler.Get(ctx, id)
 		if err != nil {
@@ -1050,7 +976,6 @@ func (w *World) stepScheduler(ctx context.Context, uw *UserWorld) {
 		w.Record(uw.User.ID, "sched", "auto.edit", fmt.Sprintf("id=%s rev=%d err=%v", id, cur.Revision, err))
 
 	case roll < 65 && len(uw.automationIDs) > 0:
-		// Act on an automation: pause, resume, snooze, run_now, cancel.
 		id := uw.automationIDs[w.RNG.IntN(len(uw.automationIDs))]
 		cur, err := uw.Scheduler.Get(ctx, id)
 		if err != nil {
@@ -1078,17 +1003,15 @@ func (w *World) stepScheduler(ctx context.Context, uw *UserWorld) {
 				act = scheduler.Action{Action: "cancel"}
 			}
 		default:
-			act = scheduler.Action{Action: "run_now"} // adversarial act on cancelled
+			act = scheduler.Action{Action: "run_now"}
 		}
 		_, err = uw.Scheduler.Act(ctx, id, w.IDs.Next(), cur.Revision, act)
 		w.Record(uw.User.ID, "sched", "auto.act", fmt.Sprintf("id=%s status=%s action=%s err=%v", id, cur.Status, act.Action, err))
 
 	case roll < 80:
-		// Goals: create, act, or record progress.
 		w.stepGoal(ctx, uw)
 
 	default:
-		// Tick scheduler!
 		next, err := uw.Scheduler.Tick(ctx)
 		nextStr := "<nil>"
 		if next != nil {
@@ -1205,16 +1128,11 @@ func (w *World) stepGoal(ctx context.Context, uw *UserWorld) {
 	w.Record(uw.User.ID, "sched", "goal.act", fmt.Sprintf("id=%s status=%s act=%s err=%v", id, g.Status, actName, err))
 }
 
-// -----------------------------------------------------------------------------
-// 5. Conversation Inputs, Turns, and ReadMarks
-// -----------------------------------------------------------------------------
-
 func (w *World) stepConversation(ctx context.Context, uw *UserWorld) {
 	roll := w.RNG.IntN(100)
 
 	switch {
 	case roll < 35:
-		// AcceptConversationInput (sets UserRoutingPending=true!) or replay existing input.
 		if len(uw.inputs) > 0 && w.RNG.IntN(4) == 0 {
 			in := uw.inputs[w.RNG.IntN(len(uw.inputs))]
 			err := uw.Store.AcceptConversationInput(ctx, in.id, in.text, nil)
@@ -1233,7 +1151,6 @@ func (w *World) stepConversation(ctx context.Context, uw *UserWorld) {
 		w.Record(uw.User.ID, "conv", "input.accept", fmt.Sprintf("id=%s err=%v", id, err))
 
 	case roll < 75:
-		// Step a conversation turn (Acquire -> Renew/Restart/Release/Publish).
 		if uw.activeConvFence == nil {
 			owner := "sim-outer-" + w.IDs.Next()[:8]
 			turnID := w.IDs.Next()
@@ -1298,11 +1215,9 @@ func (w *World) stepConversation(ctx context.Context, uw *UserWorld) {
 		}
 
 	case roll < 90:
-		// Exercise Coupled Memory mutations and FTS MemoryIndex search under store faults.
 		w.stepMemory(ctx, uw)
 
 	default:
-		// MarkSeen advancing read mark forward (or testing older/non-assistant rejection).
 		if len(uw.assistantMsgIDs) > 0 {
 			msgID := uw.assistantMsgIDs[w.RNG.IntN(len(uw.assistantMsgIDs))]
 			err := uw.Store.MarkSeen(ctx, msgID)
@@ -1310,7 +1225,6 @@ func (w *World) stepConversation(ctx context.Context, uw *UserWorld) {
 			return
 		}
 		if len(uw.inputs) > 0 {
-			// Adversarial: MarkSeen on a user message must fail with ErrCommandInvalid.
 			msgID := state.UserMessageID(uw.inputs[w.RNG.IntN(len(uw.inputs))].id)
 			err := uw.Store.MarkSeen(ctx, msgID)
 			w.Record(uw.User.ID, "conv", "mark_seen_user_msg", fmt.Sprintf("msg=%s err=%v", msgID, err))
@@ -1399,10 +1313,6 @@ func (w *World) stepMemory(ctx context.Context, uw *UserWorld) {
 	}
 }
 
-// -----------------------------------------------------------------------------
-// 6. Lease Repair & User Wake Lanes (Postgres-native discovery)
-// -----------------------------------------------------------------------------
-
 func (w *World) stepReconcileAndWakes(ctx context.Context, uw *UserWorld) {
 	roll := w.RNG.IntN(100)
 
@@ -1413,7 +1323,6 @@ func (w *World) stepReconcileAndWakes(ctx context.Context, uw *UserWorld) {
 		w.Record(uw.User.ID, "repair", "leases", fmt.Sprintf("err=%v", err))
 
 	case roll < 72:
-		// Claim and handle one due conversation user wake (mirroring worker.Pool.handleConversation).
 		owner := w.nextWorkerOwner("conv-lane")
 		claim, ok, err := w.Backend.ClaimUserWake(ctx, docstore.LaneConversation, owner, state.ConversationLease)
 		if err != nil || !ok {
@@ -1439,7 +1348,6 @@ func (w *World) stepReconcileAndWakes(ctx context.Context, uw *UserWorld) {
 		w.Record(claim.UserID, "wake", "conv_release", fmt.Sprintf("err=%v", statusErr))
 
 	default:
-		// Claim and handle one due scheduler user wake (mirroring worker.Pool.handleScheduler).
 		owner := w.nextWorkerOwner("sched-lane")
 		claim, ok, err := w.Backend.ClaimUserWake(ctx, docstore.LaneScheduler, owner, state.ConversationLease)
 		if err != nil || !ok {
@@ -1473,8 +1381,6 @@ func (w *World) stepReconcileAndWakes(ctx context.Context, uw *UserWorld) {
 	}
 }
 
-// repairUserLeases mirrors app.App.RepairLeases(ctx): reconciles nori_task_leases and
-// nori_user_wakes against authoritative nori_records truth, including task.StopPaused while paused.
 func (w *World) repairUserLeases(ctx context.Context, uw *UserWorld) error {
 	var failures []error
 	control, err := uw.Store.Control(ctx)
@@ -1568,7 +1474,6 @@ func (w *World) repairUserLeases(ctx context.Context, uw *UserWorld) error {
 		}
 	}
 
-	// Delete orphaned leases whose runs are missing or terminal & clean.
 	leaseRunIDs := make([]string, 0, len(existingLeases))
 	for id := range existingLeases {
 		leaseRunIDs = append(leaseRunIDs, id)
@@ -1613,7 +1518,6 @@ func (w *World) repairUserLeases(ctx context.Context, uw *UserWorld) error {
 		}
 	}
 
-	// Reconcile any residual undelivered commands for terminal & clean runs whose lease is already gone.
 	after := ""
 	for {
 		page, err := uw.Store.Pending(ctx, after)
@@ -1644,7 +1548,6 @@ func (w *World) repairUserLeases(ctx context.Context, uw *UserWorld) error {
 		after = page.Next
 	}
 
-	// Reconcile outer conversation & scheduler wakes.
 	wakesByLane := map[string]docstore.UserWake{}
 	if wakes, err := w.Backend.ListUserWakes(ctx, uw.User.ID); err != nil {
 		failures = append(failures, err)
@@ -1706,10 +1609,6 @@ func hasActiveOrUncleanChildMap(parent state.Run, activeRuns map[string]state.Ru
 	return false
 }
 
-// -----------------------------------------------------------------------------
-// 7. Time & Pause Chaos
-// -----------------------------------------------------------------------------
-
 func (w *World) stepTimeAndPause(ctx context.Context) {
 	if w.RNG.IntN(100) < 35 {
 		paused, err := w.Paused(ctx)
@@ -1727,10 +1626,6 @@ func (w *World) stepTimeAndPause(ctx context.Context) {
 		return
 	}
 
-	// Curated time-jump ladder crossing RestartQuiet (1s), TaskLease/ConversationLease (30s),
-	// IdleExtractDelay (+2m), IdleDreamDelay (+15m), ApprovalExpiry (+30m),
-	// DreamMinInterval (+12h), repair intervals (60s), interaction expiries,
-	// and automation due slots.
 	durations := []time.Duration{
 		50 * time.Millisecond,
 		500 * time.Millisecond,
@@ -1749,15 +1644,6 @@ func (w *World) stepTimeAndPause(ctx context.Context) {
 	w.Record("", "clock", "advance", fmt.Sprintf("delta=%s now=%s", d, now.Format(time.RFC3339Nano)))
 }
 
-// -----------------------------------------------------------------------------
-// Quiescence Drain
-// -----------------------------------------------------------------------------
-
-// DrainToQuiescence disables faults, unpauses execution, drains conversation
-// routing, finishes all remaining simulated worker executions and cleanup
-// (subtasks before parents), repairs leases, ticks schedulers, parks idle user
-// wakes to a fixed point, and runs both CheckSafetyAt and CheckQuiescence
-// (including CheckLeaseQuiescence).
 func (w *World) DrainToQuiescence(ctx context.Context) error {
 	w.SetFaultsEnabled(false)
 	if err := w.SetPaused(ctx, false); err != nil {
@@ -1765,51 +1651,41 @@ func (w *World) DrainToQuiescence(ctx context.Context) error {
 	}
 	w.Record("", "drain", "start", "faults=false paused=false")
 
-	// Clear any tracked chaos conversation fences so drain owns conversation turns cleanly.
 	for _, uw := range w.Users {
 		uw.activeConvFence = nil
 		uw.activeConvTurn = nil
 	}
 
-	// Advance clock once past any active unexpired conversation lease, crashed task lease,
-	// crashed TaskControl lease, or user-wake lease so drain can cleanly take over.
 	if err := w.advancePastActiveLeases(ctx); err != nil {
 		return err
 	}
 
 	for round := 1; round <= drainMaxRounds; round++ {
 		for _, uw := range w.Users {
-			// 1. Drain conversation routing first so held publications can release.
 			if err := w.drainUserConversation(ctx, uw); err != nil {
 				return fmt.Errorf("drain round %d user %s conversation: %w", round, uw.User.ID, err)
 			}
 
-			// 2. Deliver any undelivered interaction answers.
 			if err := w.deliverUndeliveredAnswers(ctx, uw); err != nil {
 				return fmt.Errorf("drain round %d user %s deliverAnswers: %w", round, uw.User.ID, err)
 			}
 
-			// 3. Tick scheduler until all due automations advance and pending/finished occurrences settle.
 			if err := w.drainUserScheduler(ctx, uw); err != nil {
 				return fmt.Errorf("drain round %d user %s scheduler: %w", round, uw.User.ID, err)
 			}
 
-			// 4. Repair leases (ensure missing leases, wake parked runs, delete orphans).
 			if err := w.repairUserLeases(ctx, uw); err != nil {
 				return fmt.Errorf("drain round %d user %s repair: %w", round, uw.User.ID, err)
 			}
 
-			// 5. Finish all open simulated worker executions (subtasks before parents) and cleanup.
 			if err := w.drainUserWorkers(ctx, uw); err != nil {
 				return fmt.Errorf("drain round %d user %s workers: %w", round, uw.User.ID, err)
 			}
 
-			// 6. Drain conversation inputs generated by task completions/questions.
 			if err := w.drainUserConversation(ctx, uw); err != nil {
 				return fmt.Errorf("drain round %d user %s post-worker conversation: %w", round, uw.User.ID, err)
 			}
 
-			// 7. Final lease repair, scheduler settlement, and user wake parking for this round.
 			if err := w.repairUserLeases(ctx, uw); err != nil {
 				return fmt.Errorf("drain round %d user %s final repair: %w", round, uw.User.ID, err)
 			}
@@ -1904,7 +1780,6 @@ func (w *World) drainUserWakes(ctx context.Context, uw *UserWorld) error {
 			continue
 		}
 		if wk.Lane == docstore.LaneScheduler && wk.Owner == "" && wk.WakeAt.After(now) {
-			// Future scheduled wake is valid at quiescence.
 			continue
 		}
 		if wk.LeaseUntil != nil && wk.LeaseUntil.After(now) {
@@ -1912,7 +1787,6 @@ func (w *World) drainUserWakes(ctx context.Context, uw *UserWorld) error {
 			now = w.Clock.Now()
 		}
 		owner := w.nextWorkerOwner("drain-wake")
-		// Drain wakes for this lane (may claim another user first, so re-release others or loop).
 		for range len(w.Users) + 4 {
 			claim, ok, err := w.Backend.ClaimUserWake(ctx, wk.Lane, owner, state.ConversationLease)
 			if err != nil {
@@ -2038,7 +1912,6 @@ func (w *World) drainUserWorkers(ctx context.Context, uw *UserWorld) error {
 		return err
 	}
 
-	// Finish subtasks first so parents can cleanly finalize without unfinished children.
 	var subtasks, parents []state.Run
 	for _, r := range open {
 		if r.ParentID != "" {
@@ -2053,7 +1926,6 @@ func (w *World) drainUserWorkers(ctx context.Context, uw *UserWorld) error {
 		}
 	}
 
-	// Clear any remaining terminal cleanup tasks and delete their leases.
 	cleanupRuns, err := uw.Store.CleanupTasks(ctx)
 	if err != nil {
 		return err
@@ -2085,7 +1957,6 @@ func (w *World) drainSingleRun(ctx context.Context, uw *UserWorld, runID string)
 	}
 	run := snap.Run
 
-	// If a crashed worker still holds TaskControl, acquire & release cleanly after expiry.
 	if tc, err := uw.Store.GetTaskControl(ctx, run.ID); err == nil && tc.Owner != "" {
 		if tc.LeaseUntil.After(w.Clock.Now()) {
 			w.Clock.Advance(tc.LeaseUntil.Sub(w.Clock.Now()) + time.Second)
@@ -2105,7 +1976,6 @@ func (w *World) drainSingleRun(ctx context.Context, uw *UserWorld, runID string)
 		return nil
 	}
 
-	// Incorporate any pending commands on the live run.
 	if run.Incorporated < state.TaskPosition(run) {
 		if err := uw.Store.Incorporate(ctx, state.IncorporateRequest{
 			RunID:    run.ID,
@@ -2152,7 +2022,6 @@ func (w *World) drainSingleRun(ctx context.Context, uw *UserWorld, runID string)
 		}
 	}
 
-	// Mark any late subtask_result/answer commands delivered before deleting the lease.
 	if finalSnap, sErr := uw.Store.Reconcile(ctx, run.ID); sErr == nil {
 		for _, cmd := range finalSnap.Commands {
 			if !cmd.Delivered {

@@ -71,7 +71,6 @@ test("buildChildEnv allows web and runtime vars and omits secrets completely", (
     PORT: "3210",
     HOSTNAME: "127.0.0.1",
     NODE_ENV: "development",
-    // Runtime-only keys in .env must NOT override or inject runtime env.
     PATH: "/evil/path",
     NODE_OPTIONS: "--require=/evil.js",
   };
@@ -93,7 +92,6 @@ test("buildChildEnv allows web and runtime vars and omits secrets completely", (
 
   const result = buildChildEnv(dotEnv, parentEnv);
 
-  // Allowed web vars pass through, with parentEnv taking precedence over .env.
   assert.equal(result.NEXT_PUBLIC_SENTRY_DSN, "https://pub@sentry.example/1");
   assert.equal(result.SENTRY_WEB_DSN, "https://web@sentry.example/1");
   assert.equal(result.NORI_LOCAL_AGENT_URL, "http://127.0.0.1:9090");
@@ -109,14 +107,12 @@ test("buildChildEnv allows web and runtime vars and omits secrets completely", (
   assert.equal(result.HOSTNAME, "127.0.0.1");
   assert.equal(result.NODE_ENV, "production");
 
-  // Runtime vars come from parentEnv only (never from .env).
   assert.equal(result.PATH, "/usr/bin:/bin");
   assert.equal(result.HOME, "/tmp/home");
   assert.equal(result.LC_ALL, "en_US.UTF-8");
   assert.equal(result.XDG_CACHE_HOME, "/tmp/xdg-cache");
   assert.equal("NODE_OPTIONS" in result, false);
 
-  // Every forbidden secret is completely absent (not blanked to "").
   for (const key of FORBIDDEN_SECRETS) {
     assert.equal(key in result, false, `expected ${key} to be absent from child env`);
   }

@@ -52,7 +52,6 @@ public struct MCPDetailView: View {
                         )
                     }
 
-                    // Connection Metadata Card
                     NoriCard {
                         VStack(alignment: .leading, spacing: 10) {
                             metadataRow("Transport", value: server.transport == .http ? "Streamable HTTP" : "Managed stdio")
@@ -109,7 +108,6 @@ public struct MCPDetailView: View {
                         credentialCard(for: server)
                     }
 
-                    // Discovered Tools
                     NoriSectionHeader("Discovered tools (\(tools.count))")
 
                     if tools.isEmpty {

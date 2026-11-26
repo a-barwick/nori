@@ -18,23 +18,16 @@ import (
 )
 
 const (
-	// DefaultIdleTTL is how long an unused per-user App (refs == 0) remains cached before eviction.
-	DefaultIdleTTL = 10 * time.Minute
-	// DefaultMaxCachedApps bounds the number of cached per-user App instances per pod.
+	DefaultIdleTTL       = 10 * time.Minute
 	DefaultMaxCachedApps = 256
 )
 
-// Service owns shared process resources and immutable per-user applications.
-// A changed row takes effect on the next request or processing pass; an in-flight
-// pass keeps its own scope until it finishes.
 type Service struct {
 	Users         users.Directory
 	IdleTTL       time.Duration
 	MaxCachedApps int
 	Now           func() time.Time
-	// ConfigureApp, when set, runs on each newly opened per-user App before its
-	// HTTP handler is constructed (used by tests to inject deterministic models/clocks).
-	ConfigureApp func(users.User, *App)
+	ConfigureApp  func(users.User, *App)
 
 	storage   *platform.Storage
 	cfg       settings.Settings
@@ -67,7 +60,6 @@ func OpenService(ctx context.Context, waker wake.Waker, cfg settings.Settings) (
 	return OpenServiceWithStorage(storage, waker, cfg), nil
 }
 
-// OpenServiceWithStorage constructs a Service over an already-open platform.Storage.
 func OpenServiceWithStorage(storage *platform.Storage, waker wake.Waker, cfg settings.Settings) *Service {
 	if waker == nil && storage != nil {
 		waker = platform.Waker(storage.Leases())
@@ -154,8 +146,6 @@ func (s *Service) closeShared() {
 	})
 }
 
-// evictLocked removes idle (refs == 0) entries past IdleTTL and, if still above MaxCachedApps,
-// evicts least-recently-used idle entries. Callers must close the returned Apps outside s.mu.
 func (s *Service) evictLocked(now time.Time) []*App {
 	ttl := s.idleTTL()
 	var toClose []*App
@@ -197,8 +187,6 @@ func (s *Service) evictLocked(now time.Time) []*App {
 	return toClose
 }
 
-// EvictIdle evicts cached per-user Apps that have refs == 0 and are past IdleTTL or over MaxCachedApps.
-// Returns the number of evicted Apps.
 func (s *Service) EvictIdle() int {
 	s.mu.Lock()
 	if s.closed {
@@ -213,7 +201,6 @@ func (s *Service) EvictIdle() int {
 	return len(toClose)
 }
 
-// CachedCount returns the number of currently cached user Apps (for diagnostics and tests).
 func (s *Service) CachedCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -257,14 +244,10 @@ func (s *Service) releaseEntryWithTouch(entry *userApp, touch bool) func() {
 	}
 }
 
-// Acquire returns the cached or freshly opened per-user App for row and a release callback
-// that must be invoked when the caller finishes using the App.
 func (s *Service) Acquire(ctx context.Context, row users.User) (*App, func(), error) {
 	return s.acquire(ctx, row)
 }
 
-// AcquireByID loads the full users.User row from the directory (preserving LegacyID DataOwner)
-// and acquires its per-user App.
 func (s *Service) AcquireByID(ctx context.Context, userID string) (*App, func(), error) {
 	if s.Users == nil {
 		return nil, nil, errors.New("user directory is not configured")
@@ -276,11 +259,6 @@ func (s *Service) AcquireByID(ctx context.Context, userID string) (*App, func(),
 	return s.acquire(ctx, row)
 }
 
-// RepairUser reconciles task leases and user wakes for row without thrashing the
-// hot-user LRU cache. If row is already cached with the same user record, it borrows
-// the cached App without updating its LRU timestamp; otherwise it opens an ephemeral
-// App (skipping HTTP handler construction and duplicate-connection repair), runs
-// RepairLeases, and immediately closes it without inserting into s.apps.
 func (s *Service) RepairUser(ctx context.Context, row users.User) error {
 	s.mu.Lock()
 	if s.closed {

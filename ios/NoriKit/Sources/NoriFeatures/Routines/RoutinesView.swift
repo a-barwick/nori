@@ -78,7 +78,6 @@ public struct RoutinesView: View {
         }
     }
 
-    // MARK: - Compact Routine Row
 
     private func routineRow(_ automation: Automation, showDivider: Bool) -> some View {
         let isEnabled = automation.status == .enabled
@@ -182,7 +181,6 @@ public struct RoutinesView: View {
         }
     }
 
-    // MARK: - Helpers
 
     private func triggerSummary(for trigger: AutomationTrigger) -> String {
         if let displayCadence = trigger.displayCadence, !displayCadence.isEmpty {

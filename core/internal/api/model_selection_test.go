@@ -2,13 +2,23 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
+	"nori/internal/conversation"
 	"nori/internal/modelprofiles"
+	"nori/internal/platform"
 	"nori/internal/settings"
+	"nori/internal/sim/memstore"
+	"nori/internal/state"
+	"nori/internal/state/records"
+	"nori/internal/users"
 )
 
 func TestCapabilitiesModelProfilesGating(t *testing.T) {
@@ -29,7 +39,6 @@ func TestCapabilitiesModelProfilesGating(t *testing.T) {
 		t.Fatalf("NewRegistry: %v", err)
 	}
 
-	// Allowed caller sees model_profiles.
 	allowed := Handler(Deps{Model: "inkling-2-mini:64k", ModelProvider: "gateway", ModelProfiles: reg, CanPickModels: true})
 	rec := httptest.NewRecorder()
 	allowed.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil))
@@ -47,7 +56,6 @@ func TestCapabilitiesModelProfilesGating(t *testing.T) {
 		t.Fatalf("expected provider=gateway, got %q", capView.Provider)
 	}
 
-	// Disallowed caller does not see model_profiles and gets 403 on explicit selection.
 	denied := Handler(Deps{Model: "anthropic/claude-opus-5.5", ModelProvider: "gateway", ModelProfiles: reg, CanPickModels: false})
 	rec2 := httptest.NewRecorder()
 	denied.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil))
@@ -68,7 +76,6 @@ func TestCapabilitiesModelProfilesGating(t *testing.T) {
 		t.Fatalf("expected 403 for disallowed model selection, got %d (%s)", rec3.Code, rec3.Body.String())
 	}
 
-	// Allowed caller sending an unknown profile gets 400.
 	badPayload := []byte(`{"id":"11111111-1111-4111-8111-111111111111","text":"hi","model":{"chat_profile_id":"nonexistent"}}`)
 	req4 := httptest.NewRequest(http.MethodPost, "/v1/conversations/assistant/messages", bytes.NewReader(badPayload))
 	req4.Header.Set("Content-Type", "application/json")
@@ -76,5 +83,98 @@ func TestCapabilitiesModelProfilesGating(t *testing.T) {
 	allowed.ServeHTTP(rec4, req4)
 	if rec4.Code != 400 {
 		t.Fatalf("expected 400 for unknown profile, got %d (%s)", rec4.Code, rec4.Body.String())
+	}
+}
+
+func TestAllowedSelectionThroughBothTurnEndpoints(t *testing.T) {
+	const model = "fixture-profile-local"
+	requests := make(chan string, 2)
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, "invalid fixture request", http.StatusBadRequest)
+			return
+		}
+		requests <- request.Model
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"actions\":[],\"text\":\"profile reply\"}"},"finish_reason":"stop"}]}`))
+	}))
+	defer provider.Close()
+
+	cfg := settings.Settings{Cloud: "local", EnvProfile: "dev", Models: settings.Models{
+		LocalURL: provider.URL + "/v1", LocalModel: model, Outer: model, Inner: model,
+	}}
+	reg, err := modelprofiles.NewRegistry(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var profileID string
+	for _, p := range reg.Snapshot().Public().Profiles {
+		if p.Model == model {
+			profileID = p.ID
+		}
+	}
+	if profileID == "" {
+		t.Fatal("local model profile unavailable")
+	}
+	for _, endpoint := range []struct{ path, textKey string }{
+		{"/api/turn", "message"},
+		{"/v1/conversations/assistant/messages", "text"},
+	} {
+		t.Run(endpoint.path, func(t *testing.T) {
+			ctx := context.Background()
+			u := users.User{ID: uuid.NewString(), Email: "selection@example.test", TimeZone: "UTC"}
+			store := state.Compose(records.NewShared(memstore.New(), u, 1), memstore.NewArtifacts())
+			tasks := &conversation.Tasks{Store: store}
+			runner := conversation.New(nil, nil, nil, tasks)
+			runner.ModelForTurn = func(sel *state.ModelSelection) conversation.ReplyModel {
+				p, effort, ok, err := reg.ResolveChat(sel)
+				if !ok || err != nil {
+					t.Fatalf("chat pin not resolved: %+v: %v", sel, err)
+				}
+				return platform.ReplyModelForProfile(cfg.Models, u.ID, p, effort)
+			}
+			h := Handler(Deps{Runner: runner, Tasks: tasks, ModelProfiles: reg, CanPickModels: true})
+			body, _ := json.Marshal(map[string]any{"id": uuid.NewString(), endpoint.textKey: "hello", "model": map[string]string{
+				"chat_profile_id": profileID, "task_profile_id": profileID,
+			}})
+			req := httptest.NewRequest(http.MethodPost, endpoint.path, bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf("message rejected: %d %s", rec.Code, rec.Body.String())
+			}
+			if err := runner.Process(ctx); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case got := <-requests:
+				if got != model {
+					t.Fatalf("provider got %q, want %q", got, model)
+				}
+			default:
+				t.Fatal("selected model endpoint was never called")
+			}
+		})
+	}
+}
+
+func TestDisabledAssistantRejectsTurnRoutes(t *testing.T) {
+	handler := Handler(Deps{Features: settings.Features{DisableBackgroundTasks: true}})
+	capabilities := httptest.NewRecorder()
+	handler.ServeHTTP(capabilities, httptest.NewRequest("GET", "/v1/capabilities", nil))
+	var view capabilitiesView
+	if err := json.Unmarshal(capabilities.Body.Bytes(), &view); err != nil || view.Features["backgroundTasks"] || len(view.ConversationModes) != 0 {
+		t.Fatalf("disabled assistant capabilities = %+v, %v", view, err)
+	}
+	for _, route := range []string{"/api/turn", "/v1/conversations/assistant/messages"} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest("POST", route, strings.NewReader("{}")))
+		if response.Code != http.StatusNotImplemented {
+			t.Fatalf("%s returned %d, want 501", route, response.Code)
+		}
 	}
 }

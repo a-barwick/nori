@@ -11,7 +11,7 @@ const ACCEPT = "image/png,image/jpeg,image/webp,application/pdf,text/csv,.csv";
 function Thumbnail({ file }: { file: File }) {
   const load = useCallback(async () => file as Blob, [file]);
   const preview = useBlobURL(load);
-  // eslint-disable-next-line @next/next/no-img-element -- blob URL
+  // eslint-disable-next-line @next/next/no-img-element
   return preview?.url ? <img src={preview.url} alt="" className="-ml-1 size-6 shrink-0 rounded-full object-cover" /> : null;
 }
 

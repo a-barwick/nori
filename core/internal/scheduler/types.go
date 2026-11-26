@@ -1,6 +1,3 @@
-// Package scheduler owns Automations, their occurrences, delivery and goals. Definitions and occurrences are
-// durable records; due work becomes task commands through the existing acceptance path with stable identities, so
-// duplicate or lost wakes never duplicate or lose a settled occurrence.
 package scheduler
 
 import (
@@ -17,7 +14,6 @@ const (
 	InAppDestination      = "dest_in_app"
 )
 
-// Trigger is the contract Trigger union.
 type Trigger struct {
 	Kind               string       `json:"kind"`
 	At                 *time.Time   `json:"at,omitempty"`
@@ -46,7 +42,6 @@ type RequestedAuthority struct {
 	MaxOperations int      `json:"max_operations,omitempty"`
 }
 
-// Editable is the contract AutomationEditable.
 type Editable struct {
 	Title                  string              `json:"title"`
 	Instruction            string              `json:"instruction"`
@@ -63,7 +58,6 @@ type Editable struct {
 	GoalID                 string              `json:"goal_id,omitempty"`
 }
 
-// Automation is the contract Automation projection.
 type Automation struct {
 	ID                     string      `json:"id"`
 	Revision               int64       `json:"revision"`
@@ -90,35 +84,24 @@ type Automation struct {
 	UpdatedAt              *time.Time  `json:"updated_at,omitempty"`
 }
 
-// stored is the private record: the projection plus the schedule cursor.
 type stored struct {
 	Automation
-	// Generation advances on every edit; occurrences of an older generation that were not accepted are superseded.
-	Generation int64 `json:"generation"`
-	// Cursor is the latest nominal slot already turned into an occurrence (or skipped). Edits never move it back,
-	// so an edited schedule cannot duplicate an accepted slot.
-	Cursor *time.Time `json:"cursor,omitempty"`
-	// Created counts occurrences for max_occurrences.
-	Created int `json:"created"`
-	// EventStart caches an event-relative trigger's source time and revision.
-	EventStart     *time.Time `json:"event_start,omitempty"`
-	EventRevision  string     `json:"event_revision,omitempty"`
-	EventStatus    string     `json:"event_status,omitempty"`
-	EventCheckedAt *time.Time `json:"event_checked_at,omitempty"`
-	// Checkpoint is a monitor's last meaningful observation, carried into its next run.
-	Checkpoint string `json:"checkpoint,omitempty"`
-	// ConsecutiveFailures tracks consecutive failed occurrences; auto-pauses at 3 strikes.
-	ConsecutiveFailures int `json:"consecutive_failures,omitempty"`
+	Generation          int64      `json:"generation"`
+	Cursor              *time.Time `json:"cursor,omitempty"`
+	Created             int        `json:"created"`
+	EventStart          *time.Time `json:"event_start,omitempty"`
+	EventRevision       string     `json:"event_revision,omitempty"`
+	EventStatus         string     `json:"event_status,omitempty"`
+	EventCheckedAt      *time.Time `json:"event_checked_at,omitempty"`
+	Checkpoint          string     `json:"checkpoint,omitempty"`
+	ConsecutiveFailures int        `json:"consecutive_failures,omitempty"`
 }
 
-// Action is the contract AutomationAction value.
 type Action struct {
 	Action string     `json:"action"`
 	Until  *time.Time `json:"until,omitempty"`
 }
 
-// Valid reports whether the action matches AutomationAction: snooze needs a future-or-present until, and the
-// other actions carry no extra fields.
 func (a Action) Valid() bool {
 	switch a.Action {
 	case "pause", "resume", "cancel", "run_now":
@@ -136,7 +119,6 @@ type ErrorDetail struct {
 	Retryable bool   `json:"retryable"`
 }
 
-// Occurrence is the contract Occurrence.
 type Occurrence struct {
 	ID                 string       `json:"id"`
 	AutomationID       string       `json:"automation_id"`
@@ -153,8 +135,7 @@ type Occurrence struct {
 	Error              *ErrorDetail `json:"error,omitempty"`
 	Reason             string       `json:"reason,omitempty"`
 	Deliveries         []Delivery   `json:"deliveries,omitempty"`
-	// Instruction is the exact text the occurrence's task was given; private.
-	Instruction string `json:"-"`
+	Instruction        string       `json:"-"`
 }
 
 type occurrenceDoc struct {
@@ -165,7 +146,6 @@ type occurrenceDoc struct {
 	Monitor     bool    `json:"monitor,omitempty"`
 }
 
-// Delivery is the contract Delivery.
 type Delivery struct {
 	ID             string       `json:"id"`
 	OccurrenceID   string       `json:"occurrence_id,omitempty"`
@@ -182,7 +162,6 @@ type Delivery struct {
 	Error          *ErrorDetail `json:"error,omitempty"`
 }
 
-// InboxItem is the contract InboxItem.
 type InboxItem struct {
 	ID             string     `json:"id"`
 	DeliveryID     string     `json:"delivery_id,omitempty"`
@@ -200,7 +179,6 @@ type InboxLink struct {
 	Revision int64  `json:"revision,omitempty"`
 }
 
-// Preview is the contract AutomationPreview.
 type Preview struct {
 	NextRuns             []time.Time       `json:"next_runs"`
 	Timezone             string            `json:"timezone"`
@@ -215,7 +193,6 @@ type Warning struct {
 	Message string `json:"message"`
 }
 
-// Goal is the contract Goal.
 type Goal struct {
 	ID                 string      `json:"id"`
 	Revision           int64       `json:"revision"`
@@ -254,7 +231,6 @@ type GoalLinks struct {
 	ResultIDs     []string `json:"result_ids"`
 }
 
-// GoalEditable is the contract GoalEditable.
 type GoalEditable struct {
 	Title              string `json:"title"`
 	Outcome            string `json:"outcome"`
@@ -266,13 +242,11 @@ type GoalEditable struct {
 	FollowUp string     `json:"follow_up,omitempty"`
 }
 
-// GoalAction is the contract GoalAction value.
 type GoalAction struct {
 	Action       string `json:"action"`
 	KeepMonitors bool   `json:"keep_monitors,omitempty"`
 }
 
-// Valid reports whether the action is one GoalAction allows.
 func (a GoalAction) Valid() bool {
 	switch a.Action {
 	case "pause", "resume", "complete", "abandon":

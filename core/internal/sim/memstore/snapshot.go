@@ -13,7 +13,6 @@ import (
 	"nori/internal/state/docstore"
 )
 
-// BackendSnapshot is an immutable deep copy of a Backend's entire state.
 type BackendSnapshot struct {
 	Collections  map[string]map[string]map[string]any
 	Sequences    map[string]int64
@@ -22,13 +21,11 @@ type BackendSnapshot struct {
 	MemoryChunks []docstore.MemoryChunk
 }
 
-// ArtifactsSnapshot is an immutable deep copy of an Artifacts store's entire state.
 type ArtifactsSnapshot struct {
 	PNGs  map[string][]byte
 	Files map[string]StoredFile
 }
 
-// Snapshot returns a deep copy of every document and sequence in Backend.
 func (b *Backend) Snapshot() BackendSnapshot {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -42,7 +39,6 @@ func (b *Backend) Snapshot() BackendSnapshot {
 		for id, raw := range docs {
 			fields, err := decode(raw)
 			if err != nil {
-				// Stored bytes are always valid JSON objects encoded by encodeDoc.
 				panic("memstore: corrupt stored document: " + err.Error())
 			}
 			colCopy[id] = fields
@@ -82,7 +78,6 @@ func (b *Backend) Snapshot() BackendSnapshot {
 	}
 }
 
-// Restore replaces Backend's entire committed state with a deep copy of snap.
 func (b *Backend) Restore(snap BackendSnapshot) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -134,14 +129,10 @@ func (b *Backend) Restore(snap BackendSnapshot) {
 	b.notifyLocked()
 }
 
-// Digest returns a canonical hex-encoded SHA-256 hash of Backend's entire state.
-// Identical logical states always produce the exact same digest regardless of
-// map iteration order or insertion history.
 func (b *Backend) Digest() string {
 	return b.Snapshot().Digest()
 }
 
-// Digest returns a canonical hex-encoded SHA-256 hash of the snapshot.
 func (s BackendSnapshot) Digest() string {
 	h := sha256.New()
 	writeTag(h, "memstore.backend.v2")
@@ -236,7 +227,6 @@ func (s BackendSnapshot) Digest() string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// Snapshot returns a deep copy of every PNG and file in Artifacts.
 func (a *Artifacts) Snapshot() ArtifactsSnapshot {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -258,12 +248,10 @@ func (a *Artifacts) Snapshot() ArtifactsSnapshot {
 	}
 }
 
-// Digest returns a canonical hex-encoded SHA-256 hash of Artifacts' entire state.
 func (a *Artifacts) Digest() string {
 	return a.Snapshot().Digest()
 }
 
-// Digest returns a canonical hex-encoded SHA-256 hash of the snapshot.
 func (s ArtifactsSnapshot) Digest() string {
 	h := sha256.New()
 	writeTag(h, "memstore.artifacts.v1")
@@ -297,7 +285,6 @@ func (s ArtifactsSnapshot) Digest() string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// CombinedDigest hashes the canonical digests of both Backend and Artifacts.
 func CombinedDigest(b *Backend, a *Artifacts) string {
 	h := sha256.New()
 	writeTag(h, "memstore.combined.v1")
@@ -380,7 +367,6 @@ func writeCanonicalValue(h hash.Hash, v any) {
 		_, _ = h.Write([]byte{'I'})
 		writeInt64(h, x)
 	case float64:
-		// Canonicalize -0.0 to +0.0 so numerically equal floats hash identically.
 		if x == 0 {
 			x = 0
 		}
@@ -415,7 +401,6 @@ func writeCanonicalValue(h hash.Hash, v any) {
 			writeCanonicalValue(h, x[k])
 		}
 	default:
-		// Fallback via JSON encoding for any unexpected type in a caller-constructed snapshot.
 		raw, _ := json.Marshal(x)
 		_, _ = h.Write([]byte{'J'})
 		writeBytes(h, raw)

@@ -2,7 +2,6 @@ import type { CalendarTime, Effect, Trigger } from "@/lib/contracts/assistant";
 
 const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 
-/** "in 20 min", "3 hours ago", "yesterday". */
 export function relative(iso?: string, now = Date.now()) {
   if (!iso) return "";
   const diff = Date.parse(iso) - now;
@@ -19,6 +18,29 @@ export function when(iso?: string, timeZone?: string) {
   const date = new Date(iso);
   const sameYear = date.getFullYear() === new Date().getFullYear();
   return date.toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }), hour: "numeric", minute: "2-digit", timeZone });
+}
+
+function localCalendarDay(value: number, timeZone: string) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(value);
+}
+
+export function scheduleDate(iso: string | undefined, timeZone: string): string {
+  if (!iso || !Number.isFinite(Date.parse(iso))) return "";
+  return localCalendarDay(Date.parse(iso), timeZone);
+}
+
+export function scheduleDayEnd(date: string, timeZone: string): string | undefined {
+  const utc = Date.parse(date + "T00:00:00Z");
+  if (!Number.isFinite(utc) || new Date(utc).toISOString().slice(0, 10) !== date) return undefined;
+  const formatter = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
+  let low = utc - 2 * 86_400_000;
+  let high = utc + 2 * 86_400_000;
+  while (high - low > 1) {
+    const mid = low + Math.floor((high - low) / 2);
+    if (formatter.format(mid) > date) high = mid;
+    else low = mid;
+  }
+  return formatter.format(low) === date ? new Date(low).toISOString() : undefined;
 }
 
 export function day(iso?: string) {
@@ -44,7 +66,6 @@ export function eventTime(time: CalendarTime) {
 
 const DAYS: Record<string, string> = { MO: "Mon", TU: "Tue", WE: "Wed", TH: "Thu", FR: "Fri", SA: "Sat", SU: "Sun" };
 
-/** Readable cadence for a trigger. */
 export function cadence(trigger: Trigger) {
   if (trigger.kind === "once") return `Once, ${when(trigger.at)}`;
   if (trigger.kind === "event_relative") {
@@ -77,7 +98,6 @@ export function plural(n: number, one: string, many = `${one}s`) {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-/** One line of text from Markdown: drops emphasis, code marks, link targets and heading or list markers. */
 export function plainText(markdown: string) {
   return markdown
     .replace(/!?\[([^\]]+)\]\([^)]*\)/g, "$1")

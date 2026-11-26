@@ -47,8 +47,6 @@ var metricNames = map[string]bool{
 	"nori.model.duration_ms": true, "nori.task.duration_ms": true, "nori.conversation.reply_latency_ms": true,
 }
 
-// Event logs only predefined operational names and allowlisted attributes.
-// It never forwards the application's unstructured log.Printf output.
 func Event(ctx context.Context, name string, attrs ...attribute.KeyValue) {
 	if !eventNames[name] {
 		return
@@ -93,8 +91,6 @@ func Event(ctx context.Context, name string, attrs ...attribute.KeyValue) {
 	}
 }
 
-// Metrics cover sampled operations; tags make selection explicit. They are
-// bounded diagnostic distributions, not an accounting source for exact totals.
 var metricDimensions = map[string]bool{
 	"gen_ai.provider.name": true, "gen_ai.request.model": true, "http.route": true,
 	"http.response.status_code": true, "nori.task.status": true, "nori.reply.status": true,

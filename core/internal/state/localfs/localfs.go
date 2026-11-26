@@ -1,5 +1,3 @@
-// Package localfs stores artifact bytes in a private local directory for development. It implements
-// state.ArtifactStore.
 package localfs
 
 import (
@@ -14,15 +12,12 @@ import (
 	"nori/internal/state"
 )
 
-// Store keeps one file per artifact at <directory>/<run>/<id>.png, confined to the directory by an os.Root.
 type Store struct {
 	root *os.Root
 }
 
 var _ state.ArtifactStore = (*Store)(nil)
 
-// Open creates the directory when needed, with mode 0700, and opens it. The directory must be absolute and must not
-// be a symbolic link.
 func Open(directory string) (*Store, error) {
 	if !filepath.IsAbs(directory) {
 		return nil, fmt.Errorf("must be an absolute directory")
@@ -48,8 +43,6 @@ func Open(directory string) (*Store, error) {
 	return &Store{root: root}, nil
 }
 
-// PutPNG writes the file completely before it appears under its final name, and refuses to replace an existing
-// artifact.
 func (s *Store) PutPNG(ctx context.Context, run, id string, data []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err

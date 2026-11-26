@@ -17,10 +17,6 @@ const defaultSkipGrace = time.Minute
 
 type skipTickArmKey struct{}
 
-// WithoutTickArm returns a context that tells Service.Tick to omit calling s.Arm
-// for the returned future next-due time. Use this when the caller already holds
-// the LaneScheduler discovery lease and will advance wake_at via ReleaseUserWake
-// (avoiding a self-inflicted wake_seq bump that would prevent wake_at from advancing).
 func WithoutTickArm(ctx context.Context) context.Context {
 	return context.WithValue(ctx, skipTickArmKey{}, true)
 }
@@ -30,10 +26,6 @@ func skipTickArm(ctx context.Context) bool {
 	return v
 }
 
-// Tick turns due slots into occurrences, submits pending occurrences as task commands, settles finished ones and
-// delivers their results. It is safe to run concurrently and repeatedly: every step is keyed by a stable identity
-// and guarded by the automation's generation and cursor, so duplicate wakes reuse state and lost wakes are repaired
-// on the next pass. It returns the earliest future due time, for the hosting wake adapter.
 func (s *Service) Tick(ctx context.Context) (*time.Time, error) {
 	now := s.now()
 	enabled, err := s.automations(ctx, "enabled")
@@ -59,7 +51,6 @@ func (s *Service) Tick(ctx context.Context) (*time.Time, error) {
 	return earliest, nil
 }
 
-// schedule creates the occurrences due for one automation according to its missed-run policy and window.
 func (s *Service) schedule(ctx context.Context, a stored, now time.Time) (*time.Time, error) {
 	if a.Trigger.Kind == "event_relative" {
 		a = s.refreshEvent(ctx, a, now)
@@ -147,7 +138,6 @@ func (s *Service) schedule(ctx context.Context, a stored, now time.Time) (*time.
 			if err != nil {
 				return state.MutationResult{}, err
 			}
-			// Another scheduler or an edit moved first: this pass's plan is obsolete.
 			if latest.Generation != a.Generation || latest.Status != "enabled" || !sameTime(latest.Cursor, a.Cursor) {
 				return state.MutationResult{}, ErrStale
 			}
@@ -219,8 +209,6 @@ func (s *Service) saveNext(ctx context.Context, a stored, next *time.Time) {
 	}
 }
 
-// refreshEvent re-reads an event-relative trigger's source when it is stale or due soon. A moved event moves the
-// reminder; a cancelled event stops it. A failed read keeps the last known time and is not treated as certain.
 func (s *Service) refreshEvent(ctx context.Context, a stored, now time.Time) stored {
 	if s.Events == nil || a.Trigger.Event == nil {
 		return a
@@ -299,7 +287,6 @@ func (s *Service) advance(ctx context.Context, r state.Resource, o occurrenceDoc
 	}
 	switch o.Status {
 	case "pending":
-		// An edit or cancel fences unaccepted occurrences of the old generation.
 		if a.Generation != o.Generation || a.Status == "cancelled" {
 			return s.settle(ctx, r, o, "skipped", "superseded", "", nil)
 		}
@@ -364,15 +351,12 @@ func (s *Service) settle(ctx context.Context, r state.Resource, o occurrenceDoc,
 	return s.put(ctx, r, o)
 }
 
-// finish records the occurrence's outcome and delivers it. A monitor that found nothing meaningful delivers nothing
-// and keeps its previous checkpoint.
 func (s *Service) finish(ctx context.Context, r state.Resource, o occurrenceDoc, a stored, run state.Run, status string) error {
 	summary := strings.TrimSpace(run.Result)
 	var failure *ErrorDetail
 	if status != "completed" {
 		failure = &ErrorDetail{Code: "task_" + status, Message: clip(run.Error, 1000)}
 	}
-	// A monitor stays quiet when it found nothing, or when it found exactly what it already reported last time.
 	quiet := o.Monitor && status == "completed" && (strings.HasPrefix(summary, NoChange) || sameFinding(summary, a.Checkpoint))
 	if !quiet {
 		results := []string{}
@@ -449,7 +433,6 @@ func (s *Service) recordOutcomeHealth(ctx context.Context, id, status, errText s
 	}
 }
 
-// sameFinding compares two monitor findings ignoring case and spacing.
 func sameFinding(a, b string) bool {
 	norm := func(t string) string { return strings.ToLower(strings.Join(strings.Fields(t), " ")) }
 	return b != "" && norm(clip(a, 2000)) == norm(b)

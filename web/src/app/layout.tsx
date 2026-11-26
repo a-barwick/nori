@@ -23,8 +23,6 @@ export const metadata: Metadata = {
   description: "Nori, a persistent multi-user assistant engine. One conversation, everything moving forward.",
 };
 
-// Runtime configuration must arrive before browser instrumentation and the
-// interactive app, so this document cannot use a prerendered shell.
 export const instant = false;
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {

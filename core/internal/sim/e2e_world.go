@@ -31,36 +31,21 @@ const (
 	fullDrainMaxTicks     = 128
 )
 
-// FullWorldConfig configures a Stage 3B full-stack deterministic simulation
-// combining Nori's outer conversation loop, inner task.Runner execution loop,
-// and Postgres-native coordination services (records, leases/wakes, permissions,
-// and scheduler).
 type FullWorldConfig struct {
-	// NumUsers controls how many isolated users share the backend. When <= 0,
-	// NewFullWorld deterministically chooses 2 or 3 users from the seed.
 	NumUsers int
 
-	// UnattendedWrites configures permissions.Service.UnattendedWrites
-	// ("confirm_writes" or "require_rule"). When empty, chosen from the seed.
 	UnattendedWrites string
 
-	// UserSends configures permissions.Service.UserSends ("ask" or "allow").
-	// When empty, chosen from the seed.
 	UserSends string
 
-	// TaskBudgetUSD sets the default per-task budget. Defaults to 0.75 when <= 0.
 	TaskBudgetUSD float64
 
-	// StartTime initializes the virtual clock. Defaults to env.DefaultBaseTime.
 	StartTime time.Time
 
-	// TraceCapacity bounds retained trace entries (ring buffer). Defaults to 4096.
 	TraceCapacity int
 
-	// DisableFaults disables all fault injection across every layer when true.
 	DisableFaults bool
 
-	// Layer fault overrides (used when non-zero and !DisableFaults).
 	StoreFaults         memstore.FaultConfig
 	ReplyFaults         outer.ReplyFaultConfig
 	ClassifierFaultProb float64
@@ -70,7 +55,6 @@ type FullWorldConfig struct {
 	CleanupErrProb      float64
 }
 
-// FullWorldStats summarizes workload coverage observed during a full-stack run.
 type FullWorldStats struct {
 	OuterInputs        int
 	OuterProcessCalls  int
@@ -100,8 +84,6 @@ type fullInteractionRetry struct {
 	resp      permissions.Response
 }
 
-// FullUserWorld holds all wired Nori outer, inner, and coordination services
-// for one simulated user.
 type FullUserWorld struct {
 	User        users.User
 	DB          *records.Database
@@ -112,7 +94,6 @@ type FullUserWorld struct {
 	Outer       *outer.Harness
 	Inner       *inner.UserRuntime
 
-	// Deterministic workload bookkeeping.
 	ruleIDs           []string
 	automationIDs     []string
 	goalIDs           []string
@@ -121,10 +102,6 @@ type FullUserWorld struct {
 	introEnsured      bool
 }
 
-// FullWorld is a single-seed, bit-for-bit deterministic end-to-end simulator
-// running Nori's real outer conversation loop, real inner task.Runner/activities/
-// executor/agent, permissions, scheduler, and Postgres-native lease/wake
-// coordination across multiple isolated users sharing one in-memory backend.
 type FullWorld struct {
 	Seed   int64
 	Config FullWorldConfig
@@ -147,8 +124,6 @@ type FullWorld struct {
 	Stats     FullWorldStats
 }
 
-// NewFullWorld constructs a fully wired deterministic end-to-end simulation
-// world driven from one seeded PCG RNG.
 func NewFullWorld(seed int64, cfg FullWorldConfig) *FullWorld {
 	rootRNG := rand.New(rand.NewPCG(uint64(seed), uint64(seed)^0x9e3779b97f4a7c15))
 	deriveRNG := func() *rand.Rand {
@@ -162,7 +137,7 @@ func NewFullWorld(seed int64, cfg FullWorldConfig) *FullWorld {
 	innerIDs := env.NewIDGen(deriveRNG())
 
 	if cfg.NumUsers <= 0 {
-		cfg.NumUsers = 2 + workloadRNG.IntN(2) // 2 or 3 users
+		cfg.NumUsers = 2 + workloadRNG.IntN(2)
 	}
 	if cfg.TaskBudgetUSD <= 0 {
 		cfg.TaskBudgetUSD = 0.75
@@ -278,7 +253,6 @@ func NewFullWorld(seed int64, cfg FullWorldConfig) *FullWorld {
 		}
 
 		uid := idGen.Next()
-		// Exercise LegacyID (ID="owner" != DataOwner=email) on user 0 for even seeds.
 		if i == 0 && seed%2 == 0 {
 			uid = users.LegacyID
 		}
@@ -374,7 +348,6 @@ func NewFullWorld(seed int64, cfg FullWorldConfig) *FullWorld {
 	return w
 }
 
-// User looks up a FullUserWorld by user ID.
 func (w *FullWorld) User(userID string) *FullUserWorld {
 	return w.usersByID[userID]
 }
@@ -384,8 +357,6 @@ func (w *FullWorld) nextWorkerOwner(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, w.workerSeq)
 }
 
-// SetFaultsEnabled toggles fault injection across memstore, every user's outer
-// harness, and the shared inner driver.
 func (w *FullWorld) SetFaultsEnabled(enabled bool) {
 	w.Faults.SetEnabled(enabled)
 	w.Inner.SetFaultsEnabled(enabled)
@@ -394,7 +365,6 @@ func (w *FullWorld) SetFaultsEnabled(enabled bool) {
 	}
 }
 
-// SetPaused updates system/control.paused and emits matching pause/unpause wakes fault-free.
 func (w *FullWorld) SetPaused(ctx context.Context, paused bool) error {
 	wasEnabled := w.Faults.Enabled()
 	if wasEnabled {
@@ -408,7 +378,6 @@ func (w *FullWorld) SetPaused(ctx context.Context, paused bool) error {
 	return err
 }
 
-// Paused reads system/control.paused fault-free.
 func (w *FullWorld) Paused(ctx context.Context) (bool, error) {
 	wasEnabled := w.Faults.Enabled()
 	if wasEnabled {
@@ -418,7 +387,6 @@ func (w *FullWorld) Paused(ctx context.Context) (bool, error) {
 	return w.UsersDir.Paused(ctx)
 }
 
-// UserTargets returns UserTarget handles for all users in canonical sorted order.
 func (w *FullWorld) UserTargets() []invariants.UserTarget {
 	targets := make([]invariants.UserTarget, len(w.Users))
 	for i, uw := range w.Users {
@@ -432,14 +400,10 @@ func (w *FullWorld) UserTargets() []invariants.UserTarget {
 	return targets
 }
 
-// Record appends a diagnostic event to the shared deterministic trace.
 func (w *FullWorld) Record(userID, actor, action, detail string) {
 	w.Trace.Record(w.step, w.Clock.Now(), userID, actor, action, detail)
 }
 
-// Digest returns a canonical hex-encoded SHA-256 hash combining memstore
-// (backend + leases + wakes + all user artifacts), Trace, inner Adapter,
-// inner Model, and the virtual clock.
 func (w *FullWorld) Digest() string {
 	h := sha256.New()
 	writeHashString(h, "sim.full_world.v2")
@@ -456,8 +420,6 @@ func (w *FullWorld) Digest() string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// DebugDump returns a fault-free diagnostic dump of conversation status, open
-// tasks, pending commands, pending interactions, task leases, and user wakes.
 func (w *FullWorld) DebugDump(ctx context.Context) string {
 	wasStore := w.Faults.Enabled()
 	w.Faults.SetEnabled(false)
@@ -514,9 +476,6 @@ func (w *FullWorld) DebugDump(ctx context.Context) string {
 	return b.String()
 }
 
-// CheckAllSafety runs all three safety invariant oracles (coordination/storage
-// invariants, every user's outer conversation invariants, and inner task/tool/
-// budget invariants) fault-free without consuming RNG draws.
 func (w *FullWorld) CheckAllSafety(ctx context.Context) error {
 	targets := w.UserTargets()
 	if err := w.Checker.CheckSafetyAt(ctx, targets, w.Clock.Now()); err != nil {
@@ -533,9 +492,6 @@ func (w *FullWorld) CheckAllSafety(ctx context.Context) error {
 	return nil
 }
 
-// RunFullSimulation runs steps adversarial full-stack chaos operations with
-// continuous safety checks after every step, followed by a fault-free
-// DrainToQuiescence and full quiescence/outer/inner verification.
 func (w *FullWorld) RunFullSimulation(ctx context.Context, steps int) error {
 	if err := w.CheckAllSafety(ctx); err != nil {
 		return &SimError{
@@ -550,8 +506,6 @@ func (w *FullWorld) RunFullSimulation(ctx context.Context, steps int) error {
 	w.installOuterHooks()
 	defer w.clearOuterHooks()
 
-	// Seed each user with one initial conversation message so outer workers
-	// immediately begin routing turns and dispatching real inner tasks from step 1.
 	for i, uw := range w.Users {
 		uw.Outer.SetStep(0)
 		if id, err := uw.Outer.AcceptInput(ctx, fmt.Sprintf("initial e2e request for user %d", i+1)); err == nil {
@@ -762,10 +716,6 @@ func (w *FullWorld) runFullChaosStep(ctx context.Context) {
 	}
 }
 
-// -----------------------------------------------------------------------------
-// 1. Outer User Input, Rapid Bursts, Replay, Cancellation & ReadMarks
-// -----------------------------------------------------------------------------
-
 func (w *FullWorld) stepFullOuterInput(ctx context.Context, uw *FullUserWorld) {
 	if !uw.introEnsured && w.RNG.IntN(5) == 0 {
 		uw.introEnsured = true
@@ -790,7 +740,6 @@ func (w *FullWorld) stepFullOuterInput(ctx context.Context, uw *FullUserWorld) {
 		w.Record(uw.User.ID, "user", "chat_input", fmt.Sprintf("id=%s err=%v", id, err))
 
 	case choice < 72:
-		// Rapid chat burst (4-8 quick turns) to trigger hot-window Excerpts and soft compaction.
 		burst := 4 + w.RNG.IntN(5)
 		acceptedCount := 0
 		for i := range burst {
@@ -805,7 +754,6 @@ func (w *FullWorld) stepFullOuterInput(ctx context.Context, uw *FullUserWorld) {
 		w.Record(uw.User.ID, "user", "chat_burst", fmt.Sprintf("count=%d/%d", acceptedCount, burst))
 
 	case choice < 84:
-		// Test idempotent replay or conflicting payload on an already-accepted ID.
 		id := accepted[w.RNG.IntN(len(accepted))]
 		if w.RNG.IntN(2) == 0 {
 			err := uw.Outer.AcceptInputWithID(ctx, id, "conflicting e2e payload")
@@ -818,7 +766,6 @@ func (w *FullWorld) stepFullOuterInput(ctx context.Context, uw *FullUserWorld) {
 		}
 
 	case choice < 93:
-		// Cancel active turn or latest queued user input.
 		if c, _, err := uw.Store.ConversationStatus(ctx); err == nil {
 			if c.Active != "" {
 				err = uw.Outer.Cancel(ctx, c.Active)
@@ -830,7 +777,6 @@ func (w *FullWorld) stepFullOuterInput(ctx context.Context, uw *FullUserWorld) {
 		w.Record(uw.User.ID, "user", "conv_cancel_input", fmt.Sprintf("id=%s err=%v", accepted[len(accepted)-1], err))
 
 	default:
-		// Advance read mark on a published assistant message if one exists.
 		if msgs, _, err := uw.Store.ConversationMessages(ctx, ""); err == nil {
 			for i := len(msgs) - 1; i >= 0; i-- {
 				if msgs[i].Role == "assistant" {
@@ -847,10 +793,6 @@ func (w *FullWorld) stepFullOuterInput(ctx context.Context, uw *FullUserWorld) {
 		w.Record(uw.User.ID, "user", "chat_input", fmt.Sprintf("id=%s err=%v", id, err))
 	}
 }
-
-// -----------------------------------------------------------------------------
-// 2. Inner Task Execution, Subtasks & Hard Worker Crashes (real task.Runner)
-// -----------------------------------------------------------------------------
 
 func (w *FullWorld) stepFullInnerExec(ctx context.Context, uw *FullUserWorld) {
 	if paused, err := w.Paused(ctx); err == nil && paused {
@@ -877,7 +819,6 @@ func (w *FullWorld) stepFullInnerExec(ctx context.Context, uw *FullUserWorld) {
 	}
 
 	if len(claimable) == 0 {
-		// Check whether a parent is parked on QuestionWork and needs a child subtask spawned.
 		if open, oerr := uw.Store.OpenTasks(ctx); oerr == nil {
 			if parent, ok := pickParentWithWorkQuestion(open, w.RNG); ok {
 				children, serr := w.Inner.SpawnSubtask(ctx, parent.ID, fmt.Sprintf("E2E subtask for %s at step %d", parent.ID[:8], w.step))
@@ -888,13 +829,11 @@ func (w *FullWorld) stepFullInnerExec(ctx context.Context, uw *FullUserWorld) {
 				return
 			}
 		}
-		// Otherwise run lease repair to recover any missed wake.
 		rerr := w.Inner.RepairUser(ctx, uw.User.ID)
 		w.Record(uw.User.ID, "inner", "repair_for_start", fmt.Sprintf("err=%v", rerr))
 		return
 	}
 
-	// Pick a claimable task lease deterministically.
 	chosen := claimable[w.RNG.IntN(len(claimable))]
 	runID := chosen.RunID
 
@@ -914,7 +853,6 @@ func (w *FullWorld) stepFullInnerExec(ctx context.Context, uw *FullUserWorld) {
 		return
 	}
 
-	// Selected lease did not progress; try any other claimable lease for this user.
 	for _, other := range claimable {
 		if other.RunID == runID {
 			continue
@@ -940,16 +878,11 @@ func (w *FullWorld) stepFullInnerExec(ctx context.Context, uw *FullUserWorld) {
 	w.Record(uw.User.ID, "inner", "all_parked", fmt.Sprintf("claimable=%d", len(claimable)))
 }
 
-// -----------------------------------------------------------------------------
-// 3. Permissions: Interactions, Rules, Undelivered Answers & Task Questions
-// -----------------------------------------------------------------------------
-
 func (w *FullWorld) stepFullPermissions(ctx context.Context, uw *FullUserWorld) {
 	roll := w.RNG.IntN(100)
 
 	switch {
 	case roll < 55:
-		// Respond to a pending interaction (or retry a previously submitted response).
 		if len(uw.interactionCaches) > 0 && w.RNG.IntN(6) == 0 {
 			cached := uw.interactionCaches[w.RNG.IntN(len(uw.interactionCaches))]
 			_, ans, err := uw.Permissions.Respond(ctx, cached.id, cached.requestID, 1, cached.resp)
@@ -965,7 +898,6 @@ func (w *FullWorld) stepFullPermissions(ctx context.Context, uw *FullUserWorld) 
 		if len(pending) > 0 {
 			card := pending[w.RNG.IntN(len(pending))]
 
-			// Occasionally steer the task mid-approval to exercise revision superseding!
 			if card.Kind == "approval" && card.TaskID != "" && w.RNG.IntN(100) < 15 {
 				steerCmd := state.Command{
 					ID:        w.IDs.Next(),
@@ -995,7 +927,6 @@ func (w *FullWorld) stepFullPermissions(ctx context.Context, uw *FullUserWorld) 
 				case r < 9:
 					resp = permissions.Response{Kind: "decline", ActionDigest: card.ActionDigest}
 				default:
-					// Adversarial wrong digest must be rejected cleanly.
 					resp = permissions.Response{Kind: "approve", ActionDigest: "wrong_digest"}
 				}
 			default:
@@ -1004,7 +935,7 @@ func (w *FullWorld) stepFullPermissions(ctx context.Context, uw *FullUserWorld) 
 
 			expectedRev := card.Revision
 			if w.RNG.IntN(10) == 0 {
-				expectedRev = card.Revision + 1 // adversarial stale revision
+				expectedRev = card.Revision + 1
 			}
 
 			reqID := w.IDs.Next()
@@ -1028,7 +959,6 @@ func (w *FullWorld) stepFullPermissions(ctx context.Context, uw *FullUserWorld) 
 			return
 		}
 
-		// No pending interactions: answer any open non-interaction question on a running task.
 		if open, oerr := uw.Store.OpenTasks(ctx); oerr == nil {
 			if qRun, ok := pickRunWithUnresolvedQuestion(open, w.RNG); ok {
 				cmd := state.Command{
@@ -1047,12 +977,10 @@ func (w *FullWorld) stepFullPermissions(ctx context.Context, uw *FullUserWorld) 
 				return
 			}
 		}
-		// Fallback to retrying undelivered answers.
 		derr := w.deliverUndeliveredAnswers(ctx, uw)
 		w.Record(uw.User.ID, "perms", "deliver_answers", fmt.Sprintf("err=%v", derr))
 
 	case roll < 80:
-		// Create, update, or revoke an allow/deny permission rule for sim_write/sim_send.
 		if len(uw.ruleIDs) > 0 && w.RNG.IntN(3) == 0 {
 			id := uw.ruleIDs[w.RNG.IntN(len(uw.ruleIDs))]
 			if rule, err := uw.Permissions.Rule(ctx, id); err == nil {
@@ -1173,10 +1101,6 @@ func (w *FullWorld) deliverUndeliveredAnswers(ctx context.Context, uw *FullUserW
 	}
 	return nil
 }
-
-// -----------------------------------------------------------------------------
-// 4. Scheduler (Automations, Goals, Tick)
-// -----------------------------------------------------------------------------
 
 func (w *FullWorld) stepFullScheduler(ctx context.Context, uw *FullUserWorld) {
 	roll := w.RNG.IntN(100)
@@ -1365,10 +1289,6 @@ func (w *FullWorld) stepFullGoal(ctx context.Context, uw *FullUserWorld) {
 	w.Record(uw.User.ID, "sched", "goal.act", fmt.Sprintf("id=%s status=%s act=%s err=%v", id, g.Status, actName, err))
 }
 
-// -----------------------------------------------------------------------------
-// 4b. Coupled Memory & Compaction API Mutations (Core, Daily Logs, Working, Consolidate)
-// -----------------------------------------------------------------------------
-
 func (w *FullWorld) stepFullMemory(ctx context.Context, uw *FullUserWorld) {
 	formatRes := func(res state.MemoryMutationResult) (json.RawMessage, error) {
 		return json.Marshal(res)
@@ -1377,7 +1297,6 @@ func (w *FullWorld) stepFullMemory(ctx context.Context, uw *FullUserWorld) {
 
 	switch {
 	case roll < 28:
-		// Create a Core memory (occasionally pinned, occasionally larger to exercise 24 KiB auto-demotion).
 		sections := []string{"Preferences", "People", "Projects", "Context"}
 		section := sections[w.RNG.IntN(len(sections))]
 		text := fmt.Sprintf("e2e memory step=%d topic=project_omega_%d", w.step, w.RNG.IntN(24))
@@ -1404,7 +1323,6 @@ func (w *FullWorld) stepFullMemory(ctx context.Context, uw *FullUserWorld) {
 		})
 		if err == nil {
 			w.Stats.MemoryMutations++
-			// Occasionally exercise idempotent retry on the exact same RequestID.
 			if w.RNG.IntN(4) == 0 {
 				_, _ = uw.Store.MutateMemory(ctx, state.MemoryMutationRequest{
 					RequestID:      reqID,
@@ -1420,7 +1338,6 @@ func (w *FullWorld) stepFullMemory(ctx context.Context, uw *FullUserWorld) {
 		w.Record(uw.User.ID, "memory", "core.create", fmt.Sprintf("section=%s pinned=%v err=%v", section, pinned != nil && *pinned, err))
 
 	case roll < 60:
-		// Edit, pin, unpin, demote, or forget an existing Core memory.
 		mems, err := uw.Store.Memories(ctx)
 		if err != nil || len(mems) == 0 {
 			w.Record(uw.User.ID, "memory", "core.list_empty", fmt.Sprintf("n=%d err=%v", len(mems), err))
@@ -1429,7 +1346,7 @@ func (w *FullWorld) stepFullMemory(ctx context.Context, uw *FullUserWorld) {
 		target := mems[w.RNG.IntN(len(mems))]
 		rev := target.UpdatedAt.UnixMilli()
 		if w.RNG.IntN(12) == 0 {
-			rev++ // adversarial stale revision
+			rev++
 		}
 		sub := w.RNG.IntN(5)
 		req := state.MemoryMutationRequest{
@@ -1471,7 +1388,6 @@ func (w *FullWorld) stepFullMemory(ctx context.Context, uw *FullUserWorld) {
 		w.Record(uw.User.ID, "memory", "core."+action, fmt.Sprintf("id=%s err=%v", target.ID, merr))
 
 	case roll < 72:
-		// Daily Log promote or forget.
 		logs, err := uw.Store.MemoryLogs(ctx, "", 5)
 		if err != nil || len(logs) == 0 {
 			w.Record(uw.User.ID, "memory", "log.empty", fmt.Sprintf("err=%v", err))
@@ -1496,7 +1412,6 @@ func (w *FullWorld) stepFullMemory(ctx context.Context, uw *FullUserWorld) {
 		} else {
 			req.Kind = state.MemoryMutatePromoteLog
 			if entry.Provenance == state.ProvenanceTaskOutcome && w.RNG.IntN(2) == 0 {
-				// Re-author task_outcome text explicitly half the time, and test rejection the other half.
 				req.Text = fmt.Sprintf("User-confirmed takeaway step=%d from %s", w.step, entry.ID[:min(8, len(entry.ID))])
 			}
 		}
@@ -1507,7 +1422,6 @@ func (w *FullWorld) stepFullMemory(ctx context.Context, uw *FullUserWorld) {
 		w.Record(uw.User.ID, "memory", "log."+action, fmt.Sprintf("date=%s entry=%s err=%v", logDoc.Date, entry.ID, merr))
 
 	case roll < 82:
-		// Working memory promote/dismiss or MemoryIndex search.
 		if w.RNG.IntN(2) == 0 {
 			sum, err := uw.Store.ConversationSummary(ctx)
 			if err == nil && len(sum.Items) > 0 {
@@ -1543,16 +1457,11 @@ func (w *FullWorld) stepFullMemory(ctx context.Context, uw *FullUserWorld) {
 		w.Record(uw.User.ID, "memory", "search", fmt.Sprintf("hits=%d err=%v", len(hits), serr))
 
 	default:
-		// Trigger manual AutoDream consolidation pass.
 		w.Stats.ConsolidateCalls++
 		_, cerr := uw.Outer.Workers[0].ConsolidateNow(ctx)
 		w.Record(uw.User.ID, "memory", "consolidate", fmt.Sprintf("err=%v", cerr))
 	}
 }
-
-// -----------------------------------------------------------------------------
-// 5. Lease Repair & User Wake Lanes (Postgres-native discovery)
-// -----------------------------------------------------------------------------
 
 func (w *FullWorld) stepFullReconcileAndWakes(ctx context.Context, uw *FullUserWorld) {
 	roll := w.RNG.IntN(100)
@@ -1683,16 +1592,9 @@ func (w *FullWorld) repairFullUser(ctx context.Context, uw *FullUserWorld) error
 	return errors.Join(failures...)
 }
 
-// -----------------------------------------------------------------------------
-// 6. Time Jumps & Global Pause/Resume
-// -----------------------------------------------------------------------------
-
 func (w *FullWorld) stepFullTimeAndPause(ctx context.Context) {
 	paused, err := w.Paused(ctx)
 	if err == nil {
-		// Unpause aggressively (75%) when paused, and pause modestly (20%) when
-		// unpaused, so global pause/resume is heavily exercised without freezing
-		// half of every simulation.
 		toggle := (paused && w.RNG.IntN(100) < 75) || (!paused && w.RNG.IntN(100) < 20)
 		if toggle {
 			next := !paused
@@ -1710,21 +1612,17 @@ func (w *FullWorld) stepFullTimeAndPause(ctx context.Context) {
 		}
 	}
 
-	// Curated time-jump ladder spanning quiet windows, TaskLease/ConversationLease (30s),
-	// IdleExtractDelay (+2m), compaction pauses (10m), IdleDreamDelay (+15m),
-	// ApprovalExpiry (+30m), DreamMinInterval (+12h), interaction/rule expiries,
-	// and multi-day automation schedules.
 	durations := []time.Duration{
 		200 * time.Millisecond,
 		2 * time.Second,
 		15 * time.Second,
 		45 * time.Second,
-		state.IdleExtractDelay + 5*time.Second, // +2m5s session-idle extraction wake
-		11 * time.Minute,                       // compaction backoff clear
-		state.IdleDreamDelay + 5*time.Second,   // +15m5s AutoDream quiet wake
-		31 * time.Minute,                       // crosses 30m ApprovalExpiry
+		state.IdleExtractDelay + 5*time.Second,
+		11 * time.Minute,
+		state.IdleDreamDelay + 5*time.Second,
+		31 * time.Minute,
 		2 * time.Hour,
-		state.DreamMinInterval + 5*time.Minute, // +12h5m AutoDream min interval
+		state.DreamMinInterval + 5*time.Minute,
 		25 * time.Hour,
 	}
 	d := durations[w.RNG.IntN(len(durations))]
@@ -1732,15 +1630,6 @@ func (w *FullWorld) stepFullTimeAndPause(ctx context.Context) {
 	w.Record("", "clock", "advance", fmt.Sprintf("delta=%s now=%s", d, now.Format(time.RFC3339Nano)))
 }
 
-// -----------------------------------------------------------------------------
-// Full-Stack Quiescence Drain
-// -----------------------------------------------------------------------------
-
-// DrainToQuiescence disables all faults across every layer, unpauses execution,
-// drains outer conversations, inner task.Runner steps (subtasks, approvals,
-// questions, held publications, cleanups), schedulers, lease repairs, and user
-// wakes to a fixed point, and verifies CheckAllSafety, CheckQuiescence (with
-// CheckLeaseQuiescence), CheckOuterInvariants, and CheckInnerInvariants.
 func (w *FullWorld) DrainToQuiescence(ctx context.Context) error {
 	w.SetFaultsEnabled(false)
 	w.clearOuterHooks()
@@ -1750,57 +1639,44 @@ func (w *FullWorld) DrainToQuiescence(ctx context.Context) error {
 	}
 	w.Record("", "drain", "start", "faults=false paused=false")
 
-	// Advance clock once past any active unexpired conversation lease, crashed task lease,
-	// crashed TaskControl lease, or user-wake lease so drain can cleanly take over.
 	if _, err := w.advancePastFullLeases(ctx); err != nil {
 		return err
 	}
 
 	for round := 1; round <= fullDrainMaxRounds; round++ {
 		for _, uw := range w.Users {
-			// 1. Drain outer conversation first so UserRoutingPending clears and
-			//    held task publications can release.
 			if err := uw.Outer.DrainConversation(ctx); err != nil {
 				return fmt.Errorf("drain round %d user %s outer: %w", round, uw.User.ID, err)
 			}
 
-			// 2. Deliver any undelivered resolved interaction answers.
 			if err := w.deliverUndeliveredAnswers(ctx, uw); err != nil {
 				return fmt.Errorf("drain round %d user %s deliverAnswers: %w", round, uw.User.ID, err)
 			}
 
-			// 3. Resolve any still-pending approval/question interactions so parked inner tasks can finish.
 			if err := w.drainUserInteractions(ctx, uw); err != nil {
 				return fmt.Errorf("drain round %d user %s interactions: %w", round, uw.User.ID, err)
 			}
 
-			// 4. Answer any open task questions without a pending interaction
-			//    (e.g., request_input, uncertain-action-question, or unsettled QuestionWork).
 			if err := w.drainUserOpenQuestions(ctx, uw); err != nil {
 				return fmt.Errorf("drain round %d user %s openQuestions: %w", round, uw.User.ID, err)
 			}
 
-			// 5. Tick scheduler until no enabled automations are due at now.
 			if err := w.drainUserScheduler(ctx, uw); err != nil {
 				return fmt.Errorf("drain round %d user %s scheduler: %w", round, uw.User.ID, err)
 			}
 
-			// 6. Repair leases (ensure missing leases, wake parked runs, delete orphans).
 			if err := w.repairFullUser(ctx, uw); err != nil {
 				return fmt.Errorf("drain round %d user %s repair: %w", round, uw.User.ID, err)
 			}
 
-			// 7. Step all runnable inner task executions for this user (subtasks before parents).
 			if err := w.drainUserInnerTasks(ctx, uw); err != nil {
 				return fmt.Errorf("drain round %d user %s inner: %w", round, uw.User.ID, err)
 			}
 
-			// 8. Process any conversation notifications enqueued by task completions or questions.
 			if err := uw.Outer.DrainConversation(ctx); err != nil {
 				return fmt.Errorf("drain round %d user %s post-inner outer: %w", round, uw.User.ID, err)
 			}
 
-			// 9. Final round lease repair, scheduler settlement, and user wake parking.
 			if err := w.repairFullUser(ctx, uw); err != nil {
 				return fmt.Errorf("drain round %d user %s final repair: %w", round, uw.User.ID, err)
 			}
@@ -1842,7 +1718,6 @@ func (w *FullWorld) DrainToQuiescence(ctx context.Context) error {
 		}
 	}
 
-	// Post-drain verification across ALL layers (including CheckLeaseQuiescence).
 	if err := w.CheckAllSafety(ctx); err != nil {
 		return fmt.Errorf("post-drain safety: %w", err)
 	}
@@ -1850,9 +1725,6 @@ func (w *FullWorld) DrainToQuiescence(ctx context.Context) error {
 		return err
 	}
 
-	// Verify every user's outer conversation is completely idle, all accepted inputs
-	// consumed, both flush and session-idle extraction watermarks converged, and
-	// LaneConversation wake cleanly parked.
 	for _, uw := range w.Users {
 		conv, _, err := uw.Store.ConversationStatus(ctx)
 		if err != nil {
@@ -2034,7 +1906,6 @@ func (w *FullWorld) drainUserInteractions(ctx context.Context, uw *FullUserWorld
 		}
 		_, ans, err := uw.Permissions.Respond(ctx, card.ID, w.IDs.Next(), card.Revision, resp)
 		if err != nil {
-			// An interaction might have expired right before responding; ignore stale/conflict errors.
 			if errors.Is(err, permissions.ErrInteractionStale) || errors.Is(err, state.ErrRevisionConflict) {
 				continue
 			}
@@ -2116,7 +1987,6 @@ func (w *FullWorld) drainUserInnerTasks(ctx context.Context, uw *FullUserWorld) 
 		if err != nil {
 			return err
 		}
-		// Order subtasks before parents so parents can finalize cleanly.
 		var orderedIDs []string
 		for _, r := range open {
 			if r.ParentID != "" {
@@ -2128,7 +1998,6 @@ func (w *FullWorld) drainUserInnerTasks(ctx context.Context, uw *FullUserWorld) 
 				orderedIDs = append(orderedIDs, r.ID)
 			}
 		}
-		// Also include any remaining task leases (e.g. terminal cleanup runs).
 		if leases, lerr := w.Backend.ListTaskLeases(ctx, uw.User.ID); lerr == nil {
 			for _, l := range leases {
 				if !slices.Contains(orderedIDs, l.RunID) {

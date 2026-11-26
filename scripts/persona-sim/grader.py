@@ -202,7 +202,6 @@ def _check_tier_a(persona_dir: Path) -> dict[str, Any]:
     probes = json.loads((persona_dir / "probes.json").read_text(encoding="utf-8"))
     mcp_audit = json.loads((persona_dir / "mcp_audit.json").read_text(encoding="utf-8"))
 
-    # 1. Product HTTP 5xx errors (excludes harness /_sim/drain 504 timeouts)
     checks_total += 1
     http_5xx = int(summary.get("http_5xx_count", 0) or 0)
     if http_5xx == 0:
@@ -212,7 +211,6 @@ def _check_tier_a(persona_dir: Path) -> dict[str, Any]:
 
     harness_timeouts = int(summary.get("harness_timeouts", 0) or 0)
 
-    # 1b. UI handler errors (H-13)
     checks_total += 1
     ui_errors_raw = summary.get("ui_errors")
     if ui_errors_raw is None:
@@ -235,7 +233,6 @@ def _check_tier_a(persona_dir: Path) -> dict[str, Any]:
         ui_error_count = 1
         failures.append(f"UI handler errors invalid value: {ui_errors_raw!r}")
 
-    # 2. Invariant snapshots
     snaps_dir = persona_dir / "snapshots"
     snap_files = sorted(snaps_dir.glob("*.json")) if snaps_dir.is_dir() else []
     inv_violations: list[dict[str, Any]] = []
@@ -251,7 +248,6 @@ def _check_tier_a(persona_dir: Path) -> dict[str, Any]:
             inv_violations.extend([{"snapshot": sf.stem, **v} for v in vs])
             failures.append(f"Snapshot {sf.stem}: {len(vs)} invariant violation(s)")
 
-    # 3. End-of-month forbidden substrings in Core Memory (prompt injection / task_outcome / forgotten info)
     audit_cfg = summary.get("end_of_month_audit") or {}
     forbidden_core = audit_cfg.get("forbidden_core_substrings") or []
     core_texts = [str(m.get("text", "")) for m in (final_snap.get("core_memories") or [])]
@@ -263,7 +259,6 @@ def _check_tier_a(persona_dir: Path) -> dict[str, Any]:
         else:
             failures.append(f"Forbidden substring leaked into final Core Memory: {sub!r}")
 
-    # 4. Probe-level deterministic checks (must_not_contain_in_core, expect_fts_query, expect_no_external_write)
     probe_det_results: dict[str, list[str]] = {}
     inconclusive_probes = 0
     for p in probes:
@@ -685,7 +680,6 @@ def _render_markdown(sc: dict[str, Any]) -> str:
             dl = f"{d['delta']*100:+.1f}%" if d["delta"] is not None else "—"
             lines.append(f"| `{d['slug']}` | {d['tier_a_before']} -> {d['tier_a_after']} | {sb} | {sa} | {dl} |")
 
-    # Drill-down on any failures or partial scores
     issues_section: list[str] = []
     for p in sc["personas"]:
         ta_fails = p["tier_a"]["failures"]

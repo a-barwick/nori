@@ -103,7 +103,6 @@ func TestCoordinationSim(t *testing.T) {
 		totalRuns, totalOps, totalAutos, totalSteps, totalCrashes, totalRepairs, totalUserWakes, totalStoreFaults,
 	)
 
-	// Guard against accidentally running a degenerate no-op workload across batch runs.
 	if len(seeds) >= 8 {
 		if totalRuns == 0 || totalOps == 0 || totalAutos == 0 || totalSteps == 0 {
 			t.Fatalf("workload coverage too low: runs=%d ops=%d autos=%d workerSteps=%d", totalRuns, totalOps, totalAutos, totalSteps)

@@ -16,28 +16,20 @@ import (
 
 var ErrStale = errors.New("the automation changed while it was being scheduled")
 
-// EventSource reads a calendar event's current start for event-relative triggers. It reads one event's time and
-// status only.
 type EventSource interface {
 	EventStart(ctx context.Context, ref ResourceRef) (start time.Time, revision, status string, err error)
 }
 
-// Service is opened per user.
 type Service struct {
 	Store       state.ResourceStore
 	Tasks       state.RunStore
 	Permissions *permissions.Service
 	Events      EventSource
-	// Accept submits a task command through the existing durable acceptance path.
-	Accept func(ctx context.Context, cmd state.Command) (state.Run, error)
-	// Results lists result IDs for a task.
-	Results func(ctx context.Context, taskID string) []string
-	// Timezone is the user's preference used when a trigger names none.
-	Timezone func(ctx context.Context) string
-	Now      func() time.Time
-	// Arm asks the hosting adapter to wake this user's process at a due time. Duplicate or lost arms are harmless;
-	// the next pass recomputes from durable state.
-	Arm func(ctx context.Context, at time.Time)
+	Accept      func(ctx context.Context, cmd state.Command) (state.Run, error)
+	Results     func(ctx context.Context, taskID string) []string
+	Timezone    func(ctx context.Context) string
+	Now         func() time.Time
+	Arm         func(ctx context.Context, at time.Time)
 }
 
 func (s *Service) arm(ctx context.Context) func(state.MutationReceipt, error) (state.MutationReceipt, error) {
@@ -123,7 +115,6 @@ func (s *Service) automations(ctx context.Context, status string) ([]stored, err
 	return out, nil
 }
 
-// List returns automation projections, with the latest occurrence attached.
 func (s *Service) List(ctx context.Context, status string) ([]Automation, error) {
 	all, err := s.automations(ctx, status)
 	if err != nil {
@@ -158,12 +149,8 @@ func (s *Service) Get(ctx context.Context, id string) (Automation, error) {
 	return s.project(ctx, a), nil
 }
 
-// DefaultOnceExecutionWindowSeconds is the default grace window (1 hour) applied to one-time reminders
-// when missed_run and execution_window_seconds are omitted.
 const DefaultOnceExecutionWindowSeconds int64 = 3600
 
-// applyEditableDefaults fills trustworthy defaults when missed_run is omitted on creation/preview.
-// It returns true if the caller explicitly specified missed_run.
 func applyEditableDefaults(value *Editable) bool {
 	if strings.TrimSpace(value.MissedRun) != "" {
 		return true
@@ -216,8 +203,6 @@ func (s *Service) validate(ctx context.Context, value Editable) error {
 	return nil
 }
 
-// proposedRules turns the requested standing scope into explicit permission rules for this automation. Nothing
-// beyond what is shown here is granted (decision D2 governs the default offered for unattended writes).
 func proposedRules(id string, value Editable) []permissions.RuleEditable {
 	if value.RequestedAuthority == nil || len(value.RequestedAuthority.ActionClasses) == 0 {
 		return nil
@@ -245,7 +230,6 @@ func nonNil(values []string) []string {
 	return values
 }
 
-// nextRuns lists upcoming instants of a trigger after a time.
 func (s *Service) nextRuns(ctx context.Context, t Trigger, after time.Time, limit int, eventStart *time.Time) ([]time.Time, error) {
 	switch t.Kind {
 	case "once":
@@ -289,7 +273,6 @@ func missedRunExplanation(kind, policy string) string {
 	return missedText[policy]
 }
 
-// Preview shows the next runs, the exact standing authority and warnings before saving. It is read-only.
 func (s *Service) Preview(ctx context.Context, value Editable, unattendedMode string) (Preview, error) {
 	explicitMissedRun := applyEditableDefaults(&value)
 	zone := s.resolveTimezone(ctx, value.Trigger.Timezone)
@@ -352,8 +335,6 @@ func (s *Service) Preview(ctx context.Context, value Editable, unattendedMode st
 	return p, nil
 }
 
-// Created returns the automation a create with this request ID saved. state.ErrNotFound means it saved nothing: the
-// save is one transaction, so an interrupted create either saved the whole automation or none of it.
 func (s *Service) Created(ctx context.Context, requestID string) (Automation, error) {
 	return s.Get(ctx, automationID(requestID))
 }
@@ -370,8 +351,6 @@ func (s *Service) ruleIDs(id string, count int) []string {
 	return out
 }
 
-// Save creates (id empty) or replaces an automation. An edit advances the generation; occurrences of the old
-// generation that were not accepted are superseded, and the cursor never moves back.
 func (s *Service) Save(ctx context.Context, id, requestID string, expected int64, value Editable) (state.MutationReceipt, error) {
 	applyEditableDefaults(&value)
 	if value.Trigger.Kind == "recurring" {
@@ -465,7 +444,6 @@ func (s *Service) Save(ctx context.Context, id, requestID string, expected int64
 	}))
 }
 
-// computeNext finds the next due instant after the cursor, honoring snooze, end and occurrence limits.
 func (s *Service) computeNext(ctx context.Context, a stored, now time.Time) *time.Time {
 	if a.Status != "enabled" || (a.MaxOccurrences > 0 && a.Created >= a.MaxOccurrences) {
 		return nil
@@ -492,7 +470,6 @@ func (s *Service) computeNext(ctx context.Context, a stored, now time.Time) *tim
 	return &next
 }
 
-// Act applies pause, resume, cancel, run_now or snooze.
 func (s *Service) Act(ctx context.Context, id, requestID string, expected int64, action Action) (state.MutationReceipt, error) {
 	now := s.now()
 	receipt, err := s.arm(ctx)(s.Store.Mutate(ctx, state.Mutation{
@@ -513,7 +490,6 @@ func (s *Service) Act(ctx context.Context, id, requestID string, expected int64,
 				a.Status = "paused"
 			case action.Action == "resume" && a.Status == "paused":
 				a.Status = "enabled"
-				// Slots that fell while paused are recorded as missed rather than replayed.
 				a.Cursor = &now
 			case action.Action == "cancel" && a.Status != "cancelled":
 				a.Status = "cancelled"
@@ -527,7 +503,6 @@ func (s *Service) Act(ctx context.Context, id, requestID string, expected int64,
 				}
 				extra = append(extra, resource)
 				a.LastOccurrenceID = occurrence.ID
-				// The occurrence's task ID is fixed now, so the client can open the run as soon as it starts.
 				work = &state.WorkRef{TaskID: taskID(occurrence.ID)}
 			default:
 				return state.MutationResult{}, fmt.Errorf("%w: %s does not apply to a %s automation", state.ErrInvalidResource, action.Action, a.Status)
@@ -553,7 +528,6 @@ func (s *Service) Act(ctx context.Context, id, requestID string, expected int64,
 	return receipt, err
 }
 
-// occurrenceID is stable for the automation, the nominal slot (or source event) and the schedule generation.
 func occurrenceID(automation string, generation int64, slot time.Time, source string) string {
 	key := fmt.Sprintf("%s|%d|%s|%s", automation, generation, slot.UTC().Format(time.RFC3339), source)
 	return "occ_" + strings.ReplaceAll(uuid.NewSHA1(uuid.NameSpaceOID, []byte(key)).String(), "-", "")[:24]
@@ -624,7 +598,6 @@ func (s *Service) Occurrence(ctx context.Context, id string) (Occurrence, error)
 	return occurrence, nil
 }
 
-// Occurrences lists an automation's run history, newest first.
 func (s *Service) Occurrences(ctx context.Context, automationID string) ([]Occurrence, error) {
 	resources, err := s.allResources(ctx, CollectionOccurrences, map[string]string{"automation_id": automationID}, 200)
 	if err != nil {

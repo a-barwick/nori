@@ -14,11 +14,6 @@ import (
 	"nori/internal/state"
 )
 
-// pureAckPhrases is a narrow exact allowlist of unmistakable non-decision
-// acknowledgments/gratitude that carry zero durable user facts, preferences, or
-// confirmations of assistant proposals (affirmative words like "ok", "sure", "yep",
-// "👍" are intentionally excluded because they can answer a preference question).
-// Never use a length heuristic (short messages like "No peanuts" contain critical facts).
 var pureAckPhrases = map[string]bool{
 	"thanks": true, "thank you": true, "thx": true, "ty": true, "tysm": true,
 	"got it": true, "cool": true, "nice": true, "awesome": true,
@@ -31,7 +26,6 @@ func isPureAckText(raw string) bool {
 	if trimmed == "" {
 		return false
 	}
-	// Strip trailing punctuation/whitespace for matching, e.g., "Thanks!" -> "thanks".
 	cleaned := strings.TrimRightFunc(strings.ToLower(trimmed), func(r rune) bool {
 		return unicode.IsSpace(r) || r == '!' || r == '.' || r == ','
 	})
@@ -41,8 +35,6 @@ func isPureAckText(raw string) bool {
 	return pureAckPhrases[cleaned]
 }
 
-// isPureAckInputs reports whether every input in a turn is a user-only message with
-// no task events or attachments and matches the narrow pure-acknowledgment allowlist.
 func isPureAckInputs(inputs []state.ConversationInput) bool {
 	if len(inputs) == 0 {
 		return false
@@ -87,9 +79,6 @@ type extractPlan struct {
 	batchThrough     time.Time
 }
 
-// planExtract evaluates whether completed turns after EffectiveExtractedThrough()
-// are eligible for decoupled session-idle memory extraction (IdleExtractDelay).
-// Shared by NextConversationWake and extractIdleMemory so both agree exactly.
 func (r *Runner) planExtract(
 	ctx context.Context,
 	control state.ConversationControl,
@@ -188,12 +177,6 @@ func (r *Runner) planExtract(
 	return plan, nil
 }
 
-// extractIdleMemory extracts durable Core memories and Daily Log entries from
-// completed turns after EffectiveExtractedThrough() once either
-// ExtractTurnThreshold (3) unextracted user turns accumulate or the session has been
-// idle for IdleExtractDelay (2m), leaving Through, FlushedThrough, Items,
-// Gist, Excerpts, and Turns completely untouched so verbatim turns remain in
-// the active window.
 func (r *Runner) extractIdleMemory(ctx context.Context) error {
 	control, _, err := r.tasks.Store.ConversationStatus(ctx)
 	if err != nil {
@@ -208,7 +191,6 @@ func (r *Runner) extractIdleMemory(ctx context.Context) error {
 	}
 	now := r.now()
 
-	// Coupled flush+compact takes priority whenever it is ready to run now.
 	flushState, err := r.planFlush(ctx, control, summary, now, false)
 	if err != nil || flushState.ready {
 		return err
@@ -219,8 +201,6 @@ func (r *Runner) extractIdleMemory(ctx context.Context) error {
 		return err
 	}
 
-	// Zero-cost skip when every turn in the batch is a user-only pure acknowledgment
-	// (no task events, no attachments, exact narrow allowlist match).
 	if isPureAckBatch(plan.batch) {
 		nowUTC := r.now().UTC()
 		if err := r.commitExtractWithRebase(ctx, plan, nil, nil, nowUTC); err != nil {
@@ -271,7 +251,6 @@ func (r *Runner) extractIdleMemory(ctx context.Context) error {
 	output, callErr := r.callFlushAndCompactWithTool(modelCtx, string(promptBytes), extractOnlyTool)
 	if callErr != nil {
 		if ctx.Err() != nil {
-			// Preempted by arriving user input or shutdown: leave ExtractedThrough untouched.
 			return ctx.Err()
 		}
 		return r.handleExtractFailure(ctx, plan, callErr)
@@ -299,9 +278,6 @@ func (r *Runner) handleExtractFailure(ctx context.Context, plan extractPlan, cal
 	now := r.now()
 	nowUTC := now.UTC()
 	failures := 1
-	// Increment retries whenever the watermark (extractedThrough) has not advanced
-	// past the previous failure, so newly arriving turns cannot reset the 3-strike
-	// fallback into an infinite loop.
 	if plan.base.ExtractFailures > 0 && !plan.base.LastExtractFailureThrough.IsZero() && !plan.extractedThrough.After(plan.base.LastExtractFailureThrough) {
 		failures = plan.base.ExtractFailures + 1
 	}
@@ -319,8 +295,6 @@ func (r *Runner) handleExtractFailure(ctx context.Context, plan extractPlan, cal
 		return callErr
 	}
 
-	// 3-strike poison-pill fallback: commit lossless raw user messages into Daily Logs
-	// and advance ExtractedThrough while leaving Through and FlushedThrough unchanged.
 	slog.WarnContext(ctx, "idle memory extraction reached max retries; committing lossless extractive fallback",
 		"failures", failures, "batch_through", plan.batchThrough, "err", callErr)
 	fallbackEntries := extractiveFallbackEntries(plan.batch, nowUTC)

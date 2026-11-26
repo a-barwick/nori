@@ -13,8 +13,6 @@ import (
 
 var _ state.ResourceStore = (*Database)(nil)
 
-// resourceDoc is the stored form. The body stays an exact JSON string so nested provider shapes survive either
-// backend unchanged; index carries the few scalar fields queries filter on.
 type resourceDoc struct {
 	ID        string            `firestore:"id"`
 	Revision  int64             `firestore:"revision"`
@@ -141,8 +139,6 @@ func (d *Database) Receipt(ctx context.Context, requestID string) (state.Mutatio
 	return toReceipt(doc)
 }
 
-// Mutate checks prior acceptance first, so a retried request returns its saved receipt even after later changes,
-// then the expected revision, then applies the change and saves resource and receipt together.
 func (d *Database) Mutate(ctx context.Context, m state.Mutation) (state.MutationReceipt, error) {
 	if !state.ValidResourceID(m.RequestID) || !state.ValidResourceID(m.ID) || m.Apply == nil {
 		return state.MutationReceipt{}, state.ErrInvalidResource
@@ -191,8 +187,6 @@ func (d *Database) Mutate(ctx context.Context, m state.Mutation) (state.Mutation
 		if current != nil {
 			revision = current.Revision
 		} else if m.ExpectedRevision > 0 {
-			// A change to something that does not exist (or belongs to another user) is not found, never a
-			// revision conflict.
 			return state.ErrNotFound
 		}
 		if !m.SkipRevisionCheck && revision != m.ExpectedRevision {
@@ -203,7 +197,6 @@ func (d *Database) Mutate(ctx context.Context, m state.Mutation) (state.Mutation
 			return err
 		}
 		now := d.now()
-		// Firestore transactions read everything before the first write.
 		previousAll := make([]*state.Resource, len(result.Writes))
 		for i, write := range result.Writes {
 			if !state.ValidResourceID(write.ID) {
@@ -250,7 +243,6 @@ func (d *Database) Mutate(ctx context.Context, m state.Mutation) (state.Mutation
 		return tx.Create(receiptRef, stored)
 	})
 	if errors.Is(err, docstore.ErrExists) {
-		// A concurrent identical request won; return its receipt.
 		saved, readErr := d.Receipt(ctx, m.RequestID)
 		if readErr != nil {
 			return state.MutationReceipt{}, err

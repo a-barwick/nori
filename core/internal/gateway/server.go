@@ -1,8 +1,3 @@
-// Package gateway implements a local loopback LLM gateway backed by llmguard.
-// It holds upstream provider API keys in a single process, authenticates local
-// callers (Go nori-sim and Python persona-sim responder/judge/preflight) with
-// a short-lived bearer token, and enforces a unified real-time --max-usd and
-// --max-calls kill switch across all callers.
 package gateway
 
 import (
@@ -32,7 +27,6 @@ const (
 	maxResponseBytes         = 8 << 20
 )
 
-// Config configures the local loopback LLM gateway.
 type Config struct {
 	Token             string
 	OpenAIKey         string
@@ -71,7 +65,6 @@ type StatsSnapshot struct {
 	ByModel              map[string]ModelStats `json:"by_model"`
 }
 
-// Server proxies OpenAI/OpenRouter/Anthropic LLM requests through a single llmguard.Guard.
 type Server struct {
 	cfg   Config
 	guard *llmguard.Guard
@@ -290,18 +283,16 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	respBytes, err := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes+1))
 	if err != nil {
-		s.guard.RecordUnknownCost(llmguard.EstimateWorstCaseCallUSD(len(body), maxOut))
 		writeError(w, http.StatusBadGateway, "upstream_read_error", "failed reading upstream response")
 		return
 	}
 	if len(respBytes) > maxResponseBytes {
-		s.guard.RecordUnknownCost(llmguard.EstimateWorstCaseCallUSD(len(body), maxOut))
 		writeError(w, http.StatusBadGateway, "upstream_response_too_large", "upstream response exceeded gateway limit")
 		return
 	}
 
 	if res.StatusCode == http.StatusOK {
-		respBytes = s.accountAndInjectCost(provider, metaReq.Model, respBytes, len(body), maxOut)
+		respBytes = s.accountAndInjectCost(res, provider, metaReq.Model, respBytes, len(body), maxOut)
 	}
 
 	if ct := res.Header.Get("Content-Type"); ct != "" {
@@ -344,8 +335,6 @@ func (s *Server) resolveUpstream(path, explicitProvider, model string) (provider
 		case strings.Contains(model, "/"):
 			p = "openrouter"
 		case strings.HasPrefix(strings.ToLower(model), "claude-"):
-			// OpenAI-compatible endpoints (/v1/chat/completions, /v1/responses) cannot
-			// be sent directly to api.anthropic.com; route via OpenRouter if available.
 			if s.cfg.OpenRouterKey != "" {
 				p = "openrouter"
 			} else {
@@ -388,60 +377,46 @@ func (s *Server) proxyStream(w http.ResponseWriter, res *http.Response, provider
 	w.WriteHeader(res.StatusCode)
 	flusher, _ := w.(http.Flusher)
 
-	var buf bytes.Buffer
+	observed := streamUsage{provider: provider, model: model}
 	tmp := make([]byte, 4096)
 	for {
 		n, err := res.Body.Read(tmp)
 		if n > 0 {
-			_, _ = w.Write(tmp[:n])
+			observed.write(tmp[:n])
+			if _, writeErr := w.Write(tmp[:n]); writeErr != nil {
+				break
+			}
 			if flusher != nil {
 				flusher.Flush()
 			}
-			if buf.Len() < 512<<10 {
-				buf.Write(tmp[:n])
-			}
 		}
 		if err != nil {
+			if errors.Is(err, io.EOF) {
+				observed.lineEnd()
+				if cost, inTok, outTok, ok := observed.cost(); ok {
+					llmguard.RecordResponseCost(res, cost)
+					s.recordModelStats(provider, model, inTok, outTok, cost)
+					return
+				}
+			}
 			break
 		}
 	}
-	// Best-effort cost accounting from final SSE usage chunk; fall back to worst-case estimate.
-	costKnown := false
-	for _, line := range strings.Split(buf.String(), "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "" || data == "[DONE]" || !strings.Contains(data, `"usage"`) {
-			continue
-		}
-		if cost, inTok, outTok, ok := extractAndCalculateCost(provider, model, []byte(data)); ok {
-			s.guard.RecordActualCost(cost)
-			s.recordModelStats(provider, model, inTok, outTok, cost)
-			costKnown = true
-			break
-		}
-	}
-	if !costKnown {
-		est := llmguard.EstimateWorstCaseCallUSD(reqBytes, maxOut)
-		s.guard.RecordUnknownCost(est)
-		s.recordModelStats(provider, model, 0, 0, est)
-	}
+
+	estimated := llmguard.EstimateCallUSD(llmguard.CallMeta{Provider: provider, Model: model, MaxOutputTokens: maxOut}, reqBytes)
+	s.recordModelStats(provider, model, 0, 0, estimated)
 }
 
-func (s *Server) accountAndInjectCost(provider, reqModel string, respBytes []byte, reqBytes, maxOut int) []byte {
+func (s *Server) accountAndInjectCost(res *http.Response, provider, reqModel string, respBytes []byte, reqBytes, maxOut int) []byte {
 	cost, inTok, outTok, ok := extractAndCalculateCost(provider, reqModel, respBytes)
 	if !ok {
-		est := llmguard.EstimateWorstCaseCallUSD(reqBytes, maxOut)
-		s.guard.RecordUnknownCost(est)
+		est := llmguard.EstimateCallUSD(llmguard.CallMeta{Provider: provider, Model: reqModel, MaxOutputTokens: maxOut}, reqBytes)
 		s.recordModelStats(provider, reqModel, inTok, outTok, est)
 		return respBytes
 	}
-	s.guard.RecordActualCost(cost)
+	llmguard.RecordResponseCost(res, cost)
 	s.recordModelStats(provider, reqModel, inTok, outTok, cost)
 
-	// Inject usage.cost so nori-sim in gateway mode records exact calculated cost.
 	var doc map[string]any
 	if json.Unmarshal(respBytes, &doc) == nil {
 		if u, ok := doc["usage"].(map[string]any); ok {
@@ -478,15 +453,13 @@ func extractAndCalculateCost(provider, fallbackModel string, raw []byte) (cost f
 		Model string `json:"model"`
 		Tier  string `json:"service_tier"`
 		Usage *struct {
-			// Chat completions
-			PromptTokens     *int64 `json:"prompt_tokens"`
-			CompletionTokens *int64 `json:"completion_tokens"`
-			// Responses / Anthropic
-			InputTokens   *int64   `json:"input_tokens"`
-			OutputTokens  *int64   `json:"output_tokens"`
-			TotalTokens   *int64   `json:"total_tokens"`
-			Cost          *float64 `json:"cost"`
-			PromptDetails struct {
+			PromptTokens     *int64   `json:"prompt_tokens"`
+			CompletionTokens *int64   `json:"completion_tokens"`
+			InputTokens      *int64   `json:"input_tokens"`
+			OutputTokens     *int64   `json:"output_tokens"`
+			TotalTokens      *int64   `json:"total_tokens"`
+			Cost             *float64 `json:"cost"`
+			PromptDetails    struct {
 				Cached int64 `json:"cached_tokens"`
 				Write  int64 `json:"cache_write_tokens"`
 			} `json:"prompt_tokens_details"`
@@ -533,6 +506,9 @@ func extractAndCalculateCost(provider, fallbackModel string, raw []byte) (cost f
 	}
 
 	if provider == "anthropic" {
+		if inPtr == nil || outPtr == nil {
+			return 0, inTok, outTok, false
+		}
 		if c, err := usage.AnthropicCost(model, inTok, outTok, u.CacheRead, u.CacheWrite); err == nil {
 			return c, inTok + u.CacheRead + u.CacheWrite, outTok, true
 		}
@@ -553,7 +529,9 @@ func extractAndCalculateCost(provider, fallbackModel string, raw []byte) (cost f
 	if c, err := usage.LunaCostWithWrites(model, tier, inPtr, outPtr, totalPtr, cached, written); err == nil {
 		return c, inTok, outTok, true
 	}
-	// Standard GPT-4.1 / 4.1-mini tariffs (legacy fallback if overridden via SIM_*_MODEL).
+	if inPtr == nil || outPtr == nil {
+		return 0, inTok, outTok, false
+	}
 	low := strings.ToLower(model)
 	switch {
 	case strings.HasPrefix(low, "gpt-4.1-mini"):

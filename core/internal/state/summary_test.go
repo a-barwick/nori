@@ -49,7 +49,6 @@ func TestWindowAndCompactionConstants(t *testing.T) {
 func TestHistoryWindow_WidenedTurnAndByteLimits(t *testing.T) {
 	base := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
 
-	// Accepts up to RecentTurnLimit (36) turns without truncating; 37th truncates.
 	w := NewHistoryWindow()
 	for i := range RecentTurnLimit {
 		turn := ConversationTurn{
@@ -75,9 +74,8 @@ func TestHistoryWindow_WidenedTurnAndByteLimits(t *testing.T) {
 		t.Fatalf("expected turn beyond RecentTurnLimit (%d) to truncate", RecentTurnLimit)
 	}
 
-	// Accepts turns up to RecentTurnBytes (64 KiB) without truncating; next truncates.
 	bw := NewHistoryWindow()
-	chunk := strings.Repeat("a", 8<<10) // 8 KiB each -> 8 fit in 64 KiB
+	chunk := strings.Repeat("a", 8<<10)
 	for i := range 8 {
 		turn := ConversationTurn{
 			ID:        fmt.Sprintf("bturn-%d", i),

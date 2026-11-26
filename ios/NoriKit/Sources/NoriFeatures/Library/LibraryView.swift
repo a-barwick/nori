@@ -124,7 +124,6 @@ public struct LibraryView: View {
         }
     }
 
-    // MARK: - Quiet Filter Chips
 
     private var filterChipsBar: some View {
         HStack(spacing: 6) {
@@ -160,7 +159,6 @@ public struct LibraryView: View {
         .padding(.top, 2)
     }
 
-    // MARK: - Helpers
 
     private func matchesFilter(_ item: NoriCore.LibraryItem, kind: LibraryFilterKind) -> Bool {
         switch kind {

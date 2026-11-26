@@ -1,6 +1,5 @@
 import Foundation
 
-// MARK: - Raw SSE Frame & Parser
 
 public struct SSEFrame: Sendable, Hashable {
     public var id: String?
@@ -21,8 +20,6 @@ public struct SSEFrame: Sendable, Hashable {
     }
 }
 
-/// Incremental Server-Sent Events parser compliant with the W3C EventSource spec
-/// and Nori's `core/internal/api/stream.go` framing (`id:`, `event:`, `data:`, `: comment`).
 public struct SSEParser: Sendable {
     private var currentID: String?
     private var currentEvent: String?
@@ -31,8 +28,6 @@ public struct SSEParser: Sendable {
 
     public init() {}
 
-    /// Feed a single line (without trailing newline, or with optional trailing `\r`).
-    /// Returns an `SSEFrame` when a blank line dispatches a non-empty event.
     public mutating func feedLine(_ rawLine: String) -> SSEFrame? {
         let line: String
         if rawLine.hasSuffix("\r") {
@@ -45,7 +40,6 @@ public struct SSEParser: Sendable {
             return flush()
         }
 
-        // Comment / heartbeat (`: heartbeat`)
         if line.hasPrefix(":") {
             return nil
         }
@@ -83,7 +77,6 @@ public struct SSEParser: Sendable {
         return nil
     }
 
-    /// Feed an entire chunk of text (e.g. for unit tests or buffered reads).
     public mutating func feedChunk(_ chunk: String) -> [SSEFrame] {
         var frames: [SSEFrame] = []
         let normalized = chunk.replacingOccurrences(of: "\r\n", with: "\n")
@@ -114,7 +107,6 @@ public struct SSEParser: Sendable {
     }
 }
 
-// MARK: - Typed Nori SSE Events
 
 public struct PresencePayload: Sendable, Codable, Hashable {
     public var paused: Bool?

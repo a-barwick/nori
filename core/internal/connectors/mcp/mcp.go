@@ -1,11 +1,3 @@
-// Package mcp is the MCP client: user-configured MCP servers, discovery outside workflow code, stable namespaced
-// tool definitions with digests, and an adapter that invokes tools through the common Tool executor. It uses the
-// official Go SDK (github.com/modelcontextprotocol/go-sdk v1.8.0).
-//
-// Supported: Streamable HTTP with no auth or a configured bearer credential, paginated tool discovery, tool calls
-// with text and structured content, resource and prompt counts, cancellation by context. Managed stdio servers run
-// only on the local development stack until the Computer runtime hosts managed processes. OAuth sign-in to MCP
-// servers, sampling, elicitation and remote tasks are not negotiated; the server's observed state says so.
 package mcp
 
 import (
@@ -50,7 +42,6 @@ type Exposure struct {
 	Overrides map[string]string `json:"overrides,omitempty"`
 }
 
-// Editable is the contract MCPServerEditable.
 type Editable struct {
 	Name            string   `json:"name"`
 	Transport       string   `json:"transport"`
@@ -62,8 +53,6 @@ type Editable struct {
 	Exposure        Exposure `json:"exposure"`
 }
 
-// Action is the contract MCPServerAction value. set_exposure names a tool and an exposure; sign_in may carry
-// return_to; the other actions carry none of these.
 type Action struct {
 	Action   string `json:"action"`
 	Tool     string `json:"tool,omitempty"`
@@ -91,7 +80,6 @@ func (a Action) Valid() bool {
 	return false
 }
 
-// CredentialInput is the contract MCPCredentialInput. Write-only: the receipt never echoes the token.
 type CredentialInput struct {
 	RequestID string `json:"request_id"`
 	Token     string `json:"token"`
@@ -120,15 +108,13 @@ type Observed struct {
 	LastSuccessAt     *time.Time   `json:"last_success_at,omitempty"`
 	Error             *ErrorDetail `json:"error,omitempty"`
 	Diagnostics       []Diagnostic `json:"diagnostics,omitempty"`
-	// Credential says whether a configured credential is stored; the credential itself is never projected.
-	Credential string `json:"credential,omitempty"`
+	Credential        string       `json:"credential,omitempty"`
 }
 
 type Source struct {
 	Kind string `json:"kind"`
 }
 
-// Server is the contract MCPServer.
 type Server struct {
 	ID           string   `json:"id"`
 	Revision     int64    `json:"revision"`
@@ -145,12 +131,10 @@ type Server struct {
 
 type stored struct {
 	Server
-	CommandRef string `json:"command_ref,omitempty"`
-	// Tools maps each discovered tool name to its current definition key.
-	Tools map[string]string `json:"tools,omitempty"`
+	CommandRef string            `json:"command_ref,omitempty"`
+	Tools      map[string]string `json:"tools,omitempty"`
 }
 
-// Tool is the contract MCPServerTool.
 type Tool struct {
 	Name         string                   `json:"name"`
 	Title        string                   `json:"title"`
@@ -167,20 +151,15 @@ type definitionDoc struct {
 	ReadOnly   bool                  `json:"read_only_hint,omitempty"`
 }
 
-// Service is opened per user.
 type Service struct {
-	Store       state.ResourceStore
-	Credentials secret.CredentialStore
-	// LocalProcesses allows stdio servers launched as local processes, only on the local development stack.
+	Store          state.ResourceStore
+	Credentials    secret.CredentialStore
 	LocalProcesses bool
-	// Commands maps a declared command_ref to its argument vector; requests never carry a literal command.
-	Commands map[string][]string
-	Now      func() time.Time
-	Client   *http.Client
-	// RedirectURL is the OAuth callback (NORI_OAUTH_REDIRECT_URL), shared with Connections.
-	RedirectURL string
-	// OnSignedIn runs after a server's OAuth sign-in completes, so tasks waiting for it resume.
-	OnSignedIn func(ctx context.Context, serverID string)
+	Commands       map[string][]string
+	Now            func() time.Time
+	Client         *http.Client
+	RedirectURL    string
+	OnSignedIn     func(ctx context.Context, serverID string)
 
 	transportOnce sync.Once
 	transport     http.RoundTripper
@@ -345,7 +324,6 @@ func (s *Service) write(server stored, revision int64, status int) (state.Mutati
 	return state.MutationResult{Writes: []state.Resource{resource}, Receipt: state.MutationReceipt{Status: "applied", Resource: data, HTTPStatus: status}}, nil
 }
 
-// SetCredential stores a configured bearer credential for a server in the credential store. It is write-only.
 func (s *Service) SetCredential(ctx context.Context, id, token string) error {
 	if _, _, err := s.server(ctx, id); err != nil {
 		return err
@@ -376,12 +354,10 @@ func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 	return b.base.RoundTrip(clone)
 }
 
-// connect opens an MCP session for one server. Each discovery or call uses its own session.
 func (s *Service) connect(ctx context.Context, server stored) (*sdk.ClientSession, error) {
 	return s.connectWith(ctx, server, nil)
 }
 
-// connectWith opens a session; elicit, when set, answers the server's elicitation requests during the session.
 func (s *Service) connectWith(ctx context.Context, server stored, elicit func(context.Context, *sdk.ElicitRequest) (*sdk.ElicitResult, error)) (*sdk.ClientSession, error) {
 	var options *sdk.ClientOptions
 	if elicit != nil {
@@ -425,7 +401,6 @@ func (s *Service) connectWith(ctx context.Context, server stored, elicit func(co
 
 var slug = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
 
-// modelName builds a stable, provider-valid name: mcp_<server>__<tool>, shortened with a hash when too long.
 func modelName(server, tool string) string {
 	name := "mcp_" + strings.ToLower(slug.ReplaceAllString(server, "_")) + "__" + slug.ReplaceAllString(tool, "_")
 	if len(name) <= 64 {
@@ -490,8 +465,6 @@ func definitionKey(d extensions.Definition) string {
 	return "def_" + strings.TrimPrefix(d.Ref.Digest, "sha256:")[:40]
 }
 
-// Discover connects, negotiates and lists the server's tools, resources and prompts. It runs in request or
-// activity context, never in workflow code. Changed tools get new definitions; pending calls keep theirs.
 func (s *Service) Discover(ctx context.Context, id string) (Server, error) {
 	server, r, err := s.server(ctx, id)
 	if err != nil {
@@ -726,7 +699,6 @@ func (s *Service) Act(ctx context.Context, id, requestID string, expected int64,
 	return state.MutationReceipt{}, state.ErrInvalidResource
 }
 
-// Tools lists a server's discovered tools with their current exposure.
 func (s *Service) Tools(ctx context.Context, id string) ([]Tool, error) {
 	server, _, err := s.server(ctx, id)
 	if err != nil {
@@ -755,7 +727,6 @@ func (s *Service) Tools(ctx context.Context, id string) ([]Tool, error) {
 	return out, nil
 }
 
-// Inventory implements extensions.Source for enabled, connected servers.
 func (s *Service) Inventory(ctx context.Context) (extensions.Inventory, error) {
 	servers, err := s.List(ctx)
 	if err != nil {
@@ -996,7 +967,6 @@ func (a Adapter) Execute(ctx context.Context, call invoke.Call, p invoke.Prepare
 	return invoke.Result{Outcome: "confirmed", Content: content}
 }
 
-// protocolTools are Nori's read tools for a server's resources and prompts.
 func protocolTools(capabilities []string) []*sdk.Tool {
 	var out []*sdk.Tool
 	object := func(props map[string]any, required ...string) map[string]any {

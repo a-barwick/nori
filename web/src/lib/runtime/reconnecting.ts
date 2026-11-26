@@ -1,9 +1,3 @@
-/**
- * The page a browser gets when it asks for a screen while Nori's service is unreachable or busy. It says so once and
- * checks again with a growing wait (2 s, 4 s, … up to 30 s), then opens the screen a single time when the service
- * answers. The wait keeps growing across those openings (sessionStorage), so a service that flaps can't cause a
- * reload storm. It is self-contained: no app scripts, styles or fonts, which may be what is unavailable.
- */
 export function reconnectingPage(status: 429 | 503, retryAfter?: string) {
   const busy = status === 429;
   const first = Math.min(30, Math.max(2, Number(retryAfter) || 2));

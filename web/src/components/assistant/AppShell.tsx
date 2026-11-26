@@ -25,12 +25,12 @@ type NavItem = {
   match: (path: string) => boolean;
 };
 
-export function AppShell({ localMode, children }: { localMode: boolean; children: ReactNode }) {
+export function AppShell({ localMode, scope, children }: { localMode: boolean; scope: string; children: ReactNode }) {
   useAppearance();
   return (
     <Tooltip.Provider delayDuration={500}>
       <MotionConfig reducedMotion="user">
-        <AssistantProvider localMode={localMode}>
+        <AssistantProvider localMode={localMode} scope={scope}>
           <Frame>{children}</Frame>
         </AssistantProvider>
       </MotionConfig>
@@ -165,7 +165,6 @@ function Frame({ children }: { children: ReactNode }) {
   );
 }
 
-/** Skip past navigation: to the message box on Chat, otherwise to the screen's title. */
 function skipToContent() {
   const composer = [...document.querySelectorAll<HTMLElement>('main textarea[aria-label="Message Nori"]')].find(
     (element) => element.getClientRects().length > 0,
@@ -174,7 +173,6 @@ function skipToContent() {
   else focusTitle();
 }
 
-/** Focus the visible screen's title. Next can keep the previous route mounted but hidden. */
 function focusTitle() {
   const heading = [...document.querySelectorAll<HTMLElement>("main h1")].find(
     (element) => element.offsetParent !== null || element.getClientRects().length > 0,

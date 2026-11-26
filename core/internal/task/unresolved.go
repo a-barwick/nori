@@ -11,7 +11,6 @@ import (
 	"nori/internal/transcript"
 )
 
-// attachmentNote lists the files a command gives the task. Names came from the user's device, so they're quoted as data.
 func attachmentNote(attachments []state.Attachment) string {
 	if len(attachments) == 0 {
 		return ""
@@ -20,8 +19,6 @@ func attachmentNote(attachments []state.Attachment) string {
 	return prompts.Runtime("attached-files", map[string]any{"Files": string(data)})
 }
 
-// citedOutputs finds the screenshots and saved results an answer cites, whether by their ID or by the operation that
-// made them.
 func citedOutputs(ops []state.OperationRecord, evidence []string) (artifacts, results []string) {
 	for _, op := range ops {
 		for _, id := range op.ArtifactIDs {
@@ -40,13 +37,10 @@ func citedOutputs(ops []state.OperationRecord, evidence []string) (artifacts, re
 
 const failedCommandLimit = 500
 
-// failureCleared says why a failed call can't have changed anything, or "" when it might have.
 func failureCleared(_ transcript.ToolCall, _ map[string]any) string {
 	return ""
 }
 
-// clearable reports an unresolved operation that the user's answer can release. A record with no saved result stays
-// unresolved.
 func clearable(op state.OperationRecord) bool {
 	return unresolvedWrite(op) && op.Name != "request_work" && op.ResultRef != "" &&
 		(op.Outcome == "failed" || op.Outcome == "uncertain")
@@ -110,8 +104,6 @@ func (a *Activities) exitDetail(ctx context.Context, runID string, op state.Oper
 	return prompts.Runtime("command-exit", map[string]any{"Code": *result.ExitCode})
 }
 
-// clearAnswered records that the user answered a question naming these operations. A repeated delivery saves the same
-// record again.
 func (a *Activities) clearAnswered(ctx context.Context, runID string, q *state.Question) error {
 	if len(q.Clears) == 0 {
 		return nil

@@ -8,8 +8,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// InjectTrace is safe to persist with durable work. It contains only a W3C
-// traceparent, never baggage, user content, or vendor-specific tracestate.
 func InjectTrace(ctx context.Context) map[string]string {
 	if !TracingEnabled() {
 		return nil
@@ -26,8 +24,6 @@ func ExtractTrace(ctx context.Context, headers map[string]string) context.Contex
 	return propagation.TraceContext{}.Extract(ctx, propagation.MapCarrier{"traceparent": headers["traceparent"]})
 }
 
-// sentryTraceContext supports Sentry's wire header alongside W3C traceparent.
-// It intentionally does not propagate baggage or tracestate.
 type sentryTraceContext struct{}
 
 func (sentryTraceContext) Inject(ctx context.Context, carrier propagation.TextMapCarrier) {

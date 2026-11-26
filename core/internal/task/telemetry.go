@@ -19,7 +19,6 @@ func startActivity(ctx context.Context, name, kind string, run state.Run, revisi
 		attribute.String("openinference.span.kind", kind), attribute.String("session.id", observability.SessionID()),
 		attribute.String("nori.task.id", run.ID), attribute.Int64("nori.task.revision", revision),
 	}
-	// Scheduled work carries its routine and occurrence, so one occurrence's spans can be found together.
 	if o := run.Origin; o != nil {
 		for key, value := range map[string]string{"nori.automation.id": o.AutomationID, "nori.occurrence.id": o.OccurrenceID,
 			"nori.goal.id": o.GoalID, "nori.task.continues": o.ContinuesTaskID} {
@@ -43,7 +42,6 @@ func expectedBoundary(err error) bool {
 		errors.Is(err, state.ErrTaskBusy)
 }
 
-// Optional activities correlate by task without a telemetry-only DB read.
 func (a *Activities) activityRun(_ context.Context, id string) state.Run { return state.Run{ID: id} }
 
 func recordActivityFailure(ctx context.Context, err error, operation string) {

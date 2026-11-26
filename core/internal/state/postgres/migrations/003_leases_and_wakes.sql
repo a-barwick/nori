@@ -1,4 +1,3 @@
--- 1. Global inner-task discovery & wake queue (one row per active/parked task; deleted on completion)
 CREATE TABLE IF NOT EXISTS nori_task_leases (
     user_id        text        NOT NULL,
     run_id         text        NOT NULL,
@@ -20,7 +19,6 @@ CREATE INDEX IF NOT EXISTS nori_task_leases_waiting
     ON nori_task_leases (user_id, waiting_reason)
     WHERE runnable = false;
 
--- 2. Global outer-loop & delayed scheduler discovery queue (replaces SQS + O(N users) scans)
 CREATE TABLE IF NOT EXISTS nori_user_wakes (
     user_id        text        NOT NULL,
     lane           text        NOT NULL, -- 'conversation' | 'scheduler'

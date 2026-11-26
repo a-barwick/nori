@@ -143,8 +143,6 @@ func TestOuterLeaseExpiryTakeoverAndStaleFenceRejection(t *testing.T) {
 		t.Fatalf("AcceptInput: %v", err)
 	}
 
-	// Worker 0 proposes a dispatch, but pauses past the 30s conversation lease
-	// while Worker 1 steals the expired lease and finishes the turn.
 	takeoverRan := false
 	var worker1Err error
 	h.ReplyModels[0].SetScripted(func(ctx context.Context, req conversation.ReplyRequest) (conversation.Reply, error, bool) {
@@ -176,7 +174,6 @@ func TestOuterLeaseExpiryTakeoverAndStaleFenceRejection(t *testing.T) {
 		t.Fatalf("CheckOuterInvariants: %v", err)
 	}
 
-	// Stale worker 0's dispatch must NOT have been admitted.
 	open, err := rig.store.OpenTasks(ctx)
 	if err != nil {
 		t.Fatalf("OpenTasks: %v", err)
@@ -185,7 +182,6 @@ func TestOuterLeaseExpiryTakeoverAndStaleFenceRejection(t *testing.T) {
 		t.Fatalf("stale worker 0 command leaked into store: open=%+v", open)
 	}
 
-	// Exactly one assistant message should exist for the turn.
 	sess, err := h.Session(ctx)
 	if err != nil {
 		t.Fatalf("Session: %v", err)
@@ -200,8 +196,6 @@ func TestOuterLeaseExpiryTakeoverAndStaleFenceRejection(t *testing.T) {
 		t.Fatalf("expected exactly 1 assistant message, got %d", assistantCount)
 	}
 
-	// Because worker 1 recovered an interrupted requestingReply turn as an error,
-	// UserRoutingPending should be true until DrainConversation resolves it.
 	pending, err := rig.store.UserRoutingPending(ctx)
 	if err != nil {
 		t.Fatalf("UserRoutingPending: %v", err)
@@ -220,7 +214,8 @@ func TestOuterLeaseExpiryTakeoverAndStaleFenceRejection(t *testing.T) {
 
 func TestOuterLeaseRenewalPreventsTakeover(t *testing.T) {
 	silenceStdLog(t)
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	rig := newTestRig(102, rigOptions{numWorkers: 2, disableFaults: true})
 	h := rig.harness
 
@@ -235,12 +230,13 @@ func TestOuterLeaseRenewalPreventsTakeover(t *testing.T) {
 			return nil
 		}
 		renewed = true
-		// Advance past 10s lease-renew interval and explicitly tick watchLease.
+		if !h.TickLeaseWatcher(ctx, 0, false) {
+			return errors.New("expected lease watcher to start before advancing the clock")
+		}
 		rig.clock.Advance(15 * time.Second)
 		if !h.TickLeaseWatcher(ctx, 0, false) {
 			return errors.New("expected active lease watcher on worker 0")
 		}
-		// Advance another 20s: 35s total (> original 30s TTL), but only 20s since renewal!
 		rig.clock.Advance(20 * time.Second)
 		competingErr = h.ProcessWorker(ctx, 1)
 		return nil
@@ -270,9 +266,6 @@ func TestOuterMidTurnInputRestartAndFreeze(t *testing.T) {
 		t.Fatalf("AcceptInput 1: %v", err)
 	}
 
-	// Inject 4 successive mid-turn user inputs: first 3 trigger restarts (1..3),
-	// 4th arrives after the turn freezes (Restarts == MaxTurnRestarts) and must
-	// be processed as a second turn instead of restarting again.
 	injected := 0
 	h.ReplyModels[0].SetScripted(func(ctx context.Context, req conversation.ReplyRequest) (conversation.Reply, error, bool) {
 		return outer.BuildStructuredReply(fmt.Sprintf("plain reply %d", injected), nil, state.Usage{}), nil, true
@@ -285,7 +278,6 @@ func TestOuterMidTurnInputRestartAndFreeze(t *testing.T) {
 		if _, err := h.AcceptInput(ctx, fmt.Sprintf("mid-turn message %d", injected+1)); err != nil {
 			return err
 		}
-		// On the first injection, also test watchLease mid-flight cancellation!
 		if injected == 1 {
 			if !h.TickLeaseWatcher(ctx, 0, true) {
 				return errors.New("expected watchLease to cancel stale callCtx")
@@ -315,7 +307,6 @@ func TestOuterMidTurnInputRestartAndFreeze(t *testing.T) {
 			assistantMsgs = append(assistantMsgs, m)
 		}
 	}
-	// Turn 1 froze at 3 restarts covering messages 1..4; message 5 produced Turn 2.
 	if len(assistantMsgs) != 2 {
 		t.Fatalf("expected 2 assistant turns (frozen turn 1 + follow-up turn 2), got %d", len(assistantMsgs))
 	}
@@ -366,7 +357,6 @@ func TestOuterProviderErrorAndUnroutedReplay(t *testing.T) {
 		t.Fatalf("expected RoutingPending=true after error turn, got %+v", c)
 	}
 
-	// DrainConversation disables faults and resolves the unrouted input cleanly.
 	if err := h.DrainConversation(ctx); err != nil {
 		t.Fatalf("DrainConversation: %v", err)
 	}
@@ -393,13 +383,10 @@ func TestOuterCompactionFailurePauseAndRecovery(t *testing.T) {
 		summaryFaultProb:    1.0,
 	})
 	h := rig.harness
-	// Force plain replies so every turn completes cleanly in one attempt.
 	h.ReplyModels[0].SetScripted(func(ctx context.Context, req conversation.ReplyRequest) (conversation.Reply, error, bool) {
 		return outer.BuildStructuredReply("Acknowledged: "+req.TelemetryInput, nil, state.Usage{}), nil, true
 	})
 
-	// Drive SoftCompactUserTurns (16) user turns so coupled flush_and_compact triggers on turn 16.
-	// Keep summary faults disabled during earlier 3-turn decoupled extractions so faults target flush_and_compact.
 	h.SummaryModels[0].SetFaultsEnabled(false)
 	for i := range state.SoftCompactUserTurns {
 		if i == state.SoftCompactUserTurns-1 {
@@ -419,7 +406,6 @@ func TestOuterCompactionFailurePauseAndRecovery(t *testing.T) {
 		t.Fatalf("expected summary model to be called and fail at SoftCompactTurns, stats=%+v", statsAfterFail1)
 	}
 
-	// Coupled flush-before-compact invariant: FlushedThrough MUST NOT advance on failure #1.
 	sum, err := rig.store.ConversationSummary(ctx)
 	if err != nil {
 		t.Fatalf("ConversationSummary after fail 1: %v", err)
@@ -429,8 +415,6 @@ func TestOuterCompactionFailurePauseAndRecovery(t *testing.T) {
 			sum.EffectiveFlushedThrough(), sum.FlushFailures)
 	}
 
-	// Within the 2-minute first-failure backoff, idle ProcessWorker must NOT call
-	// the compaction model again.
 	rig.clock.Advance(time.Minute)
 	if err := h.ProcessWorker(ctx, 0); err != nil {
 		t.Fatalf("ProcessWorker during 2m backoff: %v", err)
@@ -439,7 +423,6 @@ func TestOuterCompactionFailurePauseAndRecovery(t *testing.T) {
 		t.Fatalf("expected 2m backoff to skip compaction call, before=%d after=%d", statsAfterFail1.Calls, got)
 	}
 
-	// Advance past the 2m backoff -> failure #2 triggers 5m backoff while FlushedThrough stays 0.
 	rig.clock.Advance(2 * time.Minute)
 	if err := h.ProcessWorker(ctx, 0); err != nil {
 		t.Fatalf("ProcessWorker fail 2: %v", err)
@@ -457,7 +440,6 @@ func TestOuterCompactionFailurePauseAndRecovery(t *testing.T) {
 			sum.EffectiveFlushedThrough(), sum.FlushFailures)
 	}
 
-	// Within the 5m second-failure backoff, idle ProcessWorker must NOT call the model again.
 	rig.clock.Advance(3 * time.Minute)
 	if err := h.ProcessWorker(ctx, 0); err != nil {
 		t.Fatalf("ProcessWorker during 5m backoff: %v", err)
@@ -466,7 +448,6 @@ func TestOuterCompactionFailurePauseAndRecovery(t *testing.T) {
 		t.Fatalf("expected 5m backoff to skip compaction call, before=%d after=%d", statsAfterFail2.Calls, got)
 	}
 
-	// Advance past the 5m backoff, disable summary faults, and recover cleanly.
 	rig.clock.Advance(3 * time.Minute)
 	h.SummaryModels[0].SetFaultsEnabled(false)
 	if err := h.ProcessWorker(ctx, 0); err != nil {
@@ -496,7 +477,6 @@ func TestOuterCancellation(t *testing.T) {
 	rig := newTestRig(106, rigOptions{numWorkers: 2, disableFaults: true})
 	h := rig.harness
 
-	// 1. Pre-acquire cancellation by head queued input ID.
 	id1, err := h.AcceptInput(ctx, "Cancel me before acquire")
 	if err != nil {
 		t.Fatalf("AcceptInput 1: %v", err)
@@ -508,7 +488,6 @@ func TestOuterCancellation(t *testing.T) {
 		t.Fatalf("CheckOuterInvariants after pre-acquire cancel: %v", err)
 	}
 
-	// 2. Mid-turn cancellation while Worker 0 is inside Respond.
 	if _, err := h.AcceptInput(ctx, "Cancel me mid-flight"); err != nil {
 		t.Fatalf("AcceptInput 2: %v", err)
 	}
@@ -589,7 +568,6 @@ func TestOuterStreamingAndStreamCancellation(t *testing.T) {
 		t.Fatalf("final streamed chunk %q != reply.Text %q", chunks[len(chunks)-1], reply.Text)
 	}
 
-	// Stream cancellation stops provider output and surfaces the stream error.
 	streamStop := errors.New("client disconnected")
 	calls := 0
 	_, err = model.Respond(ctx, conversation.ReplyRequest{
@@ -616,7 +594,6 @@ func TestOuterIntroductionAndWorkRequests(t *testing.T) {
 	rig := newTestRig(107, rigOptions{numWorkers: 2, disableFaults: true})
 	h := rig.harness
 
-	// 1. Introduction turn (NoDispatch: true).
 	if err := h.EnsureIntroduction(ctx); err != nil {
 		t.Fatalf("EnsureIntroduction: %v", err)
 	}
@@ -624,8 +601,6 @@ func TestOuterIntroductionAndWorkRequests(t *testing.T) {
 		t.Fatalf("ProcessWorker intro: %v", err)
 	}
 
-	// 2. Start a task via user turn, then publish a QuestionWork event so the
-	// outer loop receives WorkRequests and settles it.
 	h.ReplyModels[0].SetScripted(func(ctx context.Context, req conversation.ReplyRequest) (conversation.Reply, error, bool) {
 		if len(req.WorkRequests) > 0 {
 			wr := req.WorkRequests[0]
@@ -653,7 +628,6 @@ func TestOuterIntroductionAndWorkRequests(t *testing.T) {
 	}
 	parent := open[0]
 
-	// Parent incorporates its start command, then publishes a QuestionWork request into the conversation inbox.
 	if err := rig.store.Incorporate(ctx, state.IncorporateRequest{
 		RunID:    parent.ID,
 		Position: parent.Position,
@@ -726,14 +700,12 @@ func runRandomizedOuterSim(ctx context.Context, seed int64, steps int) (simSumma
 	checker, targets := newMemoryInvariantChecker(rig)
 	var out simSummary
 
-	// Optional introduction on even seeds.
 	if seed%2 == 0 {
 		if err := h.EnsureIntroduction(ctx); err != nil {
 			return out, fmt.Errorf("EnsureIntroduction: %w", err)
 		}
 	}
 
-	// Guard re-entrancy depth so mid-flight competing worker hooks don't recurse infinitely.
 	hookDepth := 0
 	h.SetOnBeforeRespond(func(ctx context.Context, ev outer.BeforeRespondEvent) error {
 		if hookDepth > 0 {
@@ -742,8 +714,6 @@ func runRandomizedOuterSim(ctx context.Context, seed int64, steps int) (simSumma
 		hookDepth++
 		defer func() { hookDepth-- }()
 
-		// 1. If the simulated slow turn expired the conversation lease, let a
-		// competing worker try to steal the lease mid-flight!
 		if ev.LeaseExpired {
 			other := (ev.WorkerIdx + 1) % len(h.Workers)
 			if rig.rng.IntN(100) < 80 {
@@ -753,15 +723,12 @@ func runRandomizedOuterSim(ctx context.Context, seed int64, steps int) (simSumma
 			}
 		}
 
-		// 2. Otherwise deterministically inject mid-flight contention / inputs / cancels.
 		roll := rig.rng.IntN(100)
 		switch {
 		case roll < 14:
-			// Competing worker attempts Process while lease is live (must see ErrConversationBusy).
 			other := (ev.WorkerIdx + 1) % len(h.Workers)
 			_ = h.ProcessWorker(ctx, other)
 		case roll < 30:
-			// Mid-turn user message triggering RestartConversation.
 			out.midTurnInputs++
 			_, _ = h.AcceptInput(ctx, fmt.Sprintf("mid-flight input depth=%d call=%d", hookDepth, ev.CallNum))
 			if rig.rng.IntN(3) == 0 {
@@ -770,13 +737,11 @@ func runRandomizedOuterSim(ctx context.Context, seed int64, steps int) (simSumma
 				}
 			}
 		case roll < 36:
-			// Mid-turn cancellation of the active turn.
 			if c, _, err := rig.store.ConversationStatus(ctx); err == nil && c.Active != "" {
 				out.midTurnCancels++
 				_ = h.Cancel(ctx, c.Active)
 			}
 		case roll < 44 && ev.SimulatedDelay >= 10*time.Second && !ev.LeaseExpired:
-			// Explicitly exercise watchLease renewal when clock crossed 10s.
 			h.TickLeaseWatcher(ctx, ev.WorkerIdx, false)
 		}
 		return nil
@@ -787,13 +752,11 @@ func runRandomizedOuterSim(ctx context.Context, seed int64, steps int) (simSumma
 		roll := rig.rng.IntN(100)
 		switch {
 		case roll < 34:
-			// Accept a new user message.
 			text := fmt.Sprintf("step %d request #%d", step, rig.rng.IntN(1000))
 			if _, err := h.AcceptInput(ctx, text); err != nil {
 				return out, fmt.Errorf("step %d AcceptInput: %w", step, err)
 			}
 		case roll < 76:
-			// Run a randomly selected competing worker.
 			workerIdx := rig.rng.IntN(len(h.Workers))
 			err := h.ProcessWorker(ctx, workerIdx)
 			if err != nil &&
@@ -802,7 +765,6 @@ func runRandomizedOuterSim(ctx context.Context, seed int64, steps int) (simSumma
 				return out, fmt.Errorf("step %d ProcessWorker(%d): %w", step, workerIdx, err)
 			}
 		case roll < 84:
-			// Advance virtual time (exercises lease expiry, 2m fast flush, 5m idle extract, and 10m compaction pause).
 			switch rig.rng.IntN(4) {
 			case 0:
 				rig.clock.Advance(21 * time.Minute)
@@ -812,19 +774,16 @@ func runRandomizedOuterSim(ctx context.Context, seed int64, steps int) (simSumma
 				rig.clock.Advance(time.Duration(1+rig.rng.IntN(40)) * time.Second)
 			}
 		case roll < 90:
-			// Idempotent replay or conflict check on a previously accepted input.
 			accepted := h.AcceptedInputs()
 			if len(accepted) > 0 {
 				id := accepted[rig.rng.IntN(len(accepted))]
 				if rig.rng.IntN(2) == 0 {
-					// Conflict test with different text must return ErrConversationConflict.
 					if err := h.AcceptInputWithID(ctx, id, "conflicting text payload"); err != nil && !errors.Is(err, state.ErrConversationConflict) {
 						return out, fmt.Errorf("step %d conflict check: %w", step, err)
 					}
 				}
 			}
 		case roll < 96:
-			// Cancel active turn or a queued head input if present.
 			c, _, err := rig.store.ConversationStatus(ctx)
 			if err != nil {
 				return out, fmt.Errorf("step %d ConversationStatus: %w", step, err)
@@ -835,7 +794,6 @@ func runRandomizedOuterSim(ctx context.Context, seed int64, steps int) (simSumma
 				_ = h.Cancel(ctx, accepted[len(accepted)-1])
 			}
 		default:
-			// Snapshot read check.
 			if _, err := h.Session(ctx); err != nil {
 				return out, fmt.Errorf("step %d Session: %w", step, err)
 			}
@@ -849,7 +807,6 @@ func runRandomizedOuterSim(ctx context.Context, seed int64, steps int) (simSumma
 		}
 	}
 
-	// Advance clock past any compaction pause so drain can also finish pending compaction cleanly.
 	rig.clock.Advance(11 * time.Minute)
 	if err := h.DrainConversation(ctx); err != nil {
 		return out, fmt.Errorf("DrainConversation: %w", err)
@@ -1041,7 +998,6 @@ func TestOuterNoGoroutineLeaks(t *testing.T) {
 	silenceStdLog(t)
 	ctx := context.Background()
 
-	// Warm up once so any package-level background goroutines are already counted.
 	if _, err := runRandomizedOuterSim(ctx, 77, 25); err != nil {
 		t.Fatalf("warmup sim failed: %v", err)
 	}
@@ -1056,7 +1012,6 @@ func TestOuterNoGoroutineLeaks(t *testing.T) {
 		}
 	}
 
-	// Allow any already-cancelled compact.go watcher goroutine to finish its exit path.
 	deadline := time.Now().Add(time.Second)
 	for runtime.NumGoroutine() > before+1 && time.Now().Before(deadline) {
 		runtime.Gosched()

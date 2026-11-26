@@ -12,10 +12,6 @@ import (
 
 var fieldName = regexp.MustCompile(`^[A-Za-z_][A-Za-z_0-9]*(\.[A-Za-z_][A-Za-z_0-9]*)*$`)
 
-// indexedColumns maps hot JSONB fields to their STORED generated columns on nori_records
-// (migration 004). Indexing generated columns instead of data expressions keeps data out of
-// Postgres's HOT-blocking column bitmap so non-indexed JSONB updates execute as HOT updates
-// without touching nori_records_pkey or triggering false leaf-page SIREAD 40001 conflicts.
 var indexedColumns = map[string]string{
 	"seq":                 "idx_seq",
 	"created_at":          "idx_created_at",

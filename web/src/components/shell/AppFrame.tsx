@@ -3,10 +3,6 @@ import Link from "next/link";
 import { NoriMark } from "@/components/mark/NoriMark";
 import type { MarkState } from "@/lib/types";
 
-/**
- * Full-bleed shell with Concept C's calm 60px top bar:
- * Nori mark + wordmark on the left, centered 3-pillar pill switcher, and clean right whitespace.
- */
 export function AppFrame({
   children,
   nav,

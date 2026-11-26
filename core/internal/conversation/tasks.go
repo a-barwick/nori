@@ -14,8 +14,7 @@ import (
 
 type Tasks struct {
 	Store state.ConversationStore
-	// Now returns the current time for command batch spans. Nil uses time.Now.
-	Now func() time.Time
+	Now   func() time.Time
 }
 
 func (t *Tasks) now() time.Time {

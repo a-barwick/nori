@@ -1,15 +1,3 @@
-// Command contracts-check validates the assistant contract fixtures in
-// contracts/assistant against their JSON Schema 2020-12 definitions.
-//
-// It is the shared compatibility check for the Nori assistant contracts:
-// every fixture in fixtures/index.json must validate (or fail) as declared,
-// every schema must compile, and every $defs entry should have at least one
-// fixture. A valid fixture whose schema has a Go type in api.ContractTypes is also decoded into that type with unknown
-// fields disallowed, re-encoded and validated again. Run it from anywhere in the repository:
-//
-//	go run ./cmd/contracts-check            # from core/
-//	go run ./cmd/contracts-check -root ../contracts/assistant -strict
-//	go run ./cmd/contracts-check -live http://127.0.0.1:8083   # also run scenarios against a core
 package main
 
 import (
@@ -27,9 +15,6 @@ import (
 	"nori/internal/api"
 )
 
-// schemaHost is the $id authority every schema in contracts/assistant uses.
-// Relative $ref values resolve against it, so the loader maps it to the
-// schemas directory instead of fetching anything over the network.
 const schemaHost = "contracts.nori.local"
 
 type index struct {
@@ -93,7 +78,7 @@ func main() {
 	compiler.UseLoader(dirLoader{dir: schemasDir})
 
 	failures := 0
-	defs := map[string]bool{} // "file.schema.json#/$defs/Name" -> covered
+	defs := map[string]bool{}
 	files, _ := filepath.Glob(filepath.Join(schemasDir, "*.schema.json"))
 	sort.Strings(files)
 	for _, f := range files {
@@ -142,8 +127,6 @@ func main() {
 			failures++
 			fmt.Printf("FAIL %s: expected invalid against %s but validated\n", fx.File, fx.Schema)
 		case fx.Valid:
-			// The Go type the server reads or writes for this schema must take the fixture without dropping or
-			// inventing fields: decode with unknown fields disallowed, re-encode, and validate the result again.
 			if _, registered := api.ContractTypes[fx.Schema]; !registered {
 				break
 			}

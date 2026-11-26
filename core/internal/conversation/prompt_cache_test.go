@@ -10,8 +10,6 @@ import (
 	"nori/internal/usage"
 )
 
-// The reply schema is part of the cached prompt prefix, so a direct reply call's schema must not change with the
-// conversation's tasks or memories.
 func TestStableReplySchemaIgnoresIDs(t *testing.T) {
 	a, _ := json.Marshal(responseFormat(nil, nil, nil, false, false, true))
 	b, _ := json.Marshal(responseFormat([]string{"run-1", "run-2"}, nil, []string{"mem-1"}, false, false, true))
@@ -26,7 +24,6 @@ func TestStableReplySchemaIgnoresIDs(t *testing.T) {
 	if strings.Contains(string(b), "run-1") || strings.Contains(string(b), "mem-1") {
 		t.Fatal("stable schema leaked a per-turn ID")
 	}
-	// Command-plan and work-request turns keep their enum-restricted schemas.
 	plan, _ := json.Marshal(responseFormat(nil, nil, []string{"mem-1"}, true, false, true))
 	if !strings.Contains(string(plan), "mem-1") {
 		t.Fatal("command-plan schema lost its memory ID enum")
@@ -103,11 +100,9 @@ func TestBuildMessagesBreakpoints(t *testing.T) {
 	}
 	view := historyView{Turns: []state.ConversationTurn{turn("a"), turn("b"), turn("c")}}
 	msgs, bps := buildMessages(&state.ConversationTurn{}, nil, view, "")
-	// system(0), a(1,2) b(3,4) c(5,6), memory(7): breakpoints at 0, 4, 6 (no wasted BP3 on volatile memory block).
 	if want := []int{0, 4, 6}; !reflect.DeepEqual(bps, want) {
 		t.Fatalf("breakpoints = %v, want %v (messages=%d)", bps, want, len(msgs))
 	}
-	// Memory mutation must not change the cached history prefix or its breakpoints.
 	viewWithMem := view
 	viewWithMem.Memories = []state.Memory{{ID: "mem-1", Text: "User prefers concise replies"}}
 	msgsMem, bpsMem := buildMessages(&state.ConversationTurn{}, nil, viewWithMem, "")
@@ -119,7 +114,6 @@ func TestBuildMessagesBreakpoints(t *testing.T) {
 			t.Fatalf("memory mutation altered history prefix at index %d", i)
 		}
 	}
-	// Next turn: this turn's newest history end (6) is the next request's second-to-last turn end.
 	view.Turns = append(view.Turns, turn("d"))
 	_, next := buildMessages(&state.ConversationTurn{}, nil, view, "")
 	if next[1] != bps[2] {
@@ -129,7 +123,6 @@ func TestBuildMessagesBreakpoints(t *testing.T) {
 
 func TestSolCostWithWrites(t *testing.T) {
 	i := func(v int64) *int64 { return &v }
-	// 10k input: 6k read from cache, 3k written, 1k ordinary; 100 output.
 	got, err := usage.SolCostWithWrites("gpt-6.1-sol", "default", i(10_000), i(100), i(10_100), 6_000, 3_000)
 	if err != nil {
 		t.Fatal(err)

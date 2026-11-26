@@ -1,5 +1,3 @@
-// Simulated data for each step on the request page. Endpoints and field names follow the code.
-// Values are invented, and "…" marks a shortened value or fields left out to keep the example readable.
 const INPUT = '3f6c1e94-8a27-4d0b-9c35-71be20d4a6f1';
 const REPORT = 'a41d7c02-5e3b-4f68-b2c9-0d8e6f13a975';
 const TIME = '2026-10-31T16:04:12Z';
@@ -7,7 +5,7 @@ const MESSAGE = 'Pull the latest Q3 revenue summary. Also draft a launch brief.'
 const REQUEST = 'Pull the latest Q3 revenue summary.';
 
 window.REQUEST_FLOW = [
-  [ // 1. The user sends a message
+  [
     { from: 'Host app / client', to: 'Go service', edge: 'user-service', call: 'POST /v1/conversations/assistant/messages', source: 'core/internal/api/chat.go',
       request: { id: INPUT, text: MESSAGE },
       response: { status: 202, body: { turnId: INPUT, conversation: { id: 'assistant', mode: 'assistant', position: 41 } } },
@@ -18,7 +16,7 @@ window.REQUEST_FLOW = [
       request: { lane: 'conversation', user_id: 'usr_…', wake_at: TIME },
       note: 'The wake row commits in the same transaction as the input and emits a lightweight NOTIFY nori_wake hint carrying no message content or credentials.' },
   ],
-  [ // 2. An outer turn claims the batch
+  [
     { from: 'Worker pool', to: 'Go service', edge: 'wake-service', call: 'ClaimUserWake -> Process', source: 'core/internal/worker/pool.go',
       request: { lane: 'conversation', lease_seconds: 30 }, response: { status: 200, body: { processed: true } },
       other: ['If another worker holds the conversation lease, the wake backs off and retries after lease expiry or the next poll'] },
@@ -26,7 +24,7 @@ window.REQUEST_FLOW = [
       saved: { received: 12, consumed: 11, active: 'turn-…', owner: 'process-…', fence: 37, lease_until: '2026-10-31T16:04:42Z' },
       note: 'Only the current fence can write, so a stale turn can\'t publish anything.' },
   ],
-  [ // 3. Jev classifies and the model decides
+  [
     { from: 'Go service', to: 'Postgres', edge: 'service-postgres', call: 'model_usage/{id}', source: 'core/internal/state/state.go',
       saved: { id: 'c90e…', input_id: INPUT, provider: 'outer', model: 'gpt-6.1-sol', cost_status: 'unknown', request_status: 'pending', created_at: TIME },
       note: 'Written before the call. If the call is rejected or the process dies, the row still shows it was attempted.' },
@@ -39,7 +37,7 @@ window.REQUEST_FLOW = [
         usage: { prompt_tokens: 2104, completion_tokens: 88, total_tokens: 2192, prompt_tokens_details: { cached_tokens: 0 } } },
       note: 'A second call with user messages and task IDs only verifies independent dispatches and steers. Direct OpenAI tariffs price cached input tokens at 1/20th of uncached input.' },
   ],
-  [ // 4. Commands are validated together, then accepted
+  [
     { from: 'Go service', to: 'Postgres', edge: 'service-postgres', call: 'task_commands/{id}', source: 'core/internal/state/records/commands.go',
       saved: { id: REPORT, run_id: REPORT, kind: 'start', text: REQUEST, position: 1, revision: 1, delivered: false, source_input_ids: [INPUT], created_at: TIME },
       note: 'The start command\'s ID is also the task ID. There\'s one of these per dispatch.' },
@@ -50,7 +48,7 @@ window.REQUEST_FLOW = [
       response: { status: 200, body: { seq: 42, kind: 'message', messages: [{ id: '…', role: 'assistant', text: "On it. I've started both.", parts: [{ type: 'text', text: "On it. I've started both." }], createdAt: TIME }] } },
       note: 'The SSE stream delivers committed changes to the client. Resume with ?after=N or Last-Event-ID.' },
   ],
-  [ // 5. The worker pool claims each task lease
+  [
     { from: 'Go service', to: 'Postgres', edge: 'service-pool', call: 'nori_task_leases + NOTIFY nori_wake', source: 'core/internal/state/postgres/leases.go',
       saved: { user_id: 'usr_…', run_id: REPORT, runnable: true, lease_until: TIME },
       note: 'Written in the same Postgres transaction as the start command and run record, eliminating any cross-service relay gap.' },
@@ -58,7 +56,7 @@ window.REQUEST_FLOW = [
       saved: { run_id: REPORT, owner: 'worker-…', fence: 1, lease_until: '2026-10-31T16:04:42Z' },
       note: 'worker.Pool acquires a 30-second fenced lease on TaskControl and launches task.Runner.' },
   ],
-  [ // 6. Inner loops work, wait and finish
+  [
     { from: 'Worker', to: 'Responses API', edge: 'inner-models', call: 'POST /v1/responses', source: 'core/internal/agent/responses/responses.go',
       request: { model: 'gpt-6.1-terra', instructions: '…', input: [{ role: 'user', content: REQUEST }], max_output_tokens: 8192, store: false, tools: ['web_search', 'mcp__reporting__list_reports', 'complete', 'request_input', '…'] },
       response: { status: 'completed', output: [{ type: 'function_call', call_id: 'call_3', name: 'mcp__reporting__list_reports', arguments: '{"quarter":"Q3"}' }], usage: { input_tokens: 412, output_tokens: 36, total_tokens: 448, input_tokens_details: { cached_tokens: 0 } } },
@@ -71,7 +69,7 @@ window.REQUEST_FLOW = [
       saved: { id: REPORT, status: 'running', revision: 1, incorporated: 1, spent_usd: 0.0006, budget_usd: 1, events: ['…'] },
       note: 'Authoritative checkpoint and live spend live in TaskControl and runs/{id} in Postgres.' },
   ],
-  [ // 7. The result comes back as a conversation event
+  [
     { from: 'Worker', to: 'Postgres', edge: 'inner-postgres', call: 'conversation_inputs/event-{id}', source: 'core/internal/state/records/commands.go',
       saved: { id: `event-${REPORT}-terminal`, position: 13, created_at: TIME, event: { id: `${REPORT}-terminal`, run_id: REPORT, kind: 'result', sequence: 1, instruction_revision: 1, text: 'Q3 revenue is up 14% year over year across three regions.', created_at: TIME } },
       note: 'Saved in the same transaction as the task\'s final state. Other kinds are needs_input, failure and stopped.' },

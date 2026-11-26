@@ -20,30 +20,24 @@ type docKey struct {
 	id         string
 }
 
-// Option configures a new Backend.
 type Option func(*Backend)
 
-// WithFaultInjector attaches an existing FaultInjector to the Backend.
 func WithFaultInjector(inj *FaultInjector) Option {
 	return func(b *Backend) {
 		b.faults = inj
 	}
 }
 
-// WithFaults configures fault injection on the Backend using cfg and rng.
 func WithFaults(cfg FaultConfig, rng Float64Source) Option {
 	return func(b *Backend) {
 		b.faults = NewFaultInjector(cfg, rng)
 	}
 }
 
-// Backend is a deterministic, in-memory implementation of docstore.Backend,
-// docstore.Sequencer, docstore.SequenceReader, docstore.LeaseStore, and
-// docstore.WakeListener with exact parity with state/postgres.
 type Backend struct {
 	mu             sync.Mutex
-	docs           map[string]map[string][]byte // collection -> id -> canonical JSON bytes
-	seqs           map[string]int64             // path -> latest allocated sequence
+	docs           map[string]map[string][]byte
+	seqs           map[string]int64
 	taskLeases     map[docstore.TaskKey]docstore.TaskLease
 	userWakes      map[userWakeKey]docstore.UserWake
 	memoryChunks   map[memoryChunkKey]docstore.MemoryChunk
@@ -66,8 +60,6 @@ var (
 	_ docstore.WakeListener     = (*Backend)(nil)
 )
 
-// New creates a fresh in-memory Backend seeded with the default system/control
-// document ({"paused":false}) matching Postgres migration 001_records.sql.
 func New(opts ...Option) *Backend {
 	b := &Backend{
 		docs: map[string]map[string][]byte{
@@ -91,7 +83,6 @@ func New(opts ...Option) *Backend {
 	return b
 }
 
-// SetFaults configures or replaces fault injection on this Backend.
 func (b *Backend) SetFaults(cfg FaultConfig, rng Float64Source) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -102,7 +93,6 @@ func (b *Backend) SetFaults(cfg FaultConfig, rng Float64Source) {
 	b.faults.Configure(cfg, rng)
 }
 
-// SetFaultsEnabled toggles fault injection on or off without losing config or stats.
 func (b *Backend) SetFaultsEnabled(enabled bool) {
 	b.mu.Lock()
 	inj := b.faults
@@ -112,7 +102,6 @@ func (b *Backend) SetFaultsEnabled(enabled bool) {
 	}
 }
 
-// FaultStats returns injected fault counters for this Backend.
 func (b *Backend) FaultStats() FaultStats {
 	b.mu.Lock()
 	inj := b.faults
@@ -178,7 +167,6 @@ func (b *Backend) notifyChan() <-chan struct{} {
 	return ch
 }
 
-// Get retrieves a single document by full path ("<collection>/<id>").
 func (b *Backend) Get(ctx context.Context, path string) (docstore.Record, error) {
 	if err := ctx.Err(); err != nil {
 		return docstore.Record{}, err
@@ -203,7 +191,6 @@ func (b *Backend) Get(ctx context.Context, path string) (docstore.Record, error)
 	return docstore.Record{Path: path, Fields: data}, nil
 }
 
-// Query executes a QuerySpec over a consistent point-in-time view of the collection.
 func (b *Backend) Query(ctx context.Context, s docstore.QuerySpec) ([]docstore.Record, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -217,7 +204,6 @@ func (b *Backend) Query(ctx context.Context, s docstore.QuerySpec) ([]docstore.R
 	return executeQuery(colDocs, s)
 }
 
-// CurrentSequence returns the latest allocated sequence number for path, or 0 if unset.
 func (b *Backend) CurrentSequence(ctx context.Context, path string) (int64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
@@ -231,7 +217,6 @@ func (b *Backend) CurrentSequence(ctx context.Context, path string) (int64, erro
 	return seq, nil
 }
 
-// NextSequence allocates count consecutive 1-based sequence numbers atomically.
 func (b *Backend) NextSequence(ctx context.Context, path string, count int) (int64, error) {
 	if count <= 0 {
 		return 0, ctx.Err()
@@ -248,14 +233,12 @@ func (b *Backend) NextSequence(ctx context.Context, path string, count int) (int
 	return start, err
 }
 
-// Apply executes a single document mutation inside an atomic transaction.
 func (b *Backend) Apply(ctx context.Context, m docstore.Mutation) error {
 	return b.RunTransaction(ctx, false, defaultTxAttempts, func(tx docstore.TransactionBackend) error {
 		return tx.Apply(ctx, m)
 	})
 }
 
-// DeleteBatch atomically deletes all specified document paths.
 func (b *Backend) DeleteBatch(ctx context.Context, paths []string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -300,9 +283,6 @@ func (b *Backend) DeleteBatch(ctx context.Context, paths []string) error {
 	return nil
 }
 
-// RunTransaction executes f under serializable snapshot isolation, retrying on
-// serializable conflicts up to attempts times. Mutations and NextSequence
-// allocations are rolled back atomically if f returns an error or commit aborts.
 func (b *Backend) RunTransaction(ctx context.Context, readOnly bool, attempts int, f func(docstore.TransactionBackend) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -339,9 +319,6 @@ func (b *Backend) RunTransaction(ctx context.Context, readOnly bool, attempts in
 	return lastErr
 }
 
-// Watch delivers ordered batches of matching records whenever state changes,
-// advancing any "seq > ..." filter automatically (matching state/postgres) and
-// stopping cleanly when ctx is canceled or deliver returns an error.
 func (b *Backend) Watch(ctx context.Context, s docstore.QuerySpec, deliver func([]docstore.Record) error) error {
 	s.Filters = slices.Clone(s.Filters)
 	s.Count = 200
@@ -349,7 +326,6 @@ func (b *Backend) Watch(ctx context.Context, s docstore.QuerySpec, deliver func(
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		// Subscribe before querying so commits racing with Query never miss a wakeup.
 		ch := b.notifyChan()
 		rows, err := b.Query(ctx, s)
 		if err != nil {
@@ -385,10 +361,10 @@ type transaction struct {
 	snapChunks      map[memoryChunkKey]docstore.MemoryChunk
 	readDocs        map[docKey]bool
 	readCollections map[string]bool
-	writes          map[docKey][]byte // nil value means delete
+	writes          map[docKey][]byte
 	seqDeltas       map[string]int64
 	wakeOps         []stagedWakeOp
-	chunkWrites     map[memoryChunkKey]*docstore.MemoryChunk // nil value means delete
+	chunkWrites     map[memoryChunkKey]*docstore.MemoryChunk
 }
 
 var (
@@ -432,7 +408,6 @@ func (b *Backend) commitTx(tx *transaction) error {
 	mutated := len(tx.writes) > 0 || len(tx.seqDeltas) > 0 || len(tx.wakeOps) > 0 || len(tx.chunkWrites) > 0
 
 	b.mu.Lock()
-	// Serializable conflict validation against live committed state.
 	for k := range tx.readDocs {
 		snapVal, snapOK := lookupRaw(tx.snapDocs, k)
 		currVal, currOK := lookupRaw(b.docs, k)
@@ -476,7 +451,6 @@ func (b *Backend) commitTx(tx *transaction) error {
 		return err
 	}
 
-	// Apply writes, sequence increments, memory chunk updates, and staged wake operations atomically.
 	for k, raw := range tx.writes {
 		if raw == nil {
 			if colMap, ok := b.docs[k.collection]; ok {
@@ -515,7 +489,6 @@ func (b *Backend) commitTx(tx *transaction) error {
 	}
 	b.mu.Unlock()
 
-	// Emit buffered post-commit wake events ONLY AFTER releasing b.mu.
 	if len(wakeEvents) > 0 {
 		b.emitWakeEvents(wakeEvents)
 	}

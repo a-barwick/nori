@@ -26,8 +26,6 @@ const (
 	legacySummaryToolName   = "save_summary"
 )
 
-// slimCoreMemory strips verbose SourceText and timestamps from maintenance prompts
-// (compaction, extraction, AutoDream), saving ~60% of core_memories input bytes.
 type slimCoreMemory struct {
 	ID            string                 `json:"id"`
 	Text          string                 `json:"text"`
@@ -65,7 +63,6 @@ func projectMaintenanceMemories(memories []state.Memory, includeSourceID bool) [
 	return out
 }
 
-// extractOnlyTool omits summary_items/gist for session-idle extraction calls.
 var extractOnlyTool = transcript.Tool{
 	Name:        flushAndCompactToolName,
 	Description: prompts.Runtime("flush-and-compact", nil),
@@ -79,8 +76,6 @@ var extractOnlyTool = transcript.Tool{
 	},
 }
 
-// summaryOnlyTool omits core_upserts/daily_log_entries when all turns in a flush batch
-// were already extracted during idle extraction.
 var summaryOnlyTool = transcript.Tool{
 	Name:        flushAndCompactToolName,
 	Description: prompts.Runtime("flush-and-compact", nil),
@@ -94,9 +89,6 @@ var summaryOnlyTool = transcript.Tool{
 	},
 }
 
-// flushAndCompactTool asks the compaction model to perform pre-compaction memory
-// extraction (Core upserts + Daily Log notes) and Working Memory summarization
-// in a single pass. The runtime verifies every citation before committing.
 var flushAndCompactTool = transcript.Tool{
 	Name:        flushAndCompactToolName,
 	Description: prompts.Runtime("flush-and-compact", nil),
@@ -152,8 +144,6 @@ var flushAndCompactTool = transcript.Tool{
 	},
 }
 
-// SummaryModel writes the coupled pre-compaction flush/summary and AutoDream consolidations.
-// The runtime uses the inner task model for it.
 type SummaryModel interface {
 	Name() string
 	Respond(ctx context.Context, req agent.Request) (agent.Response, error)
@@ -190,7 +180,6 @@ func (r *Runner) localDate(ctx context.Context, t time.Time) string {
 	return t.In(r.userLocation(ctx)).Format("2006-01-02")
 }
 
-// Older records can carry an operator-set context cutoff. Respect it when replaying history.
 func (r *Runner) contextStart(ctx context.Context) (time.Time, error) {
 	control, _, err := r.tasks.Store.ConversationStatus(ctx)
 	if err != nil {
@@ -199,10 +188,6 @@ func (r *Runner) contextStart(ctx context.Context) (time.Time, error) {
 	return control.ContextFrom, nil
 }
 
-// compact runs out-of-band coupled pre-compaction flush + compaction, or
-// session-idle memory extraction, when no user message is waiting. Arriving
-// user input cancels the in-flight model call immediately without advancing
-// FlushedThrough or ExtractedThrough.
 func (r *Runner) compact(ctx context.Context) {
 	if r.summarizer == nil {
 		return
@@ -265,10 +250,6 @@ func isUserTurn(t state.ConversationTurn) bool {
 	return slices.ContainsFunc(t.Inputs, state.ConversationInput.IsUser)
 }
 
-// verbatimKeepCount returns how many newest completed turns to keep verbatim so
-// at least CompactKeep total turns AND CompactKeepUserTurns user turns survive
-// compaction (bounded by RecentTurnLimit, RecentTurnBytes, and optional byteLimit).
-// When stopAtThrough is non-zero (catch-up), turns at or before stopAtThrough are never kept.
 func verbatimKeepCount(newestFirst []state.ConversationTurn, stopAtThrough time.Time, byteLimit int) int {
 	windowCap := min(len(newestFirst), state.RecentTurnLimit)
 	targetUserTurns := 0
@@ -309,10 +290,6 @@ func verbatimKeepCount(newestFirst []state.ConversationTurn, stopAtThrough time.
 	return keep
 }
 
-// planFlush evaluates whether completed turns after EffectiveFlushedThrough()
-// need coupled pre-compaction flushing now (threshold pressure or hot-window catch-up).
-// Compaction never triggers on idle time alone. Shared by NextConversationWake and
-// flushAndCompact so both agree exactly.
 func (r *Runner) planFlush(
 	ctx context.Context,
 	control state.ConversationControl,
@@ -373,8 +350,6 @@ func (r *Runner) planFlush(
 		plan.latestTurnAt = completed[0].StartedAt
 	}
 
-	// Keep the newest turns verbatim (at least CompactKeep total AND CompactKeepUserTurns user turns,
-	// bounded by RecentTurnBytes) unless they have already moved past Through.
 	var stopAtThrough time.Time
 	if plan.catchUp {
 		stopAtThrough = plan.base.Through
@@ -482,7 +457,7 @@ type flushModelOutput struct {
 	CoreUpserts     []flushCoreUpsertCandidate `json:"core_upserts"`
 	DailyLogEntries []flushLogEntryCandidate   `json:"daily_log_entries"`
 	SummaryItems    []state.SummaryItem        `json:"summary_items"`
-	Items           []state.SummaryItem        `json:"items"` // legacy save_summary fallback
+	Items           []state.SummaryItem        `json:"items"`
 	Gist            string                     `json:"gist"`
 }
 
@@ -504,7 +479,6 @@ func (r *Runner) flushAndCompact(ctx context.Context) error {
 		return err
 	}
 
-	// Zero-turn catch-up: only non-completed turns fell inside (FlushedThrough, Through].
 	if len(plan.batch) == 0 {
 		nowUTC := r.now().UTC()
 		next := plan.base
@@ -536,11 +510,6 @@ func (r *Runner) flushAndCompact(ctx context.Context) error {
 	}
 	state.SortCoreMemories(coreMemories)
 
-	// Build verified source maps and rendered prompt payload from the batch.
-	// summarySources spans every turn in plan.batch (plus previous summary items)
-	// so Working Memory summarizes already-extracted turns leaving the recent window,
-	// whereas batchUsers/batchUserTimes/batchRuns include ONLY unextracted turns
-	// (StartedAt > effectiveExtracted) to guarantee zero double-extraction.
 	effectiveExtracted := plan.effectiveExtracted
 	summarySources := map[string]string{}
 	for _, item := range plan.base.Items {
@@ -595,7 +564,6 @@ func (r *Runner) flushAndCompact(ctx context.Context) error {
 	output, callErr := r.callFlushAndCompactWithTool(modelCtx, string(promptBytes), tool)
 	if callErr != nil {
 		if ctx.Err() != nil {
-			// Preempted by arriving user input or shutdown: leave FlushedThrough untouched.
 			return ctx.Err()
 		}
 		return r.handleFlushFailure(ctx, plan, callErr)
@@ -634,9 +602,6 @@ func (r *Runner) handleFlushFailure(ctx context.Context, plan flushPlan, callErr
 	now := r.now()
 	nowUTC := now.UTC()
 	failures := 1
-	// Increment retries whenever the watermark (flushedThrough) has not advanced
-	// past the previous failure, so newly arriving turns cannot reset the 3-strike
-	// fallback into an infinite loop.
 	if plan.base.FlushFailures > 0 && !plan.base.LastFailureThrough.IsZero() && !plan.flushedThrough.After(plan.base.LastFailureThrough) {
 		failures = plan.base.FlushFailures + 1
 	}
@@ -654,8 +619,6 @@ func (r *Runner) handleFlushFailure(ctx context.Context, plan flushPlan, callErr
 		return callErr
 	}
 
-	// 3-strike poison-pill fallback: commit a lossless extractive flush of raw
-	// unextracted user messages into Daily Logs before advancing FlushedThrough.
 	slog.WarnContext(ctx, "flush_and_compact reached max retries; committing lossless extractive fallback",
 		"failures", failures, "batch_through", plan.batchThrough, "err", callErr)
 	fallbackEntries := extractiveFallbackEntries(unextractedTurns(plan.batch, plan.effectiveExtracted), nowUTC)
@@ -705,7 +668,6 @@ func (r *Runner) commitFlushWithRebase(
 		if attempt >= maxRebaseAttempts {
 			return err
 		}
-		// Check whether a user message arrived or another replica already advanced FlushedThrough.
 		control, _, statusErr := r.tasks.Store.ConversationStatus(ctx)
 		if statusErr != nil || control.Pending() || control.Active != "" || !control.ContextFrom.Equal(plan.from) {
 			return state.ErrConversationStale
@@ -1001,10 +963,6 @@ func splitUTF8Chunks(s string, maxBytes int) []string {
 	return chunks
 }
 
-// advanceHotWindow keeps the live reply path fast (< OuterInputBytes) during high-rate
-// bursts by advancing summary.Through and staging lossless ConversationExcerpts for
-// (FlushedThrough, Through], while leaving FlushedThrough UNCHANGED so out-of-band
-// flushAndCompact catches up later.
 func (r *Runner) advanceHotWindow(ctx context.Context) error {
 	from, err := r.contextStart(ctx)
 	if err != nil {
@@ -1120,17 +1078,11 @@ func maxTime(a, b time.Time) time.Time {
 	return b
 }
 
-func (r *Runner) callFlushAndCompact(ctx context.Context, prompt string) (flushModelOutput, error) {
-	return r.callFlushAndCompactWithTool(ctx, prompt, flushAndCompactTool)
-}
-
 func (r *Runner) callFlushAndCompactWithTool(ctx context.Context, prompt string, tool transcript.Tool) (flushModelOutput, error) {
 	ctx = usage.WithScope(ctx, "compaction", "compaction")
 	if r.Now != nil || r.NewID != nil {
 		ctx = usage.WithSession(ctx, usage.Session{Now: r.Now, NewID: r.NewID})
 	}
-	// Use low reasoning effort and single-turn mode for structured extraction/compaction
-	// to cut output/reasoning token spend and latency while preserving schema fidelity.
 	response, err := r.summarizer.Respond(ctx, agent.Request{
 		Instructions:    prompts.Compaction,
 		Tools:           []transcript.Tool{tool},

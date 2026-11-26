@@ -36,10 +36,6 @@ func TestBackendConformance_Memstore(t *testing.T) {
 	runRecordsMemoryConformanceSuite(t, b, b, "mem")
 }
 
-// isolatedPostgresConformanceURL provisions an ephemeral database (or schema fallback when
-// CREATEDB is unavailable) so TestBackendConformance_Postgres never collides with parallel
-// state/postgres tests (ClaimTask, ClaimUserWake, global WakeWaitingTasks, QueueMetrics,
-// or pg_stat_activity LISTEN assertions).
 func isolatedPostgresConformanceURL(t *testing.T, rawURL string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -72,7 +68,6 @@ func isolatedPostgresConformanceURL(t *testing.T, rawURL string) string {
 				parsed.Path = "/" + ident
 				return parsed.String()
 			}
-			// Fall back to schema isolation when the test role lacks CREATEDB.
 			if _, err := conn.Exec(ctx, "CREATE SCHEMA "+ident); err == nil {
 				t.Cleanup(func() {
 					dropCtx, dropCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -168,7 +163,6 @@ func TestBackendConformance_Postgres(t *testing.T) {
 		`).Scan(&btreeIdx); err != nil || btreeIdx != 1 {
 			t.Fatalf("missing nori_memory_chunks_owner_updated: count=%d err=%v", btreeIdx, err)
 		}
-		// Zero GIN indexes on nori_records (preserve 004 HOT updates & SSI).
 		var recordsGin int
 		if err := conn.QueryRow(ctx, `
 			SELECT count(*) FROM pg_indexes
@@ -252,11 +246,9 @@ func runBackendConformanceSuite(t *testing.T, b docstore.Backend, prefix string)
 		if _, err := ref.Create(ctx, orig); err != nil {
 			t.Fatalf("Create: %v", err)
 		}
-		// Mutate caller map/slice to verify write isolation.
 		orig.Meta["tag"] = "mutated"
 		orig.Payload[0] = 99
 
-		// Duplicate Create must return docstore.ErrExists.
 		if _, err := ref.Create(ctx, map[string]any{"name": "conflict"}); !errors.Is(err, docstore.ErrExists) {
 			t.Fatalf("duplicate Create: got %v, want ErrExists", err)
 		}
@@ -285,7 +277,6 @@ func runBackendConformanceSuite(t *testing.T, b docstore.Backend, prefix string)
 			t.Fatalf("meta mutated or mismatched: %v", decoded.Meta)
 		}
 
-		// Mutate returned Data() map and verify subsequent Get is unaffected.
 		snap.Data()["name"] = "tampered"
 		snap.Data()["meta"].(map[string]any)["tag"] = "tampered"
 		snap2, err := ref.Get(ctx)
@@ -296,7 +287,6 @@ func runBackendConformanceSuite(t *testing.T, b docstore.Backend, prefix string)
 			t.Fatalf("store leaked mutable reference: %#v", snap2.Data())
 		}
 
-		// Set overwrites entire document.
 		if _, err := ref.Set(ctx, map[string]any{"only": true}); err != nil {
 			t.Fatalf("Set overwrite: %v", err)
 		}
@@ -308,7 +298,6 @@ func runBackendConformanceSuite(t *testing.T, b docstore.Backend, prefix string)
 			t.Fatalf("Set did not overwrite cleanly: %#v", snap3.Data())
 		}
 
-		// Delete existing and missing.
 		if _, err := ref.Delete(ctx); err != nil {
 			t.Fatalf("Delete existing: %v", err)
 		}
@@ -326,12 +315,10 @@ func runBackendConformanceSuite(t *testing.T, b docstore.Backend, prefix string)
 		missing := c.Doc("missing")
 		track(ref.Path)
 
-		// Update on missing doc returns ErrNotFound.
 		if _, err := missing.Update(ctx, []docstore.Update{{Path: "a", Value: 1}}); !errors.Is(err, docstore.ErrNotFound) {
 			t.Fatalf("Update missing: got %v, want ErrNotFound", err)
 		}
 
-		// Set with MergeAll creates doc if missing.
 		if _, err := ref.Set(ctx, map[string]any{
 			"keep": "yes",
 			"nested": map[string]any{
@@ -343,7 +330,6 @@ func runBackendConformanceSuite(t *testing.T, b docstore.Backend, prefix string)
 			t.Fatalf("Set MergeAll create: %v", err)
 		}
 
-		// Set with MergeAll deep-merges nested maps while preserving untouched siblings.
 		if _, err := ref.Set(ctx, map[string]any{
 			"nested": map[string]any{
 				"b": 20,
@@ -364,7 +350,6 @@ func runBackendConformanceSuite(t *testing.T, b docstore.Backend, prefix string)
 			t.Fatalf("unexpected MergeAll result: %#v", snap.Data())
 		}
 
-		// Set with MergeAll empty map replaces existing nested map (matches postgres/database.go).
 		if _, err := ref.Set(ctx, map[string]any{
 			"nested": map[string]any{},
 		}, docstore.MergeAll); err != nil {
@@ -378,14 +363,12 @@ func runBackendConformanceSuite(t *testing.T, b docstore.Backend, prefix string)
 			t.Fatalf("expected empty map replacement for nested, got %#v", snap.Data()["nested"])
 		}
 
-		// Restore nested map before nested dot-path updates.
 		if _, err := ref.Set(ctx, map[string]any{
 			"nested": map[string]any{"a": 1, "b": 20, "c": 30},
 		}, docstore.MergeAll); err != nil {
 			t.Fatalf("restore nested: %v", err)
 		}
 
-		// Nested dot-path Update, Delete, and ArrayUnion (primitives + structs).
 		type entry struct {
 			ID   string `firestore:"id"`
 			Text string `firestore:"text"`
@@ -439,7 +422,6 @@ func runBackendConformanceSuite(t *testing.T, b docstore.Backend, prefix string)
 			{"d2", map[string]any{"group": "a", "score": 20, "created_at": t2, "active": true, "index": map[string]any{"status": "open", "rank": 2}}},
 			{"d3", map[string]any{"group": "a", "score": 20, "created_at": t2, "active": false, "index": map[string]any{"status": "closed", "rank": 3}}},
 			{"d4", map[string]any{"group": "b", "score": 30, "created_at": t3, "active": true, "opt": nil, "index": map[string]any{"status": "open", "rank": 4}}},
-			// d5 intentionally omits score and created_at to test ORDER BY exclusion.
 			{"d5", map[string]any{"group": "b", "active": false, "index": map[string]any{"status": "pending", "rank": 5}}},
 		}
 		for _, d := range docs {
@@ -463,12 +445,10 @@ func runBackendConformanceSuite(t *testing.T, b docstore.Backend, prefix string)
 			return out
 		}
 
-		// Default order is DocumentID Asc.
 		if got := idsOf(t, c.Query); !slices.Equal(got, []string{"d1", "d2", "d3", "d4", "d5"}) {
 			t.Fatalf("default order: got %v", got)
 		}
 
-		// Operators: ==, >, >=, <, <=, in, nested field, DocumentID filter.
 		if got := idsOf(t, c.Where("score", "==", 20)); !slices.Equal(got, []string{"d2", "d3"}) {
 			t.Fatalf("== 20: got %v", got)
 		}
@@ -490,22 +470,17 @@ func runBackendConformanceSuite(t *testing.T, b docstore.Backend, prefix string)
 		if got := idsOf(t, c.Where(docstore.DocumentID, ">=", "d3").Where(docstore.DocumentID, "<", "d5")); !slices.Equal(got, []string{"d3", "d4"}) {
 			t.Fatalf("DocumentID range: got %v", got)
 		}
-		// Absent field vs explicit JSON null.
 		if got := idsOf(t, c.Where("opt", "==", nil)); !slices.Equal(got, []string{"d4"}) {
 			t.Fatalf("opt == nil: got %v, want [d4]", got)
 		}
 
-		// Missing-field exclusion on ORDER BY + trailing DocumentID tiebreaker direction.
-		// score Asc -> tiebreaker DocumentID Asc: d1(10), d2(20), d3(20), d4(30); d5 excluded!
 		if got := idsOf(t, c.OrderBy("score", docstore.Asc)); !slices.Equal(got, []string{"d1", "d2", "d3", "d4"}) {
 			t.Fatalf("OrderBy score Asc: got %v", got)
 		}
-		// score Desc -> tiebreaker DocumentID Desc: d4(30), d3(20), d2(20), d1(10); d5 excluded!
 		if got := idsOf(t, c.OrderBy("score", docstore.Desc)); !slices.Equal(got, []string{"d4", "d3", "d2", "d1"}) {
 			t.Fatalf("OrderBy score Desc: got %v", got)
 		}
 
-		// StartAfter pagination with created_at Desc (with ties on t2!) and Limit(2).
 		page1, err := c.OrderBy("created_at", docstore.Desc).OrderBy(docstore.DocumentID, docstore.Desc).Limit(2).Documents(ctx).GetAll()
 		if err != nil {
 			t.Fatalf("page1: %v", err)
@@ -528,13 +503,11 @@ func runBackendConformanceSuite(t *testing.T, b docstore.Backend, prefix string)
 			t.Fatalf("page3 expected empty, got %d", len(page3))
 		}
 
-		// StartAfter with synthetic DocumentSnapshot{Ref: c.Doc(id)} (nil Fields), matching records/tasks.go.
 		afterRef := &docstore.DocumentSnapshot{Ref: c.Doc("d2")}
 		if got := idsOf(t, c.OrderBy(docstore.DocumentID, docstore.Asc).StartAfter(afterRef).Limit(2)); !slices.Equal(got, []string{"d3", "d4"}) {
 			t.Fatalf("StartAfter DocumentID synthetic snapshot: got %v", got)
 		}
 
-		// Select projection.
 		proj, err := c.Where("group", "==", "a").OrderBy(docstore.DocumentID, docstore.Asc).Select("score").Limit(1).Documents(ctx).GetAll()
 		if err != nil {
 			t.Fatalf("Select query: %v", err)
@@ -543,7 +516,6 @@ func runBackendConformanceSuite(t *testing.T, b docstore.Backend, prefix string)
 			t.Fatalf("Select projection unexpected: %#v", proj[0].Data())
 		}
 
-		// Invalid field name and unsupported operator return errors.
 		if _, err := c.Where("bad-field", "==", 1).Documents(ctx).GetAll(); err == nil {
 			t.Fatalf("expected error on invalid field name")
 		}
@@ -731,7 +703,6 @@ func runBackendConformanceSuite(t *testing.T, b docstore.Backend, prefix string)
 		seqDoc := col("seq").Doc("head")
 		track(d1.Path, d2.Path)
 
-		// Read-your-own-writes + commit + Sequencer allocation.
 		var seqStart1, seqStart2 int64
 		err := client.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 			if !tx.HasSequencer() {
@@ -773,7 +744,6 @@ func runBackendConformanceSuite(t *testing.T, b docstore.Backend, prefix string)
 			t.Fatalf("CurrentSequence after commit: head=%d ok=%v err=%v (want 5)", head, ok, err)
 		}
 
-		// Rollback on callback error must roll back BOTH doc writes AND NextSequence!
 		sentinel := errors.New("abort tx")
 		err = client.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 			if err := tx.Create(d2, map[string]any{"v": 2}); err != nil {
@@ -802,7 +772,6 @@ func runBackendConformanceSuite(t *testing.T, b docstore.Backend, prefix string)
 			t.Fatalf("sequence should remain 5 after tx abort, got %d err=%v", headAfterAbort, err)
 		}
 
-		// Next committed sequence should start at 6 (no gap from aborted tx).
 		var seqAfter int64
 		if err := client.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 			s, _, err := tx.NextSequence(seqDoc, 1)
@@ -815,7 +784,6 @@ func runBackendConformanceSuite(t *testing.T, b docstore.Backend, prefix string)
 			t.Fatalf("expected next seq 6 after abort, got %d", seqAfter)
 		}
 
-		// Read-only transaction rejects writes.
 		err = client.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 			return tx.Set(d2, map[string]any{"ro": true})
 		}, docstore.ReadOnly)
@@ -839,7 +807,6 @@ func runBackendConformanceSuite(t *testing.T, b docstore.Backend, prefix string)
 			t.Fatalf("Set b: %v", err)
 		}
 
-		// Invalid path in batch must reject without deleting valid paths.
 		if err := b.DeleteBatch(ctx, []string{p1, "invalid"}); err == nil {
 			t.Fatalf("expected error for invalid path in DeleteBatch")
 		}
@@ -1062,12 +1029,11 @@ func TestArtifactsAndComposeStore(t *testing.T) {
 	runID := uuid.NewString()
 	artID := uuid.NewString()
 
-	// PutPNG / GetPNG + deep copy isolation + duplicate refusal.
 	pngBytes := []byte{0x89, 'P', 'N', 'G', 1, 2, 3}
 	if err := a.PutPNG(ctx, runID, artID, pngBytes); err != nil {
 		t.Fatalf("PutPNG: %v", err)
 	}
-	pngBytes[0] = 0x00 // mutate caller buffer
+	pngBytes[0] = 0x00
 	if err := a.PutPNG(ctx, runID, artID, []byte{9}); !errors.Is(err, state.ErrFileExists) {
 		t.Fatalf("duplicate PutPNG: got %v, want ErrFileExists", err)
 	}
@@ -1078,7 +1044,7 @@ func TestArtifactsAndComposeStore(t *testing.T) {
 	if !bytes.Equal(gotPNG, []byte{0x89, 'P', 'N', 'G', 1, 2, 3}) {
 		t.Fatalf("GetPNG mismatch: %v", gotPNG)
 	}
-	gotPNG[0] = 0xff // mutate returned buffer
+	gotPNG[0] = 0xff
 	gotPNG2, err := a.GetPNG(ctx, runID, artID)
 	if err != nil || gotPNG2[0] != 0x89 {
 		t.Fatalf("GetPNG leaked mutable slice: %v err=%v", gotPNG2, err)
@@ -1087,7 +1053,6 @@ func TestArtifactsAndComposeStore(t *testing.T) {
 		t.Fatalf("missing GetPNG: got %v, want ErrNotFound", err)
 	}
 
-	// PutFile / GetFile / DeleteFile.
 	fileKey := "uploads/" + uuid.NewString() + ".bin"
 	fileBytes := []byte("hello-file")
 	if err := a.PutFile(ctx, fileKey, "application/octet-stream", fileBytes); err != nil {
@@ -1116,7 +1081,6 @@ func TestArtifactsAndComposeStore(t *testing.T) {
 		t.Fatalf("GetFile after delete: got %v, want ErrNotFound", err)
 	}
 
-	// ComposeStore enforces state.Compose rules (ValidFileKey, ArtifactListed).
 	user := users.User{
 		ID:       uuid.NewString(),
 		Email:    "compose@example.com",
@@ -1172,7 +1136,6 @@ func TestFaultInjection_TransientConflictsAndCommitThenError(t *testing.T) {
 			t.Fatalf("unexpected fault stats: %+v", stats)
 		}
 
-		// Disable faults for quiescence drain: all operations succeed and stats stay frozen.
 		b.SetFaultsEnabled(false)
 		if _, err := client.Collection("items").Doc("i1").Create(ctx, map[string]any{"x": 1}); err != nil {
 			t.Fatalf("Create with faults disabled: %v", err)
@@ -1189,7 +1152,6 @@ func TestFaultInjection_TransientConflictsAndCommitThenError(t *testing.T) {
 	})
 
 	t.Run("TxConflictRetryAndExhaustion", func(t *testing.T) {
-		// Deterministic sequence: fail first 2 commit attempts, succeed on 3rd.
 		seq := &scriptedFloats{vals: []float64{0.1, 0.1, 0.9}}
 		b := memstore.New(memstore.WithFaults(memstore.FaultConfig{TxConflictProb: 0.5}, seq))
 		client := docstore.New(b)
@@ -1210,7 +1172,6 @@ func TestFaultInjection_TransientConflictsAndCommitThenError(t *testing.T) {
 			t.Fatalf("unexpected conflict stats: %+v", stats)
 		}
 
-		// Now force exhaustion (100% conflict over 3 attempts).
 		b.SetFaults(memstore.FaultConfig{TxConflictProb: 1.0}, rand.New(rand.NewPCG(7, 8)))
 		runs = 0
 		err = client.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
@@ -1241,7 +1202,6 @@ func TestFaultInjection_TransientConflictsAndCommitThenError(t *testing.T) {
 		a := memstore.NewArtifacts(memstore.WithArtifactsFaultInjector(inj))
 		client := docstore.New(b)
 
-		// 1. RunTransaction commit-then-error: error returned, BUT doc AND seq committed durably!
 		seqRef := client.Collection("seq").Doc("head")
 		err := client.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 			if err := tx.Create(client.Collection("c").Doc("txdoc"), map[string]any{"committed": true}); err != nil {
@@ -1261,7 +1221,6 @@ func TestFaultInjection_TransientConflictsAndCommitThenError(t *testing.T) {
 			t.Fatalf("sequence should be durably 2 despite error: seq=%d err=%v", seq, err)
 		}
 
-		// 2. Apply commit-then-error.
 		if _, err := client.Collection("c").Doc("applydoc").Set(ctx, map[string]any{"k": "v"}); !errors.Is(err, memstore.ErrCommitThenError) {
 			t.Fatalf("Apply commit-then-error: got %v", err)
 		}
@@ -1269,7 +1228,6 @@ func TestFaultInjection_TransientConflictsAndCommitThenError(t *testing.T) {
 			t.Fatalf("applydoc should be durably committed: snap=%v err=%v", snap, err)
 		}
 
-		// 3. DeleteBatch commit-then-error.
 		if err := b.DeleteBatch(ctx, []string{"c/applydoc"}); !errors.Is(err, memstore.ErrCommitThenError) {
 			t.Fatalf("DeleteBatch commit-then-error: got %v", err)
 		}
@@ -1277,7 +1235,6 @@ func TestFaultInjection_TransientConflictsAndCommitThenError(t *testing.T) {
 			t.Fatalf("applydoc should be durably deleted: err=%v", err)
 		}
 
-		// 4. PutFile commit-then-error: error returned, BUT file stored durably!
 		if err := a.PutFile(ctx, "uploads/f1.txt", "text/plain", []byte("durable")); !errors.Is(err, memstore.ErrCommitThenError) {
 			t.Fatalf("PutFile commit-then-error: got %v", err)
 		}
@@ -1286,7 +1243,6 @@ func TestFaultInjection_TransientConflictsAndCommitThenError(t *testing.T) {
 			t.Fatalf("file should be durably stored despite error: data=%q err=%v", data, err)
 		}
 
-		// 5. PutPNG commit-then-error.
 		if err := a.PutPNG(ctx, "r1", "a1", []byte("pngdata")); !errors.Is(err, memstore.ErrCommitThenError) {
 			t.Fatalf("PutPNG commit-then-error: got %v", err)
 		}
@@ -1295,12 +1251,10 @@ func TestFaultInjection_TransientConflictsAndCommitThenError(t *testing.T) {
 			t.Fatalf("PNG should be durably stored despite error: data=%q err=%v", png, err)
 		}
 
-		// Shared FaultInjector tracked all 5 commit-then-error events.
 		if stats := inj.Stats(); stats.CommitThenErrors != 5 {
 			t.Fatalf("expected 5 CommitThenErrors, got %+v", stats)
 		}
 
-		// Disabling shared FaultInjector disables faults on both Backend and Artifacts.
 		inj.SetEnabled(false)
 		if err := a.PutFile(ctx, "uploads/f2.txt", "text/plain", []byte("clean")); err != nil {
 			t.Fatalf("PutFile with disabled injector: %v", err)
@@ -1355,7 +1309,6 @@ func TestFaultInjection_TransientConflictsAndCommitThenError(t *testing.T) {
 func TestSnapshotAndDigestDeterminism(t *testing.T) {
 	ctx := context.Background()
 
-	// Two backends populated in reverse collection, document, and map key order.
 	b1 := memstore.New()
 	b2 := memstore.New()
 	c1 := docstore.New(b1)
@@ -1366,7 +1319,6 @@ func TestSnapshotAndDigestDeterminism(t *testing.T) {
 		t.Fatalf("fresh backends have different digests: %s vs %s", baseDigest, b2.Digest())
 	}
 
-	// Creating then deleting a doc must return to exact baseDigest (no empty collection residue).
 	if _, err := c1.Collection("temp").Doc("ephemeral").Create(ctx, map[string]any{"x": 1}); err != nil {
 		t.Fatalf("Create ephemeral: %v", err)
 	}
@@ -1380,7 +1332,6 @@ func TestSnapshotAndDigestDeterminism(t *testing.T) {
 		t.Fatalf("digest after Create+Delete differs from base: %s vs %s", b1.Digest(), baseDigest)
 	}
 
-	// Populate b1 in order A -> B, doc 1 -> 2, keys a -> b; populate b2 in reverse order.
 	if _, err := c1.Collection("colA").Doc("1").Set(ctx, map[string]any{"a": 1, "b": map[string]any{"x": true, "y": "hi"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -1408,7 +1359,6 @@ func TestSnapshotAndDigestDeterminism(t *testing.T) {
 		t.Fatalf("canonical Backend digests diverged: %s vs %s", b1.Digest(), b2.Digest())
 	}
 
-	// Mutating Snapshot must not affect live Backend or its Digest.
 	snap := b1.Snapshot()
 	snapDigest := snap.Digest()
 	if snapDigest != b1.Digest() {
@@ -1420,7 +1370,6 @@ func TestSnapshotAndDigestDeterminism(t *testing.T) {
 		t.Fatalf("mutating Snapshot mutated live Backend")
 	}
 
-	// Artifacts canonical digest across different insertion orders.
 	a1 := memstore.NewArtifacts()
 	a2 := memstore.NewArtifacts()
 	_ = a1.PutPNG(ctx, "r1", "a1", []byte("one"))
@@ -1440,7 +1389,6 @@ func TestSnapshotAndDigestDeterminism(t *testing.T) {
 		t.Fatalf("CombinedDigest diverged")
 	}
 
-	// Changing media type alone must change Artifacts digest.
 	a3 := memstore.NewArtifacts()
 	_ = a3.PutFile(ctx, "f/a", "text/html", []byte("alpha"))
 	_ = a3.PutFile(ctx, "f/b", "image/png", []byte("beta"))
@@ -1450,17 +1398,6 @@ func TestSnapshotAndDigestDeterminism(t *testing.T) {
 		t.Fatalf("expected different mediaType to produce different digest")
 	}
 }
-
-type noCloseBackend struct{ docstore.Backend }
-
-func (noCloseBackend) Close() error { return nil }
-
-type noCloseSeqBackend struct {
-	docstore.Backend
-	docstore.SequenceReader
-}
-
-func (noCloseSeqBackend) Close() error { return nil }
 
 type scriptedFloats struct {
 	vals []float64
@@ -1481,7 +1418,6 @@ func TestJSONBOrderingAndContextCancellation(t *testing.T) {
 	client := docstore.New(b)
 	c := client.Collection("jsonb")
 
-	// PostgreSQL JSONB total order: Null < String < Number < Boolean < Array < Object.
 	items := []struct {
 		id  string
 		val any
@@ -1518,13 +1454,11 @@ func TestJSONBOrderingAndContextCancellation(t *testing.T) {
 		t.Fatalf("JSONB order mismatch:\n got: %v\nwant: %v", got, want)
 	}
 
-	// int64(5) == float64(5.0)
 	eqSnaps, err := c.Where("v", "==", float64(5.0)).Documents(ctx).GetAll()
 	if err != nil || len(eqSnaps) != 1 || eqSnaps[0].Ref.ID != "num_int" {
 		t.Fatalf("float64(5.0) == int64(5): got %v err=%v", eqSnaps, err)
 	}
 
-	// Context cancellation respected across Backend and Artifacts.
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
 	a := memstore.NewArtifacts()
@@ -1588,7 +1522,6 @@ func TestArtifactsTransientAndDeleteCommitThenError(t *testing.T) {
 		t.Fatalf("expected 5 ArtifactErrors, got %+v", stats)
 	}
 
-	// Verify transient PutFile did NOT persist the file.
 	a.SetFaultsEnabled(false)
 	if _, err := a.GetFile(ctx, "k"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("expected k absent after transient PutFile error, got %v", err)
@@ -1597,7 +1530,6 @@ func TestArtifactsTransientAndDeleteCommitThenError(t *testing.T) {
 		t.Fatalf("PutFile clean: %v", err)
 	}
 
-	// DeleteFile commit-then-error removes key durably then returns error.
 	a.SetFaults(memstore.FaultConfig{CommitThenErrProb: 1.0}, rand.New(rand.NewPCG(3, 4)))
 	if err := a.DeleteFile(ctx, "k"); !errors.Is(err, memstore.ErrCommitThenError) {
 		t.Fatalf("DeleteFile commit-then-error: %v", err)
@@ -1652,7 +1584,6 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("WakeTask rFuture: %v", err)
 		}
 
-		// ClaimTask must return earliest wake_at first (rEarly before rLate), skip future.
 		c1, ok, err := ls.ClaimTask(ctx, "worker-1", 120*time.Millisecond)
 		if err != nil || !ok {
 			t.Fatalf("ClaimTask #1: ok=%v err=%v", ok, err)
@@ -1661,12 +1592,10 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("ClaimTask #1 unexpected: %+v", c1)
 		}
 
-		// ClaimTaskByID on already-leased task must fail (mutual exclusion).
 		if _, ok, err := ls.ClaimTaskByID(ctx, u1, rEarly, "worker-2", time.Second); err != nil || ok {
 			t.Fatalf("ClaimTaskByID while leased: ok=%v err=%v, want false/nil", ok, err)
 		}
 
-		// Second worker claims next available task (rLate) via SKIP LOCKED semantics.
 		c2, ok, err := ls.ClaimTask(ctx, "worker-2", 5*time.Second)
 		if err != nil || !ok {
 			t.Fatalf("ClaimTask #2: ok=%v err=%v", ok, err)
@@ -1675,21 +1604,18 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("ClaimTask #2 unexpected: %+v", c2)
 		}
 
-		// Future task must not be claimable.
 		if _, ok, err := ls.ClaimTaskByID(ctx, u1, rFuture, "worker-3", time.Second); err != nil || ok {
 			t.Fatalf("ClaimTaskByID future task: ok=%v err=%v, want false/nil", ok, err)
 		}
 
-		// RenewTaskLeases extends only owned rows.
 		renewed, err := ls.RenewTaskLeases(ctx, "worker-2", []docstore.TaskKey{
 			{UserID: u2, RunID: rLate},
-			{UserID: u1, RunID: rEarly}, // owned by worker-1, must NOT renew
+			{UserID: u1, RunID: rEarly},
 		}, 10*time.Second)
 		if err != nil || renewed != 1 {
 			t.Fatalf("RenewTaskLeases: renewed=%d err=%v, want 1/nil", renewed, err)
 		}
 
-		// Wait for worker-1's short lease on rEarly to expire, then worker-2 takes over.
 		time.Sleep(180 * time.Millisecond)
 		taken, ok, err := ls.ClaimTaskByID(ctx, u1, rEarly, "worker-2", 5*time.Second)
 		if err != nil || !ok {
@@ -1699,7 +1625,6 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("takeover unexpected: got %+v (want owner=worker-2 wake_seq=%d)", taken, c1.WakeSeq)
 		}
 
-		// Concurrent ClaimTaskByID race: only 1 of 2 workers may win an unowned task.
 		rRace := prefix + "_run_race"
 		trackTask(u1, rRace)
 		if err := ls.WakeTask(ctx, u1, rRace, now.Add(-time.Second)); err != nil {
@@ -1725,7 +1650,6 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("concurrent ClaimTaskByID winners = %d, want 1", wins.Load())
 		}
 
-		// Clean up leases from this subtest so later ClaimTask tests don't see them.
 		for _, k := range []docstore.TaskKey{{UserID: u1, RunID: rEarly}, {UserID: u2, RunID: rLate}, {UserID: u1, RunID: rFuture}, {UserID: u1, RunID: rRace}} {
 			_, _ = ls.DeleteTaskLease(ctx, k.UserID, k.RunID, 0)
 		}
@@ -1744,18 +1668,15 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("ClaimTaskByID: ok=%v err=%v", ok, err)
 		}
 
-		// Concurrent wake arrives while w1 holds lease: increments wake_seq, preserves owner.
 		if err := ls.WakeTask(ctx, u, r, time.Time{}); err != nil {
 			t.Fatalf("concurrent WakeTask: %v", err)
 		}
 
-		// ParkTask with stale wake_seq MUST fail (parked=false) and keep task runnable.
 		parked, err := ls.ParkTask(ctx, u, r, "w1", claimed.WakeSeq, docstore.WaitQuestion)
 		if err != nil || parked {
 			t.Fatalf("ParkTask stale wake_seq: parked=%v err=%v, want false/nil", parked, err)
 		}
 
-		// RefreshTaskClaim must observe new wake_seq and extend lease for w1.
 		refreshed, ok, err := ls.RefreshTaskClaim(ctx, u, r, "w1", 30*time.Second)
 		if err != nil || !ok {
 			t.Fatalf("RefreshTaskClaim: ok=%v err=%v", ok, err)
@@ -1764,7 +1685,6 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("RefreshTaskClaim unexpected: %+v (prior seq=%d)", refreshed, claimed.WakeSeq)
 		}
 
-		// Wrong owner cannot refresh or park.
 		if _, ok, err := ls.RefreshTaskClaim(ctx, u, r, "wrong-owner", 30*time.Second); err != nil || ok {
 			t.Fatalf("RefreshTaskClaim wrong owner: ok=%v err=%v", ok, err)
 		}
@@ -1772,7 +1692,6 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("ParkTask wrong owner: parked=%v err=%v", parked, err)
 		}
 
-		// ParkTask with refreshed wake_seq succeeds.
 		parked, err = ls.ParkTask(ctx, u, r, "w1", refreshed.WakeSeq, docstore.WaitQuestion)
 		if err != nil || !parked {
 			t.Fatalf("ParkTask refreshed wake_seq: parked=%v err=%v, want true/nil", parked, err)
@@ -1801,7 +1720,6 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("ClaimTaskByID #1: ok=%v err=%v", ok, err)
 		}
 
-		// Matching wake_seq applies backoff nextWake.
 		future := time.Now().UTC().Add(10 * time.Minute)
 		if err := ls.ReleaseTask(ctx, u, r, "w1", c1.WakeSeq, future); err != nil {
 			t.Fatalf("ReleaseTask backoff: %v", err)
@@ -1810,7 +1728,6 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("expected backed-off task not claimable, got ok=%v err=%v", ok, err)
 		}
 
-		// Now wake immediately, claim, inject concurrent immediate wake, then release with future backoff.
 		if err := ls.WakeTask(ctx, u, r, time.Time{}); err != nil {
 			t.Fatalf("WakeTask #2: %v", err)
 		}
@@ -1825,7 +1742,6 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("ReleaseTask after concurrent wake: %v", err)
 		}
 
-		// Mismatched wake_seq must NOT push WakeAt into the future: worker-2 must claim immediately!
 		c3, ok, err := ls.ClaimTaskByID(ctx, u, r, "w2", 30*time.Second)
 		if err != nil || !ok {
 			t.Fatalf("expected immediate reclaim after concurrent wake, got ok=%v err=%v", ok, err)
@@ -1848,12 +1764,10 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 		if err != nil || !ok {
 			t.Fatalf("ClaimTaskByID: ok=%v err=%v", ok, err)
 		}
-		// Concurrent wake bumps wake_seq.
 		if err := ls.WakeTask(ctx, u, r, time.Time{}); err != nil {
 			t.Fatalf("concurrent WakeTask: %v", err)
 		}
 
-		// Guarded delete with stale wakeSeq must return deleted=false and preserve row.
 		deleted, err := ls.DeleteTaskLease(ctx, u, r, c1.WakeSeq)
 		if err != nil || deleted {
 			t.Fatalf("guarded DeleteTaskLease stale: deleted=%v err=%v, want false/nil", deleted, err)
@@ -1863,13 +1777,11 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("row should still exist after stale guarded delete: rows=%+v err=%v", rows, err)
 		}
 
-		// Guarded delete with current wakeSeq succeeds.
 		deleted, err = ls.DeleteTaskLease(ctx, u, r, rows[0].WakeSeq)
 		if err != nil || !deleted {
 			t.Fatalf("guarded DeleteTaskLease current: deleted=%v err=%v, want true/nil", deleted, err)
 		}
 
-		// Unconditional delete (wakeSeq <= 0) removes row regardless of wakeSeq.
 		if err := ls.WakeTask(ctx, u, r, time.Time{}); err != nil {
 			t.Fatalf("WakeTask #2: %v", err)
 		}
@@ -1897,7 +1809,6 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("EnsureTaskLease duplicate: created=%v err=%v, want false/nil", created, err)
 		}
 
-		// Claim and park under WaitQuestion, then verify EnsureTaskLease does not disturb it.
 		claimed, ok, err := ls.ClaimTaskByID(ctx, u, r, "w1", 30*time.Second)
 		if err != nil || !ok {
 			t.Fatalf("ClaimTaskByID: ok=%v err=%v", ok, err)
@@ -1946,7 +1857,6 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 		parkTask(uA, rAPaused, docstore.WaitPaused)
 		parkTask(uB, rBPaused, docstore.WaitPaused)
 
-		// Scoped wake for uA + routing_pending: only rARouting becomes runnable.
 		if err := ls.WakeWaitingTasks(ctx, uA, docstore.WaitRoutingPending); err != nil {
 			t.Fatalf("WakeWaitingTasks routing_pending: %v", err)
 		}
@@ -1960,7 +1870,6 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("expected rBPaused still parked: ok=%v err=%v", ok, err)
 		}
 
-		// Global unpause ("", paused): wakes both uA and uB paused tasks.
 		if err := ls.WakeWaitingTasks(ctx, "", docstore.WaitPaused); err != nil {
 			t.Fatalf("WakeWaitingTasks global paused: %v", err)
 		}
@@ -2044,7 +1953,6 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			}
 		}
 
-		// 1. Rolled-back transaction must create NO doc, NO wake rows, and emit NO wake events.
 		sentinel := errors.New("rollback wake tx")
 		err := client.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 			if !tx.HasWakeWriter() {
@@ -2077,7 +1985,6 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("aborted tx leaked user wake: %+v err=%v", wakes, err)
 		}
 		if hasListener {
-			// Intentional short negative-assertion window confirming rollback emitted no wake event.
 			time.Sleep(30 * time.Millisecond)
 			evMu.Lock()
 			for _, ev := range received {
@@ -2088,7 +1995,6 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			evMu.Unlock()
 		}
 
-		// 2. Committed transaction creates doc + lease + user wake AND emits post-commit events.
 		err = client.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 			if err := tx.Create(docCommit, map[string]any{"v": 2}); err != nil {
 				return err
@@ -2152,7 +2058,6 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			}
 		}
 
-		// Clean up user wake by claiming and parking, and delete task lease.
 		if uw, ok, _ := ls.ClaimUserWake(ctx, docstore.LaneConversation, "cleanup", 5*time.Second); ok && uw.UserID == u {
 			_, _ = ls.ParkUserWake(ctx, u, docstore.LaneConversation, "cleanup", uw.WakeSeq)
 		}
@@ -2171,14 +2076,12 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("WakeUser scheduler future: %v", err)
 		}
 
-		// Scheduler wake is in the future -> must not be claimed.
 		if uw, ok, err := ls.ClaimUserWake(ctx, docstore.LaneScheduler, "w1", 30*time.Second); err != nil {
 			t.Fatalf("ClaimUserWake scheduler future: %v", err)
 		} else if ok && uw.UserID == u {
 			t.Fatalf("future scheduler wake was claimed early: %+v", uw)
 		}
 
-		// Conversation wake is due -> claim, renew, test stale ParkUserWake, then park.
 		cw, ok, err := ls.ClaimUserWake(ctx, docstore.LaneConversation, "w1", 30*time.Second)
 		if err != nil || !ok || cw.UserID != u || cw.Lane != docstore.LaneConversation {
 			t.Fatalf("ClaimUserWake conversation: uw=%+v ok=%v err=%v", cw, ok, err)
@@ -2190,7 +2093,6 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("RenewUserWake wrong owner: ok=%v err=%v", ok, err)
 		}
 
-		// Concurrent WakeUser bumps wake_seq -> ParkUserWake with old seq must fail.
 		if err := ls.WakeUser(ctx, u, docstore.LaneConversation, time.Time{}); err != nil {
 			t.Fatalf("concurrent WakeUser: %v", err)
 		}
@@ -2198,7 +2100,6 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("ParkUserWake stale seq: parked=%v err=%v, want false/nil", parked, err)
 		}
 
-		// ReleaseUserWake with stale wake_seq and a LATER nextWake must preserve the earlier concurrent WakeAt!
 		if err := ls.ReleaseUserWake(ctx, u, docstore.LaneConversation, "w1", cw.WakeSeq, future); err != nil {
 			t.Fatalf("ReleaseUserWake stale: %v", err)
 		}
@@ -2207,12 +2108,10 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("expected immediate reclaim preserving earlier wake: uw=%+v ok=%v err=%v", cw2, ok, err)
 		}
 
-		// Now park cleanly with current wake_seq.
 		if parked, err := ls.ParkUserWake(ctx, u, docstore.LaneConversation, "w2", cw2.WakeSeq); err != nil || !parked {
 			t.Fatalf("ParkUserWake current seq: parked=%v err=%v, want true/nil", parked, err)
 		}
 
-		// Wake scheduler lane now, claim, release to future, and verify it's delayed again.
 		if err := ls.WakeUser(ctx, u, docstore.LaneScheduler, now.Add(-24*time.Hour)); err != nil {
 			t.Fatalf("WakeUser scheduler due: %v", err)
 		}
@@ -2247,9 +2146,6 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			_, _ = ls.DeleteTaskLease(context.Background(), u, rPause, 0)
 		})
 
-		// Routing-cleared race: worker claims task, WakeWaitingTasks(user, routing_pending)
-		// fires while the worker is still in-flight (runnable=true, owner="w1"), then worker
-		// tries to ParkTask with its captured wake_seq -> MUST fail (parked=false) so wake is never lost!
 		if err := ls.WakeTask(ctx, u, rRouting, time.Time{}); err != nil {
 			t.Fatalf("WakeTask routing: %v", err)
 		}
@@ -2268,8 +2164,6 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("LOST WAKE: ParkTask succeeded with stale wake_seq=%d after WakeWaitingTasks(routing_pending)", claimed.WakeSeq)
 		}
 
-		// Global unpause race: worker claims task, global WakeWaitingTasks("", paused) fires
-		// while worker is in-flight, then worker tries to ParkTask(..., paused) -> MUST fail!
 		if err := ls.WakeTask(ctx, u, rPause, time.Time{}); err != nil {
 			t.Fatalf("WakeTask pause: %v", err)
 		}
@@ -2288,14 +2182,10 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("LOST WAKE: ParkTask succeeded with stale wake_seq=%d after global WakeWaitingTasks(paused)", claimedPause.WakeSeq)
 		}
 
-		// Empty owner must never park an unowned or owned task.
 		if parked, err := ls.ParkTask(ctx, u, rPause, "", claimedPause.WakeSeq+1, docstore.WaitPaused); err != nil || parked {
 			t.Fatalf("ParkTask with empty owner: parked=%v err=%v, want false/nil", parked, err)
 		}
 
-		// Unclaimed runnable row (runnable=true, owner="", even with future wake_at) MUST also
-		// be matched by WakeWaitingTasks on both Postgres and memstore: wake_seq increments and
-		// wake_at is clamped to <= now so it becomes immediately claimable.
 		rUnclaimed := "run-unclaimed-runnable"
 		t.Cleanup(func() {
 			_, _ = ls.DeleteTaskLease(context.Background(), u, rUnclaimed, 0)
@@ -2364,7 +2254,6 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 			t.Fatalf("WakeTask u1 future: %v", err)
 		}
 
-		// ClaimTaskForUser(u1) must skip u2's even-earlier task and claim u1's earliest due task.
 		c1, ok, err := scoped.ClaimTaskForUser(ctx, u1, "w1", 120*time.Millisecond)
 		if err != nil || !ok || c1.UserID != u1 || c1.RunID != rU1Early {
 			t.Fatalf("ClaimTaskForUser(u1) #1 = (%+v, %v, %v), want %s/%s", c1, ok, err, u1, rU1Early)
@@ -2373,23 +2262,19 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 		if err != nil || !ok || c2.UserID != u1 || c2.RunID != rU1Late {
 			t.Fatalf("ClaimTaskForUser(u1) #2 = (%+v, %v, %v), want %s/%s", c2, ok, err, u1, rU1Late)
 		}
-		// Only u1 future and u2 due remain -> u1 must return ok=false.
 		if c3, ok, err := scoped.ClaimTaskForUser(ctx, u1, "w1", 5*time.Second); err != nil || ok {
 			t.Fatalf("ClaimTaskForUser(u1) #3 = (%+v, %v, %v), want ok=false", c3, ok, err)
 		}
-		// Lease expiry takeover for u1.
 		time.Sleep(180 * time.Millisecond)
 		taken, ok, err := scoped.ClaimTaskForUser(ctx, u1, "w2", 5*time.Second)
 		if err != nil || !ok || taken.UserID != u1 || taken.RunID != rU1Early || taken.Owner != "w2" {
 			t.Fatalf("ClaimTaskForUser(u1) expiry takeover = (%+v, %v, %v)", taken, ok, err)
 		}
-		// u2's task remained unclaimed and can be claimed for u2.
 		cu2, ok, err := scoped.ClaimTaskForUser(ctx, u2, "w2", 5*time.Second)
 		if err != nil || !ok || cu2.UserID != u2 || cu2.RunID != rU2Earlier {
 			t.Fatalf("ClaimTaskForUser(u2) = (%+v, %v, %v), want %s/%s", cu2, ok, err, u2, rU2Earlier)
 		}
 
-		// User-wake scoping: ClaimUserWakeForUser ignores u2's due wakes and future u1 wakes.
 		if err := ls.WakeUser(ctx, u2, docstore.LaneConversation, now.Add(-60*time.Second)); err != nil {
 			t.Fatalf("WakeUser u2 conv: %v", err)
 		}
@@ -2407,21 +2292,17 @@ func runLeaseConformanceSuite(t *testing.T, b docstore.Backend, ls docstore.Leas
 		if err != nil || !ok || uw1.UserID != u1 || uw1.Lane != docstore.LaneConversation {
 			t.Fatalf("ClaimUserWakeForUser(u1, conv) = (%+v, %v, %v)", uw1, ok, err)
 		}
-		// Mutual exclusion while leased.
 		if uwDup, ok, err := scoped.ClaimUserWakeForUser(ctx, u1, docstore.LaneConversation, "w2", 5*time.Second); err != nil || ok {
 			t.Fatalf("ClaimUserWakeForUser(u1, conv) while leased = (%+v, %v, %v), want ok=false", uwDup, ok, err)
 		}
-		// Future u1 scheduler wake must not claim (and must not claim u2's due scheduler wake).
 		if uwSched, ok, err := scoped.ClaimUserWakeForUser(ctx, u1, docstore.LaneScheduler, "w1", 5*time.Second); err != nil || ok {
 			t.Fatalf("ClaimUserWakeForUser(u1, sched future) = (%+v, %v, %v), want ok=false", uwSched, ok, err)
 		}
-		// Expiry takeover on u1 conversation lane.
 		time.Sleep(180 * time.Millisecond)
 		uwTakeover, ok, err := scoped.ClaimUserWakeForUser(ctx, u1, docstore.LaneConversation, "w2", 5*time.Second)
 		if err != nil || !ok || uwTakeover.UserID != u1 || uwTakeover.Owner != "w2" {
 			t.Fatalf("ClaimUserWakeForUser(u1, conv) takeover = (%+v, %v, %v)", uwTakeover, ok, err)
 		}
-		// Clean up u1/u2 user wakes.
 		_, _ = ls.ParkUserWake(ctx, u1, docstore.LaneConversation, "w2", uwTakeover.WakeSeq)
 		if uw2, ok, err := scoped.ClaimUserWakeForUser(ctx, u2, docstore.LaneConversation, "w2", 5*time.Second); err != nil || !ok {
 			t.Fatalf("ClaimUserWakeForUser(u2, conv) = (%+v, %v, %v)", uw2, ok, err)
@@ -2459,7 +2340,6 @@ func TestMemstoreLeases_ClockSnapshotPostCommitAndConflicts(t *testing.T) {
 		b := memstore.New(memstore.WithClock(clock))
 		client := docstore.New(b)
 
-		// Schedule a task 10s in the future.
 		if err := b.WakeTask(ctx, "u1", "r1", clock().Add(10*time.Second)); err != nil {
 			t.Fatalf("WakeTask: %v", err)
 		}
@@ -2467,14 +2347,12 @@ func TestMemstoreLeases_ClockSnapshotPostCommitAndConflicts(t *testing.T) {
 			t.Fatalf("should not claim future task: ok=%v err=%v", ok, err)
 		}
 
-		// Exact WakeAt == now IS claimable.
 		advance(10 * time.Second)
 		claimed, ok, err := b.ClaimTask(ctx, "w1", 30*time.Second)
 		if err != nil || !ok {
 			t.Fatalf("expected claim at WakeAt == now: ok=%v err=%v", ok, err)
 		}
 
-		// 1ns before LeaseUntil is still active (LeaseUntil > now): not claimable, renew succeeds.
 		advance(30*time.Second - time.Nanosecond)
 		if _, ok, err := b.ClaimTask(ctx, "w2", 30*time.Second); err != nil || ok {
 			t.Fatalf("should not take over before LeaseUntil: ok=%v err=%v", ok, err)
@@ -2483,7 +2361,6 @@ func TestMemstoreLeases_ClockSnapshotPostCommitAndConflicts(t *testing.T) {
 			t.Fatalf("expected active RenewTaskLeases to succeed: n=%d err=%v", n, err)
 		}
 
-		// Exact LeaseUntil == now IS expired (lease_until <= now()): renew/refresh fail and takeover succeeds!
 		advance(30 * time.Second)
 		if n, err := b.RenewTaskLeases(ctx, "w1", []docstore.TaskKey{{UserID: "u1", RunID: "r1"}}, 30*time.Second); err != nil || n != 0 {
 			t.Fatalf("expected expired RenewTaskLeases to fail: n=%d err=%v", n, err)
@@ -2496,7 +2373,6 @@ func TestMemstoreLeases_ClockSnapshotPostCommitAndConflicts(t *testing.T) {
 			t.Fatalf("expected takeover at LeaseUntil == now: got=%+v ok=%v err=%v", taken, ok, err)
 		}
 
-		// READ COMMITTED LeaseStore operations during an open docstore tx must NEVER cause ErrTxConflict.
 		docRef := client.Collection("c").Doc("d1")
 		if _, err := docRef.Create(ctx, map[string]any{"v": 1}); err != nil {
 			t.Fatalf("Create: %v", err)
@@ -2507,7 +2383,6 @@ func TestMemstoreLeases_ClockSnapshotPostCommitAndConflicts(t *testing.T) {
 			if _, err := tx.Get(docRef); err != nil {
 				return err
 			}
-			// Perform LeaseStore reads/writes mid-transaction.
 			if err := b.WakeTask(ctx, "u1", "r2", time.Time{}); err != nil {
 				return err
 			}
@@ -2540,7 +2415,6 @@ func TestMemstoreLeases_ClockSnapshotPostCommitAndConflicts(t *testing.T) {
 		}
 		cancelWait()
 
-		// Verify WakeEvent is NOT emitted while tx callback is still executing.
 		err := client.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 			if err := tx.WakeTask("u1", "r1", time.Time{}); err != nil {
 				return err
@@ -2564,7 +2438,6 @@ func TestMemstoreLeases_ClockSnapshotPostCommitAndConflicts(t *testing.T) {
 			t.Fatalf("timed out waiting for post-commit wake event")
 		}
 
-		// Forced ErrTxConflict on commit must NOT persist wake rows or emit events.
 		b.SetFaults(memstore.FaultConfig{TxConflictProb: 1.0}, rand.New(rand.NewPCG(1, 2)))
 		err = client.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 			if err := tx.WakeTask("u2", "r_conflict", time.Time{}); err != nil {
@@ -2588,7 +2461,6 @@ func TestMemstoreLeases_ClockSnapshotPostCommitAndConflicts(t *testing.T) {
 		case <-time.After(25 * time.Millisecond):
 		}
 
-		// CommitThenErr on a wake-only tx commits durably and still returns ErrCommitThenError.
 		b.SetFaults(memstore.FaultConfig{CommitThenErrProb: 1.0}, rand.New(rand.NewPCG(3, 4)))
 		err = client.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 			return tx.WakeTask("u3", "r_cte", time.Time{})
@@ -2649,7 +2521,6 @@ func TestMemstoreLeases_ClockSnapshotPostCommitAndConflicts(t *testing.T) {
 		b1 := memstore.New(memstore.WithClock(clock))
 		b2 := memstore.New(memstore.WithClock(clock))
 
-		// Insert leases and wakes in opposite orders; digests must match.
 		_ = b1.WakeTask(ctx, "u1", "r1", fixed)
 		_ = b1.WakeTask(ctx, "u2", "r2", fixed)
 		_ = b1.WakeUser(ctx, "u1", docstore.LaneConversation, fixed)
@@ -2664,7 +2535,6 @@ func TestMemstoreLeases_ClockSnapshotPostCommitAndConflicts(t *testing.T) {
 			t.Fatalf("digests diverged across insertion orders: %s vs %s", b1.Digest(), b2.Digest())
 		}
 
-		// Claiming a task changes the digest; mutating Snapshot must not mutate Backend.
 		beforeClaim := b1.Digest()
 		if _, ok, err := b1.ClaimTaskByID(ctx, "u1", "r1", "w1", 30*time.Second); err != nil || !ok {
 			t.Fatalf("ClaimTaskByID: ok=%v err=%v", ok, err)
@@ -2674,7 +2544,6 @@ func TestMemstoreLeases_ClockSnapshotPostCommitAndConflicts(t *testing.T) {
 			t.Fatalf("digest did not change after claiming task lease")
 		}
 
-		// Snapshot must be fault-free even under 100% fault injection.
 		b1.SetFaults(memstore.FaultConfig{
 			GetErrProb:        1.0,
 			QueryErrProb:      1.0,
@@ -2736,7 +2605,6 @@ func runMemoryIndexConformanceSuite(t *testing.T, b docstore.Backend, idx docsto
 			}
 		}
 
-		// ListMemoryChunks returns sorted by chunk_id ASC and strictly isolated by owner.
 		gotA, err := idx.ListMemoryChunks(ctx, ownerA)
 		if err != nil {
 			t.Fatalf("ListMemoryChunks(ownerA): %v", err)
@@ -2751,7 +2619,6 @@ func runMemoryIndexConformanceSuite(t *testing.T, b docstore.Backend, idx docsto
 			t.Fatalf("chunk fields mismatch: %+v", gotA)
 		}
 
-		// Update existing chunk in place.
 		updated := chunks[0]
 		updated.Body = "Updated Nori FTS body"
 		updated.UpdatedAt = baseNow.Add(time.Minute)
@@ -2763,7 +2630,6 @@ func runMemoryIndexConformanceSuite(t *testing.T, b docstore.Backend, idx docsto
 			t.Fatalf("update did not persist cleanly: got=%+v err=%v", gotA, err)
 		}
 
-		// Search isolates tenants strictly.
 		hits, err := idx.SearchMemory(ctx, docstore.MemorySearchQuery{
 			Owner: ownerA, Query: "tenant", Now: baseNow,
 		})
@@ -2774,7 +2640,6 @@ func runMemoryIndexConformanceSuite(t *testing.T, b docstore.Backend, idx docsto
 			t.Fatalf("cross-tenant hit leaked into ownerA: %+v", hits)
 		}
 
-		// Delete chunk.
 		if err := idx.DeleteMemoryChunk(ctx, ownerA, docstore.MemoryCoreChunkID("m2")); err != nil {
 			t.Fatalf("DeleteMemoryChunk: %v", err)
 		}
@@ -2870,7 +2735,6 @@ func runMemoryIndexConformanceSuite(t *testing.T, b docstore.Backend, idx docsto
 			}
 		}
 
-		// Core layer: pinned (1.15) > unpinned (1.0).
 		coreHits, err := idx.SearchMemory(ctx, docstore.MemorySearchQuery{
 			Owner: owner, Query: "quantum espresso calibration", Layer: docstore.MemoryLayerCore, Now: day0,
 		})
@@ -2884,7 +2748,6 @@ func runMemoryIndexConformanceSuite(t *testing.T, b docstore.Backend, idx docsto
 			t.Fatalf("expected pinned score (%f) > unpinned score (%f)", coreHits[0].Score, coreHits[1].Score)
 		}
 
-		// Log layer: fresh (age=0d, factor=1.0) > stale (age=60d, factor=0.25).
 		logHits, err := idx.SearchMemory(ctx, docstore.MemorySearchQuery{
 			Owner: owner, Query: "quantum espresso calibration", Layer: docstore.MemoryLayerLog, Now: day0,
 		})
@@ -2899,7 +2762,6 @@ func runMemoryIndexConformanceSuite(t *testing.T, b docstore.Backend, idx docsto
 			t.Fatalf("60-day decay ratio = %f, want ~0.25 (30-day half-life)", ratio)
 		}
 
-		// CreatedAfter filter (INV-MEM-07): strictly >= CreatedAfter.
 		cutoff := day60Ago.Add(time.Second)
 		filtered, err := idx.SearchMemory(ctx, docstore.MemorySearchQuery{
 			Owner: owner, Query: "quantum espresso", CreatedAfter: cutoff, Now: day0,
@@ -2952,7 +2814,6 @@ func runMemoryIndexConformanceSuite(t *testing.T, b docstore.Backend, idx docsto
 		if len(hits) != 4 {
 			t.Fatalf("got %d hits, want 4", len(hits))
 		}
-		// Tie-break puts a_dup1 first, then MMR promotes diverse chunks ahead of exact duplicate b_dup2.
 		if hits[0].Chunk.ChunkID != "core:a_dup1" {
 			t.Fatalf("hits[0] = %q, want core:a_dup1 (chunk_id ASC tie-break)", hits[0].Chunk.ChunkID)
 		}
@@ -2979,7 +2840,6 @@ func runMemoryIndexConformanceSuite(t *testing.T, b docstore.Backend, idx docsto
 			Provenance: string(state.ProvenanceUserExplicit), CreatedAt: baseNow, UpdatedAt: baseNow,
 		}
 
-		// Aborted tx must roll back BOTH the document AND the FTS chunk.
 		sentinelErr := errors.New("intentional rollback")
 		err := client.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 			if err := tx.Set(docRef, map[string]any{"id": "tx1", "text": "atomic rollback sentinel"}); err != nil {
@@ -3000,7 +2860,6 @@ func runMemoryIndexConformanceSuite(t *testing.T, b docstore.Backend, idx docsto
 			t.Fatalf("rolled-back memory chunk leaked: chunks=%+v err=%v", chunks, err)
 		}
 
-		// Committed tx persists BOTH atomically.
 		err = client.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 			if err := tx.Set(docRef, map[string]any{"id": "tx1", "text": "atomic rollback sentinel"}); err != nil {
 				return err
@@ -3014,7 +2873,6 @@ func runMemoryIndexConformanceSuite(t *testing.T, b docstore.Backend, idx docsto
 			t.Fatalf("committed chunk missing: chunks=%+v err=%v", chunks, err)
 		}
 
-		// Rolled-back delete leaves both intact.
 		err = client.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 			if err := tx.Delete(docRef); err != nil {
 				return err
@@ -3031,7 +2889,6 @@ func runMemoryIndexConformanceSuite(t *testing.T, b docstore.Backend, idx docsto
 			t.Fatalf("rolled-back delete removed chunk: chunks=%+v err=%v", chunks, err)
 		}
 
-		// Committed delete removes both.
 		err = client.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 			if err := tx.Delete(docRef); err != nil {
 				return err
@@ -3099,7 +2956,6 @@ func runRecordsMemoryConformanceSuite(t *testing.T, b docstore.Backend, idx docs
 		now := time.Date(2026, 11, 23, 15, 0, 0, 0, time.UTC)
 		db, u := newDB("flush", func() time.Time { return now })
 
-		// 1. Reject ProvenanceTaskOutcome in CoreUpserts (INV-MEM-04).
 		_, err := db.CommitFlushAndCompact(ctx, state.FlushAndCompactRequest{
 			NextSummary: state.ConversationSummary{Through: now, FlushedThrough: now, UpdatedAt: now},
 			CoreUpserts: []state.Memory{{ID: "bad_task", Text: "injected", Provenance: state.ProvenanceTaskOutcome}},
@@ -3108,7 +2964,6 @@ func runRecordsMemoryConformanceSuite(t *testing.T, b docstore.Backend, idx docs
 			t.Fatalf("expected ErrInvalidResource for task_outcome Core upsert, got %v", err)
 		}
 
-		// 2. Commit initial Core memories (1 pinned + 14 unpinned x 1900B = 26.6 KiB > 24 KiB -> auto-demote oldest unpinned).
 		upserts := []state.Memory{
 			{
 				ID: "m_pinned", Text: strings.Repeat("P", 1900), About: "the user", Section: "Preferences",
@@ -3147,7 +3002,6 @@ func runRecordsMemoryConformanceSuite(t *testing.T, b docstore.Backend, idx docs
 			t.Fatalf("CommitFlushAndCompact: %v", err)
 		}
 
-		// Core memory stays <= 24 KiB, pinned item survives at index 0, oldest unpinned items auto-demoted to 2026-11-23 log.
 		core, err := db.Memories(ctx)
 		if err != nil {
 			t.Fatalf("Memories: %v", err)
@@ -3167,14 +3021,12 @@ func runRecordsMemoryConformanceSuite(t *testing.T, b docstore.Backend, idx docs
 		}
 		assertBijection(t, db, u.DataOwner())
 
-		// 3. SaveConversationSummary CAS must reject FlushedThrough mismatch.
 		staleExpected := savedSum
 		staleExpected.FlushedThrough = now.Add(-time.Minute)
 		if err := db.SaveConversationSummary(ctx, savedSum, staleExpected); !errors.Is(err, state.ErrConversationStale) {
 			t.Fatalf("SaveConversationSummary with wrong FlushedThrough: got %v, want ErrConversationStale", err)
 		}
 
-		// 4. Daily Log sharding (> 128 entries) + deduplication + newest-date-first ordering.
 		now = now.Add(time.Minute)
 		manyEntries := make([]state.MemoryLogEntry, 0, 135)
 		for i := 0; i < 135; i++ {
@@ -3184,7 +3036,6 @@ func runRecordsMemoryConformanceSuite(t *testing.T, b docstore.Backend, idx docs
 				CreatedAt: now, UpdatedAt: now,
 			})
 		}
-		// Include duplicate ID to verify idempotent dedup.
 		manyEntries = append(manyEntries, manyEntries[0])
 		dreamSum := savedSum
 		dreamSum.DreamThrough = now
@@ -3220,7 +3071,6 @@ func runRecordsMemoryConformanceSuite(t *testing.T, b docstore.Backend, idx docs
 		now := time.Date(2026, 11, 23, 18, 0, 0, 0, time.UTC)
 		db, u := newDB("mutate", func() time.Time { return now })
 
-		// Create Core + idempotent retry + conflict check.
 		pinnedTrue := true
 		createReq := state.MemoryMutationRequest{
 			RequestID: "req-create-1",
@@ -3234,18 +3084,15 @@ func runRecordsMemoryConformanceSuite(t *testing.T, b docstore.Backend, idx docs
 		if err != nil {
 			t.Fatalf("MutateMemory(create_core): %v", err)
 		}
-		// Persisted receipt matches.
 		gotReceipt, err := db.Receipt(ctx, "req-create-1")
 		if err != nil || gotReceipt.RequestID != r1.RequestID || !bytes.Equal(gotReceipt.Resource, r1.Resource) {
 			t.Fatalf("Receipt mismatch: got=%+v err=%v", gotReceipt, err)
 		}
-		// Identical retry returns saved receipt even after clock moves.
 		now = now.Add(time.Second)
 		r1Retry, err := db.MutateMemory(ctx, createReq)
 		if err != nil || !bytes.Equal(r1Retry.Resource, r1.Resource) {
 			t.Fatalf("identical retry mismatch: got=%+v err=%v", r1Retry, err)
 		}
-		// Different payload with same RequestID returns ErrIdempotencyConflict.
 		badRetry := createReq
 		badRetry.Text = "Different payload"
 		if _, err := db.MutateMemory(ctx, badRetry); !errors.Is(err, state.ErrIdempotencyConflict) {
@@ -3259,7 +3106,6 @@ func runRecordsMemoryConformanceSuite(t *testing.T, b docstore.Backend, idx docs
 		memID := createdRes.Memory.ID
 		rev := createdRes.Memory.UpdatedAt.UnixMilli()
 
-		// Edit Core (stale revision rejected, current revision succeeds).
 		if _, err := db.MutateMemory(ctx, state.MemoryMutationRequest{
 			RequestID: "req-edit-stale", Kind: state.MemoryMutateEditCore, TargetID: memID,
 			ExpectedRevision: rev - 1, Text: "Stale edit",
@@ -3277,7 +3123,6 @@ func runRecordsMemoryConformanceSuite(t *testing.T, b docstore.Backend, idx docs
 		_ = json.Unmarshal(rEdit.Resource, &editRes)
 		rev = editRes.Memory.UpdatedAt.UnixMilli()
 
-		// Unpin -> Pin -> Demote Core to Daily Log.
 		now = now.Add(time.Second)
 		rUnpin, err := db.MutateMemory(ctx, state.MemoryMutationRequest{
 			RequestID: "req-unpin-1", Kind: state.MemoryMutateUnpinCore, TargetID: memID, ExpectedRevision: rev,
@@ -3320,7 +3165,6 @@ func runRecordsMemoryConformanceSuite(t *testing.T, b docstore.Backend, idx docs
 		}
 		assertBijection(t, db, u.DataOwner())
 
-		// Seed a Working Memory summary and a task_outcome Daily Log entry.
 		now = now.Add(time.Second)
 		sum := state.ConversationSummary{
 			FlushedThrough: now, Through: now, Gist: "Working gist",
@@ -3337,7 +3181,6 @@ func runRecordsMemoryConformanceSuite(t *testing.T, b docstore.Backend, idx docs
 			t.Fatalf("seed working+task log: %v", err)
 		}
 
-		// Promote task_outcome log entry WITHOUT explicit Text must fail (INV-MEM-04).
 		dayLog, _ := db.MemoryLog(ctx, "2026-11-23")
 		logRev := dayLog.UpdatedAt.UnixMilli()
 		if _, err := db.MutateMemory(ctx, state.MemoryMutationRequest{
@@ -3346,7 +3189,6 @@ func runRecordsMemoryConformanceSuite(t *testing.T, b docstore.Backend, idx docs
 		}); !errors.Is(err, state.ErrInvalidResource) {
 			t.Fatalf("promote task_outcome without Text: got %v, want ErrInvalidResource", err)
 		}
-		// Promote task_outcome WITH explicit re-authored Text succeeds as ProvenanceUserExplicit / SourceInputID="ui".
 		now = now.Add(time.Second)
 		rPromLog, err := db.MutateMemory(ctx, state.MemoryMutationRequest{
 			RequestID: "req-promote-task-ok", Kind: state.MemoryMutatePromoteLog,
@@ -3362,7 +3204,6 @@ func runRecordsMemoryConformanceSuite(t *testing.T, b docstore.Backend, idx docs
 			t.Fatalf("re-authored promoted memory provenance mismatch: %+v", promLogRes.Memory)
 		}
 
-		// Forget log entry removes it and its FTS chunk.
 		now = now.Add(time.Second)
 		if _, err := db.MutateMemory(ctx, state.MemoryMutationRequest{
 			RequestID: "req-forget-log-1", Kind: state.MemoryMutateForgetLog,
@@ -3371,7 +3212,6 @@ func runRecordsMemoryConformanceSuite(t *testing.T, b docstore.Backend, idx docs
 			t.Fatalf("forget_log: %v", err)
 		}
 
-		// Promote Working Memory item -> Dismiss Working Memory item.
 		sumRev := sum.UpdatedAt.UnixMilli()
 		now = now.Add(time.Second)
 		rPromWork, err := db.MutateMemory(ctx, state.MemoryMutationRequest{
@@ -3401,7 +3241,6 @@ func runRecordsMemoryConformanceSuite(t *testing.T, b docstore.Backend, idx docs
 			t.Fatalf("dismiss_working summary mismatch: %+v", dismissRes.Summary)
 		}
 
-		// Forget Core memory.
 		now = now.Add(time.Second)
 		if _, err := db.MutateMemory(ctx, state.MemoryMutationRequest{
 			RequestID: "req-forget-core-1", Kind: state.MemoryMutateForgetCore,
@@ -3410,7 +3249,6 @@ func runRecordsMemoryConformanceSuite(t *testing.T, b docstore.Backend, idx docs
 			t.Fatalf("forget_core: %v", err)
 		}
 
-		// SaveMemoryActionReceipt idempotency and conflict check.
 		rcpt, err := db.SaveMemoryActionReceipt(ctx, "req-consolidate-1", "bind:consolidate", json.RawMessage(`{"ok":true}`))
 		if err != nil || !rcpt.Accepted {
 			t.Fatalf("SaveMemoryActionReceipt: %+v err=%v", rcpt, err)
@@ -3457,13 +3295,11 @@ func runRecordsMemoryConformanceSuite(t *testing.T, b docstore.Backend, idx docs
 			t.Fatalf("Publish: status=%v err=%v", finished.Status, err)
 		}
 
-		// Core memory MUST remain untouched (INV-MEM-04).
 		core, err := db.Memories(ctx)
 		if err != nil || len(core) != 0 {
 			t.Fatalf("task completion mutated CoreMemory: %+v err=%v", core, err)
 		}
 
-		// Daily Log MUST contain bounded (<= 600B) task_outcome entry indexed in MemoryIndex.
 		dayLog, err := db.MemoryLog(ctx, "2026-11-23")
 		if err != nil {
 			t.Fatalf("MemoryLog after task Publish: %v", err)
@@ -3505,7 +3341,6 @@ func runRecordsMemoryConformanceSuite(t *testing.T, b docstore.Backend, idx docs
 			t.Fatalf("PublishConversation(remember): %v", err)
 		}
 
-		// Verify Core memory + FTS chunk + EventMemory.
 		mems, err := db.Memories(ctx)
 		if err != nil || len(mems) != 1 || mems[0].ID != "conv_m1" || mems[0].SourceInputID != "in-mem-1" {
 			t.Fatalf("Memories after PublishConversation: %+v err=%v", mems, err)
@@ -3516,7 +3351,6 @@ func runRecordsMemoryConformanceSuite(t *testing.T, b docstore.Backend, idx docs
 		}
 		assertBijection(t, db, u.DataOwner())
 
-		// Forget via PublishConversation removes Core memory and FTS chunk.
 		now = now.Add(time.Minute)
 		if err := db.AcceptConversationInput(ctx, "in-mem-2", "Forget espresso", nil); err != nil {
 			t.Fatalf("AcceptConversationInput(2): %v", err)
@@ -3560,7 +3394,6 @@ func TestMemstoreMemoryIndex_SnapshotRestoreDigestAndConflicts(t *testing.T) {
 		CreatedAt: fixed, UpdatedAt: fixed,
 	}
 
-	// Insertion order independence in Digest().
 	_ = b1.UpsertMemoryChunk(ctx, c1)
 	_ = b1.UpsertMemoryChunk(ctx, c2)
 	_ = b2.UpsertMemoryChunk(ctx, c2)
@@ -3569,7 +3402,6 @@ func TestMemstoreMemoryIndex_SnapshotRestoreDigestAndConflicts(t *testing.T) {
 		t.Fatalf("digests diverged across chunk insertion order: %s vs %s", b1.Digest(), b2.Digest())
 	}
 
-	// Snapshot includes MemoryChunks and is fault-free + isolated from live Backend.
 	b1.SetFaults(memstore.FaultConfig{
 		GetErrProb: 1.0, QueryErrProb: 1.0, ApplyErrProb: 1.0, TxConflictProb: 1.0, CommitThenErrProb: 1.0,
 	}, rand.New(rand.NewPCG(11, 12)))
@@ -3586,7 +3418,6 @@ func TestMemstoreMemoryIndex_SnapshotRestoreDigestAndConflicts(t *testing.T) {
 		t.Fatalf("mutating snapshot altered live Backend digest")
 	}
 
-	// Restore parity onto a fresh Backend.
 	b1.SetFaultsEnabled(false)
 	freshSnap := b1.Snapshot()
 	b3 := memstore.New(memstore.WithClock(clock))
@@ -3599,7 +3430,6 @@ func TestMemstoreMemoryIndex_SnapshotRestoreDigestAndConflicts(t *testing.T) {
 		t.Fatalf("ListMemoryChunks after Restore: chunks=%+v err=%v", chunks, err)
 	}
 
-	// Forced ErrTxConflict rolls back staged chunkWrites.
 	client := docstore.New(b3)
 	b3.SetFaults(memstore.FaultConfig{TxConflictProb: 1.0}, rand.New(rand.NewPCG(13, 14)))
 	err = client.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {

@@ -64,7 +64,6 @@ func TestHealthzAndReadyzProbes(t *testing.T) {
 		},
 	)
 
-	// 1. /healthz returns 200 without invoking DB Ping, even when Ping fails.
 	dbDown := errors.New("dial tcp 10.0.0.5:5432: connection refused")
 	pingErr.Store(&dbDown)
 
@@ -80,7 +79,6 @@ func TestHealthzAndReadyzProbes(t *testing.T) {
 		t.Fatalf("/healthz must not invoke ReadyCheck, got %d calls", pingCalls.Load())
 	}
 
-	// 2. /readyz and /api/readyz return 503 with safe JSON (no raw DB error leak) when Ping fails.
 	for _, path := range []string{"/readyz", "/api/readyz"} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -99,7 +97,6 @@ func TestHealthzAndReadyzProbes(t *testing.T) {
 			t.Fatalf("GET %s leaked internal DB error: %s", path, rec.Body.String())
 		}
 
-		// HEAD returns 503 with empty body.
 		headRec := httptest.NewRecorder()
 		headReq := httptest.NewRequest(http.MethodHead, path, nil)
 		handler.ServeHTTP(headRec, headReq)
@@ -111,7 +108,6 @@ func TestHealthzAndReadyzProbes(t *testing.T) {
 		}
 	}
 
-	// 3. /readyz and /api/readyz return 200 when Ping succeeds.
 	pingErr.Store(nil)
 	for _, path := range []string{"/readyz", "/api/readyz"} {
 		rec := httptest.NewRecorder()
@@ -139,7 +135,6 @@ func TestHealthzAndReadyzProbes(t *testing.T) {
 		}
 	}
 
-	// 4. /readyz returns 503 promptly when Ping blocks past ReadyTimeout.
 	ch := make(chan struct{})
 	defer close(ch)
 	blockCh.Store(&ch)
@@ -156,7 +151,6 @@ func TestHealthzAndReadyzProbes(t *testing.T) {
 	}
 	blockCh.Store(nil)
 
-	// 5. Non-GET/HEAD methods are rejected with 405.
 	postRec := httptest.NewRecorder()
 	handler.ServeHTTP(postRec, httptest.NewRequest(http.MethodPost, "/readyz", nil))
 	if postRec.Code != http.StatusMethodNotAllowed {
@@ -242,7 +236,6 @@ func TestServiceAuthProtectReadyzHealthzAndMetrics(t *testing.T) {
 	)
 	protected := authCfg.Protect(inner)
 
-	// Unauthenticated /healthz and /readyz (GET and HEAD) MUST succeed.
 	for _, tc := range []struct {
 		method string
 		path   string
@@ -259,7 +252,6 @@ func TestServiceAuthProtectReadyzHealthzAndMetrics(t *testing.T) {
 		}
 	}
 
-	// Unauthenticated /api/*, /users/*, and /metrics MUST be rejected with 401.
 	for _, tc := range []struct {
 		method string
 		path   string
@@ -278,7 +270,6 @@ func TestServiceAuthProtectReadyzHealthzAndMetrics(t *testing.T) {
 		}
 	}
 
-	// Valid Bearer token grants access to /metrics and /api/readyz.
 	token, err := authCfg.Token()
 	if err != nil {
 		t.Fatalf("authCfg.Token: %v", err)

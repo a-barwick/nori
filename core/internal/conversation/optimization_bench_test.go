@@ -11,17 +11,13 @@ import (
 	"nori/internal/state"
 )
 
-// TestOptimizationBaselineMetrics prints deterministic payload & prompt-byte metrics
-// for the outer loop and memory maintenance paths so Before/After changes are directly comparable.
 func TestOptimizationBaselineMetrics(t *testing.T) {
 	now := time.Date(2026, 11, 25, 18, 0, 0, 0, time.UTC)
 
-	// 1. Static system prompt + tool schema bytes
 	convPromptBytes := len(prompts.Conversation)
 	taskWorkerPromptBytes := len(prompts.TaskWorker)
 	convToolsBytes := len(prompts.ConversationTools)
 
-	// 2. Realistic 25-memory Core Memory + Working Summary
 	memories := make([]state.Memory, 0, 25)
 	for i := 0; i < 25; i++ {
 		memories = append(memories, state.Memory{
@@ -55,13 +51,11 @@ func TestOptimizationBaselineMetrics(t *testing.T) {
 	memMsg := memoryMessage(memories)
 	sumMsg := summaryMessage(summary)
 
-	// 3. Realistic 10-turn history (mix of chat + action turns with duplicate final assistant messages)
 	turns := make([]state.ConversationTurn, 0, 10)
 	for i := 0; i < 10; i++ {
 		uMsg := string(modelMessage(map[string]string{"role": "user", "content": fmt.Sprintf("Turn %d: Please check my inbox and calendar for updates.", i)}))
 		replyText := fmt.Sprintf("Checked your inbox and calendar for turn %d — everything looks on track.", i)
 		if i%2 == 0 {
-			// Action-free turn: historically stored JSON wrapper + published duplicate assistant message
 			wrapped, _ := json.Marshal(map[string]any{"actions": []any{}, "text": replyText})
 			turns = append(turns, state.ConversationTurn{
 				ID:        fmt.Sprintf("turn-%d", i),
@@ -86,7 +80,6 @@ func TestOptimizationBaselineMetrics(t *testing.T) {
 		}
 	}
 
-	// 4. Realistic TaskContext (1 active + 10 recent completed tasks)
 	tc := TaskContext{
 		ActiveTasks: []*TaskContextRecord{{
 			ID: "run-active-1", Request: "Draft Q4 update memo", Status: state.RunRunning,
@@ -110,7 +103,6 @@ func TestOptimizationBaselineMetrics(t *testing.T) {
 	_ = fitTaskContext(&tc, append(append([]*TaskContextRecord{}, tc.ActiveTasks...), tc.RecentTasks...))
 	tcJSON, _ := json.Marshal(tc)
 
-	// 5. Build full Anthropic outer request body (cold & steady-state)
 	curTurn := &state.ConversationTurn{
 		ID: "turn-current",
 		Inputs: []state.ConversationInput{{
@@ -134,7 +126,6 @@ func TestOptimizationBaselineMetrics(t *testing.T) {
 		t.Fatalf("buildRequestBody: %v", err)
 	}
 
-	// 6. Maintenance payload sizes (projected slim core_memories)
 	slimCoreJSON, _ := json.Marshal(projectMaintenanceMemories(memories, false))
 
 	t.Logf("METRIC outer_prompt_bytes=%d", convPromptBytes)

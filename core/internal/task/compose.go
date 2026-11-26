@@ -19,18 +19,6 @@ import (
 	"nori/internal/transcript"
 )
 
-// Programmatic composition: the compose tool runs a small, versioned script of tool calls inside one task call.
-//
-// Every nested call is an ordinary operation: it has a stable identity derived from the parent operation and its
-// position in the script, records its parent, and goes through the same executor, Permission checks, approvals and
-// receipts as a direct call. The script sees tool results, never credentials: account access stays behind the
-// executor's connection grants.
-//
-// The script is deterministic given its nested results. When the activity restarts, each nested call finds its saved
-// operation and reuses the recorded result, so a completed write is never sent again and an interrupted one is
-// reconciled, not repeated. If a restart would compute a different call at a recorded position (a changed tool
-// definition, say), the run stops with a divergence instead of guessing.
-
 const (
 	ComposeRuntime        = "compose/v1"
 	composeMaxSteps       = 32
@@ -52,12 +40,11 @@ type composeStep struct {
 	ID      string         `json:"id"`
 	Tool    string         `json:"tool"`
 	Args    map[string]any `json:"args,omitempty"`
-	ForEach any            `json:"for_each,omitempty"` // a "$ref" to a list, or a literal list
+	ForEach any            `json:"for_each,omitempty"`
 	As      string         `json:"as,omitempty"`
 	Where   *composeWhere  `json:"where,omitempty"`
 }
 
-// composeWhere keeps the for_each items whose path matches.
 type composeWhere struct {
 	Path     string `json:"path"`
 	Equals   any    `json:"equals,omitempty"`
@@ -98,7 +85,6 @@ func parseComposeScript(text string) (composeScript, error) {
 		if step.As != "" && slices.ContainsFunc(s.Steps, func(o composeStep) bool { return o.ID == step.As }) {
 			return s, fmt.Errorf("step %s: \"as\" must not reuse a step id", step.ID)
 		}
-		// References may only name earlier steps or the step's own loop item.
 		allowed := map[string]bool{}
 		for id := range s.stepIndex {
 			allowed[id] = true
@@ -131,7 +117,6 @@ func parseComposeScript(text string) (composeScript, error) {
 
 var interpolation = regexp.MustCompile(`\{\{\s*(\$[^}]+?)\s*\}\}`)
 
-// checkComposeRefs walks a template and checks every reference names an allowed root.
 func checkComposeRefs(value any, allowed map[string]bool) error {
 	switch v := value.(type) {
 	case string:
@@ -174,13 +159,12 @@ func checkComposeRefs(value any, allowed map[string]bool) error {
 
 type refSegment struct {
 	key   string
-	index int // -1 none, -2 [*]
+	index int
 }
 
 var refToken = regexp.MustCompile(`^([A-Za-z0-9_-]*)((?:\[(?:\d+|\*)\])*)$`)
 var refIndex = regexp.MustCompile(`\[(\d+|\*)\]`)
 
-// splitRef parses "$root.a.b[0].c[*]|flatten|count" into the root, its path and pipe functions.
 func splitRef(ref string) (string, []refSegment, error) {
 	body, pipes, _ := strings.Cut(strings.TrimPrefix(ref, "$"), "|")
 	for _, fn := range strings.Split(pipes, "|") {
@@ -288,7 +272,6 @@ func resolveRef(ref string, env map[string]any) any {
 	return value
 }
 
-// resolveTemplate replaces whole-string references with their values and {{ $ref }} with their text.
 func resolveTemplate(value any, env map[string]any) any {
 	switch v := value.(type) {
 	case string:
@@ -344,8 +327,6 @@ func (w *composeWhere) keep(env map[string]any) bool {
 	return value != nil && value != false
 }
 
-// composable says whether compose may call a definition: the user's registry tools, including programmatic-only
-// ones, and the engine's runtime reads. Task control, computer tools and compose itself stay out.
 func composable(d extensions.Definition) bool {
 	if d.Exposure == extensions.ExposureDisabled {
 		return false
@@ -375,8 +356,6 @@ type composeResult struct {
 	output      map[string]any `json:"-"`
 }
 
-// composeTool runs a compose call. It is safe to run again after a restart: nested calls with saved results are
-// reused, never repeated.
 func (a *Activities) composeTool(ctx context.Context, in ToolInput, persist persistFunc) (map[string]any, error) {
 	text, _ := in.Call.Args["script"].(string)
 	script, err := parseComposeScript(text)
@@ -792,23 +771,18 @@ func (a *Activities) checkComposeLifecycle(ctx context.Context, step Step) error
 	return nil
 }
 
-// composeCallID is a nested call's identity: the compose call, its position and a digest of the tool, its definition
-// and its arguments.
 func composeCallID(in ToolInput, call composeCall) string {
 	data, _ := json.Marshal([]any{call.tool, call.exec.Tool, call.args})
 	sum := sha256.Sum256(data)
 	return fmt.Sprintf("%s:c%d:%s", in.Call.ID, call.index, hex.EncodeToString(sum[:6]))
 }
 
-// composeBudget reserves the expected cost of paid nested calls against what the task may still spend.
 type composeBudget struct {
 	mu        sync.Mutex
 	limited   bool
 	remaining float64
 }
 
-// estimate is a call's expected cost: its known per-call cost, or a small reservation when the cost is only known
-// after the call. Free calls reserve nothing.
 func (b *composeBudget) estimate(exec extensions.Exec) float64 {
 	if exec.Policy.InterruptedCostUSD > 0 {
 		return exec.Policy.InterruptedCostUSD

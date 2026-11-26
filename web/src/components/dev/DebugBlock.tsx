@@ -37,7 +37,6 @@ export function DebugBlock({ info }: { info: DebugInfo }) {
     }
     void load();
     return () => controller.abort();
-    // A saved change to the task reaches this component through the stream, and that is when the trace can have changed.
   }, [expanded, runId, runStatus, runChanges, retry]);
 
   return (

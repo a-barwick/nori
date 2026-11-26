@@ -45,7 +45,6 @@ func TestRegistryLocalDevDualBackendAndAllowlist(t *testing.T) {
 		t.Fatalf("unexpected cloud profile: %+v", cloud)
 	}
 
-	// ValidateAndResolve stamps versions and rejects unsupported reasoning.
 	resolved, err := reg.ValidateAndResolve(&state.ModelSelection{
 		ChatProfileID: "cloud-claude-haiku-5-5",
 		ChatReasoning: "medium",
@@ -98,7 +97,6 @@ func TestRegistryProdAllowlistAndCatalog(t *testing.T) {
 	if cat.DefaultChatProfileID != "cloud-claude-opus-5-5" || cat.DefaultTaskProfileID != "cloud-claude-haiku-5-5" {
 		t.Fatalf("unexpected prod defaults: chat=%q task=%q", cat.DefaultChatProfileID, cat.DefaultTaskProfileID)
 	}
-	// Verify Public() strips Endpoint.
 	pub := cat.Public()
 	if len(pub.Profiles) != 4 {
 		t.Fatalf("expected 4 public profiles, got %d", len(pub.Profiles))
@@ -145,7 +143,6 @@ func TestRegistryHotReloadFileAndFallback(t *testing.T) {
 		t.Fatalf("expected initial custom-haiku v1, got %+v (ok=%v)", p, ok)
 	}
 
-	// Edit file with newer mtime -> hot-reloads to v2.
 	updated := `{
 		"profiles": [
 			{
@@ -173,7 +170,6 @@ func TestRegistryHotReloadFileAndFallback(t *testing.T) {
 		t.Fatalf("expected hot-reloaded v2, got %+v (ok=%v)", p, ok)
 	}
 
-	// Write malformed JSON -> keeps last-good v2 catalog.
 	if err := os.WriteFile(path, []byte(`{invalid json`), 0o600); err != nil {
 		t.Fatal(err)
 	}

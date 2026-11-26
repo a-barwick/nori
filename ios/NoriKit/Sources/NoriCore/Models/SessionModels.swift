@@ -1,6 +1,5 @@
 import Foundation
 
-// MARK: - NoriMark State
 
 public enum MarkState: String, Sendable, Codable, Hashable {
     case idle
@@ -8,7 +7,6 @@ public enum MarkState: String, Sendable, Codable, Hashable {
     case thinking
 }
 
-// MARK: - Message & Parts
 
 public enum MessageRole: String, Sendable, Codable, Hashable {
     case user
@@ -196,9 +194,7 @@ public struct Message: Sendable, Codable, Hashable, Identifiable {
     public var error: ErrorDetail?
     public var resultIDs: [String]?
     public var createdAt: String
-    /// Client-local delivery receipt (not required on wire).
     public var receipt: MessageReceipt?
-    /// Optional display time separator label (e.g. "Today · 9:41 AM").
     public var separatorLabel: String?
 
     enum CodingKeys: String, CodingKey {
@@ -367,7 +363,6 @@ public struct SavedResult: Sendable, Codable, Hashable, Identifiable {
     }
 }
 
-// MARK: - Run & Task Commands
 
 public enum RunStatus: String, Sendable, Codable, Hashable {
     case running
@@ -684,7 +679,6 @@ public struct TaskCommandResponse: Sendable, Codable, Hashable {
     public var error: String?
 }
 
-// MARK: - Session & Conversation
 
 public struct ReadPosition: Sendable, Codable, Hashable {
     public var messageID: String

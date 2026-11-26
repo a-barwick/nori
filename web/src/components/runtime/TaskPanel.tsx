@@ -69,7 +69,7 @@ function Screenshot({
       rel="noreferrer"
       className="block overflow-hidden rounded-tile bg-surface shadow-pill"
     >
-      {/* eslint-disable-next-line @next/next/no-img-element -- The image optimizer cannot fetch a browser blob URL. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={screenshot.url}
         alt="Screenshot captured by Nori during this task. Open full size."

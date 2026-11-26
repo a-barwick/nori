@@ -5,11 +5,8 @@ import (
 	"strings"
 )
 
-// IOSOAuthCallbackURL is the single non-relative return_to target allowed for
-// native iOS ASWebAuthenticationSession OAuth completion.
 const IOSOAuthCallbackURL = "nori://oauth/callback"
 
-// IsIOSOAuthCallback reports whether raw is the exact canonical iOS OAuth callback URL.
 func IsIOSOAuthCallback(raw string) bool {
 	if raw != IOSOAuthCallbackURL {
 		return false
@@ -32,9 +29,6 @@ func IsIOSOAuthCallback(raw string) bool {
 		u.String() == IOSOAuthCallbackURL
 }
 
-// ValidReturnTo reports whether raw is a safe OAuth return target: either a
-// relative path inside the web app or the exact iOS callback target
-// nori://oauth/callback.
 func ValidReturnTo(raw string) bool {
 	if raw == "" || strings.ContainsAny(raw, `\#?`) {
 		return false
@@ -57,7 +51,6 @@ func ValidReturnTo(raw string) bool {
 	return strings.HasPrefix(u.Path, "/") && !strings.HasPrefix(u.Path, "//") && !strings.Contains(u.Path, "\\")
 }
 
-// SafeReturnTo returns a normalized valid return target, or "/apps" when raw is invalid.
 func SafeReturnTo(raw string) string {
 	if !ValidReturnTo(raw) {
 		return "/apps"
@@ -72,7 +65,6 @@ func SafeReturnTo(raw string) string {
 	return u.Path
 }
 
-// BuildReturnRedirect appends query parameters cleanly to a validated return target.
 func BuildReturnRedirect(returnTo string, params url.Values) string {
 	target := SafeReturnTo(returnTo)
 	if IsIOSOAuthCallback(target) {

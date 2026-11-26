@@ -1,13 +1,7 @@
 import Foundation
 
-/// Swift 6 concurrency-safe formatting utilities for ISO-8601 timestamps and
-/// date-only strings (`yyyy-MM-dd`) returned by the Nori backend.
 public enum NoriDateFormatting: Sendable {
-    // MARK: - Parsing
 
-    /// Parses ISO-8601 timestamps (with or without fractional seconds, including
-    /// microsecond/nanosecond precision) as well as date-only `yyyy-MM-dd` strings
-    /// in the user's current calendar/time zone.
     public static func parse(_ isoString: String) -> Date? {
         let trimmed = isoString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -45,12 +39,7 @@ public enum NoriDateFormatting: Sendable {
         return nil
     }
 
-    // MARK: - Relative
 
-    /// Human-readable relative string for both past and future timestamps
-    /// (e.g. `"Just now"`, `"5m ago"`, `"2h ago"`, `"Yesterday"`, `"3d ago"`,
-    /// `"Nov 24"`, or `"in 5m"`, `"in 2h"`, `"Tomorrow"`).
-    /// Falls back gracefully to the original string if unparseable.
     public static func relative(_ isoString: String, now: Date = Date()) -> String {
         let trimmed = isoString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let date = parse(trimmed) else { return isoString }
@@ -117,11 +106,7 @@ public enum NoriDateFormatting: Sendable {
         }
     }
 
-    // MARK: - Short Date & Time
 
-    /// Concise readable date and time (e.g. `"2:15 PM"` if today,
-    /// `"Yesterday, 2:15 PM"`, `"Tomorrow, 2:15 PM"`, `"Nov 24, 2:15 PM"`,
-    /// or with year if in a different year).
     public static func shortDateTime(_ isoString: String, now: Date = Date()) -> String {
         let trimmed = isoString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let date = parse(trimmed) else { return isoString }
@@ -149,8 +134,6 @@ public enum NoriDateFormatting: Sendable {
         return "\(dateStr), \(timeStr)"
     }
 
-    /// Plain-English local reminder timestamp (e.g. `"Today at 2:15 PM"`,
-    /// `"Tomorrow at 12:00 PM"`, `"Nov 25 at 12:00 PM"`).
     public static func reminderDateTime(_ isoString: String, now: Date = Date()) -> String {
         let trimmed = isoString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let date = parse(trimmed) else { return isoString }
@@ -178,15 +161,11 @@ public enum NoriDateFormatting: Sendable {
         return "\(dateStr) at \(timeStr)"
     }
 
-    /// Short time string (e.g. `"2:15 PM"`).
     public static func shortTime(_ isoString: String) -> String {
         guard let date = parse(isoString) else { return isoString }
         return formatTime(date)
     }
 
-    /// Readable date (e.g. `"Today"`, `"Yesterday"`, `"Tomorrow"`, `"Nov 24"`,
-    /// or `"Nov 24, 2025"` if in a different year). Handles `yyyy-MM-dd` cleanly
-    /// in the local calendar.
     public static func shortDate(_ isoString: String, now: Date = Date()) -> String {
         guard let date = parse(isoString) else { return isoString }
 
@@ -205,10 +184,7 @@ public enum NoriDateFormatting: Sendable {
         return formatMonthDay(date, relativeTo: now, calendar: calendar)
     }
 
-    // MARK: - Expiry Countdown
 
-    /// Countdown string for expiring items (e.g. `"Expires in 12m"`,
-    /// `"Expires in 2h"`, `"Expires in 3d"`, `"Expires soon"`, `"Expired"`).
     public static func expiryCountdown(_ isoString: String, now: Date = Date()) -> String {
         guard let date = parse(isoString) else { return isoString }
 
@@ -231,10 +207,7 @@ public enum NoriDateFormatting: Sendable {
         return "Expires in \(days)d"
     }
 
-    // MARK: - Duration
 
-    /// Concise duration between two ISO-8601 timestamps (e.g. `"14s"`,
-    /// `"2m 10s"`, `"1h 4m"`). Uses `now` when `endISO` is omitted.
     public static func duration(
         from startISO: String,
         to endISO: String? = nil,
@@ -263,7 +236,6 @@ public enum NoriDateFormatting: Sendable {
         return mins == 0 ? "\(hours)h" : "\(hours)h \(mins)m"
     }
 
-    // MARK: - Internal Helpers
 
     private static func isDateOnly(_ value: String) -> Bool {
         guard value.count == 10 else { return false }
@@ -279,8 +251,6 @@ public enum NoriDateFormatting: Sendable {
         return true
     }
 
-    /// Normalizes arbitrary-length fractional seconds (e.g. 6- or 9-digit Go
-    /// RFC3339Nano timestamps) to 3 digits so `ISO8601DateFormatter` parses them.
     private static func normalizeFractionalSeconds(_ value: String) -> String? {
         guard let dotIndex = value.firstIndex(of: ".") else { return nil }
         let afterDot = value.index(after: dotIndex)

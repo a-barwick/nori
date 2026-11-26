@@ -10,12 +10,6 @@ import (
 	"nori/internal/state"
 )
 
-// Reuse the runtime's command schemas in one strict action-list response.
-// Validated actions enter the same durable admission and replay path.
-//
-// stable omits every per-turn ID enum and keeps every tool, so the schema (part of the cached prompt prefix) does not
-// change when memories or tasks do. Callers using it must check reply IDs with validateReplyIDs. It does not apply to
-// command-plan or work-request turns, which keep their enum-restricted schemas.
 func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs []string, commandPlan, gateway, stable bool) any {
 	var tools []struct {
 		Function struct {
@@ -98,13 +92,11 @@ func responseFormat(taskIDs []string, requests []WorkRequest, memoryIDs []string
 	}}
 }
 
-// validateReplyIDs enforces, after decoding, the ID restrictions a non-stable response schema expresses as enums:
-// task commands name only the tasks shown to the model, and memory changes name only saved memories.
 func validateReplyIDs(calls []ToolCall, taskIDs, memoryIDs []string) error {
 	for _, call := range calls {
 		var args map[string]any
 		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
-			continue // malformed arguments are rejected with their own error downstream
+			continue
 		}
 		check := func(key string, allowed []string, nullable bool, what string) error {
 			value, present := args[key]
@@ -140,7 +132,6 @@ func validateReplyIDs(calls []ToolCall, taskIDs, memoryIDs []string) error {
 	return nil
 }
 
-// Some model providers reject a null enum member on a field with a union type.
 func setNullableStringEnum(field map[string]any, values []string, gateway bool) {
 	if !gateway {
 		items := make([]any, 1, len(values)+1)

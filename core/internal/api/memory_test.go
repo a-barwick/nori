@@ -339,7 +339,6 @@ func TestMemoryAPILifecycleAndConsolidate(t *testing.T) {
 	assistant := &Assistant{Store: store}
 	mux := newTestMemoryMux(assistant)
 
-	// 1. POST /v1/memory creates Core memory with 201 + receipt.
 	createID := uuid.NewString()
 	createBody := map[string]any{
 		"request_id":        createID,
@@ -362,13 +361,11 @@ func TestMemoryAPILifecycleAndConsolidate(t *testing.T) {
 		t.Fatalf("unexpected created fact: %+v", createdFact)
 	}
 
-	// Lookup receipt via GET /v1/mutations/{request_id}
 	rec = doJSONReq(t, mux, "GET", "/v1/mutations/"+createID, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /v1/mutations/%s status = %d: %s", createID, rec.Code, rec.Body.String())
 	}
 
-	// Idempotency conflict returns 409 without current.
 	conflictBody := map[string]any{
 		"request_id":        createID,
 		"expected_revision": 0,
@@ -379,7 +376,6 @@ func TestMemoryAPILifecycleAndConsolidate(t *testing.T) {
 		t.Fatalf("expected 409 idempotency_conflict without current, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	// 2. PUT /v1/memory/{id} edit + stale revision conflict with current.
 	editID := uuid.NewString()
 	rec = doJSONReq(t, mux, "PUT", "/v1/memory/"+createdFact.ID, map[string]any{
 		"request_id":        editID,
@@ -403,7 +399,6 @@ func TestMemoryAPILifecycleAndConsolidate(t *testing.T) {
 		t.Fatalf("expected 409 revision_conflict with current, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	// 3. POST /v1/memory/{id}/actions (pin, unpin, demote, reject consolidate).
 	rec = doJSONReq(t, mux, "POST", "/v1/memory/"+createdFact.ID+"/actions", map[string]any{
 		"request_id":        uuid.NewString(),
 		"expected_revision": editedFact.Revision,
@@ -421,7 +416,6 @@ func TestMemoryAPILifecycleAndConsolidate(t *testing.T) {
 		t.Fatalf("expected 400 for consolidate on item route, got %d", rec.Code)
 	}
 
-	// 4. POST /v1/memory/actions (consolidate): 503 when nil, then 200 + idempotent retry.
 	consReqID := uuid.NewString()
 	consBody := map[string]any{
 		"request_id":        consReqID,
@@ -441,13 +435,11 @@ func TestMemoryAPILifecycleAndConsolidate(t *testing.T) {
 		t.Fatalf("consolidate failed: status=%d calls=%d body=%s", rec.Code, consolidateCalls, rec.Body.String())
 	}
 	firstConsolidateBody := rec.Body.String()
-	// Retry must return identical receipt without invoking ConsolidateMemory a second time.
 	rec = doJSONReq(t, mux, "POST", "/v1/memory/actions", consBody)
 	if rec.Code != http.StatusOK || consolidateCalls != 1 || rec.Body.String() != firstConsolidateBody {
 		t.Fatalf("consolidate retry failed: status=%d calls=%d", rec.Code, consolidateCalls)
 	}
 
-	// 5. GET /v1/memory/logs and GET /v1/memory/logs/{date} filter pre-ContextFrom entries.
 	rec = doJSONReq(t, mux, "GET", "/v1/memory/logs", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /v1/memory/logs status = %d: %s", rec.Code, rec.Body.String())
@@ -466,7 +458,6 @@ func TestMemoryAPILifecycleAndConsolidate(t *testing.T) {
 		t.Fatalf("expected 400 for invalid log date, got %d", rec.Code)
 	}
 
-	// 6. POST /v1/memory/logs/{date}/{entry_id}/actions (promote & forget).
 	rec = doJSONReq(t, mux, "POST", "/v1/memory/logs/2026-11-23/post_entry/actions", map[string]any{
 		"request_id":        uuid.NewString(),
 		"expected_revision": now.UnixMilli(),
@@ -484,7 +475,6 @@ func TestMemoryAPILifecycleAndConsolidate(t *testing.T) {
 		t.Fatalf("expected 400 for forget with extra text field, got %d", rec.Code)
 	}
 
-	// 7. GET /v1/memory/working & POST /v1/memory/working/{item_id}/actions.
 	rec = doJSONReq(t, mux, "GET", "/v1/memory/working", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /v1/memory/working failed: %d %s", rec.Code, rec.Body.String())
@@ -503,7 +493,6 @@ func TestMemoryAPILifecycleAndConsolidate(t *testing.T) {
 		t.Fatalf("dismiss working item failed: %d %s", rec.Code, rec.Body.String())
 	}
 
-	// 8. GET /v1/memory/search & GET /v1/search enforce ContextFrom and return memory hits.
 	store.searchHits = []docstore.MemorySearchHit{
 		{
 			Chunk: docstore.MemoryChunk{
@@ -649,7 +638,6 @@ func TestWorkingMemoryExtractedThroughView(t *testing.T) {
 			t.Fatalf("last_dream_at = %v, want %v", view.LastDreamAt, dreamAt)
 		}
 
-		// Advancing contextFrom isolates old epoch metadata completely.
 		store.contextFrom = now
 		rec = doJSONReq(t, mux, "GET", "/v1/memory/working", nil)
 		if rec.Code != http.StatusOK {
@@ -669,7 +657,6 @@ func TestWorkingMemoryExtractedThroughView(t *testing.T) {
 		extractedAhead := now.Add(-20 * time.Minute)
 		store := newStubMemoryAPIStore(now)
 		store.contextFrom = cutoff
-		// Legacy / coupled summary with zero ExtractedThrough still reports EffectiveExtractedThrough == FlushedThrough.
 		store.summary = state.ConversationSummary{
 			From:           cutoff,
 			FlushedThrough: flushedAt,
@@ -696,7 +683,6 @@ func TestWorkingMemoryExtractedThroughView(t *testing.T) {
 			t.Fatalf("extracted_through = %v, want >= flushed_through (%v)", view.ExtractedThrough, flushedAt)
 		}
 
-		// Subsequent 20m session-idle extraction advances extracted_through ahead of flushed_through/through.
 		store.summary.ExtractedThrough = extractedAhead
 		store.summary.UpdatedAt = now
 		rec = doJSONReq(t, mux, "GET", "/v1/memory/working", nil)

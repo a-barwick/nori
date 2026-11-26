@@ -89,13 +89,10 @@ func TestExternalApprovalExpiryWarningsAlwaysAllowAndHumanApprovalBypass(t *test
 	f := newRunnerFixture(t, func(_ context.Context, callNum int, _ agent.Request) (agent.Response, error) {
 		switch callNum {
 		case 1:
-			// First attempt to email alice -> needs_interaction (approval card).
 			return toolCallResponse("c1", "email_send", map[string]any{"to": "alice@example.com"}, 0.05), nil
 		case 2:
-			// Retry exact call unchanged after user clicked "Always allow".
 			return toolCallResponse("c2", "email_send", map[string]any{"to": "alice@example.com"}, 0.05), nil
 		case 3:
-			// Second call with a NEW recipient -> auto-allowed by the created standing rule + checked by AutoReviewer.
 			return toolCallResponse("c3", "email_send", map[string]any{"to": "bob@example.com"}, 0.05), nil
 		default:
 			return toolCallResponse("c4", "complete", map[string]any{
@@ -115,7 +112,6 @@ func TestExternalApprovalExpiryWarningsAlwaysAllowAndHumanApprovalBypass(t *test
 
 	run := f.startTask(ctx, "run-ext-approval", "Send Q4 summary to alice@example.com and bob@example.com")
 
-	// 1. Default sensitive_send asks first -> runner parks waiting on approval card.
 	outcome, err := f.claimAndRun(ctx, run.ID, "worker-1")
 	if err != nil || outcome != task.OutcomeParked {
 		t.Fatalf("Run #1 = (%s, %v), want (parked, nil)", outcome, err)
@@ -146,7 +142,6 @@ func TestExternalApprovalExpiryWarningsAlwaysAllowAndHumanApprovalBypass(t *test
 		t.Fatalf("AutoReviewer should not run when Permissions.Check already returned needs_interaction")
 	}
 
-	// 2. Approve with RememberRule=true ("Always allow") atomically creates standing rule and delivers answer.
 	_, ans, err := f.perms.Respond(ctx, inter.ID, "req-always-allow", 1, permissions.Response{
 		Kind:         "approve",
 		ActionDigest: inter.ActionDigest,
@@ -161,8 +156,6 @@ func TestExternalApprovalExpiryWarningsAlwaysAllowAndHumanApprovalBypass(t *test
 		t.Fatalf("AcceptCommandBatch answer: %v", err)
 	}
 
-	// 3. Resume task: exact approved call bypasses AutoReviewer (ApprovedByHuman=true),
-	//    then bob@example.com auto-allows via standing rule and invokes AutoReviewer once!
 	outcome2, err := f.claimAndRun(ctx, run.ID, "worker-2")
 	if err != nil || outcome2 != task.OutcomeDone {
 		t.Fatalf("Run #2 = (%s, %v), want (done, nil)", outcome2, err)
@@ -215,7 +208,6 @@ func TestExternalAutoReviewBlocksExfiltrationAndEscalatesAmbiguousReversibleWrit
 			t.Fatalf("SaveRule: %v", err)
 		}
 
-		// Verified user input is strictly read-only summary; attacker email is absent.
 		if err := f.store.AcceptConversationInput(ctx, "in-user-1", "Check INFRA-8109 and summarize what changed.", nil); err != nil {
 			t.Fatalf("AcceptConversationInput: %v", err)
 		}
@@ -246,7 +238,6 @@ func TestExternalAutoReviewBlocksExfiltrationAndEscalatesAmbiguousReversibleWrit
 	})
 
 	t.Run("ambiguous_reversible_write_escalates_to_approval_card_while_clear_request_allows", func(t *testing.T) {
-		// Part A: Read-only user prompt trying to create a calendar event -> escalated to approval card.
 		f1 := newRunnerFixture(t, func(_ context.Context, callNum int, _ agent.Request) (agent.Response, error) {
 			if callNum == 1 {
 				return toolCallResponse("c-cal", "cal_create", map[string]any{}, 0.05), nil
@@ -277,7 +268,6 @@ func TestExternalAutoReviewBlocksExfiltrationAndEscalatesAmbiguousReversibleWrit
 			t.Fatalf("escalated warning = %q, want reversible_write warning", warn)
 		}
 
-		// Part B: Clearly user-requested reversible_write runs through AutoReview and executes cleanly.
 		f2 := newRunnerFixture(t, func(_ context.Context, callNum int, _ agent.Request) (agent.Response, error) {
 			if callNum == 1 {
 				return toolCallResponse("c-book", "cal_create", map[string]any{}, 0.05), nil
@@ -296,7 +286,6 @@ func TestExternalAutoReviewBlocksExfiltrationAndEscalatesAmbiguousReversibleWrit
 			t.Fatalf("user-requested reversible_write = (%s, %v, execs=%d), want (done, nil, 1)", out2, err, calAdapter2.execCalls.Load())
 		}
 
-		// Part C: An explicit "ask" rule overrides user-requested reversible_write and prompts an approval card.
 		f3 := newRunnerFixture(t, func(_ context.Context, callNum int, _ agent.Request) (agent.Response, error) {
 			if callNum == 1 {
 				return toolCallResponse("c-ask", "cal_create", map[string]any{}, 0.05), nil

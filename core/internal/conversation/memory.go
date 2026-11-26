@@ -15,8 +15,6 @@ import (
 	"nori/internal/state/docstore"
 )
 
-// memoryMessage shows the saved Core memories in compact JSON (omitting default
-// about="the user" and provenance="user_explicit" as documented in the header).
 func memoryMessage(memories []state.Memory) json.RawMessage {
 	content := prompts.Runtime("memories-none", nil)
 	if len(memories) > 0 {
@@ -197,7 +195,6 @@ func splitMemory(calls []ToolCall) ([]ToolCall, []memoryCall, error) {
 	return commands, changes, nil
 }
 
-// canonicalID reports whether a memory ID is a canonical UUID, which is also a safe Firestore document ID.
 func canonicalID(id string) bool {
 	parsed, err := uuid.Parse(id)
 	return err == nil && parsed.String() == id
@@ -208,8 +205,6 @@ type memoryCall struct {
 	change state.MemoryChange
 }
 
-// planMemory names new memories and checks every change against the saved ones. A new memory's ID comes from the
-// attempt and call, so a repeated attempt names it the same way.
 func planMemory(attemptID string, calls []memoryCall, saved []state.Memory) ([]state.MemoryChange, bool) {
 	changes := make([]state.MemoryChange, 0, len(calls))
 	for _, call := range calls {
@@ -222,8 +217,6 @@ func planMemory(attemptID string, calls []memoryCall, saved []state.Memory) ([]s
 	return changes, state.PlanMemoryChanges(saved, changes)
 }
 
-// memoryFailureText replaces the reply when a memory change was refused, because the reply was written before the
-// model knew.
 func memoryFailureText(changes []state.MemoryChange) string {
 	for _, c := range changes {
 		if c.Error != "" {

@@ -9,24 +9,11 @@ import (
 	"time"
 )
 
-// ConversationSummary stands in for the turns that fell out of the outer model's recent window. It changes what the
-// model sees, never what is stored: every turn and message stays saved.
 type ConversationSummary struct {
-	// A summary applies only to the retained context cutoff it covers.
-	From time.Time `json:"from" firestore:"from"`
-	// ExtractedThrough is the durable session-idle memory extraction watermark
-	// (FlushedThrough <= ExtractedThrough). Turns in (FlushedThrough, ExtractedThrough]
-	// have already extracted their durable Core/Daily-Log facts while remaining
-	// verbatim in the recent chat window, so later compaction summarizes them
-	// into Working Memory without double-extracting memories.
-	ExtractedThrough time.Time `json:"extracted_through,omitempty" firestore:"extracted_through,omitempty"`
-	// FlushedThrough is the authoritative durable watermark: every completed turn <= FlushedThrough
-	// has committed its extracted memories (Core/Log) AND semantic summary in the same DB transaction.
-	FlushedThrough time.Time `json:"flushed_through,omitempty" firestore:"flushed_through,omitempty"`
-	// Legacy RefinementThrough read-compatibly migrates to FlushedThrough when FlushedThrough.IsZero().
-	RefinementThrough time.Time `json:"refinement_through,omitempty" firestore:"refinement_through,omitempty"`
-	// Through is the hot-path verbatim window cutoff (FlushedThrough <= Through).
-	// Any turn in (FlushedThrough, Through] MUST remain represented in Excerpts until FlushedThrough catches up.
+	From                      time.Time             `json:"from" firestore:"from"`
+	ExtractedThrough          time.Time             `json:"extracted_through,omitempty" firestore:"extracted_through,omitempty"`
+	FlushedThrough            time.Time             `json:"flushed_through,omitempty" firestore:"flushed_through,omitempty"`
+	RefinementThrough         time.Time             `json:"refinement_through,omitempty" firestore:"refinement_through,omitempty"`
 	Through                   time.Time             `json:"through" firestore:"through"`
 	Excerpts                  []ConversationExcerpt `json:"excerpts,omitempty" firestore:"excerpts,omitempty"`
 	Items                     []SummaryItem         `json:"items" firestore:"items"`
@@ -43,8 +30,6 @@ type ConversationSummary struct {
 	UpdatedAt                 time.Time             `json:"updated_at" firestore:"updated_at"`
 }
 
-// EffectiveFlushedThrough returns the durable flush watermark, read-compatibly migrating
-// legacy RefinementThrough / semantic summaries when FlushedThrough is zero.
 func (s ConversationSummary) EffectiveFlushedThrough() time.Time {
 	if !s.FlushedThrough.IsZero() {
 		return s.FlushedThrough
@@ -58,8 +43,6 @@ func (s ConversationSummary) EffectiveFlushedThrough() time.Time {
 	return s.From
 }
 
-// EffectiveExtractedThrough returns the durable memory-extraction watermark
-// (always >= EffectiveFlushedThrough()).
 func (s ConversationSummary) EffectiveExtractedThrough() time.Time {
 	flushed := s.EffectiveFlushedThrough()
 	if s.ExtractedThrough.After(flushed) {
@@ -68,7 +51,6 @@ func (s ConversationSummary) EffectiveExtractedThrough() time.Time {
 	return flushed
 }
 
-// ConversationExcerpt is a lossless source excerpt for turns in (FlushedThrough, Through].
 type ConversationExcerpt struct {
 	MessageID     string    `json:"message_id" firestore:"message_id"`
 	Role          string    `json:"role" firestore:"role"`
@@ -76,7 +58,6 @@ type ConversationExcerpt struct {
 	TurnStartedAt time.Time `json:"turn_started_at,omitempty" firestore:"turn_started_at,omitempty"`
 }
 
-// FitConversationExcerpts bounds temporary unflushed excerpts well inside OuterInputBytes.
 func FitConversationExcerpts(s *ConversationSummary) {
 	const maxExcerptBytes = 32 << 10
 	for len(s.Excerpts) > 0 {
@@ -88,7 +69,6 @@ func FitConversationExcerpts(s *ConversationSummary) {
 	}
 }
 
-// SummaryItem keeps one thing from an earlier turn in the user's exact words, with the message it came from.
 type SummaryItem struct {
 	ID      string `json:"id,omitempty" firestore:"id,omitempty"`
 	Kind    string `json:"kind" firestore:"kind"`
@@ -97,7 +77,6 @@ type SummaryItem struct {
 	Note    string `json:"note,omitempty" firestore:"note,omitempty"`
 }
 
-// SummaryItemID returns a stable deterministic identifier for a SummaryItem.
 func SummaryItemID(item SummaryItem) string {
 	if item.ID != "" {
 		return item.ID
@@ -109,14 +88,9 @@ func SummaryItemID(item SummaryItem) string {
 var SummaryKinds = []string{"constraint", "correction", "preference", "approval", "open_question", "commitment", "decision", "fact"}
 
 const (
-	// OuterInputBytes bounds every message one outer reply sends, other than its tool schema.
-	// RecentTurnLimit and RecentTurnBytes bound the turns replayed word for word after the summary.
-	OuterInputBytes = 128 << 10
-	RecentTurnLimit = 36
-	RecentTurnBytes = 64 << 10
-	// SoftCompactUserTurns, SoftCompactTurns, and SoftCompactBytes trigger proactive out-of-band
-	// flush+compact well before the hard verbatim window cap. CompactKeep and CompactKeepUserTurns
-	// leave the newest turns (and at least CompactKeepUserTurns user turns) verbatim.
+	OuterInputBytes      = 128 << 10
+	RecentTurnLimit      = 36
+	RecentTurnBytes      = 64 << 10
 	SoftCompactUserTurns = 16
 	SoftCompactTurns     = 28
 	SoftCompactBytes     = 48 << 10
@@ -124,13 +98,11 @@ const (
 	CompactKeepUserTurns = 10
 	CompactTurnLimit     = 24
 	CompactInputBytes    = 64 << 10
-	// SummaryBytes bounds the saved Working Memory summary.
-	SummaryBytes    = 16 << 10
-	MaxSummaryItems = 80
-	MaxSummaryQuote = 600
-	MaxSummaryNote  = 200
-	MaxSummaryGist  = 4000
-	// Coupled compaction, session-idle extraction, & AutoDream scheduling parameters.
+	SummaryBytes         = 16 << 10
+	MaxSummaryItems      = 80
+	MaxSummaryQuote      = 600
+	MaxSummaryNote       = 200
+	MaxSummaryGist       = 4000
 	MaxFlushRetries      = 3
 	IdleExtractDelay     = 10 * time.Minute
 	ExtractTurnThreshold = 6
@@ -151,9 +123,6 @@ func TurnBytes(t ConversationTurn) int {
 	return n
 }
 
-// CheckSummaryItems keeps only items whose quote is the user's exact words from the message it names. sources maps input
-// IDs to the text of their messages, including the quotes of the summary being replaced. An item whose quote isn't
-// exact falls back to the whole message when that fits.
 func CheckSummaryItems(items []SummaryItem, sources map[string]string) (kept []SummaryItem, dropped int) {
 	kept = []SummaryItem{}
 	for i, item := range items {
@@ -182,16 +151,6 @@ func CheckSummaryItems(items []SummaryItem, sources map[string]string) (kept []S
 	return kept, dropped
 }
 
-// FitSummary trims a summary to SummaryBytes without returning archived entries.
-// Callers participating in coupled flush+compact MUST use FitSummaryWithArchive so
-// evicted items are preserved in Daily Logs (INV-MEM-02).
-func FitSummary(s *ConversationSummary) {
-	_ = FitSummaryWithArchive(s, time.Time{})
-}
-
-// FitSummaryWithArchive trims a summary to SummaryBytes and MaxSummaryItems: first the gist,
-// then the oldest items (keeping constraints and corrections longest). Every evicted item is
-// returned as a ProvenanceSummaryEvicted MemoryLogEntry so nothing is silently lost.
 func FitSummaryWithArchive(s *ConversationSummary, now time.Time) []MemoryLogEntry {
 	s.Gist = trimText(s.Gist, MaxSummaryGist)
 	for i := range s.Items {

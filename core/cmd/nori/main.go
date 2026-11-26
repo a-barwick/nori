@@ -20,11 +20,13 @@ import (
 	"nori/internal/observability"
 	"nori/internal/platform"
 	"nori/internal/settings"
+	"nori/internal/state/postgres"
 	"nori/internal/worker"
 )
 
 func main() {
 	roleFlag := flag.String("role", "", "runtime role: all, api, or worker (defaults to NORI_ROLE or all)")
+	migrateOnly := flag.Bool("migrate-only", false, "apply and verify Postgres migrations, then exit")
 	metricsAddrFlag := flag.String("metrics-addr", "", "optional listen address for operational endpoints (/healthz, /readyz, /metrics) when --role=worker")
 	flag.Parse()
 
@@ -42,6 +44,16 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if *migrateOnly {
+		backend, err := postgres.OpenBackend(ctx, s.Store.PostgresURL)
+		if err != nil {
+			observability.Fatal(err)
+		}
+		if err := backend.Close(); err != nil {
+			observability.Fatal(err)
+		}
+		return
+	}
 
 	serviceName := "nori"
 	switch role {

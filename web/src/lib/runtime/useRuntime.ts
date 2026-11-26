@@ -5,19 +5,20 @@ import * as Sentry from "@sentry/nextjs";
 import type { Span } from "@sentry/nextjs";
 import type { Attachment, DraftFile, Message, ModelSelection, PendingTaskCommand, ReadPosition, Run, SavedResult, Session, TaskCommand, TaskCommandResponse } from "@/lib/types";
 import { taskControlKinds } from "@/lib/types";
-import { invalidate } from "@/lib/assistant/useResource";
+import { parseModelSelection } from "@/lib/assistant/modelSelection";
+import { useResourceInvalidation } from "@/lib/assistant/useResource";
 import { hasSubmission, messageTooLong } from "@/lib/submission";
 import { useDraftFiles, type UploadContext } from "@/lib/useDraftFiles";
 import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "./messages";
 
 class RequestError extends Error {
-  constructor(message: string, readonly status: number, readonly details?: TaskCommandResponse) { super(message); }
+  constructor(message: string, readonly status: number, readonly details?: TaskCommandResponse, readonly code?: string) { super(message); }
 }
 
 async function readJSON<T>(response: Response, failure = "Request failed"): Promise<T> {
   const data = await response.json().catch(() => null);
   if (data === null) throw new RequestError("Nori returned an unreadable response.", response.status);
-  if (!response.ok) throw new RequestError(data.error || `${failure} (${response.status}).`, response.status, data);
+  if (!response.ok) throw new RequestError(data.error || `${failure} (${response.status}).`, response.status, data, data.code);
   return data as T;
 }
 
@@ -42,14 +43,12 @@ async function snapshot(before: string | undefined, signal: AbortSignal | undefi
   return readJSON<Session>(response);
 }
 
-// With nothing running, a visible tab drops its stream after this long, so an open tab doesn't hold the service awake.
 const STREAM_IDLE_MS = 5 * 60_000;
 type Presence = { conversation: NonNullable<Session["conversation"]>; paused: boolean };
 type Pending = { id: string; text: string; started: number; error?: string; attachments?: Attachment[]; model?: ModelSelection; retryManually?: boolean };
 const TURN_ACCEPTANCE_UNKNOWN = "Message acceptance could not be confirmed.";
 const COMMAND_ACCEPTANCE_UNKNOWN = "Task command acceptance could not be confirmed.";
 
-/** Uploads with progress and cancel (XMLHttpRequest reports upload progress; fetch does not). */
 function uploadFile(item: DraftFile, { signal, progress }: UploadContext): Promise<Attachment> {
   const query = new URLSearchParams({ id: item.id, filename: item.name });
   return new Promise((resolve, reject) => {
@@ -59,7 +58,7 @@ function uploadFile(item: DraftFile, { signal, progress }: UploadContext): Promi
     request.upload.onprogress = (event) => { if (event.lengthComputable) progress(event.loaded / event.total); };
     request.onload = () => {
       let data: { error?: string } & Partial<Attachment> | null = null;
-      try { data = JSON.parse(request.responseText); } catch { /* handled below */ }
+      try { data = JSON.parse(request.responseText); } catch {  }
       if (request.status >= 200 && request.status < 300 && data) resolve(data as Attachment);
       else reject(new Error(data?.error || (request.status ? `Upload failed (${request.status}).` : "Upload failed. Try again.")));
     };
@@ -74,20 +73,20 @@ const STORAGE_KEY = "nori-pending-turns-v1";
 const DRAFT_KEY = "nori-draft-assistant-v1";
 const MAX_PENDING = 20;
 const TIMING_STORAGE_KEY = "nori-reply-timings-v1";
-function saveTimings(timings: Map<string, ReplyTiming>) {
-  try { sessionStorage.setItem(TIMING_STORAGE_KEY, JSON.stringify([...timings].map(([id, timing]) => ({ id, started: timing.started })))); } catch { /* Best effort in private browsing. */ }
+function saveTimings(scope: string, timings: Map<string, ReplyTiming>) {
+  try { sessionStorage.setItem(`${TIMING_STORAGE_KEY}:${scope}`, JSON.stringify([...timings].map(([id, timing]) => ({ id, started: timing.started })))); } catch {  }
 }
-function restoredTimings(): Pending[] {
+function restoredTimings(scope: string): Pending[] {
   try {
-    const values: unknown = JSON.parse(sessionStorage.getItem(TIMING_STORAGE_KEY) || "[]");
+    const values: unknown = JSON.parse(sessionStorage.getItem(`${TIMING_STORAGE_KEY}:${scope}`) || "[]");
     return Array.isArray(values) ? values.slice(-MAX_PENDING).filter((value) => typeof value?.id === "string" && /^[a-f0-9-]{36}$/.test(value.id) && Number.isFinite(value.started) && value.started <= Date.now()).map((value) => ({ id: value.id, started: value.started, text: "" })) : [];
   } catch { return []; }
 }
 
 const COMMAND_STORAGE_KEY = "nori-pending-task-commands-v1";
-function restoreTaskCommands(): PendingTaskCommand[] {
+function restoreTaskCommands(scope: string): PendingTaskCommand[] {
   try {
-    const value: unknown = JSON.parse(sessionStorage.getItem(COMMAND_STORAGE_KEY) || "[]");
+    const value: unknown = JSON.parse(sessionStorage.getItem(`${COMMAND_STORAGE_KEY}:${scope}`) || "[]");
     if (!Array.isArray(value)) return [];
     return value.filter((item): item is PendingTaskCommand => item && typeof item.started === "number" &&
       typeof item.command?.id === "string" && /^[a-f0-9-]{36}$/.test(item.command.id) &&
@@ -102,15 +101,19 @@ function commandApplied(item: PendingTaskCommand, runs: Run[]) {
   return !!run && ((item.position !== undefined && ((run.incorporated ?? 0) >= item.position || (run.status !== "running" && (run.position ?? 0) >= item.position))) ||
     (item.command.kind === "stop" && run.status !== "running"));
 }
-function restorePending(): Pending[] {
+function restorePending(scope: string): Pending[] {
   try {
-    const value: unknown = JSON.parse(sessionStorage.getItem(STORAGE_KEY) || "[]");
+    const value: unknown = JSON.parse(sessionStorage.getItem(`${STORAGE_KEY}:${scope}`) || "[]");
     if (!Array.isArray(value)) return [];
     return value.filter((item): item is Pending => item && typeof item.id === "string" &&
       /^[a-f0-9-]{36}$/.test(item.id) && typeof item.text === "string" &&
       !messageTooLong(item.text) && typeof item.started === "number" && (item.attachments === undefined || Array.isArray(item.attachments)))
       .slice(0, MAX_PENDING)
-      .map((item) => item.retryManually ? { ...item, error: TURN_ACCEPTANCE_UNKNOWN } : item);
+      .map((item) => ({
+        ...item,
+        model: item.model ? parseModelSelection(item.model) : undefined,
+        ...(item.retryManually ? { error: TURN_ACCEPTANCE_UNKNOWN } : {}),
+      }));
   } catch { return []; }
 }
 const acknowledged = (data: Session, id: string) => data.conversation?.input_ids.includes(id) || data.messages.some((message) => message.id === `${id}-user`);
@@ -118,12 +121,10 @@ function mergeById<T extends { id: string }>(older: T[], newer: T[]): T[] {
   return [...new Map([...older, ...newer].map((item) => [item.id, item])).values()];
 }
 
-// A snapshot or POST response can arrive after a newer read-position event.
 function mergeReadPosition(older: ReadPosition | undefined, newer: ReadPosition | undefined) {
   return !older || (newer && newer.position > older.position) ? newer : older;
 }
 
-// Responses can arrive out of order; keep newer task progress.
 function mergeRuns(older: Run[], newer: Run[]): Run[] {
   const runs = new Map(older.map((run) => [run.id, run]));
   for (const run of newer) {
@@ -138,20 +139,19 @@ function mergeRuns(older: Run[], newer: Run[]): Run[] {
   return [...runs.values()].sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at));
 }
 
-export function useRuntime(localMode = false, modelSelection?: ModelSelection) {
+export function useRuntime(localMode = false, modelSelection?: ModelSelection, scope = "local", refreshCapabilities?: () => void) {
+  const invalidate = useResourceInvalidation();
   const modelSelectionRef = useRef<ModelSelection | undefined>(modelSelection);
   modelSelectionRef.current = modelSelection;
   const [session, setSession] = useState<Session>();
-  // The unsent draft survives reloads and reconnects; it is cleared when the message is accepted for sending.
   const [draft, setDraftState] = useState("");
   const { files: draftFiles, attach, retry, clear: clearFiles, remove: removeFile, invalidateUploads } = useDraftFiles();
   const draftValue = useRef(draft);
   const setDraft = (text: string) => {
     draftValue.current = text; setDraftState(text);
-    try { if (text) localStorage.setItem(DRAFT_KEY, text); else localStorage.removeItem(DRAFT_KEY); } catch { /* storage off */ }
+    try { if (text) localStorage.setItem(`${DRAFT_KEY}:${scope}`, text); else localStorage.removeItem(`${DRAFT_KEY}:${scope}`); } catch {  }
   };
   const [error, setError] = useState("");
-  // Mirrors an outage error so the stream can clear it when the service answers again.
   const outage = useRef(false);
   useEffect(() => { outage.current = error === SERVICE_UNAVAILABLE; }, [error]);
   const [streamError, setStreamError] = useState("");
@@ -196,20 +196,20 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection) {
     pendingRef.current = next;
     setPending(next);
     try {
-      if (next.length) sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next.map(({ id, text, started, attachments, retryManually }) => ({ id, text, started, attachments, retryManually }))));
-      else sessionStorage.removeItem(STORAGE_KEY);
-    } catch { /* Private browsing may disable storage; current-tab retries still work. */ }
-  }, []);
+      if (next.length) sessionStorage.setItem(`${STORAGE_KEY}:${scope}`, JSON.stringify(next.map(({ id, text, started, attachments, model, retryManually }) => ({ id, text, started, attachments, model, retryManually }))));
+      else sessionStorage.removeItem(`${STORAGE_KEY}:${scope}`);
+    } catch {  }
+  }, [scope]);
 
   const updateTaskCommands = useCallback((update: (current: PendingTaskCommand[]) => PendingTaskCommand[]) => {
     const next = update(taskCommandsRef.current);
     taskCommandsRef.current = next;
     setTaskCommands(next);
     try {
-      if (next.length) sessionStorage.setItem(COMMAND_STORAGE_KEY, JSON.stringify(next.map((item) => ({ ...item, sending: false }))));
-      else sessionStorage.removeItem(COMMAND_STORAGE_KEY);
-    } catch { /* Current-tab retries remain available without storage. */ }
-  }, []);
+      if (next.length) sessionStorage.setItem(`${COMMAND_STORAGE_KEY}:${scope}`, JSON.stringify(next.map((item) => ({ ...item, sending: false }))));
+      else sessionStorage.removeItem(`${COMMAND_STORAGE_KEY}:${scope}`);
+    } catch {  }
+  }, [scope]);
 
   const applySnapshot = useCallback((data: Session, serial: number) => {
     if (serial < minimumSerial.current) return;
@@ -225,7 +225,6 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection) {
       runs: mergeRuns(current?.runs ?? [], data.runs),
       traces: mergeById(current?.traces ?? [], data.traces ?? []),
       read_position: mergeReadPosition(current?.read_position, data.read_position),
-      // Preserve pages already loaded while refreshing the newest page.
       next_cursor: current ? current.next_cursor : data.next_cursor,
     }));
     if (replace) setLoading(false);
@@ -245,8 +244,8 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection) {
     });
     timing.span.end();
     replyTimings.current.delete(id);
-    saveTimings(replyTimings.current);
-  }, [localMode]);
+    saveTimings(scope, replyTimings.current);
+  }, [localMode, scope]);
 
   const beginTiming = useCallback((item: Pending) => {
     if (!Sentry.getClient() || replyTimings.current.has(item.id)) return;
@@ -254,8 +253,8 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection) {
       startTime: item.started / 1000, attributes: { "nori.mode": localMode ? "local" : "hosted" } }));
     const timer = setTimeout(() => finishTiming(item.id, "timeout"), Math.max(0, 15 * 60_000 - (Date.now() - item.started)));
     replyTimings.current.set(item.id, { started: item.started, span, timer });
-    saveTimings(replyTimings.current);
-  }, [localMode, finishTiming]);
+    saveTimings(scope, replyTimings.current);
+  }, [localMode, finishTiming, scope]);
 
   useEffect(() => {
     if (!session) return;
@@ -281,7 +280,7 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection) {
     return data;
   }, [applySnapshot]);
 
-  const submit = useCallback(async (item: Pending) => {
+  const submit = useCallback(async (item: Pending, fallbackOnUnavailableModel = false) => {
     if (replacingSnapshot.current || submissions.current.has(item.id)) return;
     submissions.current.add(item.id);
     const controller = new AbortController();
@@ -289,16 +288,21 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection) {
     updatePending((current) => current.map((entry) => entry.id === item.id ? { ...entry, error: undefined } : entry));
     const serial = ++requestSerial.current;
     try {
-      const data = await post<Session>("turn", {
-        id: item.id,
-        message: item.text,
-        attachments: item.attachments?.map((file) => file.id),
-        ...(item.model ? { model: item.model } : {}),
-      }, controller.signal, replyTimings.current.get(item.id)?.span);
+      const payload = { id: item.id, message: item.text, attachments: item.attachments?.map((file) => file.id) };
+      const span = replyTimings.current.get(item.id)?.span;
+      let data: Session;
+      try {
+        data = await post<Session>("turn", item.model ? { ...payload, model: item.model } : payload, controller.signal, span);
+      } catch (error) {
+        if (controller.signal.aborted || !(error instanceof RequestError) || error.code !== "model_selection_unavailable") throw error;
+        refreshCapabilities?.();
+        if (!item.model || !fallbackOnUnavailableModel) throw error;
+        updatePending((current) => current.map((entry) => entry.id === item.id ? { ...entry, model: undefined } : entry));
+        data = await post<Session>("turn", payload, controller.signal, span);
+      }
       if (!controller.signal.aborted) { applySnapshot(data, serial); setError(""); }
     } catch (err) {
       if (!controller.signal.aborted) {
-        // A dropped acceptance response is ambiguous. Keep the same UUID for retry.
         const rejected = err instanceof RequestError && err.status >= 400 && err.status < 500 && err.status !== 429;
         updatePending((current) => current.map((entry) => entry.id === item.id ? {
           ...entry, retryManually: entry.retryManually || rejected,
@@ -307,7 +311,7 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection) {
         await refresh(controller.signal).catch(() => undefined);
       }
     } finally { controllers.current.delete(controller); submissions.current.delete(item.id); }
-  }, [applySnapshot, refresh, updatePending]);
+  }, [applySnapshot, refresh, refreshCapabilities, updatePending]);
 
   const submitTaskCommand = useCallback(async (item: PendingTaskCommand) => {
     if (replacingSnapshot.current || commandSubmissions.current.has(item.command.id)) return;
@@ -338,7 +342,7 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection) {
       if (!controller.signal.aborted) await refresh(controller.signal).catch(() => undefined);
       controllers.current.delete(controller);
     }
-  }, [refresh, updateTaskCommands]);
+  }, [refresh, updateTaskCommands, invalidate]);
 
   const refreshAndRetry = useCallback(async (signal: AbortSignal) => {
     const wasReplacing = replacingSnapshot.current;
@@ -353,18 +357,18 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection) {
     if (!hydratedStorage.current) {
       hydratedStorage.current = true;
       try {
-        const savedDraft = localStorage.getItem(DRAFT_KEY) ?? "";
+        const savedDraft = localStorage.getItem(`${DRAFT_KEY}:${scope}`) ?? "";
         if (savedDraft && !draftValue.current) {
           draftValue.current = savedDraft;
           setDraftState(savedDraft);
         }
-      } catch { /* storage off */ }
-      const savedPending = restorePending();
+      } catch {  }
+      const savedPending = restorePending(scope);
       if (savedPending.length) {
         pendingRef.current = savedPending;
         setPending(savedPending);
       }
-      const savedCommands = restoreTaskCommands();
+      const savedCommands = restoreTaskCommands(scope);
       if (savedCommands.length) {
         taskCommandsRef.current = savedCommands;
         setTaskCommands(savedCommands);
@@ -372,7 +376,7 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection) {
     }
     const currentControllers = controllers.current;
     const currentTimings = replyTimings.current;
-    for (const item of [...restoredTimings(), ...pendingRef.current]) beginTiming(item);
+    for (const item of [...restoredTimings(scope), ...pendingRef.current]) beginTiming(item);
     const controller = new AbortController();
     void refreshAndRetry(controller.signal).catch((err) => { if (!controller.signal.aborted) setError(err.message); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
@@ -398,7 +402,7 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection) {
       window.removeEventListener("online", reconnect);
       window.removeEventListener("focus", wake);
     };
-  }, [refreshAndRetry, beginTiming]);
+  }, [refreshAndRetry, beginTiming, scope]);
 
   useEffect(() => {
     if (busy) { setStreamAwake(true); return; }
@@ -406,8 +410,6 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection) {
     return () => clearTimeout(timer);
   }, [busy, streamAwake]);
 
-  // Remember every reply exposed in this tab, independently of the shared read position. Reading a newer
-  // reply (here or elsewhere) does not prove that an older reply's results were shown.
   const markShown = useCallback((ids: string[]) => {
     if (document.hidden || replacingSnapshot.current) return;
     setShownMessageIDs((current) => ids.every((id) => current.has(id)) ? current : new Set([...current, ...ids]));
@@ -438,8 +440,6 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection) {
     };
   }, [session, shownMessageIDs, visible, deliveryRetry]);
 
-  // The newest exposed reply advances the shared read position. Retries use the same message and the service's
-  // mark only moves forward, including when another session has already read beyond this tab.
   useEffect(() => {
     if (!visible || document.hidden || !navigator.onLine || !shownMessageID || replacingSnapshot.current) return;
     const messages = session?.messages ?? [];
@@ -460,8 +460,6 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection) {
     return () => { controller.abort(); clearTimeout(timer); requests.delete(controller); };
   }, [session?.messages, session?.read_position, shownMessageID, visible, readRetry]);
 
-  // Follow the event log while the tab is visible. The browser reconnects by itself with Last-Event-ID after a stream
-  // ends. It gives up only when a response isn't a stream, and then this reopens it from the last event.
   useEffect(() => {
     if (!started || !visible || !streamAwake) return;
     const controller = new AbortController();
@@ -478,7 +476,6 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection) {
       updatePending((current) => current.filter((item) => !conversation.input_ids.includes(item.id)));
       const now = conversation.pending || conversation.processing;
       if (!now) setStreamingDelta(null);
-      // A finished turn's traces are in the snapshot. Read it once at the end of a turn, and never on a reconnect.
       if (wasConversationBusy.current && !now) void refresh(controller.signal).catch(() => undefined);
       wasConversationBusy.current = now;
     };
@@ -510,7 +507,6 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection) {
         const recovering = outage.current || failures > 0;
         failures = 0;
         setStreamError("");
-        // The service is back after an outage or restart: resync snapshot and badges once so stale counts clear.
         if (recovering) {
           void refresh(controller.signal).then((data) => { if (data) setError(""); }, () => undefined);
           invalidate("/assistant/summary", "/work", "/interactions", "/memory");
@@ -553,11 +549,9 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection) {
       listen<Presence>("conversation", applyPresence);
       listen<Presence>("presence", applyPresence);
       listen<unknown>("unknown", () => undefined);
-      // The log can't resume from this position, so start again from a snapshot.
       listen<{ position: number }>("reset", (value) => {
         const rewind = value.position < streamPosition;
         if (rewind) {
-          // After a store rewind, a higher revision or command position may belong to the retired history.
           minimumSerial.current = requestSerial.current + 1;
           replacingSnapshot.current = true;
           wasConversationBusy.current = false;
@@ -586,7 +580,7 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection) {
     }
     open();
     return () => { stopped = true; controller.abort(); source?.close(); clearTimeout(timer); };
-  }, [started, visible, streamAwake, refresh, updatePending, updateTaskCommands, invalidateUploads]);
+  }, [started, visible, streamAwake, refresh, updatePending, updateTaskCommands, invalidateUploads, invalidate]);
 
   async function refreshHistory() {
     setError(""); setStreamError(""); setLoading(true);
@@ -630,7 +624,7 @@ export function useRuntime(localMode = false, modelSelection?: ModelSelection) {
     Sentry.addBreadcrumb({ category: "nori", message: "turn submitted" });
     updatePending((current) => [...current, item]);
     setDraft(""); setError(""); clearFiles();
-    await submit(item);
+    await submit(item, true);
   }
 
   const upload = (item: DraftFile, context: UploadContext) => uploadFile(item, context);

@@ -288,14 +288,12 @@ func TestMCPOAuthSignInAndCallbackIOSBridge(t *testing.T) {
 		t.Fatalf("unmarshal MCP server: %v", err)
 	}
 
-	// Reject disallowed return_to targets.
 	for _, bad := range []string{"https://evil.com", "nori://oauth/other", "nori://oauth/callback/extra", "nori://oauth/callback@evil.com", "//evil.com"} {
 		if _, err := svc.SignIn(ctx, srv.ID, bad); !errors.Is(err, state.ErrInvalidResource) {
 			t.Fatalf("SignIn(returnTo=%q) err=%v, want ErrInvalidResource", bad, err)
 		}
 	}
 
-	// Start via Act("sign_in") with nori://oauth/callback.
 	actReceipt, err := svc.Act(ctx, srv.ID, "req-act-signin", srv.Revision, "sign_in", "", "", iosOAuthCallbackURL)
 	if err != nil {
 		t.Fatalf("Act(sign_in, nori://oauth/callback): %v", err)
@@ -313,7 +311,6 @@ func TestMCPOAuthSignInAndCallbackIOSBridge(t *testing.T) {
 		t.Fatalf("missing OAuth state")
 	}
 
-	// Success callback redirects cleanly to nori://oauth/callback.
 	loc, err := svc.Callback(ctx, oauthState, "code-ok", "")
 	if err != nil {
 		t.Fatalf("Callback success: %v", err)
@@ -323,7 +320,6 @@ func TestMCPOAuthSignInAndCallbackIOSBridge(t *testing.T) {
 		t.Fatalf("Callback success redirect = %q, want %q", loc, wantSuccess)
 	}
 
-	// Provider error redirects cleanly to nori://oauth/callback with reason.
 	errAttempt, err := svc.SignIn(ctx, srv.ID, iosOAuthCallbackURL)
 	if err != nil {
 		t.Fatalf("SignIn for provider error: %v", err)
@@ -338,7 +334,6 @@ func TestMCPOAuthSignInAndCallbackIOSBridge(t *testing.T) {
 		t.Fatalf("Callback provider error redirect = %q, want %q", errLoc, wantDenied)
 	}
 
-	// Expired attempt redirects cleanly to nori://oauth/callback.
 	expAttempt, err := svc.SignIn(ctx, srv.ID, iosOAuthCallbackURL)
 	if err != nil {
 		t.Fatalf("SignIn for expiry: %v", err)
@@ -354,7 +349,6 @@ func TestMCPOAuthSignInAndCallbackIOSBridge(t *testing.T) {
 		t.Fatalf("Callback expired redirect = %q, want %q", expLoc, wantExpired)
 	}
 
-	// Credential store failure on iOS callback still redirects cleanly instead of stranding ASWebAuthenticationSession.
 	credAttempt, err := svc.SignIn(ctx, srv.ID, iosOAuthCallbackURL)
 	if err != nil {
 		t.Fatalf("SignIn for cred failure: %v", err)

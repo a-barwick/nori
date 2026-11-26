@@ -35,7 +35,6 @@ func TestVerifyDreamOutput_UISentinelDoesNotBypassPinnedProtection(t *testing.T)
 		UpdatedAt:     t1,
 	}
 
-	// Simulate dreamConsolidate building verifiedSources across Core memories where "ui" gets t1.
 	verifiedSources := map[string]dreamSource{
 		"ui": {
 			Text:      newerUI.Text,
@@ -47,7 +46,6 @@ func TestVerifyDreamOutput_UISentinelDoesNotBypassPinnedProtection(t *testing.T)
 		},
 	}
 
-	// 1. Omitted source_input_id (falls back to "ui") or explicit "ui" must NOT update or delete pinnedUI.
 	upserts, deletes, _ := verifyDreamOutput(
 		dreamModelOutput{
 			CoreUpserts: []dreamCoreUpsertCandidate{
@@ -69,7 +67,6 @@ func TestVerifyDreamOutput_UISentinelDoesNotBypassPinnedProtection(t *testing.T)
 		t.Fatalf("expected 0 deletes against pinned UI memory via ui sentinel, got %+v", deletes)
 	}
 
-	// 2. A strictly newer genuine conversational input ID IS allowed to contradict pinnedUI.
 	upserts, deletes, _ = verifyDreamOutput(
 		dreamModelOutput{
 			CoreUpserts: []dreamCoreUpsertCandidate{
@@ -112,7 +109,6 @@ func TestVerifyFlushCoreUpserts_ProtectsNewerPinnedCoreFromOlderTurn(t *testing.
 		"in-newer": laterTurnTime,
 	}
 
-	// Older turn trying to replace newer pinned memory must be skipped.
 	got := verifyFlushCoreUpserts(
 		[]flushCoreUpsertCandidate{
 			{Text: "Stale overwrite", InputID: "in-older", Quote: "Old turn preference text.", Replaces: pinned.ID},
@@ -126,7 +122,6 @@ func TestVerifyFlushCoreUpserts_ProtectsNewerPinnedCoreFromOlderTurn(t *testing.
 		t.Fatalf("expected older turn replace against newer pinned memory to be skipped, got %+v", got)
 	}
 
-	// Strictly newer turn trying to replace pinned memory succeeds and preserves Pinned.
 	got = verifyFlushCoreUpserts(
 		[]flushCoreUpsertCandidate{
 			{Text: "Newer turn overriding preference.", InputID: "in-newer", Quote: "Newer turn overriding preference.", Replaces: pinned.ID},

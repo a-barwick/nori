@@ -22,25 +22,17 @@ import (
 )
 
 var (
-	// ErrInjectedModelFault is returned when a configured provider error fault triggers.
 	ErrInjectedModelFault = errors.New("sim/inner: injected inner model provider error")
 )
 
-// ModelConfig configures FakeInnerModel pricing, behavior, and injectable faults.
 type ModelConfig struct {
-	// CostPerCall is the reported USD cost of each model request. Defaults to 0.15 when <= 0.
-	CostPerCall float64
-	// ProviderErrProb is the probability of returning ErrInjectedModelFault when faults are enabled.
-	ProviderErrProb float64
-	// OverflowErrProb is the probability of returning contextview.ErrOverflow when faults are enabled.
-	OverflowErrProb float64
-	// UnknownCostProb is the probability of returning CostKnown=false, NotSent=false when faults are enabled.
-	UnknownCostProb float64
-	// MaxStepsBeforeComplete bounds how many model turns a task takes before emitting complete. Defaults to 3.
+	CostPerCall            float64
+	ProviderErrProb        float64
+	OverflowErrProb        float64
+	UnknownCostProb        float64
 	MaxStepsBeforeComplete int
 }
 
-// DefaultModelConfig returns a deterministic inner-model config with moderate fault probabilities.
 func DefaultModelConfig() ModelConfig {
 	return ModelConfig{
 		CostPerCall:            0.15,
@@ -51,7 +43,6 @@ func DefaultModelConfig() ModelConfig {
 	}
 }
 
-// ModelCallRecord is one append-only entry recorded every time FakeInnerModel.Respond is invoked.
 type ModelCallRecord struct {
 	UserID       string
 	RunID        string
@@ -66,7 +57,6 @@ type ModelCallRecord struct {
 	At           time.Time
 }
 
-// SpendSnapshot captures the authoritative family spend and budget observed right before a model call.
 type SpendSnapshot struct {
 	Revision     int64
 	SpentBefore  float64
@@ -74,11 +64,8 @@ type SpendSnapshot struct {
 	Budget       float64
 }
 
-// ModelScriptFunc optionally overrides FakeInnerModel.Respond for targeted deterministic scenarios.
-// Return handled=true to use the returned response/error, or handled=false to fall back to default logic.
 type ModelScriptFunc func(ctx context.Context, runID string, req agent.Request) (resp agent.Response, err error, handled bool)
 
-// FakeInnerModel is a deterministic implementation of agent.Model for inner-loop simulation.
 type FakeInnerModel struct {
 	mu            sync.Mutex
 	clock         *env.Clock
@@ -95,7 +82,6 @@ type FakeInnerModel struct {
 
 var _ agent.Model = (*FakeInnerModel)(nil)
 
-// NewFakeInnerModel creates a deterministic FakeInnerModel.
 func NewFakeInnerModel(
 	clock *env.Clock,
 	cfg ModelConfig,
@@ -123,27 +109,22 @@ func NewFakeInnerModel(
 	}
 }
 
-// Provider implements agent.Model.
 func (m *FakeInnerModel) Provider() string { return "sim" }
 
-// Name implements agent.Model.
 func (m *FakeInnerModel) Name() string { return "sim-inner-v1" }
 
-// SetFaultsEnabled toggles provider/overflow/unknown-cost fault injection.
 func (m *FakeInnerModel) SetFaultsEnabled(enabled bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.faultsEnabled = enabled
 }
 
-// FaultsEnabled reports whether fault injection is active.
 func (m *FakeInnerModel) FaultsEnabled() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.faultsEnabled
 }
 
-// SetConfig replaces the model configuration.
 func (m *FakeInnerModel) SetConfig(cfg ModelConfig) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -156,21 +137,18 @@ func (m *FakeInnerModel) SetConfig(cfg ModelConfig) {
 	m.cfg = cfg
 }
 
-// SetScript registers an optional deterministic script hook for targeted tests.
 func (m *FakeInnerModel) SetScript(fn ModelScriptFunc) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.script = fn
 }
 
-// QueueForcedError queues an error to be returned by the next Respond call.
 func (m *FakeInnerModel) QueueForcedError(errs ...error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.forcedErrs = append(m.forcedErrs, errs...)
 }
 
-// ModelCalls returns a snapshot of all recorded model calls.
 func (m *FakeInnerModel) ModelCalls() []ModelCallRecord {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -179,7 +157,6 @@ func (m *FakeInnerModel) ModelCalls() []ModelCallRecord {
 	return out
 }
 
-// Respond implements agent.Model deterministically.
 func (m *FakeInnerModel) Respond(ctx context.Context, req agent.Request) (agent.Response, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.Response{NotSent: true}, err
@@ -200,7 +177,6 @@ func (m *FakeInnerModel) Respond(ctx context.Context, req agent.Request) (agent.
 	cost := m.cfg.CostPerCall
 	script := m.script
 
-	// Check forced error queue first (for targeted deterministic tests).
 	if len(m.forcedErrs) > 0 {
 		err := m.forcedErrs[0]
 		m.forcedErrs = m.forcedErrs[1:]
@@ -213,7 +189,6 @@ func (m *FakeInnerModel) Respond(ctx context.Context, req agent.Request) (agent.
 		return resp, err
 	}
 
-	// Check injectable faults when enabled.
 	if m.faultsEnabled {
 		roll := m.rng.Float64()
 		if roll < m.cfg.OverflowErrProb {
@@ -232,7 +207,6 @@ func (m *FakeInnerModel) Respond(ctx context.Context, req agent.Request) (agent.
 	}
 	m.mu.Unlock()
 
-	// Allow an optional test script to decide the exact turn.
 	if script != nil {
 		if resp, err, handled := script(ctx, runID, req); handled {
 			m.mu.Lock()
@@ -277,7 +251,6 @@ func (m *FakeInnerModel) Respond(ctx context.Context, req agent.Request) (agent.
 	return resp, nil
 }
 
-// Inspect implements agent.Model with a deterministic response.
 func (m *FakeInnerModel) Inspect(ctx context.Context, _ agent.InspectRequest) (agent.Inspection, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.Inspection{}, err
@@ -322,7 +295,6 @@ func (m *FakeInnerModel) nextCallIDLocked() string {
 }
 
 func (m *FakeInnerModel) decideCallLocked(req agent.Request) transcript.ToolCall {
-	// Strip the trailing synthetic task-clock message appended by agent.Service.Decide.
 	msgs := req.Messages
 	if len(msgs) > 0 && isClockMessage(msgs[len(msgs)-1]) {
 		msgs = msgs[:len(msgs)-1]
@@ -333,8 +305,6 @@ func (m *FakeInnerModel) decideCallLocked(req agent.Request) transcript.ToolCall
 		offered[t.Name] = true
 	}
 
-	// Collect transcript history stats, confirmed evidence, unmet issues, pending approval call,
-	// and recall targets discovered in prior messages/tool outputs.
 	var (
 		modelTurns         int
 		evidence           []any
@@ -399,7 +369,6 @@ func (m *FakeInnerModel) decideCallLocked(req agent.Request) transcript.ToolCall
 						}
 					}
 				}
-				// Harvest recall targets from prior memory/conversation tool results.
 				switch part.ToolResult.Name {
 				case "conversation_find":
 					if msgsOut, ok := part.ToolResult.Output["messages"].([]any); ok {
@@ -449,7 +418,6 @@ func (m *FakeInnerModel) decideCallLocked(req agent.Request) transcript.ToolCall
 		}
 	}
 
-	// 1. If the user approved a pending action, immediately retry that exact call unchanged!
 	if strings.HasPrefix(lastUserText, "The user approved this exact action; retry the same call unchanged:") && lastApprovalCall != nil {
 		return transcript.ToolCall{
 			ID:   m.nextCallIDLocked(),
@@ -458,13 +426,11 @@ func (m *FakeInnerModel) decideCallLocked(req agent.Request) transcript.ToolCall
 		}
 	}
 
-	// 2. If the user declined a pending action, finish cleanly reporting the unmet item.
 	if strings.HasPrefix(lastUserText, "The user declined this action.") {
 		unmet = append(unmet, "The user declined the requested action")
 		return m.completeCallLocked("Stopped without executing the declined action.", evidence, unmet)
 	}
 
-	// 3. If a subtask finished and returned request_work result, complete using its evidence.
 	if lastToolResultName == "request_work" && lastToolOutput != nil {
 		outcome, _ := lastToolOutput["outcome"].(string)
 		if outcome != "confirmed" {
@@ -473,12 +439,10 @@ func (m *FakeInnerModel) decideCallLocked(req agent.Request) transcript.ToolCall
 		return m.completeCallLocked("Completed task incorporating subtask results.", evidence, unmet)
 	}
 
-	// 4. If we've hit our step budget for this task, emit complete.
 	if modelTurns >= m.cfg.MaxStepsBeforeComplete {
 		return m.completeCallLocked("Completed simulated task steps.", evidence, unmet)
 	}
 
-	// 5. Deterministically choose the next realistic tool call from the offered set.
 	type candidate struct {
 		weight int
 		build  func() transcript.ToolCall
@@ -783,7 +747,6 @@ func parseProjectedArchiveNotice(text string) (historyRef, before string, opIDs 
 	return notice.HistoryRef, notice.Before, opIDs
 }
 
-// Digest returns a canonical hex-encoded SHA-256 hash of FakeInnerModel's ModelCalls ledger.
 func (m *FakeInnerModel) Digest() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()

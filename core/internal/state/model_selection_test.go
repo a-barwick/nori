@@ -24,7 +24,6 @@ func TestInputBatchSplitsOnModelSelectionBoundary(t *testing.T) {
 		t.Fatalf("expected 2 inputs in batch, got %d", len(b.Inputs))
 	}
 
-	// Default (nil) vs explicit selection also splits.
 	b2 := NewInputBatch()
 	if !b2.Add(ConversationInput{ID: "in-4", Text: "default", Position: 4, CreatedAt: now}) {
 		t.Fatalf("expected default input to be accepted")
@@ -33,7 +32,6 @@ func TestInputBatchSplitsOnModelSelectionBoundary(t *testing.T) {
 		t.Fatalf("expected explicit selection after default to split the batch")
 	}
 
-	// NewTurn copies the batch's selection and freezes when newer input remains.
 	ctrl := ConversationControl{Received: 3, UserReceived: 3}
 	turn := NewTurn("turn-1", b.Inputs, nil, ctrl, now)
 	if !ModelSelectionEqual(turn.ModelSelection, selA) {
@@ -78,7 +76,6 @@ func TestCommandStartPinsAndInheritsSubtaskModelSelection(t *testing.T) {
 		t.Fatalf("expected 1 receipt, got %d", len(prep.Receipts))
 	}
 
-	// Park parent on a work question and dispatch a subtask without explicit selection -> inherits parent's TaskOnly selection.
 	parent.Question = &Question{ID: "q-1", Kind: QuestionWork, Text: "Do child work", Revision: parent.Revision}
 	batch2 := NewCommandBatch()
 	batch2.Runs["run-parent"] = parent

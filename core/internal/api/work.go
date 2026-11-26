@@ -17,13 +17,12 @@ import (
 )
 
 type workOrigin struct {
-	Kind           string `json:"kind"`
-	ConversationID string `json:"conversation_id,omitempty"`
-	MessageID      string `json:"message_id,omitempty"`
-	AutomationID   string `json:"automation_id,omitempty"`
-	OccurrenceID   string `json:"occurrence_id,omitempty"`
-	GoalID         string `json:"goal_id,omitempty"`
-	// ContinuesTaskID names the task this one explicitly continues (proposed for the contract in r2.6).
+	Kind            string `json:"kind"`
+	ConversationID  string `json:"conversation_id,omitempty"`
+	MessageID       string `json:"message_id,omitempty"`
+	AutomationID    string `json:"automation_id,omitempty"`
+	OccurrenceID    string `json:"occurrence_id,omitempty"`
+	GoalID          string `json:"goal_id,omitempty"`
 	ContinuesTaskID string `json:"continues_task_id,omitempty"`
 }
 
@@ -46,7 +45,6 @@ type errorDetail struct {
 	Retryable bool   `json:"retryable"`
 }
 
-// workItem is the contract WorkItem, a projection over state.Run.
 type workItem struct {
 	TaskID              string         `json:"task_id"`
 	Title               string         `json:"title"`
@@ -82,8 +80,6 @@ type workDetail struct {
 	EventsTruncated bool                      `json:"events_truncated,omitempty"`
 }
 
-// operationProjection extends the existing operationView wire names with the registry, account and authority
-// references. Raw arguments and authority references stay private.
 type operationProjection struct {
 	state.OperationRecord
 	Owner           operationOwner  `json:"owner"`
@@ -127,14 +123,11 @@ func (a *Assistant) item(ctx context.Context, run state.Run, ops []state.Operati
 		ParentTaskID: run.ParentID, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt, CancelRequested: run.CancelRequested,
 	}
 	if item.Origin.Kind == "automation" && a.Scheduler != nil {
-		// Show the routine's own title, not the scheduled instruction text the task was given.
 		if automation, err := a.Scheduler.Get(ctx, item.Origin.AutomationID); err == nil {
 			item.Title = automation.Title
 		}
 	}
 	if item.Origin.ContinuesTaskID != "" {
-		// Show what is being continued, not the continuation instruction the task was given.
-		// A continuation of a continuation names the root task, at most a few hops back.
 		previous, err := a.Store.GetRun(ctx, item.Origin.ContinuesTaskID)
 		for hops := 0; err == nil && hops < 8 && previous.Origin != nil && previous.Origin.ContinuesTaskID != ""; hops++ {
 			earlier, lookup := a.Store.GetRun(ctx, previous.Origin.ContinuesTaskID)
@@ -354,7 +347,6 @@ func (a *Assistant) workOperations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, list[operationProjection]{Items: a.projectOperations(r.Context(), run, ops)})
 }
 
-// operations lists recent operations across tasks, newest task first: the action history.
 func (a *Assistant) operations(w http.ResponseWriter, r *http.Request) {
 	runs, err := a.Store.RecentRuns(r.Context(), 100)
 	if err != nil {
@@ -381,7 +373,6 @@ func (a *Assistant) operations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, list[operationProjection]{Items: out})
 }
 
-// workAction accepts stop through the existing task command acceptance; the receipt names the same task.
 func (a *Assistant) workAction(w http.ResponseWriter, r *http.Request) {
 	var value struct {
 		Action    string  `json:"action"`
@@ -426,8 +417,6 @@ type summary struct {
 
 var lastSummaryRevision atomic.Int64
 
-// nextSummaryRevision returns a strictly increasing revision per process, anchored to
-// wall-clock milliseconds so rapid calls and backward wall-clock steps never regress.
 func nextSummaryRevision(nowMS int64) int64 {
 	for {
 		prev := lastSummaryRevision.Load()
@@ -441,7 +430,6 @@ func nextSummaryRevision(nowMS int64) int64 {
 	}
 }
 
-// summary drives navigation badges. Its revision changes whenever a count changes.
 func (a *Assistant) summary(w http.ResponseWriter, r *http.Request) {
 	items, err := a.workItems(r.Context())
 	if err != nil {
@@ -473,15 +461,10 @@ func (a *Assistant) summary(w http.ResponseWriter, r *http.Request) {
 	if a.InboxUnread != nil {
 		s.InboxUnread = a.InboxUnread(r.Context())
 	}
-	// Use a strictly monotonic per-process revision anchored to milliseconds so
-	// revisions never regress across rapid calls, clock steps, or dropping counts.
 	s.Revision = nextSummaryRevision(time.Now().UnixMilli())
 	writeJSON(w, 200, s)
 }
 
-// continueWork starts an explicit continuation of a finished task that did not complete, such as one stopped at its
-// spending limit. Its saved results remain, completed external actions are not repeated, and the new task records
-// what it continues.
 func (a *Assistant) continueWork(w http.ResponseWriter, r *http.Request, requestID string, budget float64) {
 	previous, err := a.Store.GetRun(r.Context(), r.PathValue("task_id"))
 	if err != nil {

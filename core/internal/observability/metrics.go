@@ -20,8 +20,6 @@ const (
 	prometheusTextContentType   = "text/plain; version=0.0.4; charset=utf-8"
 )
 
-// WorkerLaneStats captures active in-flight work and configured concurrency
-// capacity across the worker pool's execution lanes.
 type WorkerLaneStats struct {
 	TaskActive           int64
 	TaskCapacity         int64
@@ -31,9 +29,6 @@ type WorkerLaneStats struct {
 	SchedulerCapacity    int64
 }
 
-// RuntimeMetricsSources wires live, unsampled operational metric providers
-// from the storage backend and worker pool. Every field is optional; nil
-// providers are omitted from snapshots and scrapes.
 type RuntimeMetricsSources struct {
 	Pool        docstore.PoolStatsProvider
 	Tx          docstore.TxStatsProvider
@@ -41,17 +36,11 @@ type RuntimeMetricsSources struct {
 	Queue       docstore.QueueMetricsProvider
 	WorkerLanes func() WorkerLaneStats
 
-	// QueueTimeout bounds QueueMetrics database queries (defaults to 2s).
-	QueueTimeout time.Duration
-	// QueueCacheTTL caches successful QueueMetrics snapshots briefly to prevent
-	// rapid scrapes from hammering Postgres (defaults to 1s; negative disables caching).
+	QueueTimeout  time.Duration
 	QueueCacheTTL time.Duration
-	// Now optionally overrides time.Now for deterministic cache testing.
-	Now func() time.Time
+	Now           func() time.Time
 }
 
-// RuntimeMetricsSourcesFromBackend constructs RuntimeMetricsSources by
-// type-asserting docstore operational interfaces from backend.
 func RuntimeMetricsSourcesFromBackend(backend docstore.Backend, workerLanes func() WorkerLaneStats) RuntimeMetricsSources {
 	sources := RuntimeMetricsSources{WorkerLanes: workerLanes}
 	if backend == nil {
@@ -64,8 +53,6 @@ func RuntimeMetricsSourcesFromBackend(backend docstore.Backend, workerLanes func
 	return sources
 }
 
-// RuntimeMetrics is a typed, unsampled point-in-time snapshot of Nori's
-// operational runtime metrics (zero PII, zero user-scoped labels).
 type RuntimeMetrics struct {
 	HasPool           bool
 	Pool              docstore.PoolStats
@@ -81,8 +68,6 @@ type RuntimeMetrics struct {
 	WorkerLanes       WorkerLaneStats
 }
 
-// MetricsCollector serves unsampled operational runtime snapshots and
-// Prometheus/OpenMetrics text exposition independent of Sentry or trace sampling.
 type MetricsCollector struct {
 	sources RuntimeMetricsSources
 
@@ -92,7 +77,6 @@ type MetricsCollector struct {
 	queueScrapeErrors atomic.Int64
 }
 
-// NewMetricsCollector creates an isolated collector for sources.
 func NewMetricsCollector(sources RuntimeMetricsSources) *MetricsCollector {
 	return &MetricsCollector{sources: sources}
 }
@@ -150,7 +134,6 @@ func (c *MetricsCollector) readQueueMetrics(ctx context.Context) (docstore.Queue
 	return qm, nil
 }
 
-// Snapshot collects a live, unsampled snapshot from all configured sources.
 func (c *MetricsCollector) Snapshot(ctx context.Context) RuntimeMetrics {
 	if c == nil {
 		return RuntimeMetrics{}
@@ -182,9 +165,6 @@ func (c *MetricsCollector) Snapshot(ctx context.Context) RuntimeMetrics {
 	return out
 }
 
-// FormatPrometheus renders snap in Prometheus text exposition format (0.0.4).
-// Labels are strictly static low-cardinality enums (listener, lane); no user IDs
-// or PII are ever emitted.
 func FormatPrometheus(snap RuntimeMetrics) []byte {
 	var b bytes.Buffer
 	if snap.HasPool {
@@ -243,7 +223,6 @@ func FormatPrometheus(snap RuntimeMetrics) []byte {
 	return b.Bytes()
 }
 
-// Handler returns an HTTP handler exposing this collector in Prometheus text format.
 func (c *MetricsCollector) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -265,20 +244,14 @@ func (c *MetricsCollector) Handler() http.Handler {
 
 var defaultMetricsCollector atomic.Pointer[MetricsCollector]
 
-// SetRuntimeMetrics registers the process-wide unsampled operational metric
-// providers used by RuntimeMetricsSnapshot and MetricsHandler.
 func SetRuntimeMetrics(sources RuntimeMetricsSources) {
 	defaultMetricsCollector.Store(NewMetricsCollector(sources))
 }
 
-// RuntimeMetricsSnapshot returns a live, unsampled snapshot from the registered
-// process-wide RuntimeMetricsSources.
 func RuntimeMetricsSnapshot(ctx context.Context) RuntimeMetrics {
 	return defaultMetricsCollector.Load().Snapshot(ctx)
 }
 
-// MetricsHandler returns an HTTP handler serving the process-wide unsampled
-// operational metrics in Prometheus text exposition format.
 func MetricsHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defaultMetricsCollector.Load().Handler().ServeHTTP(w, r)

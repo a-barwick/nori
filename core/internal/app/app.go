@@ -51,11 +51,6 @@ type openOptions struct {
 	skipCollapseDuplicates bool
 }
 
-func Open(ctx context.Context, waker wake.Waker, cfg settings.Settings, user users.User) (*App, error) {
-	opened, _, err := openWithResources(ctx, waker, cfg, user, nil, openOptions{})
-	return opened, err
-}
-
 func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Settings, user users.User, storage *platform.Storage, opts openOptions) (*App, bool, error) {
 	cfg = platform.ForUser(cfg, user)
 	if err := validateStartup(cfg); err != nil {
@@ -114,7 +109,6 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 	}
 	var collapsed bool
 	if !opts.skipCollapseDuplicates {
-		// One-time repair of duplicate connections to one account, left by sign-ins made before they were merged.
 		if removed, err := services.Connections.CollapseDuplicates(ctx); err != nil {
 			slog.WarnContext(ctx, "connection duplicate repair failed", "user_id", user.ID, "err", err)
 		} else {
@@ -237,7 +231,6 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 		}
 	}
 	if result.Assistant.Connections != nil {
-		// A completed sign-in resumes the tasks that were waiting for it.
 		result.Assistant.Connections.OnConnected = result.Assistant.ResolveSignIns
 	}
 	if result.Assistant.MCP != nil {
@@ -279,16 +272,17 @@ func (a *App) apiDeps() api.Deps {
 	}
 }
 
-// Resume repairs this user's discovery leases/wakes (including StopPaused while globally paused)
-// and runs a scheduler pass so any due automation work whose wake was lost executes cleanly.
 func (a *App) Resume(ctx context.Context) error {
 	return errors.Join(a.RepairLeases(ctx), a.Schedule(ctx))
 }
 
-// RepairLeases reconciles this user's nori_task_leases and nori_user_wakes rows against
-// authoritative nori_records truth.
 func (a *App) RepairLeases(ctx context.Context) error {
 	var failures []error
+	if a.Tasks != nil {
+		if err := a.Tasks.CleanupUploads(ctx); err != nil {
+			failures = append(failures, err)
+		}
+	}
 	control, err := a.Store.Control(ctx)
 	if err != nil {
 		return err
@@ -327,7 +321,6 @@ func (a *App) RepairLeases(ctx context.Context) error {
 		}
 	}
 
-	// 1. Reconcile every run that needs execution or cleanup (in deterministic sorted order).
 	needIDs := make([]string, 0, len(needLease))
 	for runID := range needLease {
 		needIDs = append(needIDs, runID)
@@ -389,7 +382,6 @@ func (a *App) RepairLeases(ctx context.Context) error {
 		}
 	}
 
-	// 2. Delete orphaned task leases whose runs are missing or terminal & clean.
 	if a.Leases != nil {
 		existingIDs := make([]string, 0, len(existingLeases))
 		for runID := range existingLeases {
@@ -436,8 +428,6 @@ func (a *App) RepairLeases(ctx context.Context) error {
 		}
 	}
 
-	// 2b. Reconcile any residual undelivered commands left behind if StopPaused or task.Runner
-	// failed mid-delivery after persisting terminal state and deleting the lease.
 	after := ""
 	for {
 		page, err := a.Store.Pending(ctx, after)
@@ -469,7 +459,6 @@ func (a *App) RepairLeases(ctx context.Context) error {
 	}
 
 	if a.Leases != nil {
-		// 3. Reconcile outer conversation & scheduler wakes without bumping wake_seq on active runnable rows.
 		wakesByLane := map[string]docstore.UserWake{}
 		if wakes, err := a.Leases.ListUserWakes(ctx, a.UserID); err != nil {
 			failures = append(failures, err)
@@ -508,9 +497,6 @@ func (a *App) RepairLeases(ctx context.Context) error {
 	return errors.Join(failures...)
 }
 
-// NextSchedulerWake returns the earliest time LaneScheduler needs to run again,
-// covering enabled automation schedules, pending/unsettled occurrences, and any
-// undelivered interaction answers waiting for their task to ask.
 func (a *App) NextSchedulerWake(ctx context.Context) *time.Time {
 	var earliest *time.Time
 	if a.Scheduler != nil {
@@ -563,8 +549,6 @@ func (a *App) RepairWake(ctx context.Context) error {
 	return a.WakeRepair.Repair(ctx)
 }
 
-// NextConversationWake returns the earliest deferred idle wake timestamp for
-// out-of-band flush/compaction or AutoDream consolidation, or zero when idle.
 func (a *App) NextConversationWake(ctx context.Context) (time.Time, error) {
 	if a.Runner == nil {
 		return time.Time{}, nil
@@ -572,7 +556,6 @@ func (a *App) NextConversationWake(ctx context.Context) (time.Time, error) {
 	return a.Runner.NextConversationWake(ctx)
 }
 
-// ProcessConversation drains pending outer conversation inputs for this user.
 func (a *App) ProcessConversation(ctx context.Context) error {
 	if a.Runner == nil {
 		return nil
@@ -587,8 +570,6 @@ func (a *App) Process(ctx context.Context) error {
 	return errors.Join(a.ProcessConversation(ctx), a.Schedule(ctx))
 }
 
-// Schedule turns due automation slots into tasks, settles finished occurrences and delivers results. Duplicate or
-// lost passes are harmless: every step is keyed by a stable occurrence identity.
 func (a *App) Schedule(ctx context.Context) error {
 	if a.Scheduler == nil || a.Scheduler.Accept == nil {
 		return nil
@@ -597,8 +578,6 @@ func (a *App) Schedule(ctx context.Context) error {
 	return errors.Join(err, a.deliverAnswers(ctx))
 }
 
-// deliverAnswers retries answer commands for interactions resolved before their task asked. An answer for a task
-// that ended or moved to a newer instruction is retired: the newer revision supersedes it.
 func (a *App) deliverAnswers(ctx context.Context) error {
 	if a.Assistant == nil || a.Assistant.Permissions == nil || a.Assistant.Answer == nil {
 		return nil
@@ -611,12 +590,10 @@ func (a *App) deliverAnswers(ctx context.Context) error {
 		run, runErr := a.Store.GetRun(ctx, answer.TaskID)
 		waiting := runErr == nil && run.Status == state.RunRunning && run.Question != nil && run.Question.ID == answer.Question && run.Question.ResolvedBy == ""
 		if answer.Recheck && !waiting {
-			// Recorded as delivered and the task is not waiting on it: nothing to repair.
 			continue
 		}
 		err := a.Assistant.Answer(ctx, answer.CommandID, answer.TaskID, answer.Question, answer.Text)
 		if errors.Is(err, state.ErrQuestionStale) || errors.Is(err, state.ErrBusy) {
-			// Still running: the task has not asked yet or is mid-step, so try again on the next pass.
 			if current, e := a.Store.GetRun(ctx, answer.TaskID); e == nil && current.Status == state.RunRunning && (current.Question == nil || current.Question.ID == answer.Question) {
 				continue
 			}
@@ -648,15 +625,10 @@ func AssistantFeatures(conns *connections.Service, disableBackgroundTasks bool) 
 	}
 }
 
-// NewOuterModelAutoReviewer wraps an outer conversation.ReplyModel behind deterministic
-// action-boundary guardrails. Deterministic blocks/escalations always run first and never
-// invoke the model; model errors fail safe to "ask".
 func NewOuterModelAutoReviewer(model conversation.ReplyModel) permissions.AutoReviewer {
 	return NewOuterModelAutoReviewerWithMeter(model, nil)
 }
 
-// NewOuterModelAutoReviewerWithMeter wires durable usage metering into AutoReviewer calls
-// so action-boundary reviews count against per-user spend caps and usage ledgers.
 func NewOuterModelAutoReviewerWithMeter(model conversation.ReplyModel, meter interface {
 	RecordUsage(context.Context, state.Usage) error
 }) permissions.AutoReviewer {

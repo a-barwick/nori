@@ -6,7 +6,6 @@ import NoriDesign
 import UIKit
 #endif
 
-// MARK: - Interaction Heading Helper
 
 extension Interaction {
     var displayHeading: String {
@@ -26,7 +25,6 @@ extension Interaction {
     }
 }
 
-// MARK: - InteractionCardView
 
 public struct InteractionCardView: View {
     @Bindable private var store: NoriStore
@@ -38,21 +36,17 @@ public struct InteractionCardView: View {
     @State private var submittingAction: String?
     @State private var errorMessage: String?
 
-    // Approval state (never defaulted on)
     @State private var rememberSimilarRule: Bool = false
     @State private var isQuotedBodyExpanded: Bool = false
 
-    // Question state
     @State private var selectedOptionIDs: Set<String> = []
     @State private var textAnswer: String = ""
     @State private var dateAnswer: Date = Date()
     @State private var didSeedInitialChoice: Bool = false
 
-    // Account selection state
     @State private var rememberAccountAsDefault: Bool = false
     @State private var didSeedAccountDefault: Bool = false
 
-    // Sign-in OAuth helper
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
 
     public init(
@@ -73,7 +67,6 @@ public struct InteractionCardView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Card Header
             HStack(alignment: .top, spacing: 8) {
                 Text(interaction.displayHeading)
                     .font(.system(size: 15.5, weight: .bold))
@@ -108,7 +101,6 @@ public struct InteractionCardView: View {
                 }
             }
 
-            // Card Body
             Group {
                 if isResolved {
                     resolvedBody
@@ -175,7 +167,6 @@ public struct InteractionCardView: View {
         }
     }
 
-    // MARK: - Resolved Body
 
     @ViewBuilder
     private var resolvedBody: some View {
@@ -225,7 +216,6 @@ public struct InteractionCardView: View {
         return base
     }
 
-    // MARK: - Pending Body Dispatcher
 
     @ViewBuilder
     private var pendingBody: some View {
@@ -251,7 +241,6 @@ public struct InteractionCardView: View {
         }
     }
 
-    // MARK: - Approval Card
 
     private func approvalBody(_ payload: ApprovalPayload) -> some View {
         let isSensitiveSend = payload.effect == .sensitiveSend
@@ -343,7 +332,6 @@ public struct InteractionCardView: View {
                 )
             }
 
-            // Key-Value Metadata Grid (omits empty accounts, raw tool_id, and duplicate expiry)
             if hasMetadataRows {
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 6) {
                     if isSensitiveSend, let recipients = payload.recipients, !recipients.isEmpty {
@@ -396,7 +384,6 @@ public struct InteractionCardView: View {
                 }
             }
 
-            // Material Effects with Shield Icon
             if let effects = payload.materialEffects, !effects.isEmpty {
                 VStack(alignment: .leading, spacing: 5) {
                     ForEach(effects, id: \.self) { effect in
@@ -415,7 +402,6 @@ public struct InteractionCardView: View {
                 .padding(.top, 2)
             }
 
-            // Primary 2-Button Approval Actions + deliberate secondary rule checkbox
             let canRememberRule = supportsRememberRule(for: payload)
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
@@ -492,7 +478,6 @@ public struct InteractionCardView: View {
         return (payload.summary, nil)
     }
 
-    // MARK: - Question Card
 
     @ViewBuilder
     private func questionBody(_ payload: QuestionPayload) -> some View {
@@ -665,7 +650,6 @@ public struct InteractionCardView: View {
         }
     }
 
-    // MARK: - Account Selection Card
 
     private func accountSelectionBody(_ payload: AccountSelectionPayload) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -733,7 +717,6 @@ public struct InteractionCardView: View {
         }
     }
 
-    // MARK: - Sign In Card
 
     private func signInBody(_ payload: SignInPayload) -> some View {
         let isMCP = payload.integrationID == "mcp"
@@ -821,7 +804,6 @@ public struct InteractionCardView: View {
         return scheme == "https" ? url : nil
     }
 
-    // MARK: - Submission Helpers
 
     private func seedInitialSelectionsIfNeeded() {
         if !didSeedInitialChoice, case .question(let payload) = interaction.payload {

@@ -7,10 +7,6 @@ import (
 	"time"
 )
 
-// Repairer reconstructs missing conversation wake notifications from committed work.
-// Task-lane work (commands, finishing, deferred publication, cleanup, paused stops)
-// is repaired by the task lease sweep, so Repairer skips task-only WorkVersion tokens
-// rather than spuriously waking LaneConversation every minute.
 type Repairer struct {
 	Waker   Waker
 	Pending func(context.Context) (string, error)

@@ -19,31 +19,25 @@ func TestAllowedAddr(t *testing.T) {
 		wantNoLoopback    bool
 		wantAllowLoopback bool
 	}{
-		// IPv4 loopback
 		{name: "ipv4_loopback_127_0_0_1", addr: "127.0.0.1", wantNoLoopback: false, wantAllowLoopback: true},
 		{name: "ipv4_loopback_127_255_255_254", addr: "127.255.255.254", wantNoLoopback: false, wantAllowLoopback: true},
 
-		// RFC1918 private ranges
 		{name: "rfc1918_10", addr: "10.0.0.1", wantNoLoopback: false, wantAllowLoopback: false},
 		{name: "rfc1918_172_16", addr: "172.16.0.1", wantNoLoopback: false, wantAllowLoopback: false},
 		{name: "rfc1918_172_31", addr: "172.31.255.254", wantNoLoopback: false, wantAllowLoopback: false},
 		{name: "rfc1918_192_168", addr: "192.168.1.1", wantNoLoopback: false, wantAllowLoopback: false},
 
-		// IPv4 link-local & cloud metadata
 		{name: "ipv4_link_local_metadata", addr: "169.254.169.254", wantNoLoopback: false, wantAllowLoopback: false},
 		{name: "ipv4_link_local_start", addr: "169.254.0.1", wantNoLoopback: false, wantAllowLoopback: false},
 
-		// 0.0.0.0/8 ("this network")
 		{name: "ipv4_unspecified", addr: "0.0.0.0", wantNoLoopback: false, wantAllowLoopback: false},
 		{name: "ipv4_this_net", addr: "0.10.20.30", wantNoLoopback: false, wantAllowLoopback: false},
 
-		// CGNAT 100.64.0.0/10 and public boundaries around it
 		{name: "cgnat_start", addr: "100.64.0.1", wantNoLoopback: false, wantAllowLoopback: false},
 		{name: "cgnat_end", addr: "100.127.255.254", wantNoLoopback: false, wantAllowLoopback: false},
 		{name: "public_before_cgnat", addr: "100.63.255.255", wantNoLoopback: true, wantAllowLoopback: true},
 		{name: "public_after_cgnat", addr: "100.128.0.1", wantNoLoopback: true, wantAllowLoopback: true},
 
-		// 6to4 relay anycast 192.88.99.0/24 and other special-use IPv4 blocks
 		{name: "six_to_four_anycast", addr: "192.88.99.1", wantNoLoopback: false, wantAllowLoopback: false},
 		{name: "benchmark_198_18", addr: "198.18.0.1", wantNoLoopback: false, wantAllowLoopback: false},
 		{name: "reserved_240", addr: "240.0.0.1", wantNoLoopback: false, wantAllowLoopback: false},
@@ -53,7 +47,6 @@ func TestAllowedAddr(t *testing.T) {
 		{name: "ietf_protocol_assignments", addr: "192.0.0.1", wantNoLoopback: false, wantAllowLoopback: false},
 		{name: "ipv4_multicast", addr: "224.0.0.1", wantNoLoopback: false, wantAllowLoopback: false},
 
-		// IPv6 loopback, ULA, link-local, unspecified, multicast
 		{name: "ipv6_loopback", addr: "::1", wantNoLoopback: false, wantAllowLoopback: true},
 		{name: "ipv6_ula_fc00", addr: "fc00::1", wantNoLoopback: false, wantAllowLoopback: false},
 		{name: "ipv6_ula_fd00", addr: "fd12:3456:789a::1", wantNoLoopback: false, wantAllowLoopback: false},
@@ -63,7 +56,6 @@ func TestAllowedAddr(t *testing.T) {
 		{name: "ipv6_multicast", addr: "ff02::1", wantNoLoopback: false, wantAllowLoopback: false},
 		{name: "ipv6_non_global_discard", addr: "100::1", wantNoLoopback: false, wantAllowLoopback: false},
 
-		// IPv4-mapped IPv6 ::ffff:0:0:0/96
 		{name: "ipv4_mapped_loopback", addr: "::ffff:127.0.0.1", wantNoLoopback: false, wantAllowLoopback: true},
 		{name: "ipv4_mapped_rfc1918", addr: "::ffff:10.0.0.1", wantNoLoopback: false, wantAllowLoopback: false},
 		{name: "ipv4_mapped_metadata", addr: "::ffff:169.254.169.254", wantNoLoopback: false, wantAllowLoopback: false},
@@ -71,7 +63,6 @@ func TestAllowedAddr(t *testing.T) {
 		{name: "ipv4_mapped_6to4_anycast", addr: "::ffff:192.88.99.1", wantNoLoopback: false, wantAllowLoopback: false},
 		{name: "ipv4_mapped_public", addr: "::ffff:8.8.8.8", wantNoLoopback: true, wantAllowLoopback: true},
 
-		// NAT64, Teredo, 6to4, IPv6 doc, zoned public IPv6
 		{name: "nat64_well_known", addr: "64:ff9b::8.8.8.8", wantNoLoopback: false, wantAllowLoopback: false},
 		{name: "nat64_local", addr: "64:ff9b:1::1", wantNoLoopback: false, wantAllowLoopback: false},
 		{name: "teredo", addr: "2001:0000:4136:e378:8000:63bf:3fff:fdd2", wantNoLoopback: false, wantAllowLoopback: false},
@@ -79,7 +70,6 @@ func TestAllowedAddr(t *testing.T) {
 		{name: "ipv6_documentation", addr: "2001:db8::1", wantNoLoopback: false, wantAllowLoopback: false},
 		{name: "ipv6_public_with_zone", addr: "2606:4700:4700::1111%en0", wantNoLoopback: false, wantAllowLoopback: false},
 
-		// Public IPv4 & IPv6 allowed
 		{name: "public_ipv4_cloudflare", addr: "1.1.1.1", wantNoLoopback: true, wantAllowLoopback: true},
 		{name: "public_ipv4_google", addr: "8.8.8.8", wantNoLoopback: true, wantAllowLoopback: true},
 		{name: "public_ipv4_example", addr: "93.184.216.34", wantNoLoopback: true, wantAllowLoopback: true},
@@ -187,8 +177,6 @@ func TestNewTransportDisablesProxyAndGuardsDial(t *testing.T) {
 		t.Fatalf("unexpected TLSClientConfig: %+v", ht.TLSClientConfig)
 	}
 
-	// Functional verification (zero real sockets): set HTTP_PROXY/HTTPS_PROXY and verify
-	// http.Transport dials the target host directly rather than the configured proxy.
 	t.Setenv("HTTP_PROXY", "http://198.51.100.1:8888")
 	t.Setenv("http_proxy", "http://198.51.100.1:8888")
 	t.Setenv("HTTPS_PROXY", "http://198.51.100.1:8888")
@@ -220,7 +208,6 @@ func TestNewTransportDisablesProxyAndGuardsDial(t *testing.T) {
 		t.Fatalf("dialed %q, want target 127.0.0.1:8080 (HTTP_PROXY must be ignored)", got)
 	}
 
-	// allowLoopback=false must refuse both RoundTrip and raw DialContext to private/loopback/internal hosts.
 	strictRT := NewTransport(false, nil)
 	strictClient := &http.Client{Transport: strictRT}
 	if _, err := strictClient.Get("http://127.0.0.1:8080/check"); err == nil {
@@ -244,7 +231,6 @@ func TestNewTransportDisablesProxyAndGuardsDial(t *testing.T) {
 		}
 	}
 
-	// WrapTransport rejects nil URL before touching base RoundTripper.
 	var baseCalled atomic.Bool
 	wrapped := WrapTransport(roundTripFunc(func(*http.Request) (*http.Response, error) {
 		baseCalled.Store(true)

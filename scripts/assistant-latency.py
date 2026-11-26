@@ -46,7 +46,6 @@ def find_origin_user_message(run, messages, msg_by_id, started):
         for cand in (origin_msg_id, f"{origin_msg_id}-user"):
             if cand in msg_by_id:
                 return msg_by_id[cand]
-    # Fallback for older runs without origin.message_id: newest user message <= started.
     return next(
         (m for m in reversed(messages) if m.get("role") == "user" and started and ts(m.get("created_at")) <= started),
         None,
@@ -56,20 +55,17 @@ def find_origin_user_message(run, messages, msg_by_id, started):
 def find_delivery_message(run, messages, usage, finished):
     run_id = run["id"]
     term_input_id = f"event-{run_id}-terminal"
-    # 1) Exact match: assistant message referencing run_id after finished_at.
     for m in messages:
         if m.get("role") != "assistant":
             continue
         if m.get("run_id") == run_id and finished and ts(m.get("created_at")) >= finished:
             return m
-    # 2) Match via terminal usage record timestamp -> nearest assistant message created >= terminal usage record.
     term_usage = [u for u in usage if u.get("input_id") == term_input_id and u.get("created_at")]
     if term_usage:
         term_ts = min(ts(u["created_at"]) for u in term_usage)
         cand = next((m for m in messages if m.get("role") == "assistant" and ts(m.get("created_at")) >= term_ts), None)
         if cand is not None:
             return cand
-    # 3) Fallback: first assistant message created at or after finished_at (excluding origin turn ack).
     origin = run.get("origin") or {}
     origin_msg_id = origin.get("message_id") or ""
     for m in messages:
@@ -161,7 +157,6 @@ def main():
             "unknown": unknown,
         })
 
-    # Also summarize all usage records in the snapshot by provider/model for total spend visibility.
     all_sent = [u for u in usage if u.get("request_status") != "not_sent"]
     summary = {
         "total_calls": len(all_sent),

@@ -10,8 +10,6 @@ import (
 	"nori/internal/state"
 )
 
-// These are HTTP projections, not a second persistence model. Typed parts retain
-// files and pages; text/attachments remain for existing clients.
 type messageView struct {
 	ID          string              `json:"id"`
 	Role        string              `json:"role"`
@@ -67,8 +65,7 @@ type conversationEvent struct {
 	Results      []state.Result     `json:"results,omitempty"`
 	Operations   []operationView    `json:"operations,omitempty"`
 	ReadPosition *state.ReadMark    `json:"readPosition,omitempty"`
-	// Missing says a referenced record no longer exists; it does not invent a result.
-	Missing bool `json:"missing,omitempty"`
+	Missing      bool               `json:"missing,omitempty"`
 }
 
 func assistantMessage(m state.Message) messageView {

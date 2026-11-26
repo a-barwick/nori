@@ -17,8 +17,6 @@ type familyAccounting struct {
 	costUnknown bool
 }
 
-// stepResult reports whether a runner step/transition finished Run or should
-// continue to the next state-machine iteration.
 type stepResult struct {
 	done    bool
 	outcome RunOutcome
@@ -31,8 +29,6 @@ func stepDone(outcome RunOutcome, err error) stepResult {
 	return stepResult{done: true, outcome: outcome, err: err}
 }
 
-// runSession holds the per-invocation lease, fence, control state, and shared
-// helpers for one Runner.Run execution.
 type runSession struct {
 	runner *Runner
 	ctx    context.Context
@@ -163,9 +159,6 @@ func (s *runSession) checkLoopAbort() (stepResult, bool) {
 	return stepContinue(), false
 }
 
-// handleStepErr classifies boundary errors common to step activities after the
-// caller has already checked watcher/context cancellation and phase-specific
-// ErrSuperseded/ErrPaused cases.
 func (s *runSession) handleStepErr(err error, allowPermanent bool) stepResult {
 	switch {
 	case errors.Is(err, state.ErrCancelled):
@@ -179,8 +172,6 @@ func (s *runSession) handleStepErr(err error, allowPermanent bool) stepResult {
 	}
 }
 
-// releaseControl stops the lease watcher and releases TaskControl so another worker
-// can immediately acquire the authoritative fence once the discovery lease is parked/released.
 func (s *runSession) releaseControl() {
 	s.stopWatcher()
 	if !s.haveFence {
@@ -192,8 +183,6 @@ func (s *runSession) releaseControl() {
 	s.haveFence = false
 }
 
-// deleteLease marks any remaining commands on a terminal clean task delivered
-// and removes its discovery lease unconditionally.
 func (s *runSession) deleteLease() stepResult {
 	s.releaseControl()
 	delCtx, cancel := s.baseCtx(stepTimeoutQuick)
@@ -208,9 +197,6 @@ func (s *runSession) deleteLease() stepResult {
 	return stepDone(OutcomeDone, nil)
 }
 
-// park releases TaskControl and attempts a race-safe ParkTask guarded by capturedSeq.
-// When parked == false (concurrent wake arrived after claim), it calls RefreshTaskClaim
-// (updating capturedSeq) and re-acquires TaskControl when reacquire is true.
 func (s *runSession) park(reason string, reacquire bool) stepResult {
 	s.releaseControl()
 	pCtx, cancel := s.baseCtx(stepTimeoutQuick)
@@ -260,8 +246,6 @@ func (s *runSession) park(reason string, reacquire bool) stepResult {
 	return stepContinue()
 }
 
-// handlePaused runs StopPaused when a run is stopping/finishing/cleaning under global pause,
-// or parks the task as WaitPaused otherwise.
 func (s *runSession) handlePaused(run state.Run, reacquire bool) stepResult {
 	if run.CancelRequested || run.Finishing != nil || (run.Status != state.RunRunning && run.CleanupPending) {
 		sCtx, cancel := s.activeCtx(stepTimeoutCleanup)
@@ -303,9 +287,6 @@ func (s *runSession) handleMidRunPaused() stepResult {
 	return s.handlePaused(run, true)
 }
 
-// preAcquire runs the late-wake and global-pause check before acquiring the
-// authoritative TaskControl fence, looping only when ParkTask reports a
-// concurrent wake and RefreshTaskClaim refreshes capturedSeq.
 func (s *runSession) preAcquire() (state.Run, stepResult) {
 	for {
 		if s.ctx.Err() != nil {
@@ -323,7 +304,6 @@ func (s *runSession) preAcquire() (state.Run, stepResult) {
 		if err != nil {
 			return state.Run{}, s.backoff(err)
 		}
-		// Late-wake rule: delete leases for terminal clean runs immediately.
 		if run.Status != state.RunRunning && !run.CleanupPending {
 			return state.Run{}, s.deleteLease()
 		}
@@ -362,8 +342,6 @@ func (s *runSession) acquireControl(initialRun state.Run) stepResult {
 	if s.ctrl.Phase == "" {
 		s.ctrl.Phase = state.TaskPhaseSync
 	}
-	// If the run is already terminal/finishing (e.g. crash right after Publish committed
-	// before TaskControl transitioned to cleanup), jump straight to cleanup.
 	if (initialRun.Status != state.RunRunning && initialRun.CleanupPending) ||
 		(initialRun.Status == state.RunRunning && initialRun.Finishing != nil) {
 		if s.ctrl.Phase != state.TaskPhaseCleanup && s.ctrl.Phase != state.TaskPhaseDone {

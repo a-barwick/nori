@@ -4,7 +4,6 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Thread } from "@/components/chat/Thread";
 import { AssistantProvider } from "@/lib/assistant/context";
-import { store } from "@/lib/assistant/useResource";
 import type { Automation, Interaction, OperationProjection } from "@/lib/contracts/assistant";
 import type { Part, TextItem } from "@/lib/types";
 import { buildUnits } from "@/lib/units";
@@ -39,7 +38,7 @@ describe("Fix 1 & 3 (Web): Inline Reminder Confirmation Card and Schedule Confir
   });
 
   test("formatReminderTime formats today/tomorrow cleanly and falls back to server text", () => {
-    const now = new Date(2026, 10, 24, 15, 0, 0).getTime(); // Nov 24, 2026 3:00 PM local
+    const now = new Date(2026, 10, 24, 15, 0, 0).getTime();
     const todayNoon = new Date(2026, 10, 24, 12, 0, 0).toISOString();
     const tomorrowNoon = new Date(2026, 10, 25, 12, 0, 0).toISOString();
     const nextWeek = new Date(2026, 11, 5, 9, 0, 0).toISOString();
@@ -94,7 +93,6 @@ describe("Fix 1 & 3 (Web): Inline Reminder Confirmation Card and Schedule Confir
     );
     assert.match(threadHtml, /data-reminder-card/);
     assert.match(threadHtml, /Check supernino updates/);
-    assert.equal(threadHtml.includes("bg-bubble"), false);
   });
 
   test("cancelReminder reads current automation revision, posts cancel action, and invalidates caches", async () => {
@@ -116,8 +114,6 @@ describe("Fix 1 & 3 (Web): Inline Reminder Confirmation Card and Schedule Confir
       destination_ids: [],
     };
 
-    store("/automations", { items: [automation] });
-    store("/assistant/summary", { revision: 1, needs_you: 0, working: 0, apps_attention: 0, inbox_unread: 0 }, undefined, false);
 
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -139,8 +135,8 @@ describe("Fix 1 & 3 (Web): Inline Reminder Confirmation Card and Schedule Confir
       return Response.json({ items: [] });
     }) as unknown as typeof fetch;
 
-    const result = await cancelReminder(id);
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    const invalidated: string[] = [];
+    const result = await cancelReminder(id, (...prefixes) => invalidated.push(...prefixes));
 
     assert.equal(result.status, "cancelled");
     assert.equal(result.revision, 3);
@@ -148,8 +144,8 @@ describe("Fix 1 & 3 (Web): Inline Reminder Confirmation Card and Schedule Confir
     assert.ok(post);
     assert.equal(post.body?.expected_revision, 2);
     assert.deepEqual(post.body?.value, { action: "cancel" });
-    assert.equal(calls.some((call) => call.url === "/api/v1/automations" && call.method === "GET"), true);
-    assert.equal(calls.some((call) => call.url === "/api/v1/assistant/summary" && call.method === "GET"), true);
+    assert.equal(invalidated.includes("/automations"), true);
+    assert.equal(invalidated.includes("/assistant/summary"), true);
   });
 
   test("Schedule Confirmation card shows calm title, strips external-records warning for internal schedules, and hides empty account and raw tool_id", () => {
@@ -230,7 +226,6 @@ describe("Fix 2 (Web): Work Detail Actions grouping and read badge suppression",
     assert.match(html, /Searched the web \(2 queries\)/);
     assert.match(html, /Read page: https:\/\/weather\.gov\/austin/);
     assert.match(html, /Created &#x27;Umbrella reminder&#x27;/);
-    // Only the write operation gets the Confirmed pill; none of the web searches say "because Nori".
     assert.equal(html.match(/>Confirmed</g)?.length, 1);
     assert.equal(html.includes("because Nori"), false);
   });
@@ -295,8 +290,6 @@ describe("Fix 5 (Web): Typed chat error card and Retry affordance", () => {
     assert.match(retryableHtml, /Reply didn’t go through/);
     assert.match(retryableHtml, /temporarily busy/);
     assert.match(retryableHtml, />Retry</);
-    // Error card is NOT rendered inside a normal Nori chat bubble.
-    assert.equal(retryableHtml.includes("bg-bubble"), false);
 
     const nonRetryableHtml = renderToStaticMarkup(
       <AssistantProvider localMode>

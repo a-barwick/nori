@@ -5,9 +5,6 @@ import { parseEnv } from "node:util";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-// Strict allowlist for variables passed from repo-root .env or parent process.env
-// into the web process. Unallowed keys (core DB/model/credential/AWS secrets, etc.)
-// are omitted entirely rather than blanked to "".
 export const ALLOWED_WEB_KEYS = new Set([
   "NORI_APP_ORIGIN",
   "NORI_CLOUD",
@@ -30,7 +27,6 @@ export const ALLOWED_WEB_PREFIXES = [
   "NORI_SERVICE_",
 ];
 
-// Standard OS / Node / Bun runtime variables allowed from inherited process.env only.
 export const ALLOWED_RUNTIME_KEYS = new Set([
   "PATH",
   "HOME",
@@ -79,7 +75,6 @@ export function buildChildEnv(dotEnv = {}, parentEnv = process.env) {
       env[key] = value;
     }
   }
-  // Defensive scrub: guarantee no unallowed key survives on the child env object.
   for (const key of Object.keys(env)) {
     if (!isAllowedWebKey(key) && !isAllowedRuntimeKey(key)) {
       delete env[key];

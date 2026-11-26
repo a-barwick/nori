@@ -6,7 +6,7 @@ import { Bell, Check, Pencil, X } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { APIError, getJSON, mutate, newRequestID } from "@/lib/assistant/api";
 import { when } from "@/lib/assistant/format";
-import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
+import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant/useResource";
 import type { Automation } from "@/lib/contracts/assistant";
 import type { Part } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -28,7 +28,7 @@ export function formatReminderTime(part: Pick<Part, "text" | "scheduled_at">, no
   return part.text?.trim() || (part.scheduled_at ? when(part.scheduled_at) : "");
 }
 
-export async function cancelReminder(id: string): Promise<Automation> {
+export async function cancelReminder(id: string, invalidate: (...prefixes: string[]) => void = () => {}): Promise<Automation> {
   const path = `/automations/${encodeURIComponent(id)}`;
   const latest = await getJSON<Automation>(path);
   if (latest.status === "cancelled") {
@@ -56,6 +56,7 @@ export async function cancelReminder(id: string): Promise<Automation> {
 }
 
 export function ReminderCard({ part }: { part: Part }) {
+  const invalidate = useResourceInvalidation();
   const live = useResource<Automation>(part.id ? `/automations/${encodeURIComponent(part.id)}` : null, { poll: 0 });
   const action = useAction();
   const [cancelledLocal, setCancelledLocal] = useState(false);
@@ -72,7 +73,7 @@ export function ReminderCard({ part }: { part: Part }) {
     void action.run(
       "cancel",
       async () => {
-        const updated = await cancelReminder(part.id!);
+        const updated = await cancelReminder(part.id!, invalidate);
         live.apply(updated);
         setCancelledLocal(true);
       },

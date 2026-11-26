@@ -21,10 +21,8 @@ import (
 	"nori/internal/task"
 )
 
-// ErrInjectedCleanupFault is returned when a configured transient cleanup failure triggers.
 var ErrInjectedCleanupFault = errors.New("sim/inner: injected transient cleanup failure")
 
-// WakeHub is a deterministic in-memory task.WakeNotifier for simulations and tests.
 type WakeHub struct {
 	mu   sync.Mutex
 	next int
@@ -39,12 +37,10 @@ type wakeSub struct {
 
 var _ task.WakeNotifier = (*WakeHub)(nil)
 
-// NewWakeHub constructs an empty WakeHub.
 func NewWakeHub() *WakeHub {
 	return &WakeHub{subs: make(map[int]wakeSub)}
 }
 
-// Subscribe registers a wake channel for (userID, runID).
 func (h *WakeHub) Subscribe(userID, runID string) (<-chan struct{}, func()) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -59,7 +55,6 @@ func (h *WakeHub) Subscribe(userID, runID string) (<-chan struct{}, func()) {
 	}
 }
 
-// NotifyTask wakes active subscribers matching (userID, runID) (or all tasks for userID when runID == "*").
 func (h *WakeHub) NotifyTask(userID, runID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -73,7 +68,6 @@ func (h *WakeHub) NotifyTask(userID, runID string) {
 	}
 }
 
-// NotifyPause wakes every active task subscriber immediately.
 func (h *WakeHub) NotifyPause() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -85,7 +79,6 @@ func (h *WakeHub) NotifyPause() {
 	}
 }
 
-// Deliver fans out a docstore.WakeEvent to matching subscribers.
 func (h *WakeHub) Deliver(ev docstore.WakeEvent) {
 	parsed := docstore.ParseWakePayload(ev.Payload)
 	switch parsed.Kind {
@@ -96,8 +89,6 @@ func (h *WakeHub) Deliver(ev docstore.WakeEvent) {
 	}
 }
 
-// DriverConfig configures a deterministic inner task execution Driver backed by real task.Runner
-// and Postgres-native docstore.LeaseStore.
 type DriverConfig struct {
 	Clock          *env.Clock
 	Backend        *memstore.Backend
@@ -112,7 +103,6 @@ type DriverConfig struct {
 	DisableFaults  bool
 }
 
-// UserConfig registers one simulated user with Driver.
 type UserConfig struct {
 	UserID      string
 	Store       state.ConversationStore
@@ -121,7 +111,6 @@ type UserConfig struct {
 	UserFacts   string
 }
 
-// UserRuntime holds the wired real Nori inner-loop components for one user.
 type UserRuntime struct {
 	UserID      string
 	Store       state.ConversationStore
@@ -133,7 +122,6 @@ type UserRuntime struct {
 	Activities  *task.Activities
 }
 
-// PublicationRecord captures each committed terminal publication made through Driver.
 type PublicationRecord struct {
 	UserID             string
 	RunID              string
@@ -220,8 +208,6 @@ func (vs *virtualLeaseSync) maybeRenew(ctx context.Context, now time.Time) {
 	}
 }
 
-// observingTaskStore wraps a user's TaskStore for Activities so Driver can observe real
-// committed publications and inject cleanup faults without duplicating workflow logic.
 type observingTaskStore struct {
 	state.TaskStore
 	driver *Driver
@@ -263,9 +249,6 @@ func (s *observingTaskStore) FinishCleanup(ctx context.Context, runID, detail st
 	return s.TaskStore.FinishCleanup(ctx, runID, detail)
 }
 
-// Driver orchestrates deterministic inner task execution across one or more simulated users
-// using Nori's REAL task.Runner, task.Activities, agent.Service, task.Executor, permissions.Service,
-// and Postgres-native docstore.LeaseStore.
 type Driver struct {
 	mu             sync.Mutex
 	clock          *env.Clock
@@ -290,7 +273,6 @@ type Driver struct {
 	pubIndex        map[string]int
 }
 
-// NewDriver constructs a deterministic inner-loop Driver wired to real task.Runner.
 func NewDriver(cfg DriverConfig) *Driver {
 	clock := cfg.Clock
 	if clock == nil {
@@ -344,14 +326,10 @@ func NewDriver(cfg DriverConfig) *Driver {
 	return d
 }
 
-// Leases returns the underlying LeaseStore configured for this Driver.
 func (d *Driver) Leases() docstore.LeaseStore { return d.leases }
 
-// Wakes returns the WakeNotifier configured for this Driver.
 func (d *Driver) Wakes() task.WakeNotifier { return d.wakes }
 
-// AddUser wires real Nori inner-loop components (agent.Service, task.Executor, task.Activities)
-// for one user.
 func (d *Driver) AddUser(cfg UserConfig) (*UserRuntime, error) {
 	if cfg.UserID == "" {
 		return nil, errors.New("sim/inner: UserConfig.UserID is required")
@@ -394,7 +372,6 @@ func (d *Driver) AddUser(cfg UserConfig) (*UserRuntime, error) {
 		return ctx.Err()
 	}
 	noopTicker := func(_ time.Duration) (<-chan time.Time, func()) {
-		// Never fires on wall-clock time; bounded() exits cleanly on wake or ctx cancel.
 		return make(chan time.Time), func() {}
 	}
 
@@ -447,14 +424,12 @@ func (d *Driver) AddUser(cfg UserConfig) (*UserRuntime, error) {
 	return rt, nil
 }
 
-// User returns the wired UserRuntime for userID, if registered.
 func (d *Driver) User(userID string) *UserRuntime {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.users[userID]
 }
 
-// SetFaultsEnabled toggles fault injection across Adapter, Model, and Cleanup faults.
 func (d *Driver) SetFaultsEnabled(enabled bool) {
 	d.mu.Lock()
 	d.faultsEnabled = enabled
@@ -463,7 +438,6 @@ func (d *Driver) SetFaultsEnabled(enabled bool) {
 	d.Model.SetFaultsEnabled(enabled)
 }
 
-// Publications returns a copy of all committed PublicationRecords.
 func (d *Driver) Publications() []PublicationRecord {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -472,7 +446,6 @@ func (d *Driver) Publications() []PublicationRecord {
 	return out
 }
 
-// RunPhase returns the authoritative TaskControl.Phase for runID, or "untracked" if absent.
 func (d *Driver) RunPhase(runID string) string {
 	restore := d.pauseStoreFaults()
 	defer restore()
@@ -496,9 +469,6 @@ func (d *Driver) RunPhase(runID string) string {
 	return string(ctrl.Phase)
 }
 
-// CrashRun simulates a hard worker crash mid-task by acquiring both the discovery lease
-// and authoritative TaskControl under a crashed worker identity without releasing either,
-// leaving them stale until TaskLease (30s) expires and another worker takes over with Fence+1.
 func (d *Driver) CrashRun(runID string) bool {
 	if d.leases == nil {
 		return false
@@ -529,7 +499,6 @@ func (d *Driver) CrashRun(runID string) bool {
 	return true
 }
 
-// RepairUser runs Postgres-native lease/run reconciliation (and StopPaused when paused) for userID.
 func (d *Driver) RepairUser(ctx context.Context, userID string) error {
 	rt := d.User(userID)
 	if rt == nil {
@@ -659,7 +628,6 @@ func (d *Driver) RepairUser(ctx context.Context, userID string) error {
 		}
 	}
 
-	// Reconcile any residual undelivered commands for terminal & clean runs whose lease is already gone.
 	after := ""
 	for {
 		page, err := rt.Store.Pending(ctx, after)
@@ -713,7 +681,6 @@ func (d *Driver) hasActiveOrUncleanChild(ctx context.Context, rt *UserRuntime, p
 	return false
 }
 
-// RepairAll runs RepairUser for every registered user in deterministic order.
 func (d *Driver) RepairAll(ctx context.Context) error {
 	d.mu.Lock()
 	ids := slices.Clone(d.userOrder)
@@ -727,8 +694,6 @@ func (d *Driver) RepairAll(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// SpawnSubtask creates 1..N child tasks for a parent parked on a QuestionWork request via
-// real Store.AcceptCommandBatch (which atomically writes child task leases in the same tx).
 func (d *Driver) SpawnSubtask(ctx context.Context, parentRunID string, childTexts ...string) ([]state.Run, error) {
 	if len(childTexts) == 0 {
 		childTexts = []string{"Complete delegated subtask work"}
@@ -780,7 +745,6 @@ func (d *Driver) SpawnSubtask(ctx context.Context, parentRunID string, childText
 	return children, nil
 }
 
-// StepRun advances the task lease for runID by ONE real task.Runner step.
 func (d *Driver) StepRun(ctx context.Context, runID string) (bool, error) {
 	userID, err := d.userForRun(ctx, runID)
 	if err != nil {
@@ -789,14 +753,11 @@ func (d *Driver) StepRun(ctx context.Context, runID string) (bool, error) {
 	return d.StepUserRun(ctx, userID, runID)
 }
 
-// StepUserRun claims runID from LeaseStore and executes ONE state-machine step through real task.Runner.
 func (d *Driver) StepUserRun(ctx context.Context, userID, runID string) (bool, error) {
 	_, progressed, err := d.runWithBudget(ctx, userID, runID, "", 1)
 	return progressed, err
 }
 
-// RunUserTask claims runID from LeaseStore and runs real task.Runner until completion, park,
-// busy, backoff, or cancellation (unlimited StepBudget).
 func (d *Driver) RunUserTask(ctx context.Context, userID, runID, owner string) (task.RunOutcome, bool, error) {
 	return d.runWithBudget(ctx, userID, runID, owner, 0)
 }
@@ -842,8 +803,6 @@ func (d *Driver) runWithBudget(ctx context.Context, userID, runID, owner string,
 	return outcome, true, err
 }
 
-// StepAny picks one currently claimable task lease across all users in deterministic sorted
-// order and steps it once via real task.Runner. Returns ("", false, nil) when no claimable lease exists.
 func (d *Driver) StepAny(ctx context.Context) (string, bool, error) {
 	if d.leases == nil {
 		return "", false, nil
@@ -871,8 +830,6 @@ func (d *Driver) StepAny(ctx context.Context) (string, bool, error) {
 	return "", false, nil
 }
 
-// NextWakeTime returns the earliest future WakeAt or LeaseUntil among runnable task leases,
-// allowing deterministic drain loops to advance virtual time past backoffs or crashed leases.
 func (d *Driver) NextWakeTime(ctx context.Context) (time.Time, bool) {
 	if d.leases == nil {
 		return time.Time{}, false
@@ -990,7 +947,6 @@ func (d *Driver) userForRun(ctx context.Context, runID string) (string, error) {
 	return "", fmt.Errorf("sim/inner: no user owns run %q", runID)
 }
 
-// readFamilySpend reads authoritative family spend fault-free right before a model call.
 func (d *Driver) readFamilySpend(ctx context.Context, userID, runID string) (SpendSnapshot, bool) {
 	restore := d.pauseStoreFaults()
 	defer restore()
@@ -1025,7 +981,6 @@ func (d *Driver) readFamilySpend(ctx context.Context, userID, runID string) (Spe
 	}, true
 }
 
-// sortedRunIDs returns all tracked run IDs in deterministic sorted order.
 func (d *Driver) sortedRunIDs() []string {
 	d.mu.Lock()
 	defer d.mu.Unlock()

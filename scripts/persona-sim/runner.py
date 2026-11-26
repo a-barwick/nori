@@ -148,7 +148,6 @@ def _extract_chat_user_text(msgs: list[dict[str, Any]]) -> str:
     if not raw_user:
         return ""
     stripped = raw_user.strip()
-    # commandPlan wraps current user messages in a JSON array after a runtime prefix
     bracket_idx = stripped.find("[{")
     if bracket_idx >= 0:
         tail = stripped[bracket_idx:]
@@ -483,7 +482,6 @@ def ensure_ephemeral_postgres(
     password = parsed.password or ""
     db_name = f"nori_sim_{uuid4().hex[:10]}"
 
-    # Check if local loopback Postgres is reachable via TCP
     local_ok = False
     if host in ("127.0.0.1", "localhost"):
         try:
@@ -498,7 +496,6 @@ def ensure_ephemeral_postgres(
         admin_url = f"postgres://{auth}{host}:{port}/postgres?sslmode=disable"
         created = False
 
-        # Prefer nori-sim's built-in pgx driver (zero psql/docker CLI dependency)
         if nori_sim_bin is not None:
             try:
                 with _db_init_lock:
@@ -531,7 +528,6 @@ def ensure_ephemeral_postgres(
         if created:
             return target_url, db_name
 
-    # Fallback: launch isolated ephemeral Docker Compose Postgres container
     project = f"nori-sim-{uuid4().hex[:10]}"
     compose = (
         "docker", "compose", "--env-file", os.devnull, "--project-name", project,
@@ -593,8 +589,6 @@ def connect_sandbox_mcp(base_url: str, user_id: str, mcp_url: str, server_name: 
             if tname in READ_ONLY_TOOL_NAMES:
                 read_tool_ids.append(tid)
 
-    # Allow read-only sandbox tools by default so tasks can freely search email/calendar/docs/issues,
-    # while leaving write/send tools governed by approval cards or explicit permission rules.
     if read_tool_ids:
         st_r, res_r = http_json(base_url, "POST", f"/users/{user_id}/v1/permissions", {
             "request_id": str(uuid4()),
@@ -720,7 +714,6 @@ def latest_assistant_turn(
             latest_text = str(m.get("text", ""))
             break
 
-    # Collect result IDs from assistant messages after since_msg_id (or from the latest assistant message)
     start_idx = 0
     if since_msg_id:
         for i, m in enumerate(msgs):
@@ -1025,6 +1018,54 @@ def resolve_max_days(max_days: int | None = None, weeks: int | None = None) -> i
     return None
 
 
+def persona_runtime_env(
+    dotenv: dict[str, str], postgres_url: str, artifacts_dir: Path, cred_key_file: Path,
+    email: str, port: int, stub_model_url: str | None,
+) -> dict[str, str]:
+    env = dict(os.environ)
+    if env.get("NORI_MODEL_PROVIDER", "").strip().lower() == "gateway":
+        for k, v in strip_raw_provider_keys(dotenv).items():
+            env.setdefault(k, v)
+        env = strip_raw_provider_keys(env)
+    else:
+        for k, v in dotenv.items():
+            env.setdefault(k, v)
+    env.update({
+        "NORI_ENV_FILE": os.devnull,
+        "NORI_TASK_ENV_FILE": os.devnull,
+        "NORI_CLOUD": "local",
+        "NORI_STORE_BACKEND": "postgres",
+        "NORI_POSTGRES_URL": postgres_url,
+        "NORI_LOCAL_ARTIFACT_DIR": str(artifacts_dir),
+        "NORI_CREDENTIAL_STORE": "database",
+        "NORI_CREDENTIAL_KEY_FILE": str(cred_key_file),
+        "NORI_LOCAL_EMAIL": email,
+        "PORT": str(port),
+        "NORI_BACKGROUND_TASKS_ENABLED": "true",
+        "NORI_JEV_ENABLED": "false" if stub_model_url else env.get("NORI_JEV_ENABLED", "false"),
+    })
+    if stub_model_url:
+        env = strip_raw_provider_keys(env)
+        env.update({
+            "NORI_MODEL_TEST_URL": stub_model_url,
+            "NORI_ENV_PROFILE": "test",
+            "NORI_MODEL_PROVIDER": "openai",
+            "NORI_OUTER_PROVIDER": "openai",
+            "NORI_INNER_PROVIDER": "openai",
+            "NORI_AGENT_MODEL": "gpt-6.1-sol",
+            "MODEL_NAME": "gpt-6.1-terra",
+            "OPENAI_TEST_API_KEY": "nori-loopback-stub",
+            "NORI_MODEL_PROFILES": "",
+            "NORI_MODEL_PROFILES_FILE": "",
+            "NORI_LOCAL_MODEL_URL": "",
+            "NORI_LOCAL_MODEL_TAG": "",
+            "NORI_MODEL_GATEWAY_URL": "",
+            "NORI_MODEL_GATEWAY_API_KEY": "",
+            "NORI_LLM_MAX_USD": "",
+        })
+    return env
+
+
 def run_single_persona(
     slug: str,
     run_root: Path,
@@ -1089,7 +1130,6 @@ def run_single_persona(
             has_sim_api = False
             user_email = profile["email"]
             effective_pg_url = pg_url or os.environ.get("NORI_POSTGRES_URL") or dotenv.get("NORI_POSTGRES_URL") or "postgres://nori@127.0.0.1:15432/nori?sslmode=disable"
-            # Provision user in target DB if nori-user available
             user_id = str(uuid4())
             if nori_user_bin:
                 env = dict(os.environ)
@@ -1125,32 +1165,7 @@ def run_single_persona(
             has_sim_api = True
             user_id = str(uuid4())
 
-            env = dict(os.environ)
-            if env.get("NORI_MODEL_PROVIDER", "").strip().lower() == "gateway":
-                for k, v in strip_raw_provider_keys(dotenv).items():
-                    env.setdefault(k, v)
-                env = strip_raw_provider_keys(env)
-            else:
-                for k, v in dotenv.items():
-                    env.setdefault(k, v)
-            env.update({
-                "NORI_ENV_FILE": os.devnull,
-                "NORI_TASK_ENV_FILE": os.devnull,
-                "NORI_CLOUD": "local",
-                "NORI_STORE_BACKEND": "postgres",
-                "NORI_POSTGRES_URL": effective_pg_url,
-                "NORI_LOCAL_ARTIFACT_DIR": str(artifacts_dir),
-                "NORI_CREDENTIAL_STORE": "database",
-                "NORI_CREDENTIAL_KEY_FILE": str(cred_key_file),
-                "NORI_LOCAL_EMAIL": profile["email"],
-                "PORT": str(port),
-                "NORI_BACKGROUND_TASKS_ENABLED": "true",
-                "NORI_JEV_ENABLED": "false" if stub_model_url else env.get("NORI_JEV_ENABLED", "false"),
-            })
-            if stub_model_url:
-                env["NORI_MODEL_TEST_URL"] = stub_model_url
-                env.setdefault("OPENAI_API_KEY", "stub-key")
-                env.setdefault("OPENROUTER_API_KEY", "stub-key")
+            env = persona_runtime_env(dotenv, effective_pg_url, artifacts_dir, cred_key_file, profile["email"], port, stub_model_url)
 
             with _db_init_lock:
                 run_cmd(
@@ -1183,7 +1198,6 @@ def run_single_persona(
 
             stack.callback(_stop_proc)
 
-            # Wait for /readyz
             deadline = time.monotonic() + 45
             while True:
                 if proc.poll() is not None:
@@ -1279,19 +1293,17 @@ def run_single_persona(
                 return {}
             return res if isinstance(res, dict) else {}
 
-        # Initial setup: Preferences + MCP Sandbox + Initial Permissions
         st_pref, res_pref = apply_preferences(base_url, user_id, profile.get("preferences") or {})
         if st_pref >= 500:
             http_5xx_count += 1
         if st_pref >= 400:
-            raise RuntimeError(f"Initial apply_preferences failed ({st_pref}): {res_pref}")
+            raise RuntimeError(f"Initial apply_preferences failed ({st_pref}): {res_pref}. Runtime log: {out_dir / 'nori-sim.log'}")
 
         tool_ids = connect_sandbox_mcp(
             base_url, user_id, mcp_url,
             (profile.get("mcp_world") or {}).get("server_name") or f"{profile['name']} Workspace",
             profile.get("initial_permissions") or [],
         )
-        # Ensure intro snapshot
         st_intro, res_intro = http_json(base_url, "GET", f"/users/{user_id}/v1/snapshot")
         if st_intro >= 500:
             http_5xx_count += 1
@@ -1381,8 +1393,6 @@ def run_single_persona(
                     rec["nori_reply"] = probe_nori_reply
                     rec["show_results"] = probe_show_results
 
-                    # Adaptive loop (max 2 turns): resolve pending interactions or genuine clarifying questions
-                    # Keep probe_nori_reply immutable (H-4).
                     if not ev.get("probe") or not ev["probe"].get("expect_no_external_write"):
                         latest_adaptive_reply = probe_nori_reply
                         for _step in range(2):
@@ -1457,7 +1467,6 @@ def run_single_persona(
                             else:
                                 break
                 else:
-                    # Rapid-burst mode: tiny wall pause so message persists before next burst turn
                     time.sleep(0.05)
 
             elif kind == "settle":
@@ -1558,7 +1567,6 @@ def run_single_persona(
             if adaptive_followups:
                 rec["adaptive_followups"] = adaptive_followups
 
-            # If this event carries a Probe, capture full evidence bundle right now!
             if ev.get("probe"):
                 probe = ev["probe"]
                 snap_now = _get_state()
@@ -1595,7 +1603,6 @@ def run_single_persona(
 
             trace_lines.append(rec)
 
-        # Final idle settle + end-of-month snapshot (+20m idle so any remaining flush/dream completes)
         if has_sim_api:
             _advance_clock(1200)
             _drain(240)
@@ -1604,13 +1611,11 @@ def run_single_persona(
 
         interactions_all = _fetch_all_interactions(base_url, user_id)
 
-    # Aggregate model usage from final sim state (or snapshot fallback)
     raw_usage_records = final_snap.get("model_usage") or []
     model_usage = aggregate_model_usage(raw_usage_records)
     mcp_audit = world.audit()
     approvals_log = [it for it in interactions_all if str(it.get("kind", "")).lower() == "approval"]
 
-    # Persist run artifacts
     with (out_dir / "trace.jsonl").open("w", encoding="utf-8") as tf:
         for line in trace_lines:
             tf.write(json.dumps(line, ensure_ascii=False) + "\n")
@@ -1755,7 +1760,6 @@ def _exec_memory_ui(base_url: str, user_id: str, action: str, params: dict[str, 
                 out["error"] = f"POST memory/{target['id']}/actions ({act_name}) failed ({st_a}): {res}"
             return out
 
-        # 0 Core Memory matches -> Daily Log fallback for forget_matching / pin_matching / edit_matching
         if action in ("forget_matching", "pin_matching", "edit_matching"):
             st_l, logs_resp = http_json(base_url, "GET", f"/users/{user_id}/v1/memory/logs?limit=100")
             if st_l != 200 or not isinstance(logs_resp, dict):
@@ -1770,7 +1774,6 @@ def _exec_memory_ui(base_url: str, user_id: str, action: str, params: dict[str, 
                         log_matches.append((lg, entry))
             if len(log_matches) > 1 and action == "forget_matching":
                 forgotten: list[dict[str, Any]] = []
-                # Group by date and re-fetch latest revision per date after each forget.
                 seen_pairs = [(lg["date"], entry["id"]) for lg, entry in log_matches]
                 for log_date, entry_id in seen_pairs:
                     st_cur, cur_logs = http_json(base_url, "GET", f"/users/{user_id}/v1/memory/logs?limit=100")
@@ -2022,7 +2025,6 @@ def _parse_cron_num_field(field: str, min_v: int, max_v: int) -> list[int]:
             if n < min_v or n > max_v:
                 raise ValueError(f"cron value out of bounds: {n}")
             vals.append(n)
-    # Deduplicate preserving order
     return list(dict.fromkeys(vals))
 
 
@@ -2368,7 +2370,6 @@ def _exec_library_ui(
                     "query": q,
                     "error": f"expected 1 library item matching {q!r}, found {len(matches)}",
                 }
-            # Multiple versions of the same document: sort by version/updated_at desc and delete all_versions.
             matches.sort(key=lambda it: (int(it.get("version") or 0), str(it.get("updated_at") or "")), reverse=True)
         item = matches[0]
         st_d, res = http_json(base_url, "POST", f"/users/{user_id}/v1/library/{item['id']}/actions", {
@@ -2591,7 +2592,6 @@ def _interaction_matches(item: dict[str, Any], match_tool: str, match_recipient:
             item.get("task_title"),
         ):
             recip_sources.extend(_collect_strings(src))
-        # Also parse JSON args embedded after " with " in summary/prompt (mcp.Adapter.Prepare)
         for text_blob in (str(payload.get("summary", "")), str(item.get("prompt", ""))):
             if " with " in text_blob:
                 tail = text_blob.split(" with ", 1)[1].strip()
@@ -2733,6 +2733,9 @@ def main() -> int:
         os.environ["MODEL_NAME"] = args.inner_model
     if args.inner_reasoning:
         os.environ["NORI_INNER_REASONING_EFFORT"] = args.inner_reasoning
+
+    if args.stub_models and args.workbench_seed:
+        parser.error("--stub-models requires an isolated simulation runtime")
 
     if args.concurrency > 1 and args.workbench_seed:
         raise SystemExit(

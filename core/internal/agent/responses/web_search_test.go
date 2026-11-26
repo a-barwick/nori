@@ -147,7 +147,6 @@ func TestResponsesNativeWebSearchRequestAndParsing(t *testing.T) {
 		t.Fatalf("Respond: %v", err)
 	}
 
-	// Verify request tools include {"type":"web_search"} and omit function web_search.
 	rawTools, ok := capturedBody["tools"].([]any)
 	if !ok {
 		t.Fatalf("expected tools array in request, got %#v", capturedBody["tools"])
@@ -177,7 +176,6 @@ func TestResponsesNativeWebSearchRequestAndParsing(t *testing.T) {
 		t.Fatalf("expected function tool complete to remain in request: %#v", rawTools)
 	}
 
-	// Verify parsed web_search_call items.
 	if len(resp.WebSearches) != 3 {
 		t.Fatalf("len(resp.WebSearches) = %d, want 3: %+v", len(resp.WebSearches), resp.WebSearches)
 	}
@@ -191,17 +189,14 @@ func TestResponsesNativeWebSearchRequestAndParsing(t *testing.T) {
 		t.Fatalf("unexpected third web_search_call: %+v", resp.WebSearches[2])
 	}
 
-	// Verify deduplicated citations.
 	if len(resp.Citations) != 1 || resp.Citations[0].URL != "https://weather.example.com/sf" || resp.Citations[0].Title != "SF Weather Forecast" {
 		t.Fatalf("unexpected citations: %+v", resp.Citations)
 	}
 
-	// Verify complete function call still parsed.
 	if len(resp.Calls) != 1 || resp.Calls[0].Name != "complete" {
 		t.Fatalf("unexpected Calls: %+v", resp.Calls)
 	}
 
-	// Verify cost = TerraCost + 1 billed search call (open_page and failed search excluded).
 	inTok, outTok, totTok := int64(10000), int64(500), int64(10500)
 	tokenCost, err := usage.TerraCost("gpt-6.1-terra-2026-04-01", "default", &inTok, &outTok, &totTok, 2000)
 	if err != nil {
@@ -216,7 +211,6 @@ func TestResponsesNativeWebSearchRequestAndParsing(t *testing.T) {
 		t.Fatalf("recorded usage CostUSD = %v, want %.12f", lastUsage.CostUSD, wantCost)
 	}
 
-	// Verify ProviderState retains raw web_search_call items for replay.
 	if resp.Message == nil || resp.Message.Provider() == nil {
 		t.Fatalf("expected ProviderState on response message")
 	}
@@ -228,7 +222,6 @@ func TestResponsesNativeWebSearchRequestAndParsing(t *testing.T) {
 func TestResponsesWebSearchDisabledForCompactionAndNonDirectClients(t *testing.T) {
 	ctx := context.Background()
 
-	// 1. Direct client with req.WebSearch == false must NOT send web_search.
 	direct := responses.New("test-key", settings.DefaultInnerModel, &captureMeter{})
 	var directTools []any
 	direct.HTTP = &http.Client{
@@ -251,7 +244,6 @@ func TestResponsesWebSearchDisabledForCompactionAndNonDirectClients(t *testing.T
 		t.Fatalf("expected no tools when WebSearch=false, got %#v", directTools)
 	}
 
-	// 2. Gateway and OpenRouter clients report SupportsNativeWebSearch == false and keep function web_search.
 	gateway := responses.NewGateway("https://gateway.local", "gw-key", "custom/model", &captureMeter{})
 	if gateway.SupportsNativeWebSearch() {
 		t.Fatalf("gateway client should not support native web_search")
@@ -309,7 +301,6 @@ func TestAgentDecideWiresNativeWebSearchWithoutBraveKey(t *testing.T) {
 	}
 
 	svc := agent.New(nil, client)
-	// Intentionally leave svc.Capabilities.SearchKey empty.
 	if _, err := svc.Decide(ctx, []transcript.Message{transcript.UserText("Check the weather")}, true, true); err != nil {
 		t.Fatalf("Decide: %v", err)
 	}

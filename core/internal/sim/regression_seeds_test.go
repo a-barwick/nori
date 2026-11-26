@@ -30,9 +30,6 @@ type regressionSeed struct {
 	description string
 }
 
-// pinnedRegressionSeeds is the permanent registry of simulation seeds that
-// previously uncovered real bugs in Nori. Every entry always runs in `go test`
-// regardless of `-sim-seeds`.
 var pinnedRegressionSeeds = []regressionSeed{
 	{
 		name:        "coord_seed_13_stop_paused_fault_undelivered_command",
@@ -146,14 +143,10 @@ func TestRegressionSeeds(t *testing.T) {
 	}
 }
 
-// TestFullWorldNextConversationWakeAndMemoryChaos verifies that FullWorld exercises
-// memory mutations, rapid bursts, consolidation, and delayed NextConversationWake
-// execution in LaneConversation using deterministic virtual time.
 func TestFullWorldNextConversationWakeAndMemoryChaos(t *testing.T) {
 	silenceStdLog(t)
 	ctx := context.Background()
 
-	// 1. Verify weighted chaos coverage across a small batch of FullWorld seeds.
 	var memMut, bursts, cons int
 	for _, seed := range []int64{17, 104, 188} {
 		w := sim.NewFullWorld(seed, fullConfigForSeed(seed))
@@ -168,16 +161,12 @@ func TestFullWorldNextConversationWakeAndMemoryChaos(t *testing.T) {
 		t.Fatalf("expected non-zero memory/burst/consolidate chaos coverage, got memMut=%d bursts=%d cons=%d", memMut, bursts, cons)
 	}
 
-	// 2. Directly verify NextConversationWake (+2m IdleExtractDelay with zero premature idle compaction)
-	// arm -> virtual clock jump -> claim -> extract -> park, followed by SoftCompactUserTurns compaction.
 	w := sim.NewFullWorld(777, sim.FullWorldConfig{
 		NumUsers:      1,
 		DisableFaults: true,
 	})
 	uw := w.Users[0]
 
-	// Complete 8 user turns (< SoftCompactUserTurns=16): turns 3 & 6 extract immediately via
-	// ExtractTurnThreshold=3, turns 7..8 schedule +2m IdleExtractDelay, and ZERO compaction occurs.
 	for i := range 8 {
 		if _, err := uw.Outer.AcceptInput(ctx, fmt.Sprintf("idle wake turn %d remember project_falcon_%d", i+1, i+1)); err != nil {
 			t.Fatalf("AcceptInput %d: %v", i, err)
@@ -200,7 +189,6 @@ func TestFullWorldNextConversationWakeAndMemoryChaos(t *testing.T) {
 		t.Fatalf("expected ExtractTurnThreshold=%d to have already extracted turns 1..6", state.ExtractTurnThreshold)
 	}
 
-	// Ensure LaneConversation wake is claimed and re-armed via NextConversationWake (+2m IdleExtractDelay).
 	if err := w.Backend.WakeUser(ctx, uw.User.ID, docstore.LaneConversation, time.Time{}); err != nil {
 		t.Fatalf("WakeUser: %v", err)
 	}
@@ -217,13 +205,10 @@ func TestFullWorldNextConversationWakeAndMemoryChaos(t *testing.T) {
 		t.Fatalf("ReleaseUserWake delayed: %v", err)
 	}
 
-	// Before extractWakeAt, ClaimUserWake must NOT claim the delayed wake.
 	if _, claimedEarly, err := w.Backend.ClaimUserWake(ctx, docstore.LaneConversation, "sim-pool-early", state.ConversationLease); err != nil || claimedEarly {
 		t.Fatalf("expected delayed LaneConversation wake not claimable before wakeAt, claimedEarly=%v err=%v", claimedEarly, err)
 	}
 
-	// Advance virtual clock past extractWakeAt (+2m IdleExtractDelay) and verify turns 7..8 extract
-	// WITHOUT compacting (Through/FlushedThrough remain zero) and LaneConversation parks cleanly.
 	w.Clock.Advance(extractWakeAt.Sub(w.Clock.Now()) + time.Second)
 	owner2 := "sim-pool-2"
 	claim2, ok, err := w.Backend.ClaimUserWake(ctx, docstore.LaneConversation, owner2, state.ConversationLease)
@@ -253,8 +238,6 @@ func TestFullWorldNextConversationWakeAndMemoryChaos(t *testing.T) {
 		t.Fatalf("expected ParkUserWake after idle extract, parked=%v err=%v", parked, err)
 	}
 
-	// Drive 8 more user turns (reaching SoftCompactUserTurns=16) and verify compaction triggers,
-	// keeping CompactKeep (14) turns verbatim with FlushedThrough == Through > 0.
 	for i := 8; i < state.SoftCompactUserTurns; i++ {
 		if _, err := uw.Outer.AcceptInput(ctx, fmt.Sprintf("buffered compact turn %d remember project_falcon_%d", i+1, i+1)); err != nil {
 			t.Fatalf("AcceptInput %d: %v", i, err)
@@ -278,10 +261,6 @@ func TestFullWorldNextConversationWakeAndMemoryChaos(t *testing.T) {
 	}
 }
 
-// TestFullWorldShortSessionIdleExtractAndInnerRecall pins a deterministic E2E
-// FullWorld scenario exercising 1..5 turn short-session +20m idle extraction
-// (keeping all verbatim turns uncompacted) followed by a +10h overnight gap and
-// an inner task calling memory_search to recall the extracted memory.
 func TestFullWorldShortSessionIdleExtractAndInnerRecall(t *testing.T) {
 	silenceStdLog(t)
 	ctx := context.Background()
@@ -303,8 +282,6 @@ func runShortSessionIdleExtractAndRecall(t *testing.T, ctx context.Context, seed
 	})
 	uw := w.Users[0]
 
-	// 1. Short 2-turn session (< ExtractTurnThreshold=3, so extraction defers to +2m IdleExtractDelay
-	// and zero compaction occurs).
 	const token = "aurora_beacon_942"
 	prompts := []string{
 		"remember preference " + token + " for quarterly engineering reports",
@@ -335,7 +312,6 @@ func runShortSessionIdleExtractAndRecall(t *testing.T, ctx context.Context, seed
 		t.Fatalf("expected completed turns after 3-turn short session")
 	}
 
-	// NextConversationWake must schedule +20m IdleExtractDelay (not +2m).
 	wakeAt, err := uw.Outer.Workers[0].NextConversationWake(ctx)
 	if err != nil {
 		t.Fatalf("NextConversationWake: %v", err)
@@ -345,7 +321,6 @@ func runShortSessionIdleExtractAndRecall(t *testing.T, ctx context.Context, seed
 		t.Fatalf("NextConversationWake = %v, want %v (newestTurnAt + %s)", wakeAt, wantWake, state.IdleExtractDelay)
 	}
 
-	// Arm LaneConversation with the +20m delayed wake.
 	if err := w.Backend.WakeUser(ctx, uw.User.ID, docstore.LaneConversation, time.Time{}); err != nil {
 		t.Fatalf("WakeUser: %v", err)
 	}
@@ -357,7 +332,6 @@ func runShortSessionIdleExtractAndRecall(t *testing.T, ctx context.Context, seed
 		t.Fatalf("ReleaseUserWake: %v", err)
 	}
 
-	// 2. Advance half of IdleExtractDelay: must NOT claim or extract early.
 	w.Clock.Advance(state.IdleExtractDelay / 2)
 	if _, claimedEarly, err := w.Backend.ClaimUserWake(ctx, docstore.LaneConversation, "sim-short-early", state.ConversationLease); err != nil || claimedEarly {
 		t.Fatalf("expected +%s wake not claimable early, claimedEarly=%v err=%v", state.IdleExtractDelay, claimedEarly, err)
@@ -374,7 +348,6 @@ func runShortSessionIdleExtractAndRecall(t *testing.T, ctx context.Context, seed
 			sumEarly.EffectiveExtractedThrough(), sumEarly.Through, sumEarly.FlushedThrough)
 	}
 
-	// 3. Advance past +20m: LaneConversation wakes, extracts Core + Daily Log memories, leaves Through/FlushedThrough zero, and parks.
 	w.Clock.Advance(wakeAt.Sub(w.Clock.Now()) + time.Second)
 	claim2, ok, err := w.Backend.ClaimUserWake(ctx, docstore.LaneConversation, "sim-short-2", state.ConversationLease)
 	if err != nil || !ok || claim2.UserID != uw.User.ID {
@@ -405,7 +378,6 @@ func runShortSessionIdleExtractAndRecall(t *testing.T, ctx context.Context, seed
 		t.Fatalf("CheckAllSafety after +20m idle extract: %v", err)
 	}
 
-	// 4. Advance +10h overnight gap, then run an inner task that calls memory_search for token and verifies recall.
 	w.Clock.Advance(10 * time.Hour)
 
 	recalledHits := 0

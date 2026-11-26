@@ -15,8 +15,6 @@ export async function POST(request: Request) {
   try { body = await request.arrayBuffer(); }
   catch { return new Response("Incomplete envelope.", { status: 400 }); }
   if (body.byteLength !== length) return new Response("Incomplete envelope.", { status: 400 });
-  // The SDK validates the envelope DSN against the configured server DSN.
-  // Remove even diagnostic headers (IP, referrer, user agent) before it forwards.
   const envelope = new Request(request.url, {
     method: "POST",
     headers: { "content-length": String(length) },

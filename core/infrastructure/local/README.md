@@ -32,26 +32,6 @@ sequences, so a rolled-back transaction does not leave a gap.
 
 Event streams fan out over a shared Postgres `LISTEN nori_watch` connection with a 20 s fallback poll in batches of 200. The durable sequence is the resume cursor.
 
-## Chat-only runtime
+## Assistant disabled mode
 
-Set both feature flags to `false` in the main checkout's `.env`:
-
-```dotenv
-NORI_BACKGROUND_TASKS_ENABLED=false
-NORI_JEV_ENABLED=false
-```
-
-Keep `NORI_CLOUD=local`, the Postgres settings and `NORI_LOCAL_ARTIFACT_DIR` from
-above. Only `OPENAI_API_KEY` is required for models; keep the prescribed outer model.
-Jev and OpenRouter keys are unnecessary in this mode. Start Postgres with `make deps`,
-provision a user, then run `go run ./cmd/nori-local` from `core/`. Set `NORI_ENV_FILE`
-to the main checkout's existing env file when working in a worktree.
-
-The local loop processes accepted chats and resumes saved work after a restart.
-The runtime accepts trusted server requests at `/users/<id>/v1/conversations`;
-use the existing web proxy or your host's authenticated backend. It deliberately
-rejects direct browser requests. Assistant routes return `501` with
-`code: "not_enabled"`. Turning features off does not delete their records or stop
-an already-running worker process; apply the same configuration to every process
-and stop that deployment's worker when selecting chat-only mode. Re-enabling uses
-the retained work. Chats remain separate from assistant tasks in either mode.
+Set `NORI_BACKGROUND_TASKS_ENABLED=false` to run the API without the assistant worker. Assistant chat, streaming, and attachment endpoints return HTTP 501 with `code: "not_enabled"`. The capabilities route and supported management routes remain available. Apply the same configuration to every process in the deployment. Existing conversation and task records are retained for re-enabling the assistant.

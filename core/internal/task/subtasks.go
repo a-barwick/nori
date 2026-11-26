@@ -11,7 +11,6 @@ import (
 	"nori/internal/transcript"
 )
 
-// subtaskAnswerLimit keeps a parent's prompt small. The full answer stays on the subtask.
 const subtaskAnswerLimit = 8 << 10
 
 func questionTool(q *state.Question) string {
@@ -21,10 +20,6 @@ func questionTool(q *state.Question) string {
 	return "request_input"
 }
 
-// unresolvedWrite reports a write or shell operation whose effect isn't known. A provider's refusal of a write is a
-// definite answer, so it doesn't count, and neither does a request_work whose subtask ended without finishing: that
-// outcome is saved and final, and a write the subtask left unresolved makes it uncertain instead. A cleared operation
-// doesn't count either: it never ran, it only read, or the user answered a question naming it.
 func unresolvedWrite(op state.OperationRecord) bool {
 	if op.EffectClass == "read" || op.EffectClass == "control" || op.Cleared != "" {
 		return false
@@ -33,8 +28,6 @@ func unresolvedWrite(op state.OperationRecord) bool {
 		(op.Outcome == "failed" && op.Name != "request_work")
 }
 
-// workQuestion parks the parent on its request. A parent that can't do a write itself can't get one done by asking, so
-// the limit is saved on the question for the transaction that accepts a subtask.
 func (a *Activities) workQuestion(ctx context.Context, in RefInput, call transcript.ToolCall) (state.Question, error) {
 	request, _ := call.Args["request"].(string)
 	why, _ := call.Args["why"].(string)
@@ -53,8 +46,6 @@ func (a *Activities) workQuestion(ctx context.Context, in RefInput, call transcr
 	return question, nil
 }
 
-// subtaskResult builds the result of the parent's request_work call from its finished subtasks, and saves it under the
-// parent so the parent can cite it. A repeated delivery finds the saved operation and reuses its result.
 func (a *Activities) subtaskResult(ctx context.Context, parent state.Run, q state.Question, cmd state.Command) (map[string]any, error) {
 	operation := cmd.ID
 	saved, err := a.Store.Operations(ctx, parent.ID)
@@ -101,7 +92,6 @@ func (a *Activities) subtaskResult(ctx context.Context, parent state.Run, q stat
 		if child.Status != state.RunCompleted {
 			outcome = "failed"
 		}
-		// The outer loop's comparison needs what the subtask's answer rests on, not only its claim.
 		if found, err := a.Store.ReadTaskOutcome(ctx, child.ID); err == nil {
 			if len(found.Unmet) > 0 {
 				item["unmet"] = found.Unmet
@@ -136,8 +126,6 @@ func (a *Activities) subtaskResult(ctx context.Context, parent state.Run, q stat
 		}
 		subtasks = append(subtasks, item)
 	}
-	// An unresolved write in a subtask holds the parent to the rules for its own: it can't write again, and it can only
-	// finish by listing the write as unmet.
 	for _, item := range subtasks {
 		if item["unresolved_write"] == true {
 			outcome = "uncertain"
@@ -155,7 +143,6 @@ func (a *Activities) subtaskResult(ctx context.Context, parent state.Run, q stat
 	if err != nil {
 		return nil, err
 	}
-	// This records a result and starts no work, so it doesn't need admission and still saves during a pause.
 	err = a.Store.PutOperation(ctx, parent.ID, state.OperationRecord{
 		ID: operation, CallID: q.CallID, Name: "request_work", Revision: cmd.Revision, EffectClass: effect, Outcome: outcome, ResultRef: ref,
 	})

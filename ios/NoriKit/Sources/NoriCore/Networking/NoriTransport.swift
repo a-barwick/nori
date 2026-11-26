@@ -59,17 +59,13 @@ public protocol NoriTransport: Sendable {
     func fetchSession(before cursor: String?) async throws -> Session
     func fetchFullSnapshot() async throws -> NoriFullSnapshot
 
-    /// Resumable SSE event stream starting after `after` log position.
     func eventStream(after position: Int) -> AsyncThrowingStream<NoriStreamEvent, Error>
 
-    // Conversation & Uploads
-    func sendTurn(id: String, message: String, attachmentIDs: [String]) async throws -> Session
     func sendTurn(id: String, message: String, attachmentIDs: [String], modelSelection: ModelSelection?) async throws -> Session
     func retryTurn(turnID: String?, messageID: String?) async throws -> Session
     func sendTaskCommand(_ command: TaskCommand) async throws -> TaskCommandResponse
     func uploadFile(id: String, filename: String, mediaType: String, data: Data) async throws -> Attachment
 
-    // Work & Interactions
     func fetchWorkItems(bucket: WorkBucket?) async throws -> [WorkItem]
     func fetchWorkDetail(taskID: String) async throws -> WorkDetail
     func stopWork(taskID: String, requestID: String) async throws -> MutationReceipt<WorkItem>
@@ -83,7 +79,6 @@ public protocol NoriTransport: Sendable {
         requestID: String
     ) async throws -> MutationReceipt<Interaction>
 
-    // Apps: MCP Servers & Connections
     func fetchMCPServers() async throws -> [MCPServer]
     func fetchMCPTools(serverID: String) async throws -> [MCPServerTool]
     func createMCPServer(input: MCPServerInput, requestID: String) async throws -> MutationReceipt<MCPServer>
@@ -116,7 +111,6 @@ public protocol NoriTransport: Sendable {
         requestID: String
     ) async throws -> MutationReceipt<Connection>
 
-    // Library & Search
     func fetchLibrary() async throws -> [LibraryItem]
     func fetchLibraryItem(id: String) async throws -> LibraryItem
     func fetchLibraryItemFile(id: String, format: String?) async throws -> LibraryFilePayload
@@ -128,7 +122,6 @@ public protocol NoriTransport: Sendable {
         requestID: String
     ) async throws -> MutationReceipt<LibraryItem>
 
-    // Memory (3-layer)
     func fetchCoreMemories() async throws -> [MemoryFact]
     func fetchMemoryLogs() async throws -> [MemoryLog]
     func fetchWorkingMemory() async throws -> WorkingMemory
@@ -160,7 +153,6 @@ public protocol NoriTransport: Sendable {
         requestID: String
     ) async throws -> MutationReceipt<WorkingMemoryActionResource>
 
-    // Automations, Goals, Permissions, Preferences
     func fetchAutomations() async throws -> [Automation]
     func fetchAutomation(id: String) async throws -> Automation
     func updateAutomation(
@@ -228,7 +220,7 @@ public extension NoriTransport {
         try await fetchLibraryItemFile(id: id, format: nil)
     }
 
-    func sendTurn(id: String, message: String, attachmentIDs: [String], modelSelection: ModelSelection?) async throws -> Session {
-        try await sendTurn(id: id, message: message, attachmentIDs: attachmentIDs)
+    func sendTurn(id: String, message: String, attachmentIDs: [String]) async throws -> Session {
+        try await sendTurn(id: id, message: message, attachmentIDs: attachmentIDs, modelSelection: nil)
     }
 }

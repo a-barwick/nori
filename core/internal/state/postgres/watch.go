@@ -19,7 +19,6 @@ const (
 	defaultWatchReadyTimeout     = 500 * time.Millisecond
 )
 
-// Package-internal timing knobs (overridable in tests).
 var (
 	watchFallbackInterval = defaultWatchFallbackInterval
 	watchHubIdleGrace     = 5 * time.Second
@@ -31,9 +30,6 @@ type watchSub struct {
 	ch         chan struct{}
 }
 
-// watchHub manages one shared per-process LISTEN nori_watch connection and fans out
-// collection change notifications to active Watch callers.
-// All mutable fields except active and limiter are guarded by b.watchMu.
 type watchHub struct {
 	b              *backend
 	closed         bool
@@ -456,9 +452,6 @@ func waitWatchReady(ctx context.Context, ready <-chan struct{}, onTimeout func()
 	}
 }
 
-// Watch streams ordered batches matching s until ctx is canceled.
-// Active Watch callers share one per-process LISTEN nori_watch connection via watchHub,
-// falling back to a low-frequency safety poll only if a notification is missed.
 func (b *backend) Watch(ctx context.Context, s docstore.QuerySpec, deliver func([]docstore.Record) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -484,8 +477,6 @@ func (b *backend) Watch(ctx context.Context, s docstore.QuerySpec, deliver func(
 	defer timer.Stop()
 
 	for {
-		// Drain any pending wake before querying so notifications arriving during
-		// b.Query remain queued in sub.ch and trigger an immediate catch-up.
 		select {
 		case <-sub.ch:
 		default:

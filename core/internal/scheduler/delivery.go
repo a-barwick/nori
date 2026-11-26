@@ -16,8 +16,6 @@ func deliveryID(occurrence, destination string) string {
 	return "dlv_" + strings.ReplaceAll(uuid.NewSHA1(uuid.NameSpaceOID, []byte(occurrence+"|"+destination)).String(), "-", "")[:24]
 }
 
-// deliver records one delivery per destination, deduplicated by occurrence and destination. In-app delivery
-// stores an inbox item; any non-inbox destination fails visibly.
 func (s *Service) deliver(ctx context.Context, a stored, o occurrenceDoc, run state.Run, summary, status string, results []string) ([]string, error) {
 	destinations := a.DestinationIDs
 	if len(destinations) == 0 {
@@ -79,7 +77,6 @@ func (s *Service) Delivery(ctx context.Context, id string) (Delivery, error) {
 	return d, err
 }
 
-// Inbox lists inbox items, newest first.
 func (s *Service) Inbox(ctx context.Context, unread bool) ([]InboxItem, error) {
 	filter := map[string]string{}
 	if unread {
@@ -102,7 +99,6 @@ func (s *Service) Inbox(ctx context.Context, unread bool) ([]InboxItem, error) {
 	return out, nil
 }
 
-// Acknowledge marks an inbox item read and records the acknowledgement on its delivery.
 func (s *Service) Acknowledge(ctx context.Context, id, requestID string, expected int64) (state.MutationReceipt, error) {
 	now := s.now()
 	return s.Store.Mutate(ctx, state.Mutation{
@@ -139,7 +135,6 @@ func (s *Service) Acknowledge(ctx context.Context, id, requestID string, expecte
 	})
 }
 
-// UnreadCount counts unread inbox items for navigation badges.
 func (s *Service) UnreadCount(ctx context.Context) int {
 	items, err := s.Inbox(ctx, true)
 	if err != nil {
@@ -148,7 +143,6 @@ func (s *Service) UnreadCount(ctx context.Context) int {
 	return len(items)
 }
 
-// NextScheduled is the earliest next run of an enabled automation.
 func (s *Service) NextScheduled(ctx context.Context) *time.Time {
 	all, err := s.automations(ctx, "enabled")
 	if err != nil {
@@ -164,9 +158,6 @@ func (s *Service) NextScheduled(ctx context.Context) *time.Time {
 	return earliest
 }
 
-// NextWake returns the earliest time the scheduler lane needs to run again,
-// covering both enabled automation schedules (NextScheduled) and any pending
-// occurrences or terminal-task active occurrences awaiting settlement/delivery.
 func (s *Service) NextWake(ctx context.Context) *time.Time {
 	now := s.now()
 	earliest := s.NextScheduled(ctx)

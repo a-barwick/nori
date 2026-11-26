@@ -189,7 +189,6 @@ public struct DocumentReaderSheet: View {
         }
     }
 
-    // MARK: - Main Content
 
     @ViewBuilder
     private var contentBody: some View {
@@ -228,7 +227,6 @@ public struct DocumentReaderSheet: View {
         }
     }
 
-    // MARK: - Metadata Pills
 
     @ViewBuilder
     private func metadataPills(for item: NoriCore.LibraryItem) -> some View {
@@ -251,7 +249,6 @@ public struct DocumentReaderSheet: View {
         }
     }
 
-    // MARK: - Document Body Renderer
 
     @ViewBuilder
     private func documentBodySection(for item: NoriCore.LibraryItem) -> some View {
@@ -466,7 +463,6 @@ public struct DocumentReaderSheet: View {
         }
     }
 
-    // MARK: - Quick Actions & Share
 
     @ViewBuilder
     private func quickActionsRow(for item: NoriCore.LibraryItem) -> some View {
@@ -540,7 +536,6 @@ public struct DocumentReaderSheet: View {
             .background(NoriColors.fill1, in: Circle())
     }
 
-    // MARK: - Revise Section
 
     @ViewBuilder
     private func revisionSection(for item: NoriCore.LibraryItem) -> some View {
@@ -612,7 +607,6 @@ public struct DocumentReaderSheet: View {
         }
     }
 
-    // MARK: - Loading & Actions
 
     private func loadDocument() async {
         if loadedItemID != itemID {
@@ -783,7 +777,6 @@ public struct DocumentReaderSheet: View {
         #endif
     }
 
-    // MARK: - Formatting Helpers
 
     private func shareableText(for item: NoriCore.LibraryItem) -> String {
         if let text = fullTextContent, !text.isEmpty {
@@ -1006,7 +999,6 @@ public struct DocumentReaderSheet: View {
     }
 }
 
-// MARK: - Temporary File Cleanup
 
 private final class TempFileCleanup: @unchecked Sendable {
     private let lock = NSLock()
@@ -1041,7 +1033,6 @@ private final class TempFileCleanup: @unchecked Sendable {
     }
 }
 
-// MARK: - Lightweight Markdown Block Renderer
 
 private struct MarkdownBlocksView: View {
     let markdown: String

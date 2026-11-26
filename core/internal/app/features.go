@@ -2,8 +2,6 @@ package app
 
 import "nori/internal/settings"
 
-// Background tasks are the assistant mode. Disabling them leaves independent
-// chats available without Jev or an inner-worker key.
 func validateStartup(cfg settings.Settings) error {
 	outerKeyName, outerKey := cfg.Models.OuterCredential()
 	if _, err := settings.Required(outerKeyName, outerKey); err != nil {

@@ -29,7 +29,6 @@ func TestWithAdmission_BlocksBeforeProviderIO(t *testing.T) {
 	reader := &fakeWindowReader{calls: 10, spendUSD: 4.50, unknownCalls: 0}
 	meter := WithAdmission(local, reader, 10, 10.0, func() time.Time { return now })
 
-	// Pending attempt hits hourly call limit (10 >= 10) -> blocked before local write / provider I/O.
 	err := meter.RecordUsage(context.Background(), state.Usage{ID: "u1", RequestStatus: "pending"})
 	if !errors.Is(err, ErrUserQuotaExceeded) {
 		t.Fatalf("expected ErrUserQuotaExceeded on hourly call cap, got %v", err)
@@ -38,7 +37,6 @@ func TestWithAdmission_BlocksBeforeProviderIO(t *testing.T) {
 		t.Fatalf("expected 0 local writes when blocked, got %d", recorded)
 	}
 
-	// Terminal observation always passes through so completed calls are never dropped.
 	if err := meter.RecordUsage(context.Background(), state.Usage{ID: "u1", RequestStatus: "received"}); err != nil {
 		t.Fatalf("expected terminal usage update to pass through, got %v", err)
 	}
@@ -46,10 +44,9 @@ func TestWithAdmission_BlocksBeforeProviderIO(t *testing.T) {
 		t.Fatalf("expected terminal usage write to succeed, got %d", recorded)
 	}
 
-	// Daily spend cap counts unknown/pending calls conservatively.
 	reader.calls = 2
 	reader.spendUSD = 9.95
-	reader.unknownCalls = 5 // +$0.10 conservative exposure -> $10.05 >= $10.00
+	reader.unknownCalls = 5
 	err = meter.RecordUsage(context.Background(), state.Usage{ID: "u2", RequestStatus: "pending"})
 	if !errors.Is(err, ErrUserQuotaExceeded) {
 		t.Fatalf("expected ErrUserQuotaExceeded on daily spend cap with unknown exposure, got %v", err)

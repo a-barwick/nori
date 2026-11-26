@@ -1,6 +1,3 @@
-// Package permissions implements Permission checks and pending interactions. Effective authority combines the
-// task's origin and instructions, the user's rules, recorded approvals and the connection's grant. Installation,
-// discovery and connection consent grant none of it.
 package permissions
 
 import (
@@ -25,7 +22,6 @@ const (
 	CollectionAuthority = "authority"
 )
 
-// Rule is the contract PermissionRule.
 type Rule struct {
 	ID            string     `json:"id"`
 	Revision      int64      `json:"revision"`
@@ -43,11 +39,9 @@ type Rule struct {
 	Summary       string     `json:"summary,omitempty"`
 	CreatedAt     *time.Time `json:"created_at,omitempty"`
 	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
-	// Used counts operations admitted under the rule; it is private.
-	Used int `json:"-"`
+	Used          int        `json:"-"`
 }
 
-// RuleEditable is the contract PermissionRuleEditable.
 type RuleEditable struct {
 	Effect        string     `json:"effect"`
 	ToolIDs       []string   `json:"tool_ids"`
@@ -67,7 +61,6 @@ type storedRule struct {
 	Used int `json:"used"`
 }
 
-// Wildcard is the explicit "any" selector value.
 const Wildcard = "*"
 
 func validEffects(classes []string) bool {
@@ -81,7 +74,6 @@ func validEffects(classes []string) bool {
 	return true
 }
 
-// Summarize renders a rule's exact selectors as readable text.
 func Summarize(r RuleEditable) string {
 	verb := "Allow"
 	switch r.Effect {
@@ -124,20 +116,12 @@ func Summarize(r RuleEditable) string {
 	return text + "."
 }
 
-// Service evaluates authority and manages rules, approvals and interactions for one user.
 type Service struct {
-	Store state.ResourceStore
-	// UnattendedWrites controls automation-origin writes: "confirm_writes" (default)
-	// turns them into interactions; "require_rule" denies them without a matching rule.
+	Store            state.ResourceStore
 	UnattendedWrites string
-	// UserSends says how a sensitive send in a task the user asked for directly is treated without a rule: "ask"
-	// (the default: external sends require approval until an allow rule is saved) or "allow". Unattended automation
-	// runs follow UnattendedWrites instead, and unknown-effect tools always ask without an allow rule.
-	UserSends string
-	Now       func() time.Time
-	// OnDecline runs before a declined approval is recorded, to undo what Nori set up for the action (an unsent draft
-	// it wrote). What it returns is added to what the task is told.
-	OnDecline func(ctx context.Context, i Interaction) string
+	UserSends        string
+	Now              func() time.Time
+	OnDecline        func(ctx context.Context, i Interaction) string
 }
 
 func (s *Service) now() time.Time {
@@ -291,11 +275,10 @@ func nonNil(values []string) []string {
 	return values
 }
 
-// Request is one prepared action to authorize.
 type Request struct {
 	RunID        string
 	Revision     int64
-	Origin       string // "user", "automation", "goal"
+	Origin       string
 	AutomationID string
 	GoalID       string
 	ReadOnly     bool
@@ -308,11 +291,10 @@ type Request struct {
 	Digest       string
 }
 
-// Decision is the result of a Permission check.
 type Decision struct {
-	Result          string // allow, deny, needs_interaction
+	Result          string
 	Reason          string
-	Source          string // user_request, permission_rule, automation, approval, internal
+	Source          string
 	AuthorityRef    string
 	RuleIDs         []string
 	RuleSummaries   []string
@@ -428,7 +410,6 @@ func intersectsFold(selector, values []string) bool {
 	return false
 }
 
-// ApprovalKey identifies a recorded approval: the task, its instruction revision and the exact action digest.
 func ApprovalKey(runID string, revision int64, digest string) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%s", runID, revision, digest)))
 	return "apv_" + hex.EncodeToString(sum[:20])
@@ -438,15 +419,11 @@ type approval struct {
 	RunID       string    `json:"run_id"`
 	Revision    int64     `json:"revision"`
 	Digest      string    `json:"digest"`
-	Decision    string    `json:"decision"` // approve or decline
+	Decision    string    `json:"decision"`
 	Interaction string    `json:"interaction_id"`
 	At          time.Time `json:"at"`
 }
 
-// Check evaluates authority for one prepared action with strict deny > ask > allow precedence.
-// Deny rules win over everything; a recorded decline denies and a recorded exact-digest approval allows;
-// matching ask rules require explicit approval (overriding allow rules); matching allow rules allow
-// (subject to action-boundary AutoReview); otherwise the action class and task origin decide.
 func (s *Service) Check(ctx context.Context, req Request) (Decision, error) {
 	if req.ReadOnly && req.Effect != "read" {
 		return Decision{Result: "deny", Reason: "This task may only read."}, nil
@@ -456,13 +433,11 @@ func (s *Service) Check(ctx context.Context, req Request) (Decision, error) {
 		return Decision{}, err
 	}
 	sort.Slice(rules, func(i, j int) bool { return rules[i].ID < rules[j].ID })
-	// 1. Deny rules beat everything, even direct user requests and prior approvals.
 	for _, rule := range rules {
 		if rule.Effect == "deny" && s.applies(rule, req) {
 			return Decision{Result: "deny", Reason: "A permission rule forbids this: " + rule.Summary, RuleIDs: []string{rule.ID}, RuleSummaries: []string{rule.Summary}}, nil
 		}
 	}
-	// 2. Recorded exact-digest human decision for (RunID, Revision, Digest).
 	if req.Digest != "" && req.RunID != "" {
 		if r, err := s.Store.Resource(ctx, CollectionApprovals, ApprovalKey(req.RunID, req.Revision, req.Digest)); err == nil {
 			var a approval
@@ -482,13 +457,11 @@ func (s *Service) Check(ctx context.Context, req Request) (Decision, error) {
 			return Decision{}, err
 		}
 	}
-	// 3. Ask rules always beat Allow automatically.
 	for _, rule := range rules {
 		if rule.Effect == "ask" && s.applies(rule, req) {
 			return Decision{Result: "needs_interaction", Reason: "A custom rule requires your approval: " + rule.Summary, RuleIDs: []string{rule.ID}, RuleSummaries: []string{rule.Summary}}, nil
 		}
 	}
-	// 4. Allow rules authorize tentatively (subject to action-boundary AutoReview).
 	for _, rule := range rules {
 		if rule.Effect == "allow" && s.applies(rule, req) {
 			if err := s.consume(ctx, rule); err != nil {
@@ -505,12 +478,10 @@ func (s *Service) Check(ctx context.Context, req Request) (Decision, error) {
 			return dec, nil
 		}
 	}
-	// 5. Default fallback when no rule matches.
 	switch {
 	case req.Effect == "read" || req.Effect == "control":
 		return s.allow(ctx, req, originSource(req.Origin), nil, "")
 	case req.Origin == "user" && req.Effect == "reversible_write":
-		// User-requested reversible writes proceed tentatively into action-boundary AutoReview.
 		return s.allow(ctx, req, "user_request", nil, "")
 	case req.Origin == "user" && req.Effect == "sensitive_send" && s.UserSends == "allow":
 		return s.allow(ctx, req, "user_request", nil, "")
@@ -572,7 +543,6 @@ type authority struct {
 	At           time.Time `json:"at"`
 }
 
-// allow records the evaluated authority and returns its server-issued reference.
 func (s *Service) allow(ctx context.Context, req Request, source string, rules []string, interaction string) (Decision, error) {
 	now := s.now()
 	evidence := authority{RunID: req.RunID, Revision: req.Revision, Source: source, RuleIDs: rules, Interaction: interaction,
@@ -590,7 +560,6 @@ func (s *Service) allow(ctx context.Context, req Request, source string, rules [
 	return Decision{Result: "allow", Source: source, AuthorityRef: ref, RuleIDs: rules}, nil
 }
 
-// AuthoritySource reads the source recorded for an authority reference, for operation projections.
 func (s *Service) AuthoritySource(ctx context.Context, ref string) string {
 	if ref == "" {
 		return ""

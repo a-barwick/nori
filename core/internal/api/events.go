@@ -11,7 +11,6 @@ import (
 	"nori/internal/state"
 )
 
-// The legacy heartbeat also reports changes that write no event, like an expired lease.
 const streamHeartbeat = 20 * time.Second
 
 func (s *server) events(w http.ResponseWriter, r *http.Request) {
@@ -67,8 +66,6 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 			presence = s.sendPresence(ctx, stream, presence)
 			open = s.sendOpenTasks(ctx, stream, open)
 		case batch := <-batches:
-			// Drain any buffered ephemeral deltas before emitting durable messages so a
-			// stale delta cannot arrive after the final message and linger on clients.
 			for drained := false; !drained && deltaCh != nil; {
 				select {
 				case <-deltaCh:
@@ -78,7 +75,6 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 			}
 			for _, event := range state.CoalesceEvents(batch) {
 				err := s.sendEvent(ctx, stream, event)
-				// A record that's gone can't be sent, and it mustn't block every event after it.
 				if errors.Is(err, state.ErrNotFound) {
 					err = stream.send("unknown", event.Seq, map[string]string{"kind": event.Kind})
 				}
@@ -91,7 +87,6 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// sendEvent reads the record's current state, so a replay can't show something older than the client already has.
 func (s *server) sendEvent(ctx context.Context, stream eventStream, event state.LogEvent) error {
 	switch event.Kind {
 	case state.EventMessage:
@@ -127,12 +122,9 @@ func (s *server) sendEvent(ctx context.Context, stream eventStream, event state.
 	case state.EventMemory:
 		return stream.send(state.EventMemory, event.Seq, map[string]any{"ref": event.Ref})
 	}
-	// A kind this server doesn't know still moves the client's position forward.
 	return stream.send("unknown", event.Seq, map[string]string{"kind": event.Kind})
 }
 
-// sendPresence sends the conversation's state when it changed, and repairs a wake that was never queued. A browser's
-// polling used to do that repair.
 func (s *server) sendPresence(ctx context.Context, stream eventStream, last string) string {
 	presence, err := s.Runner.Presence(ctx)
 	if err != nil {
@@ -147,9 +139,6 @@ func (s *server) sendPresence(ctx context.Context, stream eventStream, last stri
 	return string(encoded)
 }
 
-// sendOpenTasks catches what the log can't: a worker on an older build writes no events, and a few small changes, such
-// as a new screenshot, don't either. It sends each open task that changed since the last heartbeat, and the final state
-// of one that has since closed. These carry no log position.
 func (s *server) sendOpenTasks(ctx context.Context, stream eventStream, last map[string]string) map[string]string {
 	runs, err := s.Tasks.Store.OpenTasks(ctx)
 	if err != nil {

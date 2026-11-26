@@ -4,11 +4,6 @@ import * as Sentry from "@sentry/nextjs";
 import Link from "next/link";
 import { useEffect } from "react";
 
-/**
- * A screen that failed to render shows this calm card instead of the bare framework error page. Keeping the error in
- * a route boundary also matters in development: Next's dev client reloads the whole page on every server change once
- * an error has reached its root, which turns one failure into a reload loop. Nothing here retries by itself.
- */
 export function ScreenError({ error, retry }: { error: Error & { digest?: string }; retry: () => void }) {
   useEffect(() => { Sentry.captureException(error); }, [error]);
   return (

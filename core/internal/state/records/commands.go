@@ -9,8 +9,6 @@ import (
 	"nori/internal/state/docstore"
 )
 
-// AcceptCommandBatch validates every command before writing any of them. The caller's IDs are the durable delivery
-// intents, including on HTTP retry.
 func (d *Database) AcceptCommandBatch(ctx context.Context, commands []state.Command, fence *state.ConversationFence) ([]state.CommandReceipt, error) {
 	if err := state.ValidateCommandBatch(commands); err != nil {
 		return nil, err
@@ -52,7 +50,6 @@ func (d *Database) AcceptCommandBatch(ctx context.Context, commands []state.Comm
 	return receipts, err
 }
 
-// readCommandBatch completes all document reads before the transaction writes, including for repeated task IDs.
 func (d *Database) readCommandBatch(tx *docstore.Transaction, commands []state.Command) (state.CommandBatch, error) {
 	batch := state.NewCommandBatch()
 	for _, cmd := range commands {
@@ -101,8 +98,6 @@ func (d *Database) readCommandBatch(tx *docstore.Transaction, commands []state.C
 	return batch, nil
 }
 
-// admitCommandBatch is part of the acceptance transaction: input acceptance and new task admission serialize on the
-// same conversation control document. A batch of replays is not admitted again.
 func (d *Database) admitCommandBatch(
 	tx *docstore.Transaction, commands []state.Command, batch state.CommandBatch, fence *state.ConversationFence,
 ) (state.Control, error) {
@@ -179,9 +174,6 @@ func (d *Database) writeCommandBatch(
 	return nil
 }
 
-// appendHeldEvents handles registration after a task finished. Reading the run in the registration transaction
-// serializes it against terminal publication. All event reads precede writes, including batches with several
-// terminal tasks.
 func (d *Database) appendHeldEvents(tx *docstore.Transaction, events []state.TaskEvent, traceContext map[string]string) error {
 	if len(events) == 0 {
 		return nil
@@ -210,8 +202,6 @@ func (d *Database) appendHeldEvents(tx *docstore.Transaction, events []state.Tas
 	return tx.Set(d.conversation(), c)
 }
 
-// appendTaskEvent is called after the task transaction's other reads and before its writes. The state transition and
-// outer inbox insertion commit together. It reports false when the same event was already in the inbox.
 func (d *Database) appendTaskEvent(tx *docstore.Transaction, run state.Run, event state.TaskEvent, traceContext map[string]string) (bool, error) {
 	if !reportsToAssistant(run) {
 		return false, nil
@@ -250,8 +240,6 @@ func reportsToAssistant(run state.Run) bool {
 	return run.Origin == nil || run.Origin.ConversationID == "" || run.Origin.ConversationID == "assistant"
 }
 
-// preferredTaskBudget is the user's saved per-task budget (Preferences.budgets.task_usd), bounded like an explicit
-// continuation's, or the deployment default when none is saved.
 func (d *Database) preferredTaskBudget(ctx context.Context) float64 {
 	r, err := d.Resource(ctx, "preferences", "preferences")
 	if err != nil {

@@ -41,8 +41,6 @@ func isRetryableTransportError(ctx context.Context, err error) bool {
 	return true
 }
 
-// parseRetryAfter parses an HTTP Retry-After header (delta-seconds or HTTP-date),
-// clamping the returned duration to [0, maxDelay].
 func parseRetryAfter(header string, now time.Time, maxDelay time.Duration) (time.Duration, bool) {
 	raw := strings.TrimSpace(header)
 	if raw == "" {
@@ -108,7 +106,6 @@ func defaultRetryJitter(d time.Duration) time.Duration {
 	if d <= 0 {
 		return 0
 	}
-	// +/-25% jitter to avoid thundering herds.
 	factor := 0.75 + rand.Float64()*0.5
 	return time.Duration(float64(d) * factor)
 }

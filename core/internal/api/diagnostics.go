@@ -13,9 +13,6 @@ import (
 	"nori/internal/state"
 )
 
-// Diagnostics lists conditions that need repair, each with the repair that runs through the normal authority and
-// operation paths. Nothing here repeats an external action: an uncertain write is resolved by the user's answer or
-// by provider reconciliation, never by an operator shortcut.
 type diagnostic struct {
 	Kind     string         `json:"kind"`
 	Severity string         `json:"severity"`
@@ -126,8 +123,6 @@ func (a *Assistant) diagnostics(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, list[diagnostic]{Items: items})
 }
 
-// diagnosticsAction runs a repair: resume delivery repairs accepted commands and worker wakes; run_scheduler
-// re-reads durable schedules and re-arms due-time wakes.
 func (a *Assistant) diagnosticsAction(w http.ResponseWriter, r *http.Request) {
 	var value struct {
 		Action string `json:"action"`
@@ -170,8 +165,6 @@ func (a *Assistant) diagnosticsAction(w http.ResponseWriter, r *http.Request) {
 
 const collectionFeedback = "feedback"
 
-// feedback records what the user reports, linked to the task's evidence (operations, results, trace) so nobody has
-// to find trace IDs.
 func (a *Assistant) feedback(w http.ResponseWriter, r *http.Request) {
 	var value struct {
 		Kind         string `json:"kind"`
@@ -214,7 +207,6 @@ func (a *Assistant) feedback(w http.ResponseWriter, r *http.Request) {
 			if op.ID != value.OperationID {
 				continue
 			}
-			// The operation's provenance: which definition and version ran, under which account and parent.
 			detail := map[string]any{"name": op.Name, "outcome": op.Outcome, "effect_class": op.EffectClass}
 			if op.Tool != nil {
 				detail["tool"] = op.Tool

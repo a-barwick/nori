@@ -191,7 +191,6 @@ func (w *memoryAPIWorld) doJSON(t *testing.T, userID, method, suffix string, pay
 	return rec
 }
 
-// sseCaptureWriter captures SSE chunks and cancels the request context as soon as targetSubstr appears.
 type sseCaptureWriter struct {
 	mu           sync.Mutex
 	header       http.Header
@@ -258,9 +257,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			}
 		}
 
-		// =========================================================================
-		// 1. POST /v1/memory create + durable receipt + idempotent retry + 409 conflict + SSE event: memory
-		// =========================================================================
 		posBeforeCreate, err := w.alice.store.EventPosition(ctx)
 		if err != nil {
 			t.Fatalf("EventPosition before create: %v", err)
@@ -300,7 +296,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("expected user_explicit provenance, got %q", createdMem.Provenance)
 		}
 
-		// Verify durable receipt lookup via GET /v1/mutations/{request_id}.
 		recLookup := w.doJSON(t, aliceID, http.MethodGet, "/v1/mutations/"+createReqID, nil)
 		if recLookup.Code != http.StatusOK {
 			t.Fatalf("GET /v1/mutations/%s: status=%d body=%s", createReqID, recLookup.Code, recLookup.Body.String())
@@ -311,7 +306,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("stored receipt mismatch: got=%+v want=%+v", storedReceipt, createReceipt)
 		}
 
-		// Verify identical retry returns exact identical receipt.
 		w.clock.Advance(2 * time.Second)
 		recRetry := w.doJSON(t, aliceID, http.MethodPost, "/v1/memory", createBody)
 		if recRetry.Code != http.StatusCreated {
@@ -323,7 +317,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("retry receipt diverged: got=%+v want=%+v", retryReceipt, createReceipt)
 		}
 
-		// Verify conflicting payload with same request_id returns 409 idempotency_conflict.
 		conflictBody := map[string]any{
 			"request_id":        createReqID,
 			"expected_revision": 0,
@@ -346,7 +339,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("expected code=idempotency_conflict, got %q", errResp.Code)
 		}
 
-		// Verify SSE emits event: memory for the mutation!
 		sseCtx, sseCancel := context.WithCancel(ctx)
 		sseWriter := newSSECaptureWriter("event: memory\n", sseCancel)
 		sseReq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/users/%s/v1/events?after=%d", aliceID, posBeforeCreate), nil).WithContext(sseCtx)
@@ -356,9 +348,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("expected SSE stream to emit 'event: memory', got:\n%s", sseWriter.String())
 		}
 
-		// =========================================================================
-		// 2. PUT /v1/memory/{id} edit (<= 2000B) + >2000B validation + stale revision 409 with current
-		// =========================================================================
 		w.clock.Advance(3 * time.Second)
 		oversizedRec := w.doJSON(t, aliceID, http.MethodPut, "/v1/memory/"+createdMem.ID, map[string]any{
 			"request_id":        w.ids.Next(),
@@ -372,7 +361,7 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 		}
 
 		editReqID := w.ids.Next()
-		editText := "Prefers washed Ethiopian pour-over coffee (keyword: cobalt_roast) " + strings.Repeat("note ", 300) // ~1560 bytes <= 2000B
+		editText := "Prefers washed Ethiopian pour-over coffee (keyword: cobalt_roast) " + strings.Repeat("note ", 300)
 		editRec := w.doJSON(t, aliceID, http.MethodPut, "/v1/memory/"+createdMem.ID, map[string]any{
 			"request_id":        editReqID,
 			"expected_revision": createdMem.Revision,
@@ -399,10 +388,9 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("unexpected edited memory: %+v", editedMem)
 		}
 
-		// Verify stale revision returns 409 revision_conflict WITH current populated!
 		staleRec := w.doJSON(t, aliceID, http.MethodPut, "/v1/memory/"+createdMem.ID, map[string]any{
 			"request_id":        w.ids.Next(),
-			"expected_revision": createdMem.Revision, // stale!
+			"expected_revision": createdMem.Revision,
 			"value": map[string]any{
 				"text": "Stale overwrite attempt",
 			},
@@ -426,9 +414,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("unexpected current in 409 revision_conflict: %s", string(errResp.Current))
 		}
 
-		// =========================================================================
-		// 3. POST /v1/memory/{id}/actions: pin, unpin, demote, forget (all with durable receipts)
-		// =========================================================================
 		runMemAction := func(memID string, rev int64, action string) state.MutationReceipt {
 			t.Helper()
 			w.clock.Advance(2 * time.Second)
@@ -444,7 +429,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			}
 			var receipt state.MutationReceipt
 			decodeJSON(r, &receipt)
-			// Verify durable receipt lookup + idempotent retry.
 			lookup := w.doJSON(t, aliceID, http.MethodGet, "/v1/mutations/"+reqID, nil)
 			if lookup.Code != http.StatusOK {
 				t.Fatalf("GET /v1/mutations/%s (%s): status=%d", reqID, action, lookup.Code)
@@ -485,7 +469,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("expected demoted log_entry after demote action, got %s", string(demoteReceipt.Resource))
 		}
 
-		// Create another Core memory and test forget action.
 		w.clock.Advance(2 * time.Second)
 		rec2 := w.doJSON(t, aliceID, http.MethodPost, "/v1/memory", map[string]any{
 			"request_id":        w.ids.Next(),
@@ -504,12 +487,8 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 		_ = json.Unmarshal(receipt2.Resource, &mem2)
 		_ = runMemAction(mem2.ID, mem2.Revision, "forget")
 
-		// =========================================================================
-		// 4. Daily Logs: GET /v1/memory/logs, /logs/{date}, promote (task_outcome guard), forget
-		// =========================================================================
 		tPre := w.clock.Now().UTC().Truncate(time.Microsecond)
 		todayDate := tPre.Format("2006-01-02")
-		// Seed a pre-ContextFrom message + Daily Log entry for ContextFrom isolation checks.
 		preInputID := w.ids.Next()
 		if err := w.alice.store.AcceptConversationInput(ctx, preInputID, "cobalt_roast pre_cutoff_secret_token hidden message", nil); err != nil {
 			t.Fatalf("seed pre-cutoff input: %v", err)
@@ -539,7 +518,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("seed pre-cutoff daily log: %v", err)
 		}
 
-		// Advance clock +1h and set Alice's ContextFrom cutoff.
 		w.clock.Advance(1 * time.Hour)
 		cutoff := w.clock.Now().UTC().Truncate(time.Microsecond)
 		aliceControlPath := "owners/" + w.alice.user.DataOwner() + "/conversation/control"
@@ -558,8 +536,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("set alice context_from: %v", err)
 		}
 
-		// Advance clock +5m and seed post-ContextFrom user message, Daily Log entries (user + task_outcome),
-		// and Working Memory items.
 		w.clock.Advance(5 * time.Minute)
 		tPost := w.clock.Now().UTC().Truncate(time.Microsecond)
 		postInputID := w.ids.Next()
@@ -626,7 +602,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("seed post-cutoff daily log & working memory: %v", err)
 		}
 
-		// GET /v1/memory/logs and GET /v1/memory/logs/{date} must filter out pre-ContextFrom entries!
 		logsRec := w.doJSON(t, aliceID, http.MethodGet, "/v1/memory/logs", nil)
 		if logsRec.Code != http.StatusOK {
 			t.Fatalf("GET /v1/memory/logs: %d %s", logsRec.Code, logsRec.Body.String())
@@ -655,7 +630,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("expected 3 post-cutoff log entries, got %d (%s)", len(dayLog.Entries), dayRec.Body.String())
 		}
 
-		// Promoting task_outcome WITHOUT re-authored text MUST fail with 400 validation_failed (INV-MEM-04).
 		w.clock.Advance(2 * time.Second)
 		blockedPromote := w.doJSON(t, aliceID, http.MethodPost, "/v1/memory/logs/"+todayDate+"/post-task-log/actions", map[string]any{
 			"request_id":        w.ids.Next(),
@@ -666,7 +640,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("expected 400 blocking raw task_outcome promotion, got %d body=%s", blockedPromote.Code, blockedPromote.Body.String())
 		}
 
-		// Promoting task_outcome WITH explicit user re-authored text MUST succeed with user_explicit provenance!
 		w.clock.Advance(2 * time.Second)
 		reauthoredPromote := w.doJSON(t, aliceID, http.MethodPost, "/v1/memory/logs/"+todayDate+"/post-task-log/actions", map[string]any{
 			"request_id":        w.ids.Next(),
@@ -691,7 +664,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("expected promoted re-authored memory to have user_explicit provenance, got %q", reauthMem.Provenance)
 		}
 
-		// Promoting user-sourced log entry without override succeeds directly.
 		w.clock.Advance(2 * time.Second)
 		userPromote := w.doJSON(t, aliceID, http.MethodPost, "/v1/memory/logs/"+todayDate+"/post-user-log/actions", map[string]any{
 			"request_id":        w.ids.Next(),
@@ -702,7 +674,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("expected user-sourced log promote to succeed, got %d body=%s", userPromote.Code, userPromote.Body.String())
 		}
 
-		// Forgetting a Daily Log entry removes it and records a durable receipt.
 		w.clock.Advance(2 * time.Second)
 		forgetLogReqID := w.ids.Next()
 		forgetLogRec := w.doJSON(t, aliceID, http.MethodPost, "/v1/memory/logs/"+todayDate+"/post-forget-log/actions", map[string]any{
@@ -717,9 +688,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("GET /v1/mutations/%s (forget log): %d", forgetLogReqID, r.Code)
 		}
 
-		// =========================================================================
-		// 5. Working Memory: GET /v1/memory/working, promote, dismiss, consolidate idempotency
-		// =========================================================================
 		workingRec := w.doJSON(t, aliceID, http.MethodGet, "/v1/memory/working", nil)
 		if workingRec.Code != http.StatusOK {
 			t.Fatalf("GET /v1/memory/working: %d %s", workingRec.Code, workingRec.Body.String())
@@ -736,7 +704,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("unexpected working memory view: %s", workingRec.Body.String())
 		}
 
-		// Promote first working item to Core Memory.
 		w.clock.Advance(2 * time.Second)
 		promoteWorkingRec := w.doJSON(t, aliceID, http.MethodPost, "/v1/memory/working/"+workingView.Items[0].ID+"/actions", map[string]any{
 			"request_id":        w.ids.Next(),
@@ -747,7 +714,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("promote working item: %d %s", promoteWorkingRec.Code, promoteWorkingRec.Body.String())
 		}
 
-		// Dismiss second working item.
 		w.clock.Advance(2 * time.Second)
 		dismissWorkingRec := w.doJSON(t, aliceID, http.MethodPost, "/v1/memory/working/"+workingView.Items[1].ID+"/actions", map[string]any{
 			"request_id":        w.ids.Next(),
@@ -758,7 +724,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("dismiss working item: %d %s", dismissWorkingRec.Code, dismissWorkingRec.Body.String())
 		}
 
-		// Consolidate now + idempotent retry (must not re-invoke ConsolidateMemory!).
 		w.clock.Advance(2 * time.Second)
 		consolidateReqID := w.ids.Next()
 		consolidateBody := map[string]any{
@@ -784,10 +749,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("GET /v1/mutations/%s (consolidate): %d", consolidateReqID, lookup.Code)
 		}
 
-		// =========================================================================
-		// 6. Search: GET /v1/memory/search & GET /v1/search (ContextFrom + cross-owner isolation)
-		// =========================================================================
-		// Seed Bob's private memory containing the exact same search keyword.
 		w.clock.Advance(2 * time.Second)
 		bobCreate := w.doJSON(t, bobID, http.MethodPost, "/v1/memory", map[string]any{
 			"request_id":        w.ids.Next(),
@@ -802,7 +763,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("create bob memory: %d %s", bobCreate.Code, bobCreate.Body.String())
 		}
 
-		// Bob cannot edit Alice's promoted memory (cross-owner isolation).
 		bobCrossEdit := w.doJSON(t, bobID, http.MethodPut, "/v1/memory/"+reauthMem.ID, map[string]any{
 			"request_id":        w.ids.Next(),
 			"expected_revision": 0,
@@ -812,7 +772,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("expected 404 on cross-owner memory edit, got %d body=%s", bobCrossEdit.Code, bobCrossEdit.Body.String())
 		}
 
-		// GET /v1/memory/search for Alice: returns Alice's post-cutoff hits, ZERO pre-cutoff or Bob hits.
 		memSearchRec := w.doJSON(t, aliceID, http.MethodGet, "/v1/memory/search?q=cobalt_roast&limit=20", nil)
 		if memSearchRec.Code != http.StatusOK {
 			t.Fatalf("GET /v1/memory/search: %d %s", memSearchRec.Code, memSearchRec.Body.String())
@@ -834,8 +793,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("expected non-empty memory search hits for cobalt_roast")
 		}
 
-		// GET /v1/search for Alice: includes "memory" hits with jump.kind == "memory",
-		// excludes pre-ContextFrom messages/logs and Bob's memories!
 		globalSearchRec := w.doJSON(t, aliceID, http.MethodGet, "/v1/search?q=cobalt_roast", nil)
 		if globalSearchRec.Code != http.StatusOK {
 			t.Fatalf("GET /v1/search: %d %s", globalSearchRec.Code, globalSearchRec.Body.String())
@@ -867,9 +824,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("expected GET /v1/search to return at least one memory hit with jump.kind==memory, got %s", globalSearchRec.Body.String())
 		}
 
-		// =========================================================================
-		// 7. Core > 24 KiB overflow auto-demotion via API while preserving Pinned items
-		// =========================================================================
 		w.clock.Advance(2 * time.Second)
 		pinnedTrue := true
 		pinnedCreate := w.doJSON(t, aliceID, http.MethodPost, "/v1/memory", map[string]any{
@@ -892,7 +846,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 		}
 		_ = json.Unmarshal(pinnedReceipt.Resource, &pinnedSentinel)
 
-		// Create 16 unpinned ~1900B memories (> 30 KiB total >> 24 KiB CoreMemoryBytes).
 		for i := range 16 {
 			w.clock.Advance(time.Second)
 			text := fmt.Sprintf("overflow_unpinned_%02d: ", i) + strings.Repeat("bulk_memory_content ", 90)
@@ -913,7 +866,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			}
 		}
 
-		// Verify GET /v1/memory total <= 24 KiB AND pinned sentinel survived!
 		listRec := w.doJSON(t, aliceID, http.MethodGet, "/v1/memory", nil)
 		if listRec.Code != http.StatusOK {
 			t.Fatalf("GET /v1/memory after overflow: %d %s", listRec.Code, listRec.Body.String())
@@ -941,7 +893,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("INV-MEM-03 violation: pinned sentinel %s was evicted during Core overflow!", pinnedSentinel.ID)
 		}
 
-		// Verify auto-demoted oldest unpinned item (overflow_unpinned_00) moved to Daily Log & stays searchable!
 		demotedSearch := w.doJSON(t, aliceID, http.MethodGet, "/v1/memory/search?q=overflow_unpinned_00&layer=log", nil)
 		if demotedSearch.Code != http.StatusOK {
 			t.Fatalf("search demoted item: %d %s", demotedSearch.Code, demotedSearch.Body.String())
@@ -950,7 +901,6 @@ func TestDST_MemoryAPIIdempotencyReceiptsAndSearch(t *testing.T) {
 			t.Fatalf("expected auto-demoted overflow_unpinned_00 to be searchable in Daily Log, got %s", demotedSearch.Body.String())
 		}
 
-		// Check Bob's isolated memory remained untouched.
 		bobList := w.doJSON(t, bobID, http.MethodGet, "/v1/memory", nil)
 		if bobList.Code != http.StatusOK || !strings.Contains(bobList.Body.String(), "bob_only_secret_data") {
 			t.Fatalf("Bob's isolated memory check failed: %d %s", bobList.Code, bobList.Body.String())

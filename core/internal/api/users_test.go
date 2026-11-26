@@ -65,7 +65,6 @@ func TestUnprefixedAPIProcessReturns403(t *testing.T) {
 		"test-model",
 	)
 
-	// Un-prefixed POST /api/process must NOT fall back to users.LegacyID and must return 403.
 	req := httptest.NewRequest(http.MethodPost, "/api/process", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -80,7 +79,6 @@ func TestUnprefixedAPIProcessReturns403(t *testing.T) {
 		t.Fatalf("POST /api/process unexpectedly queried directory.Get %d times", dir.getCalls.Load())
 	}
 
-	// Prefixed POST /users/owner/api/process still routes cleanly to users.LegacyID.
 	prefixedReq := httptest.NewRequest(http.MethodPost, "/users/"+users.LegacyID+"/api/process", strings.NewReader(`{}`))
 	prefixedReq.Header.Set("Content-Type", "application/json")
 	prefixedRec := httptest.NewRecorder()

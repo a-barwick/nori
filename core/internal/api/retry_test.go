@@ -63,7 +63,6 @@ func TestRetryEndpointsAndMessageViewErrorContract(t *testing.T) {
 
 	h := Handler(Deps{Model: "stub-model", Runner: runner, Tasks: tasks})
 
-	// Submit a turn and let it fail.
 	turnRec := doJSONReq(t, h, http.MethodPost, "/api/turn", map[string]any{
 		"id":      uuid.NewString(),
 		"message": "Check my schedule",
@@ -75,7 +74,6 @@ func TestRetryEndpointsAndMessageViewErrorContract(t *testing.T) {
 		t.Fatalf("Process failed turn: %v", err)
 	}
 
-	// Verify GET /v1/conversations/assistant surfaces status="failed" + structured error.
 	convRec := doJSONReq(t, h, http.MethodGet, "/v1/conversations/assistant", nil)
 	if convRec.Code != http.StatusOK {
 		t.Fatalf("GET /v1/conversations/assistant status=%d body=%s", convRec.Code, convRec.Body.String())
@@ -98,7 +96,6 @@ func TestRetryEndpointsAndMessageViewErrorContract(t *testing.T) {
 		t.Fatalf("leaked internal text: %q", failedView.Text)
 	}
 
-	// Call POST /api/retry -> 202 Accepted with Session, failed message superseded.
 	retryRec := doJSONReq(t, h, http.MethodPost, "/api/retry", map[string]any{
 		"turn_id":    failedView.TurnID,
 		"message_id": failedView.ID,
@@ -114,7 +111,6 @@ func TestRetryEndpointsAndMessageViewErrorContract(t *testing.T) {
 		t.Fatalf("expected pending=true after POST /api/retry")
 	}
 
-	// Succeed on retry.
 	model.SetHandler(func(context.Context, conversation.ReplyRequest) (conversation.Reply, error) {
 		return conversation.Reply{
 			Usage:   state.Usage{ID: "u-ok", Model: "stub-model"},
@@ -126,7 +122,6 @@ func TestRetryEndpointsAndMessageViewErrorContract(t *testing.T) {
 		t.Fatalf("Process retry turn: %v", err)
 	}
 
-	// Calling POST /v1/conversations/assistant/retry when already recovered is idempotent 202.
 	v1RetryRec := doJSONReq(t, h, http.MethodPost, "/v1/conversations/assistant/retry", map[string]any{})
 	if v1RetryRec.Code != http.StatusAccepted {
 		t.Fatalf("POST /v1/conversations/assistant/retry status=%d body=%s", v1RetryRec.Code, v1RetryRec.Body.String())

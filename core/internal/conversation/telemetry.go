@@ -14,8 +14,6 @@ import (
 
 var conversationTracer = otel.Tracer("nori/conversation")
 
-// The queue wake is only a signal to drain the inbox. Prefer the first sampled
-// input as parent, falling back to the first valid input; the others are links.
 func startTurn(ctx context.Context, t state.ConversationTurn) (context.Context, trace.Span) {
 	parent := ctx
 	var primary trace.SpanContext
@@ -51,8 +49,6 @@ func startTurn(ctx context.Context, t state.ConversationTurn) (context.Context, 
 	))
 }
 
-// Emit one acceptance-to-reply span for each user input, including messages
-// merged into a later attempt. The span is created only after publication.
 func recordReplies(ctx context.Context, t state.ConversationTurn, text string, now time.Time) {
 	turnSpan := trace.SpanContextFromContext(ctx)
 	for _, in := range t.Inputs {

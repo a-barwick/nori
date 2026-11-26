@@ -1,21 +1,18 @@
 export type Sender = "nori" | "me";
 
-/** One piece of a message. A client that doesn't know the type shows `fallback`. */
 export type Part = { type: string; text?: string; display?: "page" | "bubble"; fallback?: string; id?: string; name?: string; media_type?: string; size?: number; url?: string; scheduled_at?: string;
-  /** Card parts (contract CardPart): a typed reference to server state. */
   schema_version?: number; kind?: string; resource?: { kind: string; id: string; revision?: number }; actions?: string[] };
-/** A saved output of a task. Created, checked, reported and delivered are separate facts. */
 export type SavedResult = {
   id: string; root_id: string; version: number; revises?: string; superseded_by?: string; run_id: string; kind: "answer" | "file" | "screenshot" | "link";
   title: string; name?: string; media_type?: string; size?: number; url?: string; unmet?: string[];
   created_at: string; checked_at?: string; reported_at?: string; delivered_at?: string; message_id?: string;
 };
 export type Attachment = { id: string; name: string; media_type: string; size: number };
-export type DraftFile = Attachment & { status: "uploading" | "ready" | "error"; error?: string; file: File; /** 0–1 while uploading, when the browser reports it. */ progress?: number };
+export type DraftFile = Attachment & { status: "uploading" | "ready" | "error"; error?: string; file: File;  progress?: number };
 export type MarkState = "idle" | "attentive" | "thinking";
 
-export type MessageStatus = "completed" | "failed" | "cancelled" | "superseded";
-export type MessageError = { code: string; message: string; retryable: boolean };
+type MessageStatus = "completed" | "failed" | "cancelled" | "superseded";
+type MessageError = { code: string; message: string; retryable: boolean };
 
 export interface TextItem {
   id: string;
@@ -28,7 +25,6 @@ export interface TextItem {
   display?: Part["display"];
   parts?: Part[];
   debug?: DebugInfo;
-  /** The user's own latest message: sending until the core's receipt, then saved until Nori replies. */
   receipt?: "sending" | "saved";
 }
 
@@ -37,7 +33,6 @@ export interface Thread {
   items: TextItem[];
 }
 
-// Wire types for the Go runtime API. Field names match its JSON exactly.
 
 export type Message = { id: string; run_id: string; turn_id?: string; role: "user" | "assistant"; status?: MessageStatus; text: string; parts?: Part[]; error?: MessageError; result_ids?: string[]; created_at: string };
 type RunEvent = { id?: string; sequence?: number; instruction_revision?: number; kind: string; text: string; created_at: string };
@@ -76,9 +71,7 @@ export type Run = {
   incorporated?: number;
   waiting?: string;
   progress?: string;
-  /** Model USD from reported token usage, and the configured task budget. */
   spent_usd?: number;
-  /** Recorded spend is partial when at least one provider cost is unknown. */
   cost_unknown?: boolean;
   budget_usd?: number;
   model_selection?: ModelSelection;
@@ -123,9 +116,7 @@ export type Session = {
   traces?: ConversationTrace[];
   next_cursor?: string;
   results?: SavedResult[];
-  /** Event log position this snapshot reflects. */
   position?: number;
-  /** The owner's read position, shared across sessions. */
   read_position?: ReadPosition;
 };
 

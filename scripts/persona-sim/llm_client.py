@@ -56,7 +56,6 @@ def resolve_dotenv_path(root: Path, explicit: Path | None = None) -> Path:
                 gitdir = Path(text.split(":", 1)[1].strip())
                 if not gitdir.is_absolute():
                     gitdir = (root / gitdir).resolve()
-                # <main-repo>/.git/worktrees/<name> -> <main-repo>/.env
                 if gitdir.parent.name == "worktrees" and gitdir.parent.parent.name == ".git":
                     main_env = gitdir.parent.parent.parent / ".env"
                     if main_env.is_file():

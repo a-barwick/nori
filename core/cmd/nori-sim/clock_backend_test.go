@@ -28,18 +28,15 @@ func TestSimClockFrozenDeterministic(t *testing.T) {
 		t.Fatalf("Advance(90s) = %s / Now=%s, want %s", adv, clock.Now(), want)
 	}
 
-	// AdvanceUntil with an earlier target must be a monotonic no-op.
 	if got := clock.AdvanceUntil(start.Add(30 * time.Second)); !got.Equal(start.Add(90 * time.Second)) {
 		t.Fatalf("AdvanceUntil(earlier) = %s, want %s", got, start.Add(90*time.Second))
 	}
 
-	// AdvanceUntil with a later target jumps to that exact timestamp.
 	target := start.Add(5 * time.Minute)
 	if got := clock.AdvanceUntil(target); !got.Equal(target) || !clock.Now().Equal(target) {
 		t.Fatalf("AdvanceUntil(later) = %s / Now=%s, want %s", got, clock.Now(), target)
 	}
 
-	// Set resets to explicit timestamp.
 	reset := start.Add(24 * time.Hour)
 	if got := clock.Set(reset); !got.Equal(reset) || !clock.Now().Equal(reset) {
 		t.Fatalf("Set = %s / Now=%s, want %s", got, clock.Now(), reset)
@@ -53,7 +50,6 @@ func TestTranslateUserWakeThreshold(t *testing.T) {
 	mem := memstore.New(memstore.WithClock(time.Now))
 	b := newSimClockBackend(mem, clock)
 
-	// Zero and past wakes translate to time.Time{} and are not parked in b.userWakes.
 	if got := b.translateUserWake("u1", docstore.LaneConversation, time.Time{}); !got.IsZero() {
 		t.Fatalf("zero wakeAt translated to %s, want zero", got)
 	}
@@ -61,7 +57,6 @@ func TestTranslateUserWakeThreshold(t *testing.T) {
 		t.Fatalf("past wakeAt translated to %s, want zero", got)
 	}
 
-	// Short user wake (2s ScheduleAnswerRetry / Pool backoff, and boundary 30s) passes through to ~200ms wall clock.
 	for _, d := range []time.Duration{2 * time.Second, shortUserWakeThreshold} {
 		beforeWall := time.Now().UTC()
 		got := b.translateUserWake("u1", docstore.LaneScheduler, start.Add(d))
@@ -77,7 +72,6 @@ func TestTranslateUserWakeThreshold(t *testing.T) {
 		}
 	}
 
-	// Delays > 30s (31s, 2m IdleExtractDelay / flushBackoff, 15m IdleDreamDelay) park at farHorizon in b.userWakes.
 	wallBefore := time.Now().UTC()
 	got2m := b.translateUserWake("u1", docstore.LaneConversation, start.Add(2*time.Minute))
 	if got2m.Sub(wallBefore) < b.farHorizon-time.Minute {
@@ -88,7 +82,6 @@ func TestTranslateUserWakeThreshold(t *testing.T) {
 		t.Fatalf("15m wake translated to %s, expected ~farHorizon (%s)", got15m, b.farHorizon)
 	}
 
-	// WakeDue before clock advances must NOT release u1 or u2.
 	if err := b.WakeDue(ctx); err != nil {
 		t.Fatalf("WakeDue before advance: %v", err)
 	}
@@ -96,7 +89,6 @@ func TestTranslateUserWakeThreshold(t *testing.T) {
 		t.Fatalf("expected 0 woken rows in memstore before advance, got %+v (err=%v)", wakes, err)
 	}
 
-	// Advance 2m -> WakeDue releases u1 (2m) while keeping u2 (15m) parked.
 	clock.Advance(2 * time.Minute)
 	if err := b.WakeDue(ctx); err != nil {
 		t.Fatalf("WakeDue at +2m: %v", err)
@@ -140,7 +132,6 @@ func TestSimClockTxRollbackAndRetry(t *testing.T) {
 		mem := memstore.New(memstore.WithClock(time.Now))
 		b := newSimClockBackend(mem, clock)
 
-		// Pre-seed a virtual wake at +10m.
 		existingWake := start.Add(10 * time.Minute)
 		if err := b.WakeUser(ctx, "u1", docstore.LaneConversation, existingWake); err != nil {
 			t.Fatalf("WakeUser seed: %v", err)
@@ -152,7 +143,6 @@ func TestSimClockTxRollbackAndRetry(t *testing.T) {
 		sentinel := errors.New("intentional rollback")
 		err := b.RunTransaction(ctx, false, 1, func(tx docstore.TransactionBackend) error {
 			w := tx.(docstore.WakeWriter)
-			// Overwrite with immediate wake (would delete from maps if applied prematurely) and add a new future wake.
 			if err := w.WakeUser(ctx, "u1", docstore.LaneConversation, time.Time{}); err != nil {
 				return err
 			}
@@ -245,7 +235,6 @@ func TestStandaloneLeaseStoreErrorAndGuardSafety(t *testing.T) {
 	futureWake := start.Add(10 * time.Minute)
 	laterWake := start.Add(20 * time.Minute)
 
-	// 1. EnsureTaskLease: first succeeds (created=true) -> recorded; duplicate (created=false) -> ignored.
 	created, err := b.EnsureTaskLease(ctx, "u1", "r-ens", futureWake)
 	if err != nil || !created {
 		t.Fatalf("EnsureTaskLease #1 = (%v, %v), want (true, nil)", created, err)
@@ -261,7 +250,6 @@ func TestStandaloneLeaseStoreErrorAndGuardSafety(t *testing.T) {
 		t.Fatalf("EnsureTaskLease duplicate overwrote taskWake: got %s, want %s", gotEns, futureWake)
 	}
 
-	// 2. DeleteTaskLease with mismatched wakeSeq (deleted=false) preserves b.taskWakes.
 	deleted, err := b.DeleteTaskLease(ctx, "u1", "r-ens", 999)
 	if err != nil || deleted {
 		t.Fatalf("DeleteTaskLease mismatched wakeSeq = (%v, %v), want (false, nil)", deleted, err)
@@ -273,7 +261,6 @@ func TestStandaloneLeaseStoreErrorAndGuardSafety(t *testing.T) {
 		t.Fatal("DeleteTaskLease with deleted=false deleted b.taskWakes entry")
 	}
 
-	// Matching wakeSeq deletes both underlying lease and b.taskWakes entry.
 	deleted, err = b.DeleteTaskLease(ctx, "u1", "r-ens", 1)
 	if err != nil || !deleted {
 		t.Fatalf("DeleteTaskLease matching wakeSeq = (%v, %v), want (true, nil)", deleted, err)
@@ -285,7 +272,6 @@ func TestStandaloneLeaseStoreErrorAndGuardSafety(t *testing.T) {
 		t.Fatal("DeleteTaskLease with deleted=true left stale b.taskWakes entry")
 	}
 
-	// 3. Failing underlying calls must NOT mutate b.userWakes or b.taskWakes.
 	if err := b.WakeUser(ctx, "u1", docstore.LaneConversation, time.Time{}); err != nil {
 		t.Fatalf("WakeUser conv: %v", err)
 	}
@@ -323,11 +309,9 @@ func TestStandaloneLeaseStoreErrorAndGuardSafety(t *testing.T) {
 	}
 	b.mu.Unlock()
 
-	// 4. ParkUserWake / ParkTask clears any future map entry when parked=true.
 	if err := b.ReleaseUserWake(ctx, "u1", docstore.LaneConversation, "w1", cw.WakeSeq, laterWake); err != nil {
 		t.Fatalf("ReleaseUserWake success: %v", err)
 	}
-	// Manually simulate parked=true after Claim (e.g. if an earlier future entry existed).
 	b.mu.Lock()
 	b.userWakes[userWakeKey{userID: "u1", lane: docstore.LaneConversation}] = laterWake
 	b.mu.Unlock()
@@ -374,13 +358,11 @@ func TestWakeDueForUserScopingAndRequeueOnError(t *testing.T) {
 		t.Fatalf("WakeTask u2: %v", err)
 	}
 
-	// Advance past both user wakes and task wakes, then WakeDueForUser("u1").
 	clock.Advance(6 * time.Minute)
 	if err := b.WakeDueForUser(ctx, "u1"); err != nil {
 		t.Fatalf("WakeDueForUser(u1): %v", err)
 	}
 
-	// u1 should be woken in memstore; u2 should still be parked at farHorizon in b.userWakes/b.taskWakes and memstore.
 	if w1, err := mem.ListUserWakes(ctx, "u1"); err != nil || len(w1) != 1 || !w1[0].Runnable || w1[0].WakeAt.After(time.Now().UTC().Add(time.Second)) {
 		t.Fatalf("expected u1 user wake released to now, got %+v (err=%v)", w1, err)
 	}
@@ -394,7 +376,6 @@ func TestWakeDueForUserScopingAndRequeueOnError(t *testing.T) {
 		t.Fatalf("expected u2 task lease still parked at farHorizon, got %+v (err=%v)", t2, err)
 	}
 
-	// Inject error during WakeDueForUser("u2"): unsent entries must be re-queued and delivered on retry.
 	inj.SetConfig(memstore.FaultConfig{LeaseErrProb: 1.0})
 	if err := b.WakeDueForUser(ctx, "u2"); !errors.Is(err, memstore.ErrInjectedFault) {
 		t.Fatalf("WakeDueForUser(u2) under fault = %v, want ErrInjectedFault", err)
@@ -418,7 +399,6 @@ func TestSimClockBackendSafeOptionalDelegationsAndScopedLeaseStore(t *testing.T)
 	mem := memstore.New(memstore.WithClock(time.Now))
 	b := newSimClockBackend(mem, clock)
 
-	// memstore.Backend does not implement Pinger or AdvisoryLocker -> must NOT panic.
 	if err := b.Ping(ctx); err != nil {
 		t.Fatalf("Ping over memstore = %v, want nil", err)
 	}
@@ -428,7 +408,6 @@ func TestSimClockBackendSafeOptionalDelegationsAndScopedLeaseStore(t *testing.T)
 	}
 	unlock()
 
-	// ScopedLeaseStore delegation works cleanly.
 	if err := b.WakeTask(ctx, "u2", "r2", time.Time{}); err != nil {
 		t.Fatalf("WakeTask u2: %v", err)
 	}

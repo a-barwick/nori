@@ -6,11 +6,6 @@ import (
 	"unicode/utf8"
 )
 
-// actionFreeStructuredPartial extracts the partial decoded "text" string from a
-// streaming nori_response JSON object ONLY AFTER "actions" has been observed as
-// a complete empty array ([]). If "actions" is missing, incomplete, or non-empty,
-// it returns ("", false) so replies that might trigger commands or rejections
-// never stream prematurely and raw JSON never leaks to clients.
 func actionFreeStructuredPartial(raw string) (string, bool) {
 	actionsDone, actionsEmpty := inspectTopLevelActions(raw)
 	if !actionsDone || !actionsEmpty {
@@ -23,9 +18,6 @@ func actionFreeStructuredPartial(raw string) (string, bool) {
 	return text, true
 }
 
-// inspectTopLevelActions scans a partial JSON object for top-level `"actions": [...]`.
-// It returns (true, true) iff `"actions"` has been completely closed as an empty array `[]`,
-// (true, false) if `"actions"` has at least one item, and (false, false) if not yet decided.
 func inspectTopLevelActions(raw string) (decided bool, empty bool) {
 	depth := 0
 	inString := false
@@ -58,7 +50,6 @@ func inspectTopLevelActions(raw string) (decided bool, empty bool) {
 					return false, false
 				}
 				if rest[0] != '[' {
-					// Invalid/non-array actions -> never stream.
 					return true, false
 				}
 				inner := strings.TrimSpace(rest[1:])
@@ -68,7 +59,6 @@ func inspectTopLevelActions(raw string) (decided bool, empty bool) {
 				if inner[0] == ']' {
 					return true, true
 				}
-				// At least one element started inside actions -> do not stream.
 				return true, false
 			}
 			inString = true
@@ -77,8 +67,6 @@ func inspectTopLevelActions(raw string) (decided bool, empty bool) {
 	return false, false
 }
 
-// extractTopLevelPartialString locates a top-level string field (e.g. "text") in a
-// partial JSON object and decodes the longest valid UTF-8 prefix received so far.
 func extractTopLevelPartialString(raw, key string) (string, bool) {
 	quotedKey := `"` + key + `"`
 	depth := 0
@@ -119,7 +107,6 @@ func extractTopLevelPartialString(raw, key string) (string, bool) {
 	return "", false
 }
 
-// decodePartialJSONString decodes a JSON string starting with '"' that may still be open.
 func decodePartialJSONString(s string) (string, bool) {
 	if len(s) < 2 || s[0] != '"' {
 		return "", false
@@ -176,7 +163,6 @@ func decodePartialJSONString(s string) (string, bool) {
 		}
 		r, size := utf8.DecodeRuneInString(s[i:])
 		if r == utf8.RuneError && size == 1 {
-			// Incomplete trailing multibyte UTF-8 sequence — wait for next chunk.
 			break
 		}
 		b.WriteRune(r)

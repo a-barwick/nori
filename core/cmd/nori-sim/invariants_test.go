@@ -52,7 +52,6 @@ func TestInspectUserState_INV_MEM_01_And_08_ExtractedThroughAndExcerpts(t *testi
 	turnsCol := client.Collection("owners").Doc(owner).Collection("conversation_turns")
 	tracker := newSimInvariantTracker()
 
-	// 1. Seed a completed turn at T0, then advance past IdleExtractDelay with no extraction -> INV-MEM-08.unextracted_after_idle.
 	t0 := start
 	mustSetDoc(t, ctx, turnsCol.Doc("turn-1"), state.ConversationTurn{
 		ID:        "turn-1",
@@ -73,7 +72,6 @@ func TestInspectUserState_INV_MEM_01_And_08_ExtractedThroughAndExcerpts(t *testi
 		t.Fatalf("expected INV-MEM-08.unextracted_after_idle, got %+v", snap.InvariantViolations)
 	}
 
-	// 2. Mark ExtractedThrough = T0 (while Through=0, FlushedThrough=0): decoupled extraction is valid & clean!
 	mustSetDoc(t, ctx, sumRef, state.ConversationSummary{
 		ExtractedThrough: t0,
 		UpdatedAt:        clock.Now(),
@@ -86,7 +84,6 @@ func TestInspectUserState_INV_MEM_01_And_08_ExtractedThroughAndExcerpts(t *testi
 		t.Fatalf("expected clean snapshot after decoupled extraction, got %+v", snap.InvariantViolations)
 	}
 
-	// 3. FlushedThrough == Through with lingering retired Excerpts -> INV-MEM-08.stale_excerpts.
 	mustSetDoc(t, ctx, sumRef, state.ConversationSummary{
 		Through:          t0,
 		FlushedThrough:   t0,
@@ -107,7 +104,6 @@ func TestInspectUserState_INV_MEM_01_And_08_ExtractedThroughAndExcerpts(t *testi
 		t.Fatalf("expected INV-MEM-08.stale_excerpts, got %+v", snap.InvariantViolations)
 	}
 
-	// 4. ExtractedThrough < FlushedThrough -> INV-MEM-01.watermark_bounds.
 	mustSetDoc(t, ctx, sumRef, state.ConversationSummary{
 		Through:          t0.Add(time.Minute),
 		FlushedThrough:   t0.Add(time.Minute),
@@ -122,7 +118,6 @@ func TestInspectUserState_INV_MEM_01_And_08_ExtractedThroughAndExcerpts(t *testi
 		t.Fatalf("expected INV-MEM-01.watermark_bounds, got %+v", snap.InvariantViolations)
 	}
 
-	// 5. ExtractFailures > 0 with ExtractedThrough >= LastExtractFailureThrough -> INV-MEM-01.failure_watermark_advance.
 	mustSetDoc(t, ctx, sumRef, state.ConversationSummary{
 		ExtractedThrough:          t0,
 		ExtractFailures:           1,
@@ -145,7 +140,6 @@ func TestInspectUserState_INV_MEM_02_03_04_05_06_Parity(t *testing.T) {
 	ownerRef := client.Collection("owners").Doc(owner)
 	tracker := newSimInvariantTracker()
 
-	// Seed a valid user input and pinned Core memory + matching FTS chunk + model_usage.
 	mustSetDoc(t, ctx, ownerRef.Collection("conversation_inputs").Doc("in-user-1"), state.ConversationInput{
 		ID:        "in-user-1",
 		Text:      "My dog is named Biscuit.",
@@ -204,7 +198,6 @@ func TestInspectUserState_INV_MEM_02_03_04_05_06_Parity(t *testing.T) {
 		t.Fatalf("expected 1 ModelUsage record with 400 cached tokens, got %+v", snap.ModelUsage)
 	}
 
-	// Trigger INV-MEM-06.fts_chunk_mismatch (same ChunkID, mutated Body).
 	badChunk := simExpectedCoreChunk(owner, pinnedMem)
 	badChunk.Body = "Corrupted FTS body"
 	if err := backend.UpsertMemoryChunk(ctx, badChunk); err != nil {
@@ -214,11 +207,8 @@ func TestInspectUserState_INV_MEM_02_03_04_05_06_Parity(t *testing.T) {
 	if !hasViolationPrefix(snap.InvariantViolations, "INV-MEM-06.fts_chunk_mismatch") {
 		t.Fatalf("expected INV-MEM-06.fts_chunk_mismatch, got %+v", snap.InvariantViolations)
 	}
-	// Restore valid chunk.
 	_ = backend.UpsertMemoryChunk(ctx, simExpectedCoreChunk(owner, pinnedMem))
 
-	// Trigger INV-MEM-02.silent_eviction (drop summary item without dismissal or evict log)
-	// AND INV-MEM-03.pinned_auto_demoted (remove pinned core mem and place demote_<id> in logs without receipt).
 	mustSetDoc(t, ctx, ownerRef.Collection("conversation").Doc("summary"), state.ConversationSummary{
 		From:             start,
 		Through:          start,
@@ -253,7 +243,6 @@ func TestInspectUserState_INV_MEM_02_03_04_05_06_Parity(t *testing.T) {
 		t.Fatalf("expected INV-MEM-03.pinned_auto_demoted, got %+v", snap.InvariantViolations)
 	}
 
-	// Adding a manual demote receipt clears INV-MEM-03.pinned_auto_demoted.
 	receiptPayload, _ := json.Marshal(map[string]any{
 		"memory":    map[string]string{"id": pinnedMem.ID},
 		"log_entry": map[string]string{"id": demotedEntry.ID},
@@ -266,7 +255,6 @@ func TestInspectUserState_INV_MEM_02_03_04_05_06_Parity(t *testing.T) {
 		t.Fatalf("expected manual demote receipt to clear INV-MEM-03.pinned_auto_demoted, got %+v", snap.InvariantViolations)
 	}
 
-	// Trigger INV-MEM-04.unverified_source_input & INV-MEM-05.uncompleted_attempt_applied.
 	badMem := state.Memory{
 		ID:            "mem-bad-1",
 		Text:          "Injected fact",
@@ -297,8 +285,6 @@ func TestInspectUserState_INV_MEM_07_RealTokenContextFromIsolation(t *testing.T)
 	owner := user.DataOwner()
 	ownerRef := client.Collection("owners").Doc(owner)
 
-	// Seed a pre-ContextFrom daily log entry with a distinctive non-stopword token
-	// and a pre-ContextFrom user message.
 	entry := state.MemoryLogEntry{
 		ID:            "log-pre-1",
 		Text:          "Zirconium prototype serial ZX9912 shipped to Zurich.",
@@ -320,7 +306,6 @@ func TestInspectUserState_INV_MEM_07_RealTokenContextFromIsolation(t *testing.T)
 		CreatedAt: start,
 	})
 
-	// Set ContextFrom to start + 1h.
 	cutoff := start.Add(time.Hour)
 	clock.Set(cutoff)
 	mustSetDoc(t, ctx, ownerRef.Collection("conversation").Doc("control"), state.ConversationControl{

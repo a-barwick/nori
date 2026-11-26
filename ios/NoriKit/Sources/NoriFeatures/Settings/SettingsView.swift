@@ -2,7 +2,6 @@ import SwiftUI
 import NoriCore
 import NoriDesign
 
-// MARK: - Standing Permissions Screen
 
 public struct StandingPermissionsView: View {
     @Bindable private var store: NoriStore
@@ -160,7 +159,6 @@ public struct StandingPermissionsView: View {
     }
 }
 
-// MARK: - Preferences & Budgets Screen
 
 public struct PreferencesBudgetsView: View {
     @Bindable private var store: NoriStore
@@ -227,7 +225,6 @@ public struct PreferencesBudgetsView: View {
     }
 }
 
-// MARK: - Appearance Screen
 
 public struct AppearanceSettingsView: View {
     @AppStorage(NoriAppearance.storageKey) private var appearanceRawValue: String = NoriAppearance.system.rawValue
@@ -244,7 +241,6 @@ public struct AppearanceSettingsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 NoriCard(padding: 14) {
                     VStack(alignment: .leading, spacing: 14) {
-                        // Interactive appearance preview reflecting live palette & mascot
                         VStack(alignment: .leading, spacing: 10) {
                             HStack {
                                 Spacer(minLength: 32)
@@ -276,7 +272,6 @@ public struct AppearanceSettingsView: View {
                                 .strokeBorder(NoriColors.hairline, lineWidth: 1)
                         )
 
-                        // System / Light / Dark segmented control
                         HStack(spacing: 4) {
                             ForEach(NoriAppearance.allCases) { option in
                                 let isSelected = appearance == option
@@ -333,7 +328,6 @@ public struct AppearanceSettingsView: View {
     }
 }
 
-// MARK: - Account Screen
 
 public struct AccountSettingsView: View {
     @Bindable private var store: NoriStore
@@ -384,7 +378,6 @@ public struct AccountSettingsView: View {
     }
 }
 
-// MARK: - Diagnostics Screen
 
 public struct DiagnosticsSettingsView: View {
     @Bindable private var store: NoriStore
@@ -668,7 +661,6 @@ public struct DiagnosticsSettingsView: View {
     }
 }
 
-// MARK: - Capability Pills Wrap
 
 private struct FlowCapabilitiesView: View {
     let items: [String]
@@ -683,7 +675,6 @@ private struct FlowCapabilitiesView: View {
     }
 }
 
-// MARK: - Edit Preferences Sheet
 
 private struct EditPreferencesSheet: View {
     @Bindable var store: NoriStore
@@ -809,7 +800,6 @@ private struct EditPreferencesSheet: View {
     }
 }
 
-// MARK: - Add Permission Rule Sheet
 
 private struct AddPermissionRuleSheet: View {
     @Bindable var store: NoriStore
@@ -909,7 +899,6 @@ private struct AddPermissionRuleSheet: View {
                         systemImage: "shield.lefthalf.filled"
                     )
 
-                    // 3-State Rule Effect Selector
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Rule behavior")
                             .font(NoriTypography.metaSemibold)
@@ -957,7 +946,6 @@ private struct AddPermissionRuleSheet: View {
                         }
                     }
 
-                    // Target Picker
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Target")
                             .font(NoriTypography.metaSemibold)
@@ -975,7 +963,6 @@ private struct AddPermissionRuleSheet: View {
                         .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                     }
 
-                    // Tool ID Filter
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Tool ID (use * for all)")
                             .font(NoriTypography.metaSemibold)
@@ -994,7 +981,6 @@ private struct AddPermissionRuleSheet: View {
                             .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                     }
 
-                    // Action Classes
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Action classes")
                             .font(NoriTypography.metaSemibold)
@@ -1036,7 +1022,6 @@ private struct AddPermissionRuleSheet: View {
                         }
                     }
 
-                    // Recipients (for sensitive sends)
                     if selectedClasses.contains(.sensitiveSend) {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(effect == .allow ? "Recipients (required, or * for anyone)" : "Recipients (leave blank for anyone)")
@@ -1057,7 +1042,6 @@ private struct AddPermissionRuleSheet: View {
                         }
                     }
 
-                    // Plain-English Summary Preview
                     Text(previewText)
                         .font(.system(size: 13))
                         .foregroundStyle(NoriColors.ink)

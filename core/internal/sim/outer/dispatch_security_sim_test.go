@@ -466,9 +466,7 @@ func TestOuterCommandPlanTrimsOver40KiB(t *testing.T) {
 	rig := newTestRig(203, rigOptions{numWorkers: 2, disableFaults: true})
 	h := rig.harness
 
-	// Seed enough user context to comfortably exceed state.OuterInputBytes (128 KiB)
-	// before commandPlanMessages trimming runs.
-	padding := strings.Repeat("detailed-context-payload-", 290) // 7250 B (< MaxMessageBytes=8192)
+	padding := strings.Repeat("detailed-context-payload-", 290)
 	historicalCount := (state.OuterInputBytes / len(padding)) + 6
 	totalSeededBytes := 0
 	historicalMarkers := make([]string, 0, historicalCount)
@@ -539,8 +537,6 @@ func TestOuterCommandPlanTrimsOver40KiB(t *testing.T) {
 	}
 	activeTask := open[0]
 
-	// Coalesce an untrusted task notification with the dispatch turn so CommandPlan runs
-	// and exercises OuterInputBytes trimming over the large user history.
 	if err := rig.store.Incorporate(ctx, state.IncorporateRequest{
 		RunID: activeTask.ID, Position: activeTask.Position, Revision: activeTask.Revision,
 	}); err != nil {
@@ -615,7 +611,6 @@ func TestOuterCommandPlanTrimsOver40KiB(t *testing.T) {
 		t.Fatalf("expected new dispatch %q to succeed after trimming, open=%+v", dispatchReq, open)
 	}
 
-	// Coalesce an untrusted task notification with the steer turn so CommandPlan runs.
 	if err := rig.store.Incorporate(ctx, state.IncorporateRequest{
 		RunID: auditTask.ID, Position: auditTask.Position, Revision: auditTask.Revision,
 	}); err != nil {
@@ -808,7 +803,6 @@ func TestOuterConversationalFollowupSingleCall(t *testing.T) {
 	rig := newTestRig(205, rigOptions{numWorkers: 2, disableFaults: true})
 	h := rig.harness
 
-	// Turn 1: clean user question -> Nori replies with a clarifying statement about Thursday's forecast.
 	priorReply := "That forecast was for Thursday—I haven't checked today's weather."
 	h.ReplyModels[0].SetScripted(func(_ context.Context, req conversation.ReplyRequest) (conversation.Reply, error, bool) {
 		return outer.BuildStructuredReply(priorReply, nil, state.Usage{}), nil, true
@@ -820,8 +814,6 @@ func TestOuterConversationalFollowupSingleCall(t *testing.T) {
 		t.Fatalf("ProcessWorker turn 1: %v", err)
 	}
 
-	// Advance +10m idle: decoupled idle extraction runs at +2m, but ZERO compaction occurs so
-	// Nori's prior assistant reply remains verbatim in the active thread.
 	rig.clock.Advance(10 * time.Minute)
 	if err := h.ProcessWorker(ctx, 0); err != nil {
 		t.Fatalf("ProcessWorker +10m idle: %v", err)
@@ -834,8 +826,6 @@ func TestOuterConversationalFollowupSingleCall(t *testing.T) {
 		t.Fatalf("expected zero compaction after +10m idle on 1-turn thread, got %+v", sumIdle)
 	}
 
-	// Turn 2: brief conversational follow-up ("Ah can u?") must execute in ONE outer LLM call
-	// (zero CommandPlan call), seeing Nori's prior reply verbatim and dispatching cleanly.
 	totalCalls := 0
 	planCalls := 0
 	sawPriorAssistantReply := false
@@ -872,9 +862,6 @@ func TestOuterConversationalFollowupSingleCall(t *testing.T) {
 	}
 	weatherTask := open[0]
 
-	// Part 2: When an untrusted TaskEvent IS coalesced with a user message, CommandPlan MUST run,
-	// include reference_only_assistant_replies from clean turns (excluding untrusted task prose),
-	// block injected remember calls, and permit legitimate user stop.
 	if err := rig.store.Incorporate(ctx, state.IncorporateRequest{
 		RunID: weatherTask.ID, Position: weatherTask.Position, Revision: weatherTask.Revision,
 	}); err != nil {

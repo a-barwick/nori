@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/primitives";
 import { APIError, mutate, newRequestID } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { day, relative } from "@/lib/assistant/format";
-import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
+import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant/useResource";
 import type { Automation, Goal, GoalEditable, LibraryItem, WorkItem } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
 import {
@@ -104,7 +104,6 @@ function GoalQuickStartGrid({ onStart }: { onStart: (prompt: string) => void }) 
   );
 }
 
-/** Embeddable Goals view used inside Work -> Goals and standalone /goals. */
 export function GoalsContent() {
   const { has, runtime } = useAssistant();
   const router = useRouter();
@@ -288,6 +287,7 @@ export function GoalsScreen() {
 }
 
 export function GoalDetailScreen({ id }: { id: string }) {
+  const invalidate = useResourceInvalidation();
   const { has } = useAssistant();
   const goal = useResource<Goal>(`/goals/${encodeURIComponent(id)}`, { poll: 20_000 });
   const work = useResource<List<WorkItem>>(has("work") ? "/work" : null, { poll: 0 });
@@ -531,6 +531,7 @@ export function GoalEditorScreen({ id }: { id?: string }) {
 }
 
 function GoalEditor({ existing }: { existing?: Goal }) {
+  const invalidate = useResourceInvalidation();
   const router = useRouter();
   const action = useAction();
   const [title, setTitle] = useState(existing?.title ?? "");

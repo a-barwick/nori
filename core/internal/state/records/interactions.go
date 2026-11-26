@@ -10,7 +10,6 @@ import (
 	"nori/internal/state/docstore"
 )
 
-// CollectionInteractions holds pending questions, approvals, account choices, sign-ins and computer takeovers.
 const CollectionInteractions = "interactions"
 
 type pendingInteraction struct {
@@ -18,8 +17,6 @@ type pendingInteraction struct {
 	runID    string
 }
 
-// readPendingInteractions reads, inside the acceptance transaction, the pending interactions of the tasks a batch
-// names, so a correction can supersede them in the same commit that advances the task's revision.
 func (d *Database) readPendingInteractions(tx *docstore.Transaction, runIDs []string) ([]pendingInteraction, error) {
 	var pending []pendingInteraction
 	for _, id := range runIDs {
@@ -42,8 +39,6 @@ func (d *Database) readPendingInteractions(tx *docstore.Transaction, runIDs []st
 	return pending, nil
 }
 
-// supersedeInteractions marks pending interactions superseded when their task's instruction revision advanced and
-// the batch did not answer them. An approval for revision N can then never authorize work at revision N+1.
 func (d *Database) supersedeInteractions(tx *docstore.Transaction, pending []pendingInteraction, before map[string]int64, batch state.CommandBatch, commands []state.Command) error {
 	answered := map[string]string{}
 	for _, cmd := range commands {
@@ -64,7 +59,6 @@ func (d *Database) supersedeInteractions(tx *docstore.Transaction, pending []pen
 		}
 		status := "superseded"
 		if commandID, ok := answered[p.resource.ID]; ok {
-			// Answered through the task's answer command (for example in chat): resolved, not superseded.
 			status = "resolved"
 			for _, cmd := range commands {
 				if cmd.ID == commandID {

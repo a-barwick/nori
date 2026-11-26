@@ -12,12 +12,10 @@ import (
 	"nori/internal/state"
 )
 
-// CollectionInteractions matches records.CollectionInteractions, where task corrections supersede pending ones.
 const CollectionInteractions = "interactions"
 
 var ErrInteractionStale = errors.New("this question or approval is no longer pending")
 
-// Interaction is the contract Interaction.
 type Interaction struct {
 	ID                  string          `json:"id"`
 	Revision            int64           `json:"revision"`
@@ -37,12 +35,11 @@ type Interaction struct {
 	SupersededBy        string          `json:"superseded_by,omitempty"`
 	TaskTitle           string          `json:"task_title,omitempty"`
 	Resolution          *Resolution     `json:"resolution,omitempty"`
-	// Private fields the executor needs when the call is retried or remembered; never projected.
-	ConnectionID string   `json:"-"`
-	ToolID       string   `json:"-"`
-	ToolTitle    string   `json:"-"`
-	ActionClass  string   `json:"-"`
-	Recipients   []string `json:"-"`
+	ConnectionID        string          `json:"-"`
+	ToolID              string          `json:"-"`
+	ToolTitle           string          `json:"-"`
+	ActionClass         string          `json:"-"`
+	Recipients          []string        `json:"-"`
 }
 
 type Resolution struct {
@@ -60,14 +57,12 @@ type stored struct {
 	ActionClass     string   `json:"private_action_class,omitempty"`
 	Recipients      []string `json:"private_recipients,omitempty"`
 	CommandAccepted bool     `json:"command_accepted,omitempty"`
-	// AnswerText is the exact answer command text, so a retried response delivers the identical command.
-	AnswerText      string `json:"answer_text,omitempty"`
-	AnswerID        string `json:"answer_command_id,omitempty"`
-	RememberDefault bool   `json:"remember_default,omitempty"`
-	Purpose         string `json:"purpose,omitempty"`
+	AnswerText      string   `json:"answer_text,omitempty"`
+	AnswerID        string   `json:"answer_command_id,omitempty"`
+	RememberDefault bool     `json:"remember_default,omitempty"`
+	Purpose         string   `json:"purpose,omitempty"`
 }
 
-// Response is the contract InteractionResponse value.
 type Response struct {
 	Kind              string   `json:"kind"`
 	Text              string   `json:"text,omitempty"`
@@ -96,7 +91,6 @@ func (s *Service) decodeInteraction(r state.Resource) (Interaction, stored, erro
 	return i, body, nil
 }
 
-// Open creates an interaction once; a repeated call with the same ID returns the stored one.
 func (s *Service) Open(ctx context.Context, i Interaction, purpose string) (Interaction, error) {
 	if i.Payload == nil {
 		i.Payload = json.RawMessage("{}")
@@ -125,8 +119,6 @@ func (s *Service) Open(ctx context.Context, i Interaction, purpose string) (Inte
 	return s.Interaction(ctx, i.ID)
 }
 
-// linkSuperseded points interactions of the same task and kind that a correction superseded at the new one, so a
-// client holding a stale card can jump to its replacement.
 func (s *Service) linkSuperseded(ctx context.Context, replacement Interaction) {
 	page, _, err := s.Store.Resources(ctx, CollectionInteractions, map[string]string{"task_id": replacement.TaskID, "status": "superseded"}, "", 50)
 	if err != nil {
@@ -208,17 +200,13 @@ func (s *Service) Interactions(ctx context.Context, status, taskID, after string
 	}
 }
 
-// Answer is what resumes the waiting task: an answer command for its question.
 type Answer struct {
-	CommandID string
-	TaskID    string
-	Question  string
-	Text      string
-	// Default is set when the user chose an account and asked to remember it for the purpose.
+	CommandID                         string
+	TaskID                            string
+	Question                          string
+	Text                              string
 	DefaultPurpose, DefaultConnection string
-	// Recheck marks an answer recorded as delivered: deliver it again only if its task is still waiting on exactly
-	// this question, which proves the earlier delivery never landed.
-	Recheck bool
+	Recheck                           bool
 }
 
 func (s *Service) Respond(ctx context.Context, id, requestID string, expected int64, response Response) (state.MutationReceipt, *Answer, error) {
@@ -391,7 +379,6 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 	return receipt, answer, nil
 }
 
-// questionID is the task question the answer resolves: the legacy question it projects, or the interaction itself.
 func questionID(i Interaction) string {
 	if i.LegacyQuestionID != "" {
 		return i.LegacyQuestionID
@@ -408,10 +395,6 @@ func contains(values []string, value string) bool {
 	return false
 }
 
-// rememberApprovalRule constructs the standing allow Rule resource committed atomically alongside an
-// "Always allow" approval response. Selectors scope to the approved tool, action class, and account
-// (or "*" when unscoped), with wildcard resources and wildcard recipients when recipient-addressed so
-// subsequent calls to that tool/account auto-allow cleanly (still subject to AutoReview).
 func (s *Service) rememberApprovalRule(requestID string, i Interaction, body stored) (state.Resource, error) {
 	toolID := strings.TrimSpace(body.ToolID)
 	toolTitle := strings.TrimSpace(body.ToolTitle)
@@ -419,7 +402,6 @@ func (s *Service) rememberApprovalRule(requestID string, i Interaction, body sto
 	connID := strings.TrimSpace(body.ConnectionID)
 	recipients := body.Recipients
 
-	// Fallback to the stored approval payload if private fields were not populated directly.
 	if toolID == "" || actionClass == "" || (connID == "" && len(recipients) == 0) {
 		var payload struct {
 			ToolID     string   `json:"tool_id"`
@@ -475,7 +457,6 @@ func (s *Service) rememberApprovalRule(requestID string, i Interaction, body sto
 	return res, err
 }
 
-// MarkDelivered records that the answer command was accepted, so repair does not repeat it.
 func (s *Service) MarkDelivered(ctx context.Context, id string) {
 	r, err := s.Store.Resource(ctx, CollectionInteractions, id)
 	if err != nil {

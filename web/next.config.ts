@@ -5,15 +5,10 @@ const nextConfig: NextConfig = {
   output: "standalone",
   cacheComponents: true,
   partialPrefetching: true,
-  // Keep the development badge clear of chat controls.
   devIndicators: false,
-  // A phone on the local network loads the dev server by this Mac's address (NORI_DEV_ORIGINS=192.168.x.y).
   allowedDevOrigins: process.env.NORI_DEV_ORIGINS?.split(",").map((origin) => origin.trim()).filter(Boolean),
-  // Keep next dev from writing its own AGENTS.md.
   agentRules: false,
   experimental: {
-    // Chat renders on the client (clock and viewport), so
-    // per-page instant-navigation insights only apply where a page opts in.
     instantInsights: { validationLevel: "manual-warning" },
   },
   turbopack: {

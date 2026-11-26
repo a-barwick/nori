@@ -141,7 +141,6 @@ describe("proxy auth gate and header stripping", () => {
     assert.equal(doc503.headers.get("content-type"), "text/html; charset=utf-8");
     assert.equal((await doc503.text()).includes("Reconnecting to Nori"), true);
 
-    // RSC navigation must receive plain text, not the full HTML reconnecting shell
     const rsc503 = await proxy(new NextRequest("https://app.nori.example/", {
       headers: { authorization: `Bearer ${downToken}`, "sec-fetch-dest": "document", rsc: "1" },
     }));
@@ -149,7 +148,6 @@ describe("proxy auth gate and header stripping", () => {
     assert.equal((rsc503.headers.get("content-type") ?? "").includes("text/html"), false);
     assert.equal((await rsc503.text()).includes("<!doctype html>"), false);
 
-    // 429 document navigation renders busy HTML page with Retry-After preserved
     const busyToken = await bearerFor("busy@example.test");
     const doc429 = await proxy(new NextRequest("https://app.nori.example/", {
       headers: { authorization: `Bearer ${busyToken}`, "sec-fetch-dest": "document" },

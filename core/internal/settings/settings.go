@@ -1,6 +1,3 @@
-// Package settings loads every setting Nori's processes read, once, at startup. It is the only code that reads the
-// process environment. Each process passes on only the values a package needs. .env.example at the repo root
-// describes each setting.
 package settings
 
 import (
@@ -21,46 +18,31 @@ import (
 )
 
 type Settings struct {
-	Features Features
-	Cloud    string
-	// EnvProfile selects key isolation profile: "prod", "dev", or "test".
-	EnvProfile string
-	// Role selects which runtime subsystems cmd/nori runs: "all" (default), "api", or "worker".
-	Role        string
-	AWS         AWS
-	ServiceAuth serviceauth.Config
-	// BindHost and Port are where the API listens.
+	Features       Features
+	Cloud          string
+	EnvProfile     string
+	Role           string
+	AWS            AWS
+	ServiceAuth    serviceauth.Config
 	BindHost, Port string
 	Models         Models
 	Metering       usage.Config
 	Store          Store
-	// SearchKey is the Brave Search key. Without it, web search reports itself unavailable.
-	SearchKey string
-	// TimeZone is filled from the user row, never the environment.
-	TimeZone string
-	// TaskBudgetUSD is recorded as the spending ceiling when a background task starts.
-	TaskBudgetUSD float64
-	Observability Observability
-	Connections   Connections
+	SearchKey      string
+	TimeZone       string
+	TaskBudgetUSD  float64
+	Observability  Observability
+	Connections    Connections
 }
 
-// Connections configures connected accounts and MCP servers.
 type Connections struct {
-	// RedirectURL is the OAuth callback through the web proxy, for example http://127.0.0.1:3211/api/v1/connections/oauth/callback.
-	RedirectURL string
-	// CredentialStore is "database" (envelope-encrypted rows, D1) or empty (unavailable). The database store wraps
-	// data keys with NORI_CREDENTIAL_KEY / NORI_CREDENTIAL_KEY_SECRET (base64 or hex 32-byte key, optionally from
-	// AWS Secrets Manager) or, on the local stack only, NORI_CREDENTIAL_KEY_FILE.
+	RedirectURL                                           string
 	CredentialStore                                       string
 	CredentialKey, CredentialKeySecret, CredentialKeyFile string
-	// UnattendedWrites and UserSends are the interim D2 mechanisms; see internal/permissions.
-	UnattendedWrites, UserSends string
-	// MCPCommands declares local stdio MCP servers by command_ref -> argument vector (NORI_MCP_COMMANDS, a JSON
-	// object). Honoured only with NORI_CLOUD=local; requests name a command_ref, never a command line.
-	MCPCommands map[string][]string
+	UnattendedWrites, UserSends                           string
+	MCPCommands                                           map[string][]string
 }
 
-// Features uses disabled flags so an existing caller with zero settings keeps Nori enabled.
 type Features struct {
 	DisableBackgroundTasks, DisableJev bool
 }
@@ -70,55 +52,33 @@ type AWS struct {
 }
 
 type Models struct {
-	// EnvProfile is the resolved key isolation profile ("prod", "dev", or "test").
-	EnvProfile string
-	// Provider keys resolved according to EnvProfile (never falling back across profiles in test mode).
+	Guard                                          *llmguard.Guard
+	EnvProfile                                     string
 	OpenAIKey, AnthropicKey, JevKey, OpenRouterKey string
-	// Outer is the outer conversation model and Inner the task worker model.
-	Outer, Inner string
-	// OuterReasoning and InnerReasoning optionally override default reasoning effort ("low", "medium", "high").
-	OuterReasoning, InnerReasoning string
-	// Provider sets the default model provider ("openai", "anthropic", "openrouter", "gateway").
-	// OuterProvider and InnerProvider optionally override the provider per tier.
-	Provider, OuterProvider, InnerProvider string
-	GatewayURL, GatewayKey                 string
-	// LocalURL and LocalModel optionally configure a local loopback OpenAI-compatible
-	// endpoint (e.g. standalone Ollama serving Inkling 2 Mini) alongside the cloud gateway
-	// in local dev (NORI_LOCAL_MODEL_URL, NORI_LOCAL_MODEL_TAG).
-	LocalURL, LocalModel string
-	// ProfilesFile is an optional hot-reloaded JSON file defining or overriding approved
-	// model profiles (NORI_MODEL_PROFILES_FILE). ProfilesJSON is an optional inline JSON
-	// override (NORI_MODEL_PROFILES).
-	ProfilesFile, ProfilesJSON string
-	// PickerUsers lists comma-separated user IDs or emails allowed to switch models in
-	// production (NORI_MODEL_PICKER_USERS). Local mode always allows switching.
-	PickerUsers []string
-	// MaxUSD optionally sets a process-wide hard estimated spend ceiling in llmguard (NORI_LLM_MAX_USD).
-	MaxUSD float64
-	// TestURL sends every model request to a loopback HTTP stub instead of the provider. Local development only
-	// (NORI_MODEL_TEST_URL, refused unless NORI_CLOUD=local), for checking timeouts and prompts without provider keys.
-	TestURL string
+	Outer, Inner                                   string
+	OuterReasoning, InnerReasoning                 string
+	Provider, OuterProvider, InnerProvider         string
+	GatewayURL, GatewayKey                         string
+	LocalURL, LocalModel                           string
+	ProfilesFile, ProfilesJSON                     string
+	PickerUsers                                    []string
+	MaxUSD                                         float64
+	TestURL                                        string
 }
 
 type Store struct {
-	Backend, PostgresURL string
-	// PostgresListenURL optionally overrides PostgresURL for dedicated LISTEN connections
-	// (for deployments where PostgresURL routes through RDS Proxy or PgBouncer transaction pooling).
-	PostgresListenURL string
-	// Postgres pool and query tuning; zero values fall back to postgres backend defaults.
+	Backend, PostgresURL      string
+	PostgresListenURL         string
 	PostgresMaxConns          int32
 	PostgresMinConns          int32
 	PostgresMaxConnLifetime   time.Duration
 	PostgresMaxConnIdleTime   time.Duration
 	PostgresHealthCheckPeriod time.Duration
 	PostgresStatementTimeout  time.Duration
-	// ArtifactBucket is the S3 bucket for file bytes.
-	ArtifactBucket string
-	// LocalArtifactDir keeps file bytes in a local directory, for development.
-	LocalArtifactDir string
+	ArtifactBucket            string
+	LocalArtifactDir          string
 }
 
-// ValidRole reports whether role is one of "all", "api", or "worker".
 func ValidRole(role string) bool {
 	switch role {
 	case "all", "api", "worker":
@@ -129,26 +89,18 @@ func ValidRole(role string) bool {
 }
 
 type Observability struct {
-	SentryDSN, SentryEnvironment, SentryRelease string
-	// SampleRate and the hourly limits stay text: an invalid value falls back to its default.
-	SampleRate, ErrorsPerHour, LogsPerHour, MetricsPerHour string
-	// Revision and Service optionally come from the hosting platform.
+	SentryDSN, SentryEnvironment, SentryRelease                                          string
+	SampleRate, ErrorsPerHour, LogsPerHour, MetricsPerHour                               string
 	Revision, Service                                                                    string
 	ArizeProject, ArizeProjectURL, ArizeSpace, ArizeKey, ArizeEndpoint, ArizeCertificate string
-	// CaptureContent sends redacted prompt and reply text to Arize.
-	CaptureContent bool
-	// Credentials are values redacted from anything exported.
-	Credentials []string
+	CaptureContent                                                                       bool
+	Credentials                                                                          []string
 }
 
-// Load reads NORI_ENV_FILE (default ../.env), then NORI_TASK_ENV_FILE when it names a separate task configuration,
-// and returns the settings with NORI_CLOUD defaulting to "aws". Missing files are fine in deployed environments;
-// malformed files are not. Already-set variables win. Management credentials are removed first and never loaded.
 func Load() (Settings, error) {
 	return LoadDefaultCloud("aws")
 }
 
-// LoadDefaultCloud behaves like Load, using defaultCloud when NORI_CLOUD is unset.
 func LoadDefaultCloud(defaultCloud string) (Settings, error) {
 	for _, entry := range os.Environ() {
 		name, _, _ := strings.Cut(entry, "=")
@@ -223,7 +175,6 @@ func LoadDefaultCloud(defaultCloud string) (Settings, error) {
 	return s, nil
 }
 
-// connectionsFromEnvironment loads connection, credential store, and MCP settings.
 func connectionsFromEnvironment() Connections {
 	return Connections{
 		RedirectURL:         os.Getenv("NORI_OAUTH_REDIRECT_URL"),
@@ -235,10 +186,6 @@ func connectionsFromEnvironment() Connections {
 		UserSends:           get("NORI_USER_SENDS", "ask"),
 		MCPCommands:         mcpCommands(os.Getenv("NORI_MCP_COMMANDS")),
 	}
-}
-
-func FromEnvironment() Settings {
-	return fromEnvironment("aws")
 }
 
 func fromEnvironment(defaultCloud string) Settings {
@@ -327,12 +274,10 @@ func fromEnvironment(defaultCloud string) Settings {
 	}
 }
 
-// MissingError names a required setting that is empty. It carries no value, so a process may print it.
 type MissingError struct{ Name string }
 
 func (e *MissingError) Error() string { return e.Name + " must be configured" }
 
-// Required returns a setting's value, or a MissingError naming its variable when it is empty.
 func Required(name, value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {

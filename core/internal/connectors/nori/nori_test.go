@@ -62,7 +62,7 @@ func TestAutomationCreateSchemaMakesMissedRunOptional(t *testing.T) {
 
 func TestAutomationCreatePrepareAndExecute(t *testing.T) {
 	ctx := context.Background()
-	now := time.Date(2026, 11, 25, 6, 55, 0, 0, time.UTC) // Nov 24 10:55 PM PST
+	now := time.Date(2026, 11, 25, 6, 55, 0, 0, time.UTC)
 	adapter := newAdapter(t, now, "America/Los_Angeles")
 	exec := automationCreateDef(t).Exec()
 
@@ -78,7 +78,7 @@ func TestAutomationCreatePrepareAndExecute(t *testing.T) {
 				"instruction": "Remind me to check out updates to supernino",
 				"trigger": map[string]any{
 					"kind": "once",
-					"at":   "2026-11-25T20:00:00Z", // Nov 25 12:00 PM PST
+					"at":   "2026-11-25T20:00:00Z",
 				},
 			},
 		}

@@ -49,8 +49,6 @@ func (s *Service) resultLink(ctx context.Context, run, address, title string) (m
 	return map[string]any{"result_id": saved.ID, "artifact_id": saved.ID, "title": saved.Title, "url": saved.URL}, nil
 }
 
-// resultsFind searches saved results, and tasks from before results existed. There are few enough for one owner to read
-// the newest and match words, and an index would have to be kept in step with them.
 func (s *Service) resultsFind(ctx context.Context, query string) (map[string]any, error) {
 	words := []string{}
 	for _, word := range strings.Fields(strings.ToLower(query)) {

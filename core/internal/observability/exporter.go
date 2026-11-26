@@ -10,8 +10,6 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
-// Only explicitly selected operational fields cross the export boundary.
-// This also protects Sentry when an Arize span opts into model text.
 var operationalKeys = map[string]bool{
 	"nori.completion.failure_count": true, "nori.completion.verified": true, "nori.completion.available": true,
 	"nori.completion.score": true, "nori.completion.choice": true,
@@ -85,8 +83,6 @@ func (s filteredSpan) Attributes() []attribute.KeyValue {
 			result = append(result, safe)
 		}
 	}
-	// This URL is generated only from validated configuration and OTel IDs.
-	// Never allow caller-provided URLs through the operational allowlist.
 	if s.arizeProjectURL != nil && s.SpanContext().IsValid() {
 		for _, attr := range attrs {
 			if attr.Key == "openinference.span.kind" && attr.Value.AsString() == "LLM" {
@@ -105,9 +101,6 @@ func (s filteredSpan) Attributes() []attribute.KeyValue {
 	return result
 }
 
-// arizeProjectURL accepts only an Arize project page with three opaque,
-// base64-encoded IDs. Queries, fragments, credentials, and other hosts cannot
-// become an export-side exception to URL redaction.
 func arizeProjectURL(raw string) *url.URL {
 	if raw == "" {
 		return nil

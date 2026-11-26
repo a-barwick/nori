@@ -76,11 +76,6 @@ type dreamPlan struct {
 	wakeAt   time.Time
 }
 
-// planDream evaluates the AutoDream triple gate:
-// 1) Conversation idle and (!summary.Applies(from) || EffectiveFlushedThrough() >= Through)
-// 2) At least DreamMinInterval (12h) since LastDreamAt (or first dream)
-// 3) At least DreamMinLogEntries (10) user-sourced Daily Log entries since DreamThrough
-// 4) Quiet for IdleDreamDelay (15m) after latestTurnAt
 func (r *Runner) planDream(
 	ctx context.Context,
 	control state.ConversationControl,
@@ -141,8 +136,6 @@ func (r *Runner) planDream(
 	return dreamPlan{eligible: true, ready: true, wakeAt: now}, nil
 }
 
-// maybeDream runs idle AutoDream consolidation when all triple-gate criteria
-// and the quiet delay are satisfied, yielding immediately to arriving user input.
 func (r *Runner) maybeDream(ctx context.Context) {
 	if r.summarizer == nil || r.now().Before(r.dreamAfter) {
 		return
@@ -287,7 +280,6 @@ func (r *Runner) dreamConsolidate(ctx context.Context, manual bool) (state.Conve
 		return state.ConversationSummary{}, err
 	}
 
-	// Build verified user-sourced provenance table; never include task_outcome entries.
 	verifiedSources := map[string]dreamSource{}
 	addSource := func(id, text string, ts time.Time) {
 		id = strings.TrimSpace(id)
@@ -344,8 +336,6 @@ func (r *Runner) dreamConsolidate(ctx context.Context, manual bool) (state.Conve
 		}
 	}
 
-	// Process bounded log batches in chronological oldest-first order so DreamThrough
-	// never jumps past unconsolidated older entries.
 	slices.SortFunc(promptLogs, func(a, b promptLogEntry) int {
 		if a.CreatedAt.Before(b.CreatedAt) {
 			return -1
@@ -389,8 +379,6 @@ func (r *Runner) dreamConsolidate(ctx context.Context, manual bool) (state.Conve
 	nowUTC := r.now().UTC()
 	processedThrough := nowUTC
 	if logsTruncated && len(selectedLogs) > 0 {
-		// Advance DreamThrough only through the batch actually processed so remaining
-		// newer entries are picked up on the next consolidation cycle.
 		processedThrough = selectedLogs[len(selectedLogs)-1].CreatedAt.UTC()
 	}
 	coreUpserts, coreDeletes, dailyLogEntries := verifyDreamOutput(output, coreMemories, verifiedSources, nowUTC)
@@ -491,7 +479,6 @@ func verifyDreamOutput(
 			continue
 		}
 
-		// Protect pinned Core memories unless contradicted by a strictly newer cited user conversation input.
 		if isUpdate && existing.Pinned && !isConversationalContradiction(sourceInputID, src, existing) {
 			continue
 		}

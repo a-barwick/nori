@@ -284,7 +284,6 @@ func TestConnectionsOAuthStartAndCallbackIOSBridge(t *testing.T) {
 		t.Fatalf("unmarshal connection: %v", err)
 	}
 
-	// Reject disallowed return_to targets.
 	for _, bad := range []string{"https://evil.com", "nori://oauth/other", "nori://oauth/callback/extra", "//evil.com"} {
 		if _, err := svc.Act(ctx, created.ID, "req-bad-"+bad, created.Revision, Action{
 			Action:   "connect",
@@ -294,7 +293,6 @@ func TestConnectionsOAuthStartAndCallbackIOSBridge(t *testing.T) {
 		}
 	}
 
-	// Start OAuth with exact nori://oauth/callback.
 	startReceipt, err := svc.Act(ctx, created.ID, "req-start-1", created.Revision, Action{
 		Action:       "connect",
 		Capabilities: []string{"mail.read"},
@@ -316,7 +314,6 @@ func TestConnectionsOAuthStartAndCallbackIOSBridge(t *testing.T) {
 		t.Fatalf("missing OAuth state")
 	}
 
-	// Success callback redirects cleanly to nori://oauth/callback with query params.
 	loc, err := svc.Callback(ctx, oauthState, "code-123", "")
 	if err != nil {
 		t.Fatalf("Callback success: %v", err)
@@ -326,7 +323,6 @@ func TestConnectionsOAuthStartAndCallbackIOSBridge(t *testing.T) {
 		t.Fatalf("Callback success redirect = %q, want %q", loc, wantSuccess)
 	}
 
-	// Replayed callback returns the same iOS redirect.
 	replayLoc, err := svc.Callback(ctx, oauthState, "code-123", "")
 	if err != nil {
 		t.Fatalf("Callback replay: %v", err)
@@ -335,7 +331,6 @@ func TestConnectionsOAuthStartAndCallbackIOSBridge(t *testing.T) {
 		t.Fatalf("Callback replay redirect = %q, want %q", replayLoc, wantSuccess)
 	}
 
-	// Verify connection state is connected and token stored.
 	proj, err := svc.Get(ctx, created.ID)
 	if err != nil {
 		t.Fatalf("Get connection: %v", err)
@@ -347,7 +342,6 @@ func TestConnectionsOAuthStartAndCallbackIOSBridge(t *testing.T) {
 		t.Fatalf("expected stored credential: %v", err)
 	}
 
-	// Provider cancellation redirects cleanly to nori://oauth/callback?connection=...&result=cancelled.
 	cancelStart, err := svc.Act(ctx, created.ID, "req-cancel-start", proj.Revision, Action{
 		Action:   "repair",
 		ReturnTo: IOSOAuthCallbackURL,
@@ -367,7 +361,6 @@ func TestConnectionsOAuthStartAndCallbackIOSBridge(t *testing.T) {
 		t.Fatalf("Callback cancelled redirect = %q, want %q", cancelLoc, wantCancelled)
 	}
 
-	// Expired attempt redirects cleanly to nori://oauth/callback?connection=...&result=failed.
 	proj, _ = svc.Get(ctx, created.ID)
 	expStart, err := svc.Act(ctx, created.ID, "req-exp-start", proj.Revision, Action{
 		Action:   "repair",
@@ -389,7 +382,6 @@ func TestConnectionsOAuthStartAndCallbackIOSBridge(t *testing.T) {
 		t.Fatalf("Callback expired redirect = %q, want %q", expLoc, wantFailed)
 	}
 
-	// Merge sign-in into existing account also redirects cleanly to nori://oauth/callback.
 	dupReceipt, err := svc.Create(ctx, "req-create-dup", Editable{
 		IntegrationID: "google",
 		Title:         "Google Duplicate",

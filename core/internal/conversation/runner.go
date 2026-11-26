@@ -1,5 +1,3 @@
-// Package conversation owns durable outer turns. Task execution runs in the
-// unified Postgres-native task worker pool.
 package conversation
 
 import (
@@ -23,11 +21,9 @@ import (
 )
 
 type Input struct {
-	ID      string `json:"id"`
-	Message string `json:"message"`
-	// Attachments are the IDs of files already uploaded.
-	Attachments []string `json:"attachments,omitempty"`
-	// ModelSelection optionally pins approved chat/task model profiles for this input.
+	ID             string                `json:"id"`
+	Message        string                `json:"message"`
+	Attachments    []string              `json:"attachments,omitempty"`
 	ModelSelection *state.ModelSelection `json:"model,omitempty"`
 }
 type Message = state.Message
@@ -77,22 +73,15 @@ type Session struct {
 	Traces         []Trace            `json:"traces"`
 	NextCursor     string             `json:"next_cursor,omitempty"`
 	Results        []state.Result     `json:"results"`
-	// Position is the event log's position when this snapshot was read. Events after it may already be included, and
-	// applying one again changes nothing.
-	Position int64 `json:"position"`
-	// ReadPosition is shared by every client and only moves forward.
-	ReadPosition state.ReadMark `json:"read_position"`
+	Position       int64              `json:"position"`
+	ReadPosition   state.ReadMark     `json:"read_position"`
 }
 type Runner struct {
-	UserFacts string
-	// Profile, when set, supplies the user facts and clock at the time of each call instead of UserFacts and Clock.
-	Profile users.Profile
-	model   ReplyModel
-	// ModelForTurn, when set, resolves a per-turn ReplyModel from the turn's pinned ModelSelection.
+	UserFacts    string
+	Profile      users.Profile
+	model        ReplyModel
 	ModelForTurn func(*state.ModelSelection) ReplyModel
 	classifier   IntentClassifier
-	// summarizer writes coupled flush/compaction, decoupled extraction, and AutoDream passes.
-	// compactAfter, extractAfter, and dreamAfter pause background maintenance after failures.
 	summarizer   SummaryModel
 	compactAfter time.Time
 	extractAfter time.Time
@@ -100,15 +89,12 @@ type Runner struct {
 	tasks        *Tasks
 	process      sync.Mutex
 	Clock        Clock
-	// Optional determinism hooks. Nil defaults to time.Now, uuid.NewString, time.NewTimer, and time.NewTicker.
-	Now       func() time.Time
-	NewID     func() string
-	After     func(time.Duration) <-chan time.Time
-	NewTicker func(time.Duration) (<-chan time.Time, func())
-	SyncWork  bool
-	// OnDelta, when set, receives ephemeral streaming text snapshots for confirmed
-	// action-free outer replies (never on turns with actions or untrusted task output).
-	OnDelta func(turnID, text string)
+	Now          func() time.Time
+	NewID        func() string
+	After        func(time.Duration) <-chan time.Time
+	NewTicker    func(time.Duration) (<-chan time.Time, func())
+	SyncWork     bool
+	OnDelta      func(turnID, text string)
 }
 
 func (r *Runner) runWork(work *sync.WaitGroup, fn func()) {
@@ -212,8 +198,6 @@ func (r *Runner) replyModel(sel *state.ModelSelection) ReplyModel {
 	return r.model
 }
 
-// HandleInput only accepts the idempotent inbox item; provider I/O is performed
-// by Process independently of the submitting HTTP request.
 func (r *Runner) HandleInput(ctx context.Context, input Input) (Session, error) {
 	if _, e := uuid.Parse(input.ID); e != nil {
 		return Session{}, fmt.Errorf("message ID must be a UUID")
@@ -246,7 +230,6 @@ func (r *Runner) HandleInput(ctx context.Context, input Input) (Session, error) 
 	return session, err
 }
 
-// Retry replays unrouted user input(s) from a failed turn without duplicating the visible user message.
 func (r *Runner) Retry(ctx context.Context, turnID, messageID string) (Session, error) {
 	ctx, span := conversationTracer.Start(ctx, "conversation.retry", trace.WithAttributes(
 		attribute.String("openinference.span.kind", "CHAIN"), attribute.String("session.id", observability.SessionID()),
@@ -269,8 +252,6 @@ func fenceFor(c state.ConversationControl, t state.ConversationTurn) state.Conve
 	return state.ConversationFence{Owner: c.Owner, Fence: c.Fence, TurnID: t.ID, Through: t.Through, UserThrough: t.UserThrough, Frozen: t.Frozen}
 }
 
-// Process drains durable work. A live competing lease is retryable so a queue
-// wake never acknowledges away the only remaining notification.
 func (r *Runner) Process(ctx context.Context) error {
 	if !r.process.TryLock() {
 		return state.ErrConversationBusy
@@ -282,7 +263,6 @@ func (r *Runner) Process(ctx context.Context) error {
 			return e
 		}
 		if t == nil {
-			// Nothing is waiting, so coupled flush/compaction and idle AutoDream can run without delaying a reply.
 			r.compact(ctx)
 			r.maybeDream(ctx)
 			return nil
@@ -335,8 +315,6 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 			return e
 		}
 		if stale {
-			// Refresh accepted receipts before the restart transaction records the
-			// superseded attempt and carries its accepted tool protocol forward.
 			if t.Attempt.ID != "" {
 				if e = r.recoverActions(ctx, &t); e != nil {
 					return e
@@ -381,7 +359,6 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 			if e = r.call(ctx, f, &t); e != nil {
 				return e
 			}
-			// Freshness is checked again after the provider result was durably saved.
 			continueIfStale, e := r.tasks.Store.RenewConversation(ctx, f)
 			if e != nil {
 				return e
@@ -405,8 +382,6 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 		if stale {
 			continue
 		}
-		// Resolve explicit retrievals even when resuming a saved model reply. A missing
-		// ID must not leave the model's display claim or the "Here it is" fallback.
 		shown := []string{}
 		missing := false
 		for _, id := range t.Attempt.ShowResults {
@@ -438,7 +413,6 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 				break
 			}
 		}
-		// Failed retrievals or refused changes replace model claims, while accepted tasks still say so.
 		if failures := strings.TrimSpace(showFailure + " " + memoryFailureText(t.Attempt.Memory)); failures != "" {
 			text = strings.TrimSpace(failures + " " + commandFailure + " " + acceptedCommandText(t.Attempt.Actions))
 		}
@@ -478,7 +452,6 @@ func decodeSavedReply(a state.ConversationAttempt, reply *Reply) error {
 	if err := restoreReply(a.Reply, a.Text, a.StructuredReply, reply); err != nil {
 		return err
 	}
-	// Actions line up with task commands only: shown results and memory changes have no action.
 	reply.Calls = slices.DeleteFunc(reply.Calls, func(call ToolCall) bool {
 		name := call.Function.Name
 		return name == "show_result" || name == state.MemoryRemember || name == state.MemoryForget
@@ -551,7 +524,6 @@ func (r *Runner) dispatchPending(ctx context.Context, f state.ConversationFence,
 			if a.Status != "pending" {
 				continue
 			}
-			// M2 checkpoints contained only dispatch requests.
 			if a.Command.ID == "" {
 				a.Command = state.Command{ID: a.ID, RunID: a.ID, Kind: "start", Text: a.Request}
 			}
@@ -605,9 +577,6 @@ func buildProtocol(t *state.ConversationTurn, text string) {
 		t.Protocol = append(t.Protocol, string(inputMessage(in)))
 	}
 	t.Protocol = append(t.Protocol, t.Context...)
-	// When a structured turn had zero actions/memory/shows and its published reply matches
-	// the model draft verbatim, store only the clean published assistant reply instead of
-	// duplicating the same prose inside both the JSON wrapper and a trailing assistant message.
 	cleanActionFree := t.Attempt.StructuredReply &&
 		!t.Attempt.ProtocolInvalid &&
 		t.Attempt.Status != "error" &&
@@ -644,11 +613,6 @@ func (r *Runner) EnsureIntroduction(ctx context.Context) error {
 	return r.tasks.Store.EnsureConversationIntroduction(ctx, prompts.Introduction)
 }
 
-// backgroundIdleBlocked reports whether out-of-band background maintenance
-// (compaction, idle extraction, AutoDream) must stay parked because user input
-// or routing work is still pending or active. Shared by NextConversationWake,
-// compact, flushAndCompact, extractIdleMemory, and maybeDream so wake planning
-// and execution never disagree.
 func (r *Runner) backgroundIdleBlocked(ctx context.Context, control state.ConversationControl) (bool, error) {
 	if control.Pending() || control.Active != "" {
 		return true, nil
@@ -660,8 +624,6 @@ func (r *Runner) backgroundIdleBlocked(ctx context.Context, control state.Conver
 	return pending, nil
 }
 
-// NextConversationWake returns the earliest deferred idle wake timestamp for
-// out-of-band flush/compaction or AutoDream consolidation, or zero when idle.
 func (r *Runner) NextConversationWake(ctx context.Context) (time.Time, error) {
 	if r.summarizer == nil {
 		return time.Time{}, nil
@@ -729,7 +691,6 @@ func (r *Runner) NextConversationWake(ctx context.Context) (time.Time, error) {
 	return earliest, nil
 }
 
-// ConsolidateNow triggers a manual AutoDream consolidation pass.
 func (r *Runner) ConsolidateNow(ctx context.Context) (state.ConversationSummary, error) {
 	return r.dreamConsolidate(ctx, true)
 }

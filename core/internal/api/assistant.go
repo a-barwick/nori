@@ -23,46 +23,29 @@ import (
 	"nori/internal/state"
 )
 
-// AssistantContract is advertised once every route family it names is implemented.
 const AssistantContract = "nori-assistant-1"
 
-// Assistant holds the user-scoped application services behind the /v1 management routes. UI commands and the
-// Nori MCP endpoint call these same services; no route bypasses the Tool executor or Permission checks.
 type Assistant struct {
-	Store       state.ConversationStore
-	Connections *connections.Service
-	Permissions *permissions.Service
-	// Tools resolves the Available tools inventory from metadata only.
-	Tools func(ctx context.Context) (*extensions.Snapshot, []extensions.CapabilityState)
-	// Answer accepts a task answer command (the existing durable acceptance path).
-	Answer func(ctx context.Context, commandID, taskID, questionID, text string) error
-	// Revise starts a task that revises a saved result, keeping its earlier versions.
-	Revise func(ctx context.Context, taskID, resultID, instruction string) (state.Run, error)
-	// DeliverAnswers retries answers recorded for interactions that never reached their task.
-	DeliverAnswers func(ctx context.Context) error
-	// ScheduleAnswerRetry wakes the scheduler lane to retry deferred pre-ask interaction answers.
+	Store               state.ConversationStore
+	Connections         *connections.Service
+	Permissions         *permissions.Service
+	Tools               func(ctx context.Context) (*extensions.Snapshot, []extensions.CapabilityState)
+	Answer              func(ctx context.Context, commandID, taskID, questionID, text string) error
+	Revise              func(ctx context.Context, taskID, resultID, instruction string) (state.Run, error)
+	DeliverAnswers      func(ctx context.Context) error
 	ScheduleAnswerRetry func(ctx context.Context)
-	// Resume repairs command delivery and worker wakes, and runs a scheduler pass.
-	Resume func(ctx context.Context) error
-	// Continue starts a task that explicitly continues one that stopped, for example at its budget.
-	Continue func(ctx context.Context, taskID, previous, request string, budget float64) (state.Run, error)
-	// Stop accepts a task stop command.
-	Stop func(ctx context.Context, commandID, taskID string) (state.Run, error)
-	// Features lists the route families that are live.
-	Features map[string]bool
-	// Scheduler serves automations, goals and the inbox.
-	Scheduler        *scheduler.Service
-	MCP              *mcp.Service
-	UnattendedWrites string
-	// NextScheduled and InboxUnread feed the summary badges once the Scheduler and inbox exist.
-	NextScheduled func(ctx context.Context) *time.Time
-	InboxUnread   func(ctx context.Context) int
-	// ConsolidateMemory runs an on-demand AutoDream memory consolidation pass.
-	ConsolidateMemory func(ctx context.Context) (state.ConversationSummary, error)
-	// NormalizeMemory optionally normalizes a manually added Core memory (phrasing, section,
-	// about, and deduplication against existing Core memories). Nil falls back to raw storage.
-	NormalizeMemory func(ctx context.Context, input conversation.ManualMemoryInput) (conversation.NormalizedMemory, error)
-	Extra           []func(mux *http.ServeMux, a *Assistant)
+	Resume              func(ctx context.Context) error
+	Continue            func(ctx context.Context, taskID, previous, request string, budget float64) (state.Run, error)
+	Stop                func(ctx context.Context, commandID, taskID string) (state.Run, error)
+	Features            map[string]bool
+	Scheduler           *scheduler.Service
+	MCP                 *mcp.Service
+	UnattendedWrites    string
+	NextScheduled       func(ctx context.Context) *time.Time
+	InboxUnread         func(ctx context.Context) int
+	ConsolidateMemory   func(ctx context.Context) (state.ConversationSummary, error)
+	NormalizeMemory     func(ctx context.Context, input conversation.ManualMemoryInput) (conversation.NormalizedMemory, error)
+	Extra               []func(mux *http.ServeMux, a *Assistant)
 }
 
 type apiError struct {
@@ -72,8 +55,7 @@ type apiError struct {
 	Accepted  bool            `json:"accepted"`
 	RequestID string          `json:"request_id,omitempty"`
 	Current   json.RawMessage `json:"current,omitempty"`
-	// Receipt is the saved mutation when the change was accepted but a follow-up step failed.
-	Receipt json.RawMessage `json:"receipt,omitempty"`
+	Receipt   json.RawMessage `json:"receipt,omitempty"`
 }
 
 func writeAPIError(w http.ResponseWriter, err error, requestID string, current any) {
@@ -120,7 +102,6 @@ type changeRequest struct {
 	Value            json.RawMessage `json:"value"`
 }
 
-// decodeChange reads a Change or ActionRequest and decodes its value strictly into value.
 func decodeChange(w http.ResponseWriter, r *http.Request, value any) (string, int64, bool) {
 	var req changeRequest
 	if err := httpjson.Decode(w, r, &req, 64<<10); err != nil {
@@ -336,8 +317,6 @@ func (a *Assistant) connectionResources(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, 200, list[connections.Resource]{Items: items})
 }
 
-// oauthCallback completes sign-in for the authenticated user and redirects inside the web app. The attempt is
-// found by its state only within this user's records, so a callback cannot complete another user's connection.
 func (a *Assistant) oauthCallback(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	state, code, providerError := query.Get("state"), query.Get("code"), query.Get("error")
@@ -345,7 +324,6 @@ func (a *Assistant) oauthCallback(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, apiError{Error: "This sign-in link is incomplete.", Code: "validation_failed"})
 		return
 	}
-	// The same redirect URL serves MCP server sign-in; an MCP attempt owns its state, otherwise Connections does.
 	if a.MCP != nil {
 		location, err := a.MCP.Callback(r.Context(), state, code, providerError)
 		if err == nil {
@@ -369,9 +347,6 @@ func (a *Assistant) oauthCallback(w http.ResponseWriter, r *http.Request) {
 	callbackRedirect(w, r, location)
 }
 
-// callbackRedirect answers the sign-in callback. The hosted runtime's gateway does not pass a redirect's Location
-// through to the web tier, which then reported every sign-in as failed. The web tier therefore asks for the
-// destination as JSON; a browser reaching core directly still gets the redirect.
 func callbackRedirect(w http.ResponseWriter, r *http.Request, location string) {
 	if r.Header.Get("X-Nori-Redirect") == "json" || r.URL.Query().Get("nori_redirect") == "json" {
 		writeJSON(w, 200, map[string]string{"location": location})
@@ -496,7 +471,6 @@ func (a *Assistant) ruleAction(w http.ResponseWriter, r *http.Request) {
 	writeReceipt(w, receipt)
 }
 
-// interactions lists stored interactions plus legacy task questions that have no interaction of their own.
 func (a *Assistant) interactions(w http.ResponseWriter, r *http.Request) {
 	status, taskID := r.URL.Query().Get("status"), r.URL.Query().Get("task_id")
 	items, next, err := a.Permissions.Interactions(r.Context(), status, taskID, r.URL.Query().Get("cursor"), 100)
@@ -515,8 +489,6 @@ func (a *Assistant) interactions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, list[permissions.Interaction]{Items: items, NextCursor: next})
 }
 
-// legacyQuestions projects open state.Question records that no stored interaction represents, keeping text
-// answers working through the existing answer command.
 func (a *Assistant) legacyQuestions(ctx context.Context, taskID string, stored []permissions.Interaction) ([]permissions.Interaction, error) {
 	known := map[string]bool{}
 	for _, i := range stored {
@@ -589,13 +561,11 @@ func (a *Assistant) respond(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if value.Kind == "signed_in" {
-		// r2.11: only the server resolves a sign-in as signed_in, when the account or MCP server becomes usable.
 		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
 		return
 	}
 	id := r.PathValue("id")
 	if _, err := a.Permissions.Interaction(r.Context(), id); errors.Is(err, state.ErrNotFound) {
-		// A legacy question becomes a stored interaction on first response so the response is receipted.
 		if err := a.adoptLegacy(r.Context(), id); err != nil {
 			writeAPIError(w, err, requestID, nil)
 			return
@@ -620,12 +590,8 @@ func (a *Assistant) respond(w http.ResponseWriter, r *http.Request) {
 		case err == nil || errors.Is(err, state.ErrDuplicate):
 			a.Permissions.MarkDelivered(r.Context(), id)
 		case errors.Is(err, state.ErrBusy) && !a.taskRunning(r.Context(), answer.TaskID):
-			// The task ended; the answer has nothing left to reach.
 			a.Permissions.MarkDelivered(r.Context(), id)
 		case errors.Is(err, state.ErrQuestionStale), errors.Is(err, state.ErrBusy):
-			// A task that is mid-step answers "busy"; like an unasked question, the saved answer is retried.
-			// The task has not published this question yet. The resolution and its exact answer are saved and the
-			// delivery pass retries until the task asks it, so the answer is never lost.
 			if a.ScheduleAnswerRetry != nil {
 				a.ScheduleAnswerRetry(context.WithoutCancel(r.Context()))
 			}
@@ -664,7 +630,6 @@ func (a *Assistant) rememberDefault(ctx context.Context, purpose, connectionID s
 	}
 	defaults := map[string]string{}
 	for k, v := range prefs.AccountDefaults {
-		// A default naming a connection that no longer exists would make the whole save invalid.
 		if _, err := a.Connections.Get(ctx, v); err == nil {
 			defaults[k] = v
 		}
@@ -702,7 +667,6 @@ type availableTool struct {
 	Exposure      string                   `json:"exposure,omitempty"`
 }
 
-// availableTools computes the inventory from definitions and connection state only; it reads no account content.
 func (a *Assistant) availableTools(ctx context.Context) ([]availableTool, error) {
 	snapshot, _ := a.Tools(ctx)
 	records, _, err := a.Connections.Records(ctx)
@@ -741,7 +705,6 @@ func (a *Assistant) availableTools(ctx context.Context) ([]availableTool, error)
 		}
 		add(d, "ready", "", "", ids)
 	}
-	// Tools of catalog integrations not yet connected or missing access.
 	for id, integration := range a.Connections.Integrations {
 		for _, d := range integration.Definitions() {
 			if seen[d.Ref.ID] {
@@ -823,13 +786,6 @@ func mustJSON(v any) json.RawMessage {
 	return data
 }
 
-// newRequestIDFrom derives a stable request ID for a dependent mutation, so a retried request repeats it exactly.
-func newRequestIDFrom(requestID string) string {
-	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("dependent:"+requestID)).String()
-}
-
-// ResolveSignIns answers every pending sign-in interaction for a connection once its sign-in completes, so each task
-// that was waiting resumes and retries the call that needed the account.
 func (a *Assistant) ResolveSignIns(ctx context.Context, connectionID string) {
 	if a.Permissions == nil || a.Answer == nil {
 		return

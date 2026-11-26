@@ -1,9 +1,6 @@
-# The demo reuses the local dependency images and volumes.
-# Each Compose project gets its own volumes and Docker assigns its host ports.
 services:
   postgres:
     ports: !override
       - "127.0.0.1::5432"
     healthcheck:
-      # Wait for the network listener after Postgres finishes initializing.
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "nori", "-d", "nori"]

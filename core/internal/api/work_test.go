@@ -62,7 +62,6 @@ func TestSummaryRevisionMonotonicWhenNeedsYouDrops(t *testing.T) {
 		return out
 	}
 
-	// Start a task and park it on a clarifying question so needs_you == 1.
 	taskID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	start := state.Command{
 		ID:        taskID,
@@ -97,7 +96,6 @@ func TestSummaryRevisionMonotonicWhenNeedsYouDrops(t *testing.T) {
 		t.Fatalf("expected positive revision, got %d", s1.Revision)
 	}
 
-	// Answer the question and complete the task so needs_you drops back to 0.
 	time.Sleep(2 * time.Millisecond)
 	ans := state.Command{
 		ID:         "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
@@ -153,7 +151,6 @@ func TestSummaryRevisionStrictlyMonotonicAcrossRapidCallsAndClockJump(t *testing
 	mux := http.NewServeMux()
 	assistant.register(mux)
 
-	// 1. Rapid sequential calls (no sleep) must yield strictly increasing revisions.
 	var prev int64
 	for i := 0; i < 64; i++ {
 		req := httptest.NewRequest(http.MethodGet, "/v1/assistant/summary", nil)
@@ -172,13 +169,11 @@ func TestSummaryRevisionStrictlyMonotonicAcrossRapidCallsAndClockJump(t *testing
 		prev = out.Revision
 	}
 
-	// 2. Simulated backward wall-clock jump must still strictly increase.
 	jumped := nextSummaryRevision(prev - 60_000)
 	if jumped != prev+1 {
 		t.Fatalf("backward wall-clock step revision = %d, want %d", jumped, prev+1)
 	}
 
-	// 3. Concurrent calls must all produce unique revisions without races.
 	const goroutines = 8
 	const perGoroutine = 25
 	results := make(chan int64, goroutines*perGoroutine)
@@ -264,8 +259,6 @@ func TestConversationEndpointsAvoidRedundantWakesAndRepairTaskOnlyWork(t *testin
 		Ops:    ops,
 	})
 
-	// 1. POST /v1/conversations/assistant/messages writes LaneConversation once in-tx
-	// without calling s.Waker.WakeConversation redundantly.
 	msgID := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
 	body := bytes.NewBufferString(`{"id":"` + msgID + `","text":"hello nori"}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/conversations/assistant/messages", body)
@@ -283,7 +276,6 @@ func TestConversationEndpointsAvoidRedundantWakesAndRepairTaskOnlyWork(t *testin
 		t.Fatalf("user wakes after message accept = %+v (err=%v), want 1 LaneConversation wake with WakeSeq=1", wakes, err)
 	}
 
-	// 2. POST /v1/conversations/assistant/cancel does NOT spuriously call s.Waker.WakeConversation.
 	cancelBody := bytes.NewBufferString(`{"turnId":"` + msgID + `"}`)
 	req = httptest.NewRequest(http.MethodPost, "/v1/conversations/assistant/cancel", cancelBody)
 	req.Header.Set("Content-Type", "application/json")
@@ -296,10 +288,6 @@ func TestConversationEndpointsAvoidRedundantWakesAndRepairTaskOnlyWork(t *testin
 		t.Fatalf("external WakeConversation calls after cancel = %d, want 0", got)
 	}
 
-	// 3. Seed an undelivered task command while conversation inbox is empty:
-	// GET /v1/conversations/assistant skips RepairWake on idle inbox, AND calling
-	// Repairer.Repair directly skips task-only WorkVersion ("command:...") without
-	// waking LaneConversation!
 	taskID := "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
 	if _, err := store.AcceptCommandBatch(ctx, []state.Command{{
 		ID: taskID, RunID: taskID, Kind: state.CommandStart, Text: "background work", CreatedAt: time.Now().UTC(),
@@ -327,7 +315,6 @@ func TestConversationEndpointsAvoidRedundantWakesAndRepairTaskOnlyWork(t *testin
 		t.Fatalf("Repairer woke LaneConversation %d times for task-only WorkVersion %q, want 0", got, wv)
 	}
 
-	// 4. POST /api/turn writes LaneConversation once in-tx (WakeSeq advances by 1, not 2).
 	turnID := "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
 	turnBody := bytes.NewBufferString(`{"id":"` + turnID + `","message":"second message"}`)
 	req = httptest.NewRequest(http.MethodPost, "/api/turn", turnBody)
@@ -345,8 +332,6 @@ func TestConversationEndpointsAvoidRedundantWakesAndRepairTaskOnlyWork(t *testin
 		t.Fatalf("user wakes after /api/turn = %+v (err=%v), want WakeSeq=2", wakes, err)
 	}
 
-	// 5. GET /v1/conversations/assistant while conversation IS pending & not processing
-	// triggers RepairWake -> Repairer wakes LaneConversation for "assistant:...".
 	req = httptest.NewRequest(http.MethodGet, "/v1/conversations/assistant", nil)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

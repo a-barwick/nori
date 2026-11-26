@@ -1000,7 +1000,6 @@ func TestDST_InnerContext128KiBAndMemoryRecallTools(t *testing.T) {
 			costPerCall:   0.01,
 		})
 
-		// 1. Seed pre-ContextFrom conversation message and Daily Log entry on virtual clock t0.
 		t0 := h.clock.Now().UTC().Truncate(time.Microsecond)
 		todayDate := t0.Format("2006-01-02")
 		preMsgID := h.ids.Next()
@@ -1030,7 +1029,6 @@ func TestDST_InnerContext128KiBAndMemoryRecallTools(t *testing.T) {
 			t.Fatalf("CommitFlushAndCompact pre-cutoff: %v", err)
 		}
 
-		// 2. Advance virtual clock +2h and set ContextFrom cutoff.
 		h.clock.Advance(2 * time.Hour)
 		cutoff := h.clock.Now().UTC().Truncate(time.Microsecond)
 		controlPath := "owners/" + h.user.DataOwner() + "/conversation/control"
@@ -1042,14 +1040,12 @@ func TestDST_InnerContext128KiBAndMemoryRecallTools(t *testing.T) {
 			t.Fatalf("set context_from: %v", err)
 		}
 
-		// 3. Advance virtual clock +10m and seed post-ContextFrom message, Core memories, Daily Log, and Working Memory.
 		h.clock.Advance(10 * time.Minute)
 		postTime := h.clock.Now().UTC().Truncate(time.Microsecond)
 		postMsgID := h.ids.Next()
 		if err := h.store.AcceptConversationInput(ctx, postMsgID, "aurora post-cutoff aurora_post_cutoff discuss milestone alpha", nil); err != nil {
 			t.Fatalf("AcceptConversationInput post-cutoff: %v", err)
 		}
-		// Mark outer routing clear so the inner task publishes without holding for UserRoutingPending.
 		convCtrl, _, err := h.store.ConversationStatus(ctx)
 		if err != nil {
 			t.Fatalf("ConversationStatus: %v", err)
@@ -1068,8 +1064,6 @@ func TestDST_InnerContext128KiBAndMemoryRecallTools(t *testing.T) {
 			t.Fatalf("clear user routing pending: %v", err)
 		}
 
-		// Create 6 Core memories (~1800B each = ~10.8 KiB total) so memory_get("core") output is large enough
-		// to trigger fitContext (>128 KiB) omission on older tool outputs cleanly.
 		pinnedTrue := true
 		for i := range 6 {
 			padding := strings.Repeat(fmt.Sprintf("aurora_post_cutoff_core_%d ", i), 65)
@@ -1132,7 +1126,6 @@ func TestDST_InnerContext128KiBAndMemoryRecallTools(t *testing.T) {
 			t.Fatalf("expected 6 Core memories before task, got %d", len(coreBefore))
 		}
 
-		// 4. Drive a real task.Runner execution > 128 KiB exercising fitContext -> projectContext and all 7 recall tools.
 		var (
 			phase                 = "grow_fit"
 			growFitCalls          = 0
@@ -1154,8 +1147,6 @@ func TestDST_InnerContext128KiBAndMemoryRecallTools(t *testing.T) {
 		}
 
 		h.driver.Model.SetScript(func(_ context.Context, _ string, req agent.Request) (agent.Response, error, bool) {
-			// Scan incoming projected/fitted request messages for fitContext omissions, projectContext archive notices,
-			// and recall tool results from the previous turn.
 			for _, msg := range req.Messages {
 				for _, p := range msg.Parts {
 					if p.ToolResult != nil {
@@ -1319,7 +1310,6 @@ func TestDST_InnerContext128KiBAndMemoryRecallTools(t *testing.T) {
 						Name: inner.ToolNameRead,
 						Args: map[string]any{"key": fmt.Sprintf("k-%d", growProjectCalls)},
 					}
-					// Attach ~16 KiB of non-omittable model text so fitted transcript exceeds 128 KiB and triggers projectContext.
 					largeNote := fmt.Sprintf("Large model analysis block %d: ", growProjectCalls) + strings.Repeat("context_growth_segment_128k ", 600)
 					msg := transcript.Message{
 						Role: transcript.RoleModel,
@@ -1361,7 +1351,6 @@ func TestDST_InnerContext128KiBAndMemoryRecallTools(t *testing.T) {
 						"offset":      "0",
 					}, 0.01), nil, true
 				default:
-					// Emit a >600B answer to prove Publish bounds task_outcome Daily Log entries to <= 600 bytes.
 					longAnswer := "Completed aurora_post_cutoff recall audit successfully: " + strings.Repeat("verified_milestone_alpha_outcome ", 28)
 					return scriptedCall("recall-complete", "complete", map[string]any{
 						"answer":   longAnswer,
@@ -1397,7 +1386,6 @@ func TestDST_InnerContext128KiBAndMemoryRecallTools(t *testing.T) {
 			}
 		}
 
-		// 5. Verify Publish did NOT mutate Core Memory (INV-MEM-04).
 		coreAfter, err := h.store.Memories(ctx)
 		if err != nil {
 			t.Fatalf("Memories after task: %v", err)
@@ -1414,7 +1402,6 @@ func TestDST_InnerContext128KiBAndMemoryRecallTools(t *testing.T) {
 			}
 		}
 
-		// 6. Verify Publish appended a bounded (<= 600 B) task_outcome entry to today's Daily Log & MemoryIndex.
 		logDoc, err := h.store.MemoryLog(ctx, todayDate)
 		if err != nil {
 			t.Fatalf("MemoryLog(%s): %v", todayDate, err)
@@ -1438,7 +1425,6 @@ func TestDST_InnerContext128KiBAndMemoryRecallTools(t *testing.T) {
 				state.MaxTaskOutcomeBytes, len(taskEntry.Text), utf8.ValidString(taskEntry.Text), taskEntry.Text)
 		}
 
-		// Verify the new task_outcome entry is indexed in MemoryIndex.
 		hits, err := h.store.SearchMemory(ctx, docstore.MemorySearchQuery{
 			Query:        "verified_milestone_alpha_outcome",
 			Layer:        docstore.MemoryLayerLog,

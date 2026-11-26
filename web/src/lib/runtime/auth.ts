@@ -11,7 +11,6 @@ const lastRejection = new Map<string, number>();
 function rejected(stage: string, status?: number): null {
   if (Date.now() - (lastRejection.get(stage) ?? 0) >= 60_000) {
     lastRejection.set(stage, Date.now());
-    // Never log assertions, provider error messages, or user identities.
     console.warn(JSON.stringify({ severity: "WARNING", message: "nori.auth.rejected", stage, ...(status ? { status } : {}) }));
   }
   return null;
@@ -34,8 +33,6 @@ export function accessFailureResponse(failure: AccessFailure, plainText = false)
   return plainText ? new Response(failure.error, init) : Response.json({ error: failure.error }, init);
 }
 
-// The hosted runtime allows few queries per minute, and every page and API request resolves the caller first.
-// Remember successful resolutions briefly; failures are never remembered, and the runtime still checks each request.
 const RESOLVED_TTL_MS = 5 * 60_000;
 const resolved = new Map<string, { userID: string; expires: number }>();
 
@@ -87,7 +84,6 @@ export function sameOrigin(request: Request) {
   }
 }
 
-/** A browser's EventSource and same-origin GET send no Origin header, so a read checks Sec-Fetch-Site. */
 export function sameOriginRead(request: Request): boolean {
   return request.headers.get("sec-fetch-site") === "same-origin";
 }

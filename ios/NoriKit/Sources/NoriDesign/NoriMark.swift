@@ -4,7 +4,6 @@ import NoriCore
 import UIKit
 #endif
 
-/// Exact onigiri silhouette path ported from `web/src/components/mark/NoriMark.tsx` (96×96 coordinate space).
 public struct OnigiriRiceShape: Shape {
     public init() {}
 
@@ -15,14 +14,6 @@ public struct OnigiriRiceShape: Shape {
             CGPoint(x: rect.minX + x * sx, y: rect.minY + y * sy)
         }
 
-        // M48 11
-        // C54.5 11 59.2 14.3 62.6 20
-        // L84.6 58.4
-        // C91.5 70.5 84.6 85 70.6 85
-        // H25.4
-        // C11.4 85 4.5 70.5 11.4 58.4
-        // L33.4 20
-        // C36.8 14.3 41.5 11 48 11 Z
         var p = Path()
         p.move(to: pt(48, 11))
         p.addCurve(to: pt(62.6, 20), control1: pt(54.5, 11), control2: pt(59.2, 14.3))
@@ -37,10 +28,6 @@ public struct OnigiriRiceShape: Shape {
     }
 }
 
-/// Animated Nori onigiri mark with appearance-aware palette:
-/// - Light mode: `#FDFCFF` soft white rice, `#101A30` navy seaweed wrap, `#190936` outline & expression
-/// - Dark mode: `#C6C4CE` soft light-gray body, `#171522` dark face & seaweed wrap, `#D1CFD8` subtle outer edge
-/// - Periodic eye blink (idle / attentive), downward glance (attentive), and 2s thinking eye sweep (thinking).
 public struct NoriMark: View {
     public let size: CGFloat
     public let state: MarkState
@@ -103,10 +90,8 @@ public struct NoriMark: View {
 
             let ricePath = OnigiriRiceShape().path(in: box)
 
-            // 1. Appearance-aware rice body fill (soft white in light, #C6C4CE light-gray in dark)
             context.fill(ricePath, with: .color(bodyColor))
 
-            // 2. Seaweed wrap clipped cleanly to rice silhouette (x:30, y:61, w:36, h:30, rx:3)
             context.drawLayer { layer in
                 layer.clip(to: ricePath)
                 let wrapRect = CGRect(x: ox + 30.0 * s, y: oy + 61.0 * s, width: 36.0 * s, height: 30.0 * s)
@@ -114,7 +99,6 @@ public struct NoriMark: View {
                 layer.fill(wrapPath, with: .color(seaweedColor))
             }
 
-            // 3. Outer silhouette stroke (dark ink in light, subtle #D1CFD8 edge in dark)
             let edgeWidth = isDark ? max(0.85, 1.35 * s) : max(1.0, 1.75 * s)
             context.stroke(
                 ricePath,
@@ -122,7 +106,6 @@ public struct NoriMark: View {
                 style: StrokeStyle(lineWidth: edgeWidth, lineCap: .round, lineJoin: .round)
             )
 
-            // 4. Eyes at (38.5, 46) and (57.5, 46), rx: 3.4, ry: 4.0
             let rx = 3.4 * s
             let ry = 4.0 * s * blinkScaleY
             let dx = eyeOffset.width * s
@@ -135,7 +118,6 @@ public struct NoriMark: View {
                 context.fill(Path(ellipseIn: eyeRect), with: .color(faceColor))
             }
 
-            // 5. Smile: M44 53.5 Q48 57.1 52 53.5
             var mouth = Path()
             mouth.move(to: CGPoint(x: ox + 44.0 * s, y: oy + 53.5 * s))
             mouth.addQuadCurve(
@@ -150,7 +132,6 @@ public struct NoriMark: View {
         }
     }
 
-    /// Replicates `@keyframes mark-think` (2s cycle: 0% -> 30% (-2.4,-2.6) -> 65% (2.4,-2.6) -> 100% (0,0)).
     private func thinkingOffset(at timestamp: TimeInterval) -> CGSize {
         let phase = (timestamp.truncatingRemainder(dividingBy: 2.0) + 2.0).truncatingRemainder(dividingBy: 2.0) / 2.0
         func ease(_ t: Double) -> Double {
@@ -186,10 +167,8 @@ public struct NoriMedallion: View {
     }
 }
 
-// MARK: - Tab Bar Icon
 
 public extension NoriMark {
-    /// Monochrome template image of the Nori onigiri avatar sized for iOS `TabView` `.tabItem`.
     @MainActor
     static func tabBarIcon(selected: Bool) -> Image {
         #if canImport(UIKit)
@@ -208,7 +187,7 @@ public extension NoriMark {
         let side: CGFloat = 25
         let format = UIGraphicsImageRendererFormat()
         format.opaque = false
-        format.scale = 0 // native screen scale
+        format.scale = 0
 
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format)
         let image = renderer.image { rendererContext in
@@ -236,19 +215,15 @@ public extension NoriMark {
             ctx.setLineJoin(.round)
 
             if selected {
-                // Solid onigiri silhouette with negative-space expression & seaweed wrap seam
                 ctx.addPath(ricePath)
                 ctx.fillPath()
 
                 ctx.setBlendMode(.clear)
-                // Eyes
                 ctx.fillEllipse(in: leftEyeRect)
                 ctx.fillEllipse(in: rightEyeRect)
-                // Smile
                 ctx.addPath(mouthPath)
                 ctx.setLineWidth(max(1.2, 3.0 * s))
                 ctx.strokePath()
-                // Crisp seam separating the seaweed wrap from the rice body
                 ctx.saveGState()
                 ctx.addPath(ricePath)
                 ctx.clip()
@@ -257,7 +232,6 @@ public extension NoriMark {
                 ctx.strokePath()
                 ctx.restoreGState()
             } else {
-                // Outline onigiri silhouette with solid seaweed wrap & expression
                 ctx.saveGState()
                 ctx.addPath(ricePath)
                 ctx.clip()

@@ -32,15 +32,6 @@ type storedApproval struct {
 	At          time.Time `json:"at"`
 }
 
-// CheckInnerInvariants verifies all inner-loop safety and accounting invariants across
-// FakeAdapter.Executed, FakeInnerModel.ModelCalls, and durable Store state:
-//  1. Zero unapproved writes: every non-read call in Executed had a valid allow rule or an
-//     approved interaction matching (RunID, Revision, ActionDigest) at execution time.
-//  2. Zero duplicate external side effects: no (RunID, OperationID) with a write/send side
-//     effect is ever executed twice.
-//  3. Budget ceiling enforcement: no model call is ever issued once Spent + Others >= Budget.
-//  4. Budget exhaustion semantics: budget-exhausted tasks terminate with RunFailed and
-//     ExpectedIncomplete == true (unless explicitly cancelled or crashed before publishing).
 func (d *Driver) CheckInnerInvariants(ctx context.Context) error {
 	if d.storeFaults != nil {
 		was := d.storeFaults.Enabled()
@@ -52,7 +43,6 @@ func (d *Driver) CheckInnerInvariants(ctx context.Context) error {
 
 	var violations []error
 
-	// 1 & 2: Inspect every entry in FakeAdapter's append-only Executed ledger.
 	executed := d.Adapter.Executed()
 	seenWriteOps := make(map[providerOpKey]ExecutedCall)
 	for i, call := range executed {
@@ -60,7 +50,6 @@ func (d *Driver) CheckInnerInvariants(ctx context.Context) error {
 			continue
 		}
 
-		// Invariant 2: Zero duplicate external side effects.
 		opKey := providerOpKey{runID: call.RunID, operationID: call.OperationID}
 		if prev, exists := seenWriteOps[opKey]; exists {
 			violations = append(violations, fmt.Errorf(
@@ -71,7 +60,6 @@ func (d *Driver) CheckInnerInvariants(ctx context.Context) error {
 			seenWriteOps[opKey] = call
 		}
 
-		// Invariant 1: Zero unapproved writes.
 		uid := call.UserID
 		if uid == "" {
 			var err error
@@ -183,7 +171,6 @@ func (d *Driver) CheckInnerInvariants(ctx context.Context) error {
 		}
 	}
 
-	// 3: Inspect every entry in FakeInnerModel's ModelCalls ledger.
 	modelCalls := d.Model.ModelCalls()
 	for i, mc := range modelCalls {
 		if mc.Budget > 0 && mc.SpentBefore >= mc.Budget {
@@ -194,7 +181,6 @@ func (d *Driver) CheckInnerInvariants(ctx context.Context) error {
 		}
 	}
 
-	// 4: Verify budget-exhausted tasks terminated with RunFailed and ExpectedIncomplete == true.
 	pubsByRun := make(map[string][]PublicationRecord)
 	for _, p := range d.Publications() {
 		pubsByRun[p.RunID] = append(pubsByRun[p.RunID], p)

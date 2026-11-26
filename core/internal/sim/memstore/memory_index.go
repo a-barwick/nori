@@ -69,14 +69,12 @@ func validateMemoryChunk(chunk docstore.MemoryChunk) error {
 	return nil
 }
 
-// UpsertMemoryChunk writes or replaces a single indexed memory chunk atomically.
 func (b *Backend) UpsertMemoryChunk(ctx context.Context, chunk docstore.MemoryChunk) error {
 	return b.RunTransaction(ctx, false, defaultTxAttempts, func(tx docstore.TransactionBackend) error {
 		return tx.(docstore.MemoryIndexWriter).UpsertMemoryChunk(ctx, chunk)
 	})
 }
 
-// DeleteMemoryChunk removes a single indexed memory chunk atomically.
 func (b *Backend) DeleteMemoryChunk(ctx context.Context, owner, chunkID string) error {
 	return b.RunTransaction(ctx, false, defaultTxAttempts, func(tx docstore.TransactionBackend) error {
 		return tx.(docstore.MemoryIndexWriter).DeleteMemoryChunk(ctx, owner, chunkID)
@@ -120,7 +118,6 @@ func (t *transaction) DeleteMemoryChunk(ctx context.Context, owner, chunkID stri
 	return nil
 }
 
-// ListMemoryChunks returns all indexed chunks for owner sorted by chunk_id ASC.
 func (b *Backend) ListMemoryChunks(ctx context.Context, owner string) ([]docstore.MemoryChunk, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -146,8 +143,6 @@ func (b *Backend) ListMemoryChunks(ctx context.Context, owner string) ([]docstor
 	return out, nil
 }
 
-// SearchMemory executes dual-dictionary (english + simple) full-text search
-// with 30-day half-life recency decay and deterministic token-Jaccard MMR reranking.
 func (b *Backend) SearchMemory(ctx context.Context, query docstore.MemorySearchQuery) ([]docstore.MemorySearchHit, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -262,14 +257,12 @@ func (b *Backend) SearchMemory(ctx context.Context, query docstore.MemorySearchQ
 	return rerankMemoryMMR(candidates, limit, docstore.MemoryMMRLambda), nil
 }
 
-// websearchQuery represents a parsed OR-of-AND-clauses query matching Postgres
-// websearch_to_tsquery semantics (quotes for phrases, OR, -negation).
 type websearchQuery struct {
 	clauses []websearchClause
 }
 
 type websearchClause struct {
-	must    [][]string // each element is a token sequence (1 token for word, >1 for phrase)
+	must    [][]string
 	mustNot [][]string
 }
 
@@ -437,7 +430,6 @@ func matchSeq(seq []string, doc []string, set map[string]struct{}) bool {
 		_, ok := set[seq[0]]
 		return ok
 	}
-	// Phrase match: consecutive tokens in doc.
 	for i := 0; i+len(seq) <= len(doc); i++ {
 		if doc[i] != seq[0] {
 			continue
@@ -456,10 +448,6 @@ func matchSeq(seq []string, doc []string, set map[string]struct{}) bool {
 	return false
 }
 
-// tokenizeSimple preserves exact lowercase tokens (code identifiers, emails,
-// dotted versions, UUIDs) and also emits sub-segments split on separators like
-// '-' / '.' / '/' / '@' so searches match both full identifiers and parts,
-// mirroring Postgres's 'simple' text search parser.
 func tokenizeSimple(s string) []string {
 	lower := strings.ToLower(s)
 	var out []string
@@ -498,7 +486,6 @@ func tokenizeSimple(s string) []string {
 	return out
 }
 
-// tokenizeEnglish emits lowercase English-stemmed tokens with standard stopwords removed.
 func tokenizeEnglish(s string) []string {
 	lower := strings.ToLower(s)
 	var out []string
@@ -546,13 +533,10 @@ var englishStopwords = map[string]struct{}{
 	"yours": {}, "yourself": {}, "yourselves": {},
 }
 
-// stemEnglish applies lightweight deterministic English suffix stripping matching
-// common Snowball/Porter stems (plurals, -ing, -ed, -ies, -ment, -ness, -ly).
 func stemEnglish(w string) string {
 	if len(w) <= 2 || strings.Contains(w, "_") {
 		return w
 	}
-	// Do not stem words containing digits (identifiers, versions, hex IDs).
 	for _, r := range w {
 		if unicode.IsDigit(r) {
 			return w

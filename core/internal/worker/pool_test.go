@@ -122,31 +122,26 @@ func TestPoolWakeNotifierFanout(t *testing.T) {
 	chB1, unsubB1 := pool.Subscribe("uB", "r1")
 	defer unsubB1()
 
-	// 1. Specific task wake reaches only (uA, r1).
 	pool.HandleWake(docstore.WakeEvent{Channel: docstore.WakeChannel, Payload: docstore.TaskWakePayload("uA", "r1")})
 	expectSignal(t, chA1, "uA/r1 specific wake")
 	expectNoSignal(t, chA2, "uA/r2 should not receive uA/r1 wake")
 	expectNoSignal(t, chB1, "uB/r1 should not receive uA/r1 wake")
 
-	// 2. User-wide task wake reaches all uA subscribers only.
 	pool.HandleWake(docstore.WakeEvent{Channel: docstore.WakeChannel, Payload: docstore.UserTasksWakePayload("uA")})
 	expectSignal(t, chA1, "uA/r1 user-wide wake")
 	expectSignal(t, chA2, "uA/r2 user-wide wake")
 	expectNoSignal(t, chB1, "uB/r1 should not receive uA:* wake")
 
-	// 3. Global pause notifies all active task subscribers immediately.
 	pool.HandleWake(docstore.WakeEvent{Channel: docstore.WakeChannel, Payload: docstore.WakePayloadPause})
 	expectSignal(t, chA1, "uA/r1 pause")
 	expectSignal(t, chA2, "uA/r2 pause")
 	expectSignal(t, chB1, "uB/r1 pause")
 
-	// 4. Resync notifies all active task subscribers.
 	pool.HandleWake(docstore.WakeEvent{Channel: docstore.WakeChannel, Payload: docstore.WakePayloadResync})
 	expectSignal(t, chA1, "uA/r1 resync")
 	expectSignal(t, chA2, "uA/r2 resync")
 	expectSignal(t, chB1, "uB/r1 resync")
 
-	// 5. Unsubscribe removes subscriber cleanly.
 	unsubA2()
 	pool.HandleWake(docstore.WakeEvent{Channel: docstore.WakeChannel, Payload: docstore.WakePayloadAllTask})
 	expectSignal(t, chA1, "uA/r1 global task wake")
@@ -267,9 +262,6 @@ func TestPoolOuterConversationClaimParkAndConcurrentWake(t *testing.T) {
 		RunConversation: func(ctx context.Context, userApp *app.App) error {
 			n := runs.Add(1)
 			if n == 1 {
-				// Simulate a concurrent wake arriving mid-turn (bumping wake_seq).
-				// Because ConversationStatus is idle (nothing pending in records),
-				// Pool will try ParkUserWake -> parked=false -> release immediately -> run #2!
 				if err := backend.WakeUser(ctx, u.ID, docstore.LaneConversation, time.Time{}); err != nil {
 					return err
 				}
@@ -299,7 +291,6 @@ func TestPoolOuterConversationClaimParkAndConcurrentWake(t *testing.T) {
 		t.Fatalf("expected concurrent wake to prevent parking and trigger pass #2; runs=%d", runs.Load())
 	}
 
-	// Wait briefly for pass #2 to park cleanly.
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		wakes, err := backend.ListUserWakes(ctx, u.ID)
@@ -352,7 +343,6 @@ func TestPoolOuterSchedulerDelayedClaimReArmAndPark(t *testing.T) {
 		t.Fatalf("worker.New: %v", err)
 	}
 
-	// Schedule first run 1 hour in the future -> must NOT run yet.
 	firstDue := clock.Now().Add(time.Hour)
 	if err := backend.WakeUser(ctx, u.ID, docstore.LaneScheduler, firstDue); err != nil {
 		t.Fatalf("WakeUser future: %v", err)
@@ -367,7 +357,6 @@ func TestPoolOuterSchedulerDelayedClaimReArmAndPark(t *testing.T) {
 		t.Fatalf("scheduler ran before wake_at was due: pass=%d", pass.Load())
 	}
 
-	// Advance clock to firstDue -> pass 1 runs and re-arms secondDue.
 	clock.Advance(time.Hour)
 	select {
 	case <-pass1Done:
@@ -375,7 +364,6 @@ func TestPoolOuterSchedulerDelayedClaimReArmAndPark(t *testing.T) {
 		t.Fatalf("scheduler pass 1 did not run after wake_at became due")
 	}
 
-	// Verify re-armed wake_at == secondDue and not claimed yet.
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		wakes, _ := backend.ListUserWakes(ctx, u.ID)
@@ -389,7 +377,6 @@ func TestPoolOuterSchedulerDelayedClaimReArmAndPark(t *testing.T) {
 		t.Fatalf("expected re-armed scheduler wake at %s, got %+v", secondDue, wakes)
 	}
 
-	// Advance to secondDue -> pass 2 runs, returns nil, and parks cleanly.
 	clock.Advance(time.Hour)
 	select {
 	case <-pass2Done:
@@ -427,7 +414,6 @@ func TestPoolRepairSweep(t *testing.T) {
 	}
 	defer release()
 
-	// 1. Missing runnable task lease for an open run -> must be recreated.
 	missingLeaseRunID := uuid.NewString()
 	if _, err := userApp.Store.AcceptCommandBatch(ctx, []state.Command{{
 		ID: uuid.NewString(), RunID: missingLeaseRunID, Kind: state.CommandStart, Text: "open task",
@@ -438,7 +424,6 @@ func TestPoolRepairSweep(t *testing.T) {
 		t.Fatalf("DeleteTaskLease: %v", err)
 	}
 
-	// 2. Orphan lease for missing run and for unknown user -> must be deleted.
 	orphanRunID := uuid.NewString()
 	if err := backend.WakeTask(ctx, u.ID, orphanRunID, time.Time{}); err != nil {
 		t.Fatalf("WakeTask orphan: %v", err)
@@ -448,7 +433,6 @@ func TestPoolRepairSweep(t *testing.T) {
 		t.Fatalf("WakeTask unknown user: %v", err)
 	}
 
-	// 3. Stuck parked leases while !Paused: paused, routing_pending, question (no question on run), finishing (no children).
 	stuckReasons := []string{
 		docstore.WaitPaused,
 		docstore.WaitRoutingPending,
@@ -474,8 +458,6 @@ func TestPoolRepairSweep(t *testing.T) {
 		}
 	}
 
-	// 4. On a second user: pending conversation input whose user wake was parked -> conversation wake must be recreated,
-	// AND a routing_pending task on that user must STAY parked while conv.RoutingPending() is true.
 	u2 := mustCreateUser(t, svc, uuid.NewString(), "repair2@example.com")
 	userApp2, release2, err := svc.Acquire(ctx, u2)
 	if err != nil {
@@ -506,7 +488,6 @@ func TestPoolRepairSweep(t *testing.T) {
 		t.Fatalf("ParkTask legitRoutingRunID: parked=%v err=%v", parked, err)
 	}
 
-	// 5. Enabled automation with NextAt and no scheduler wake -> must create scheduler wake <= NextAt.
 	nextDue := clock.Now().Add(30 * time.Minute)
 	autoBody, _ := json.Marshal(map[string]any{
 		"id":      "auto-1",
@@ -584,7 +565,6 @@ func TestPoolRepairSweep(t *testing.T) {
 		t.Fatalf("expected u2 conversation wake re-armed, got ok=%v wake=%+v", ok, cw)
 	}
 
-	// 6. Global pause + CancelRequested -> RepairOnce invokes StopPaused and deletes lease.
 	pausedStopRunID := uuid.NewString()
 	if _, err := userApp.Store.AcceptCommandBatch(ctx, []state.Command{{
 		ID: uuid.NewString(), RunID: pausedStopRunID, Kind: state.CommandStart, Text: "stop while paused",
@@ -720,7 +700,6 @@ func TestPoolGracefulShutdownDrainAndTimeout(t *testing.T) {
 			Now:            clock.Now,
 			RunTask: func(workCtx context.Context, userApp *app.App, claim docstore.TaskLease, drain <-chan struct{}) (task.RunOutcome, error) {
 				close(started)
-				// Deliberately ignore drainCh to test DrainTimeout -> workCtx cancellation.
 				<-workCtx.Done()
 				sawWorkCancel.Store(true)
 				finCtx, finCancel := context.WithTimeout(context.WithoutCancel(workCtx), time.Second)
@@ -819,7 +798,6 @@ func TestPoolSlowConversationAndSchedulerBeyondCancelGrace(t *testing.T) {
 		CancelGrace:             25 * time.Millisecond,
 		Now:                     clock.Now,
 		RunConversation: func(ctx context.Context, _ *app.App) error {
-			// Exceed CancelGrace by >3x; finCtx MUST be constructed after return, not before!
 			time.Sleep(90 * time.Millisecond)
 			close(convDone)
 			return nil
@@ -928,8 +906,6 @@ func TestPoolRunNowOnceAutomationSettlementAndDeferredAnswer(t *testing.T) {
 	}
 	defer release()
 
-	// Huge PollInterval & RepairInterval prove wakes alone (no fallback poll/repair!) drive
-	// run_now -> task.Runner -> Publish -> LaneScheduler settlement + Inbox delivery, AND deferred answer retry.
 	pool, err := worker.New(svc, worker.Options{
 		Owner:                   "pool-real-sched",
 		TaskConcurrency:         2,
@@ -958,7 +934,6 @@ func TestPoolRunNowOnceAutomationSettlementAndDeferredAnswer(t *testing.T) {
 		t.Fatalf("WaitForWakeSubscribers: %v", err)
 	}
 
-	// 1. Create a "once" automation far in the future, then trigger run_now!
 	farFuture := clock.Now().Add(48 * time.Hour)
 	saveReq := uuid.NewString()
 	saveRcpt, err := userApp.Scheduler.Save(ctx, "", saveReq, 0, scheduler.Editable{
@@ -986,8 +961,6 @@ func TestPoolRunNowOnceAutomationSettlementAndDeferredAnswer(t *testing.T) {
 		t.Fatalf("expected run_now Work.TaskID, got %+v", actRcpt)
 	}
 
-	// Wait for BOTH inbox delivery and occurrence settlement purely from wakes (PollInterval = 1h!).
-	// scheduler.finish delivers InboxItem before settling Occurrence.Status="completed", so poll both.
 	deadline := time.Now().Add(5 * time.Second)
 	var inbox []scheduler.InboxItem
 	var occs []scheduler.Occurrence
@@ -1007,9 +980,6 @@ func TestPoolRunNowOnceAutomationSettlementAndDeferredAnswer(t *testing.T) {
 		t.Fatalf("expected 1 delivered InboxItem and settled completed occurrence after run_now+Publish wake, got inbox=%d occs=%+v (run=%+v)", len(inbox), curOccs, run)
 	}
 
-	// 2. Deferred pre-ask interaction answer: create task + interaction BEFORE task asks,
-	// respond via real HTTP handler (triggers ErrQuestionStale -> ScheduleAnswerRetry -> LaneScheduler at now+2s),
-	// then record the matching Ask and advance clock so Pool retries deliverAnswers cleanly!
 	taskID := uuid.NewString()
 	deferTaskID.Store(taskID)
 	if _, err := userApp.Store.AcceptCommandBatch(ctx, []state.Command{{
@@ -1017,8 +987,6 @@ func TestPoolRunNowOnceAutomationSettlementAndDeferredAnswer(t *testing.T) {
 	}}, nil); err != nil {
 		t.Fatalf("AcceptCommandBatch deferTask: %v", err)
 	}
-	// Wait until SyncHistory has incorporated Position=1 and the task is deterministically
-	// paused inside ModelRef before opening the pre-ask interaction and projecting the question.
 	select {
 	case <-modelEntered:
 	case <-time.After(5 * time.Second):
@@ -1031,7 +999,6 @@ func TestPoolRunNowOnceAutomationSettlementAndDeferredAnswer(t *testing.T) {
 			close(allowDeferredComplete)
 		}
 	}()
-	// Open a pending interaction for this task BEFORE it calls Ask (matching real pre-ask race).
 	interID := "int_" + uuid.NewString()[:8]
 	rev1 := int64(1)
 	inter, err := userApp.Assistant.Permissions.Open(ctx, permissions.Interaction{
@@ -1045,7 +1012,6 @@ func TestPoolRunNowOnceAutomationSettlementAndDeferredAnswer(t *testing.T) {
 		t.Fatalf("Permissions.Open: %v", err)
 	}
 
-	// Respond via real HTTP handler while task has NOT asked yet!
 	reqBody, _ := json.Marshal(map[string]any{
 		"request_id":        uuid.NewString(),
 		"expected_revision": inter.Revision,
@@ -1062,7 +1028,6 @@ func TestPoolRunNowOnceAutomationSettlementAndDeferredAnswer(t *testing.T) {
 		t.Fatalf("POST /v1/interactions/%s/responses: status=%d body=%s", inter.ID, rec.Code, rec.Body.String())
 	}
 
-	// Verify LaneScheduler was armed with retry WakeAt ~ now+2s!
 	wakes, err := backend.ListUserWakes(ctx, u.ID)
 	if err != nil {
 		t.Fatalf("ListUserWakes: %v", err)
@@ -1077,8 +1042,6 @@ func TestPoolRunNowOnceAutomationSettlementAndDeferredAnswer(t *testing.T) {
 		t.Fatalf("expected ScheduleAnswerRetry to arm LaneScheduler within 3s, got %+v", wakes)
 	}
 
-	// Record the matching Question ID on the run, then advance clock past retry delay and resync
-	// so Pool runs Schedule -> deliverAnswers, delivering the deferred CommandAnswer!
 	if err := userApp.TaskActivities.Store.ProjectQuestion(ctx, taskID, 1, state.Question{
 		ID:       inter.ID,
 		Revision: 1,
@@ -1091,8 +1054,6 @@ func TestPoolRunNowOnceAutomationSettlementAndDeferredAnswer(t *testing.T) {
 	clock.Advance(3 * time.Second)
 	backend.EmitResync()
 
-	// Wait until deliverAnswers resolves the question on the run (or SyncHistory already
-	// incorporated the delivered CommandAnswer and cleared the question), then let the model complete!
 	deadline = time.Now().Add(5 * time.Second)
 	resolved := false
 	for time.Now().Before(deadline) {
@@ -1219,7 +1180,7 @@ func TestPoolLostNotifyAndResyncRecovery(t *testing.T) {
 		taskRan := make(chan struct{})
 		pool, err := worker.New(svc, worker.Options{
 			Owner:          "pool-resync",
-			PollInterval:   time.Hour, // Disable fallback polling to prove EmitResync wakes everything!
+			PollInterval:   time.Hour,
 			RepairInterval: time.Hour,
 			DrainTimeout:   2 * time.Second,
 			Now:            clock.Now,
@@ -1251,11 +1212,9 @@ func TestPoolLostNotifyAndResyncRecovery(t *testing.T) {
 		}}, nil); err != nil {
 			t.Fatalf("AcceptCommandBatch: %v", err)
 		}
-		// Because wake events are dropped and PollInterval=1h, the task sits unclaimed until resync.
 		time.Sleep(40 * time.Millisecond)
 		expectNoSignal(t, subCh, "subscriber should not fire while wakes are dropped")
 
-		// EmitResync simulates LISTEN reconnect -> must wake both active task subscribers AND claim loop!
 		backend.EmitResync()
 		expectSignal(t, subCh, "active task subscriber on resync")
 		select {
@@ -1327,7 +1286,6 @@ func TestPoolRepairOncePreservesHotCache(t *testing.T) {
 		coldUsers[i] = mustCreateUser(t, svc, uuid.NewString(), fmt.Sprintf("pool-cold-%d@example.com", i))
 	}
 
-	// Seed a cold user with a missing lease before filling cache with hot users A & B.
 	coldApp, relCold, err := svc.Acquire(ctx, coldUsers[0])
 	if err != nil {
 		t.Fatalf("Acquire cold[0]: %v", err)
@@ -1343,7 +1301,6 @@ func TestPoolRepairOncePreservesHotCache(t *testing.T) {
 	}
 	relCold()
 
-	// Fill MaxCachedApps=2 with hot A & B.
 	clock.Advance(time.Second)
 	appA, relA, err := svc.Acquire(ctx, uA)
 	if err != nil {
@@ -1369,7 +1326,6 @@ func TestPoolRepairOncePreservesHotCache(t *testing.T) {
 		t.Fatalf("RepairOnce: %v", err)
 	}
 
-	// Verify A & B remained cached with the exact same *App pointers (zero evictions).
 	if svc.CachedCount() != 2 {
 		t.Fatalf("CachedCount after RepairOnce = %d, want 2", svc.CachedCount())
 	}
@@ -1387,7 +1343,6 @@ func TestPoolRepairOncePreservesHotCache(t *testing.T) {
 		t.Fatalf("expected hot users A & B to remain exact same cached *App pointers after RepairOnce")
 	}
 
-	// Verify cold user's missing lease was repaired despite not entering cache.
 	leases, err := backend.ListTaskLeases(ctx, coldUsers[0].ID)
 	if err != nil {
 		t.Fatalf("ListTaskLeases: %v", err)
@@ -1446,7 +1401,6 @@ func TestPoolRepairOnceLeaderElection(t *testing.T) {
 		t.Fatalf("worker.New pool2: %v", err)
 	}
 
-	// Start replica-1 sweep and wait until it holds the advisory lock mid-sweep.
 	errCh := make(chan error, 1)
 	go func() { errCh <- pool1.RepairOnce(ctx) }()
 
@@ -1456,7 +1410,6 @@ func TestPoolRepairOnceLeaderElection(t *testing.T) {
 		t.Fatalf("replica-1 never entered sweep")
 	}
 
-	// Concurrent replica-2 RepairOnce must skip cleanly without executing a sweep.
 	if err := pool2.RepairOnce(ctx); err != nil {
 		t.Fatalf("replica-2 RepairOnce while lock held: %v", err)
 	}
@@ -1464,13 +1417,11 @@ func TestPoolRepairOnceLeaderElection(t *testing.T) {
 		t.Fatalf("expected only 1 sweep execution while lock held, got %d", sweepExecutions.Load())
 	}
 
-	// Finish replica-1 sweep -> lock is released.
 	close(releaseSweep)
 	if err := <-errCh; err != nil {
 		t.Fatalf("replica-1 RepairOnce: %v", err)
 	}
 
-	// Subsequent replica-2 sweep acquires the released lock and executes.
 	if err := pool2.RepairOnce(ctx); err != nil {
 		t.Fatalf("replica-2 RepairOnce after release: %v", err)
 	}
@@ -1492,7 +1443,6 @@ func TestPoolRepairOnceLeaderElection(t *testing.T) {
 		t.Fatalf("advisory lock counts: acquired=%d skipped=%d unlocked=%d, want 2/1/2", acquired, skipped, unlocked)
 	}
 
-	// Lock backend error propagates from RepairOnce.
 	wantErr := errors.New("advisory lock db error")
 	lockerBackend.mu.Lock()
 	lockerBackend.injectErr = wantErr
@@ -1562,7 +1512,6 @@ func TestPoolLaneStatsConcurrentWork(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- pool.Run(runCtx) }()
 
-	// Enqueue 2 tasks, 1 conversation wake, and 1 scheduler wake.
 	for range 2 {
 		if _, err := app1.Store.AcceptCommandBatch(ctx, []state.Command{{
 			ID: uuid.NewString(), RunID: uuid.NewString(), Kind: state.CommandStart, Text: "lane task",
@@ -1726,7 +1675,6 @@ func TestPoolScopedUserIsolationWakeAndRepair(t *testing.T) {
 		t.Fatalf("worker.New scoped: %v", err)
 	}
 
-	// 1. Verify HandleWake filters out u2 wake events while keeping global t:*, pause, resync.
 	subU1, unsubU1 := pool.Subscribe(u1.ID, "r1")
 	defer unsubU1()
 	pool.HandleWake(docstore.WakeEvent{Channel: docstore.WakeChannel, Payload: docstore.TaskWakePayload(u2.ID, "r1")})
@@ -1740,7 +1688,6 @@ func TestPoolScopedUserIsolationWakeAndRepair(t *testing.T) {
 		expectSignal(t, subU1, "global wake "+payload)
 	}
 
-	// 2. Seed tasks, conversation wakes, and scheduler wakes for BOTH u1 and u2.
 	u2RunID := uuid.NewString()
 	if _, err := app2.Store.AcceptCommandBatch(ctx, []state.Command{{
 		ID: uuid.NewString(), RunID: u2RunID, Kind: state.CommandStart, Text: "u2 work",
@@ -1782,7 +1729,6 @@ func TestPoolScopedUserIsolationWakeAndRepair(t *testing.T) {
 		t.Fatalf("u1 scoped pool did not complete all lanes: task=%d conv=%d sched=%d",
 			u1TaskDone.Load(), u1ConvDone.Load(), u1SchedDone.Load())
 	}
-	// Give poll interval a chance to run; u2 must NEVER be claimed or touched.
 	time.Sleep(50 * time.Millisecond)
 	cancel()
 	if err := <-done; err != nil {
@@ -1806,9 +1752,6 @@ func TestPoolScopedUserIsolationWakeAndRepair(t *testing.T) {
 		}
 	}
 
-	// 3. RepairOnce scoping:
-	// - Recreates missing lease for u1, does NOT recreate missing lease for u2,
-	//   and does NOT delete u2's existing task lease or unknown user's lease.
 	u1MissingRun := uuid.NewString()
 	if _, err := app1.Store.AcceptCommandBatch(ctx, []state.Command{{
 		ID: uuid.NewString(), RunID: u1MissingRun, Kind: state.CommandStart, Text: "u1 missing lease",
@@ -1849,7 +1792,6 @@ func TestPoolScopedUserIsolationWakeAndRepair(t *testing.T) {
 		t.Fatalf("expected u2 existing lease preserved and u2 missing lease untouched, got %+v (err=%v)", u2LeasesAfter, err)
 	}
 
-	// 4. RepairOnce for a deleted/unknown scoped user cleans up ONLY that user's orphan leases.
 	missingUserID := uuid.NewString()
 	if err := backend.WakeTask(ctx, missingUserID, "orphan-run", time.Time{}); err != nil {
 		t.Fatalf("WakeTask missingUserID: %v", err)
@@ -1872,7 +1814,6 @@ func TestPoolScopedUserIsolationWakeAndRepair(t *testing.T) {
 		t.Fatalf("expected u2 lease untouched by missingUserID RepairOnce, got %+v (err=%v)", u2LeasesStill, err)
 	}
 
-	// 5. Per-user advisory lock: scoped pools for u1 and u2 do not block each other's RepairOnce.
 	lockerBackend := newAdvisoryLockBackend(clock)
 	lockerStorage := platform.NewStorage(lockerBackend, func(users.User) state.ArtifactStore {
 		return memstore.NewArtifacts()

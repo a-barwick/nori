@@ -9,8 +9,6 @@ type SamplingContext = Parameters<NonNullable<Options["tracesSampler"]>>[0];
 
 export function protectEnvelopeHeaders(client: Client | undefined) {
   if (!client) return;
-  // Sentry derives an envelope/baggage transaction name from the unsanitized
-  // root span before beforeSendSpan runs. Remove it at both boundaries.
   client.on("createDsc", (dsc) => { delete dsc.transaction; });
   client.on("beforeEnvelope", (envelope) => {
     const trace = envelope[0].trace;
@@ -30,8 +28,6 @@ export function protectEnvelopeHeaders(client: Client | undefined) {
       if (release) safe.release = release;
       envelope[0].trace = safe;
     }
-    // Scope attributes are merged into logs and metrics after their individual
-    // callbacks, so filter the serialized items at the final send boundary too.
     for (const [header, payload] of envelope[1]) {
       if ((header.type !== "log" && header.type !== "trace_metric") || !payload || typeof payload !== "object" || !("items" in payload) || !Array.isArray(payload.items)) continue;
       for (const item of payload.items) {
@@ -54,7 +50,6 @@ export function protectEnvelopeHeaders(client: Client | undefined) {
   });
 }
 
-// SDK 11 collects these categories by default, even without sendDefaultPii.
 const dataCollection = {
   userInfo: false,
   cookies: false,
@@ -70,7 +65,6 @@ const dataCollection = {
   frameContextLines: 0,
 } satisfies NonNullable<Options["dataCollection"]>;
 
-// Per-process/tab burst protection; billing limits remain account-side.
 const limits = new Map<string, { start: number; used: number; dropped: number }>();
 function allow(kind: string, maximum: number): boolean {
  const now = Date.now();
@@ -113,8 +107,6 @@ function beforeBreadcrumb(crumb: Breadcrumb): Breadcrumb | null {
 
 function beforeSend(event: ErrorEvent, hint: EventHint): ErrorEvent | null {
   if (!allow("errors", 50)) return null;
-  // Exceptions can contain arbitrary server responses or user content. Preserve
-  // the stack for diagnosis, but never send exception text or request details.
   delete event.message;
   delete event.logentry;
   delete event.user;
@@ -146,8 +138,6 @@ function beforeSend(event: ErrorEvent, hint: EventHint): ErrorEvent | null {
       delete frame.module_metadata;
     }
   }
-  // The SDK builds debug images before beforeSend from the original frame
-  // paths. Keep them aligned with the sanitized frames for source maps.
   if (event.debug_meta?.images) {
     event.debug_meta.images = event.debug_meta.images.flatMap((image) => {
       if (image.type !== "sourcemap" || !/^[0-9a-f-]{36}$/i.test(image.debug_id)) return [];
@@ -162,7 +152,6 @@ function beforeSend(event: ErrorEvent, hint: EventHint): ErrorEvent | null {
 function safeFramePath(path?: string): string | undefined {
   if (!path) return undefined;
   const clean = path.split(/[?#]/, 1)[0];
-  // Stack frames should point to application bundles, never user-provided URLs.
   if (/^https?:\/\/[^/@\s]+\/_next\/static\/[a-z0-9_./-]+\.m?js$/i.test(clean)) return clean;
   const bundled = clean.match(/\/(?:_next\/static|\.next\/server)\/[a-z0-9_./-]+\.m?js$/i);
   if (bundled) return bundled[0];

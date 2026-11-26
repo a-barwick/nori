@@ -10,19 +10,11 @@ import (
 )
 
 const (
-	// shortUserWakeThreshold keeps short user-lane retries/backoffs (e.g. 2s
-	// ScheduleAnswerRetry and worker.Pool DefaultBackoff) running promptly on wall
-	// clock while keeping 2m IdleExtractDelay, 2m/5m/10m flushBackoff, and 15m
-	// IdleDreamDelay virtual in simClockBackend.
 	shortUserWakeThreshold = 30 * time.Second
 	shortTaskWakeThreshold = 2 * time.Minute
 	shortWakeWallDelay     = 200 * time.Millisecond
 )
 
-// simClock is a deterministic, thread-safe 0x frozen virtual clock for
-// month-long simulations. Time advances only on explicit Set, Advance, or
-// AdvanceUntil calls so slow LLM turns never drift across 2m IdleExtractDelay
-// or 30m ApprovalExpiry boundaries mid-event.
 type simClock struct {
 	mu  sync.RWMutex
 	now time.Time
@@ -75,11 +67,6 @@ type taskWakeKey struct {
 	runID  string
 }
 
-// simClockBackend wraps a real Postgres docstore.Backend so virtual-clock wakeAt
-// timestamps never prematurely hot-spin or stall against Postgres server now().
-// Immediate wakes (wakeAt <= simClock.Now()) map to time.Time{} (Postgres now()),
-// while future wakes (wakeAt > simClock.Now()) park in Postgres until simClock
-// catches up and WakeDue releases them immediately.
 type simClockBackend struct {
 	inner docstore.Backend
 	clock *simClock
@@ -134,8 +121,6 @@ func (b *simClockBackend) planUserWake(userID, lane string, wakeAt time.Time) (t
 	if wakeAt.IsZero() || !wakeAt.After(now) {
 		return time.Time{}, stagedUserWakeOp{key: key, delete: true}
 	}
-	// Short user-lane retries/backoffs (<= 30s virtual) should execute promptly on
-	// wall clock while keeping 2m IdleExtractDelay / flushBackoff / 15m dream virtual.
 	if wakeAt.Sub(now) <= shortUserWakeThreshold {
 		return time.Now().UTC().Add(shortWakeWallDelay), stagedUserWakeOp{key: key, delete: true}
 	}
@@ -148,8 +133,6 @@ func (b *simClockBackend) planTaskWake(userID, runID string, wakeAt time.Time) (
 	if wakeAt.IsZero() || !wakeAt.After(now) {
 		return time.Time{}, stagedTaskWakeOp{key: key, delete: true}
 	}
-	// Short task retries/backoffs (<= 2m virtual) should execute promptly on wall clock
-	// rather than stalling until the next virtual-clock jump.
 	if wakeAt.Sub(now) <= shortTaskWakeThreshold {
 		return time.Now().UTC().Add(shortWakeWallDelay), stagedTaskWakeOp{key: key, delete: true}
 	}
@@ -198,14 +181,6 @@ func (b *simClockBackend) translateUserWake(userID, lane string, wakeAt time.Tim
 	return translated
 }
 
-func (b *simClockBackend) translateTaskWake(userID, runID string, wakeAt time.Time) time.Time {
-	translated, op := b.planTaskWake(userID, runID, wakeAt)
-	b.mu.Lock()
-	b.applyTaskWakeOpLocked(op)
-	b.mu.Unlock()
-	return translated
-}
-
 type dueUserWake struct {
 	key userWakeKey
 	at  time.Time
@@ -216,13 +191,10 @@ type dueTaskWake struct {
 	at  time.Time
 }
 
-// WakeDue releases any delayed virtual-clock wakes that are now <= simClock.Now().
 func (b *simClockBackend) WakeDue(ctx context.Context) error {
 	return b.WakeDueForUser(ctx, "")
 }
 
-// PendingUserWakeAt returns any delayed virtual-clock wake timestamp tracked
-// for (userID, lane).
 func (b *simClockBackend) PendingUserWakeAt(userID, lane string) (time.Time, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -230,8 +202,6 @@ func (b *simClockBackend) PendingUserWakeAt(userID, lane string) (time.Time, boo
 	return at, ok
 }
 
-// WakeDueForUser releases delayed virtual-clock wakes for userID (or all users when
-// userID is empty) that are now <= simClock.Now(). Unsent entries are re-queued on error.
 func (b *simClockBackend) WakeDueForUser(ctx context.Context, userID string) error {
 	now := b.clock.Now()
 	var dueUsers []dueUserWake
@@ -292,7 +262,6 @@ func (b *simClockBackend) WakeDueForUser(ctx context.Context, userID string) err
 	return nil
 }
 
-// docstore.Backend methods
 func (b *simClockBackend) Get(ctx context.Context, path string) (docstore.Record, error) {
 	return b.inner.Get(ctx, path)
 }
@@ -428,7 +397,6 @@ func (t *simClockTx) NextSequence(ctx context.Context, path string, count int) (
 	return s.NextSequence(ctx, path, count)
 }
 
-// docstore.LeaseStore, ScopedLeaseStore & WakeWriter methods
 func (b *simClockBackend) leases() (docstore.LeaseStore, error) {
 	leases, ok := b.inner.(docstore.LeaseStore)
 	if !ok {
@@ -656,7 +624,6 @@ func (b *simClockBackend) NotifyPause(ctx context.Context) error {
 	return leases.NotifyPause(ctx)
 }
 
-// WakeListener, MemoryIndex, Sequencer, SequenceReader, Pinger, AdvisoryLocker
 func (b *simClockBackend) ListenWakes(ctx context.Context, onEvent func(docstore.WakeEvent)) error {
 	wl, ok := b.inner.(docstore.WakeListener)
 	if !ok {

@@ -285,12 +285,10 @@ func TestIdleExtract_TwoTurnsAt2mLeavesVerbatimAndParks(t *testing.T) {
 		}), nil
 	}
 
-	// Send 2 completed user turns (< ExtractTurnThreshold = 3).
 	_, _ = h.sendTurn(ctx, "I prefer dark roast espresso.")
 	h.clk.Advance(10 * time.Second)
 	_, t2 := h.sendTurn(ctx, "My dog's name is Mochi.")
 
-	// NextConversationWake must return latestTurnAt + IdleExtractDelay (2m).
 	wakeAt, err := h.runner.NextConversationWake(ctx)
 	if err != nil {
 		t.Fatalf("NextConversationWake: %v", err)
@@ -300,7 +298,6 @@ func TestIdleExtract_TwoTurnsAt2mLeavesVerbatimAndParks(t *testing.T) {
 		t.Fatalf("NextConversationWake = %v, want %v", wakeAt, wantWake)
 	}
 
-	// Before 2m elapses, Process/compact must NOT run extraction.
 	h.clk.Advance(state.IdleExtractDelay - time.Second)
 	if err := h.runner.Process(ctx); err != nil {
 		t.Fatalf("Process before 2m: %v", err)
@@ -309,7 +306,6 @@ func TestIdleExtract_TwoTurnsAt2mLeavesVerbatimAndParks(t *testing.T) {
 		t.Fatalf("expected 0 summarizer calls before 2m, got %d", h.sum.CallCount())
 	}
 
-	// Advance to exactly +2m -> extractIdleMemory runs.
 	h.clk.Advance(time.Second)
 	if err := h.runner.Process(ctx); err != nil {
 		t.Fatalf("Process at +2m: %v", err)
@@ -331,7 +327,6 @@ func TestIdleExtract_TwoTurnsAt2mLeavesVerbatimAndParks(t *testing.T) {
 		}
 	}
 
-	// Verify Core Memories and Daily Logs were committed atomically.
 	coreMems, err := h.store.Memories(ctx)
 	if err != nil {
 		t.Fatalf("Memories: %v", err)
@@ -347,7 +342,6 @@ func TestIdleExtract_TwoTurnsAt2mLeavesVerbatimAndParks(t *testing.T) {
 		t.Fatalf("expected 2 daily log entries, got %+v", logs)
 	}
 
-	// Verify ConversationSummary watermarks: ExtractedThrough == T2, Through == 0, FlushedThrough == 0.
 	sum, err := h.store.ConversationSummary(ctx)
 	if err != nil {
 		t.Fatalf("ConversationSummary: %v", err)
@@ -362,7 +356,6 @@ func TestIdleExtract_TwoTurnsAt2mLeavesVerbatimAndParks(t *testing.T) {
 		t.Fatalf("expected Working Memory untouched, got turns=%d gist=%q items=%d excerpts=%d", sum.Turns, sum.Gist, len(sum.Items), len(sum.Excerpts))
 	}
 
-	// All 2 turns must remain verbatim in readAttemptHistory.
 	hist := h.runner.readAttemptHistory(ctx, time.Time{})
 	if hist.err != nil {
 		t.Fatalf("readAttemptHistory: %v", hist.err)
@@ -374,7 +367,6 @@ func TestIdleExtract_TwoTurnsAt2mLeavesVerbatimAndParks(t *testing.T) {
 		t.Fatalf("expected all 2 turns verbatim in readAttemptHistory, got %d", len(hist.view.Turns))
 	}
 
-	// NextConversationWake must be zero (parks cleanly), and staying idle for hours never triggers compaction.
 	wakeAt, err = h.runner.NextConversationWake(ctx)
 	if err != nil {
 		t.Fatalf("NextConversationWake after extract: %v", err)
@@ -396,8 +388,6 @@ func TestIdleExtract_NoPrematureIdleCompactionAndSoftThresholdPreventsDoubleExtr
 	start := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
 	h := newIdleTestHarness(t, start)
 
-	// Adversarial model: ALWAYS attempts to emit core_upserts and daily_log_entries for EVERY turn
-	// in the batch (even turns marked already_extracted=true!), plus summary_items and gist.
 	h.sum.handler = func(_ context.Context, _ int, payload map[string]any, _ agent.Request) (agent.Response, error) {
 		turns := decodePromptTurns(t, payload)
 		var coreUpserts []any
@@ -409,7 +399,6 @@ func TestIdleExtract_NoPrematureIdleCompactionAndSoftThresholdPreventsDoubleExtr
 				if msg["from"] != "user" {
 					continue
 				}
-				// Deliberately emit a slightly different text on later calls to catch any duplicate insertion.
 				tag := "extract"
 				if extractOnly, _ := payload["extract_only"].(bool); !extractOnly {
 					tag = "re-emitted-during-compact"
@@ -447,8 +436,6 @@ func TestIdleExtract_NoPrematureIdleCompactionAndSoftThresholdPreventsDoubleExtr
 		}), nil
 	}
 
-	// Send 15 user turns (> CompactKeep=14, < SoftCompactUserTurns=16) across two sessions.
-	// Every ExtractTurnThreshold (6) turns triggers immediate decoupled extraction (2 calls + 1 idle drain), NEVER compaction.
 	var turnIDs []string
 	var turnTimes []time.Time
 	for i := 1; i <= 15; i++ {
@@ -461,7 +448,6 @@ func TestIdleExtract_NoPrematureIdleCompactionAndSoftThresholdPreventsDoubleExtr
 		turnIDs = append(turnIDs, id)
 		turnTimes = append(turnTimes, ts)
 	}
-	// Drain remaining unextracted turns (13..15) after IdleExtractDelay.
 	h.clk.Advance(state.IdleExtractDelay + time.Second)
 	if err := h.runner.Process(ctx); err != nil {
 		t.Fatalf("Process idle drain: %v", err)
@@ -476,8 +462,6 @@ func TestIdleExtract_NoPrematureIdleCompactionAndSoftThresholdPreventsDoubleExtr
 		}
 	}
 
-	// Idle for 2m, 10m, and 6h -> NO premature idle compaction!
-	// Note: 15 user-sourced log entries exist, so temporarily pin LastDreamAt to isolate compaction behavior.
 	sumPreIdle, err := h.store.ConversationSummary(ctx)
 	if err != nil {
 		t.Fatalf("ConversationSummary before idle: %v", err)
@@ -511,8 +495,6 @@ func TestIdleExtract_NoPrematureIdleCompactionAndSoftThresholdPreventsDoubleExtr
 		t.Fatalf("expected all 15 turns verbatim before turn 16, got summary=%v turns=%d err=%v", histBefore16.view.Summary, len(histBefore16.view.Turns), histBefore16.err)
 	}
 
-	// Turn 16 (== SoftCompactUserTurns=16) triggers flushAndCompact immediately!
-	// Keeps CompactKeep=14 turns verbatim (Turns 3..16) and compacts Turns 1..2.
 	h.clk.Advance(10 * time.Second)
 	_, t16 := h.sendTurn(ctx, "Turn 16: unique user fact #16.")
 	if h.sum.CallCount() != 4 {
@@ -527,7 +509,6 @@ func TestIdleExtract_NoPrematureIdleCompactionAndSoftThresholdPreventsDoubleExtr
 		t.Fatalf("expected 2 already_extracted=true turns (Turns 1..2) in compact payload, got %+v", compactTurns)
 	}
 
-	// Verify Turns 1..2 were summarized into Working Memory, FlushedThrough=Through=T2, and ExtractedThrough stayed T15!
 	sum, err := h.store.ConversationSummary(ctx)
 	if err != nil {
 		t.Fatalf("ConversationSummary after compact: %v", err)
@@ -545,7 +526,6 @@ func TestIdleExtract_NoPrematureIdleCompactionAndSoftThresholdPreventsDoubleExtr
 		t.Fatalf("expected Turns 1..2 in Gist, got %q", sum.Gist)
 	}
 
-	// Verify NO duplicate Core memories or Daily Log entries were created even though the adversarial model emitted them!
 	coreAfterCompact, err := h.store.Memories(ctx)
 	if err != nil {
 		t.Fatalf("Memories after compact: %v", err)
@@ -575,7 +555,6 @@ func TestIdleExtract_NoPrematureIdleCompactionAndSoftThresholdPreventsDoubleExtr
 		t.Fatalf("expected still 15 daily log entries (no duplicate for Turns 1..2), got %d", totalLogs)
 	}
 
-	// Verify readAttemptHistory now sees Summary (Through=T2) + 14 verbatim turns (Turns 3..16).
 	hist := h.runner.readAttemptHistory(ctx, time.Time{})
 	if hist.err != nil {
 		t.Fatalf("readAttemptHistory: %v", hist.err)
@@ -587,7 +566,6 @@ func TestIdleExtract_NoPrematureIdleCompactionAndSoftThresholdPreventsDoubleExtr
 		t.Fatalf("expected %d verbatim turns (Turns 3..16), got %d", state.CompactKeep, len(hist.view.Turns))
 	}
 
-	// NextConversationWake must schedule T16 + IdleExtractDelay (2m) for extracting Turn 16.
 	wakeAt, err := h.runner.NextConversationWake(ctx)
 	if err != nil {
 		t.Fatalf("NextConversationWake after turn 16 compact: %v", err)
@@ -597,7 +575,6 @@ func TestIdleExtract_NoPrematureIdleCompactionAndSoftThresholdPreventsDoubleExtr
 		t.Fatalf("NextConversationWake = %v, want %v (T16 + 2m)", wakeAt, wantExtractWake)
 	}
 
-	// Advance +2m -> extracts ONLY Turn 16, leaving Through=FlushedThrough=T2 unchanged.
 	h.clk.Advance(state.IdleExtractDelay)
 	if err := h.runner.Process(ctx); err != nil {
 		t.Fatalf("Process idle extract for Turn 16: %v", err)
@@ -643,7 +620,6 @@ func TestIdleExtract_PreemptionByUserMessageLeavesExtractedThroughUntouched(t *t
 	h.clk.Advance(10 * time.Second)
 	_, _ = h.sendTurn(ctx, "Turn 2: Target race is in October.")
 
-	// Advance +20m so idle extraction triggers.
 	h.clk.Advance(state.IdleExtractDelay)
 
 	started := make(chan struct{})
@@ -662,12 +638,10 @@ func TestIdleExtract_PreemptionByUserMessageLeavesExtractedThroughUntouched(t *t
 	}()
 
 	<-started
-	// User sends a new message mid-extraction -> UserRoutingPending becomes true.
 	urgentID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("preempt-msg")).String()
 	if _, err := h.runner.HandleInput(ctx, Input{ID: urgentID, Message: "Wait, quick question!"}); err != nil {
 		t.Fatalf("HandleInput during extract: %v", err)
 	}
-	// Fire the 500ms watcher tick deterministically.
 	tickCh <- h.clk.Now()
 
 	select {
@@ -677,7 +651,6 @@ func TestIdleExtract_PreemptionByUserMessageLeavesExtractedThroughUntouched(t *t
 	}
 	<-done
 
-	// Verify ExtractedThrough and ExtractFailures are completely untouched.
 	sum, err := h.store.ConversationSummary(ctx)
 	if err != nil {
 		t.Fatalf("ConversationSummary: %v", err)
@@ -710,7 +683,6 @@ func TestIdleExtract_ThreeStrikeFailureTriggersLosslessFallback(t *testing.T) {
 	h.clk.Advance(10 * time.Second)
 	_, t2 := h.sendTurn(ctx, "My flight departs at 06:30.")
 
-	// Advance +20m -> Strike 1 (2m backoff).
 	h.clk.Advance(state.IdleExtractDelay)
 	if err := h.runner.Process(ctx); err != nil {
 		t.Fatalf("Process strike 1: %v", err)
@@ -727,7 +699,6 @@ func TestIdleExtract_ThreeStrikeFailureTriggersLosslessFallback(t *testing.T) {
 		t.Fatalf("expected +2m backoff wake after strike 1, got %v (now=%v) err=%v", wake1, h.clk.Now(), err)
 	}
 
-	// Advance +2m -> Strike 2 (5m backoff).
 	h.clk.Advance(2 * time.Minute)
 	if err := h.runner.Process(ctx); err != nil {
 		t.Fatalf("Process strike 2: %v", err)
@@ -744,7 +715,6 @@ func TestIdleExtract_ThreeStrikeFailureTriggersLosslessFallback(t *testing.T) {
 		t.Fatalf("expected +5m backoff wake after strike 2, got %v (now=%v) err=%v", wake2, h.clk.Now(), err)
 	}
 
-	// Advance +5m -> Strike 3 -> lossless raw-log fallback commits Daily Log entries and advances ExtractedThrough!
 	h.clk.Advance(5 * time.Minute)
 	if err := h.runner.Process(ctx); err != nil {
 		t.Fatalf("Process strike 3: %v", err)
@@ -775,7 +745,6 @@ func TestIdleExtract_ThreeStrikeFailureTriggersLosslessFallback(t *testing.T) {
 		t.Fatalf("expected raw user messages preserved in fallback logs, got %q", joined)
 	}
 
-	// NextConversationWake must now be zero (parks cleanly).
 	wake3, err := h.runner.NextConversationWake(ctx)
 	if err != nil || !wake3.IsZero() {
 		t.Fatalf("expected zero NextConversationWake after 3-strike fallback, got %v err=%v", wake3, err)
@@ -805,7 +774,6 @@ func TestIdleExtract_AutoDreamPreservesExtractedThrough(t *testing.T) {
 		}), nil
 	}
 
-	// Complete ExtractTurnThreshold turns -> extracts immediately, so ExtractedThrough == lastTurn > FlushedThrough (0).
 	var t3 time.Time
 	for i := 1; i <= state.ExtractTurnThreshold; i++ {
 		if i > 1 {
@@ -814,7 +782,6 @@ func TestIdleExtract_AutoDreamPreservesExtractedThrough(t *testing.T) {
 		_, t3 = h.sendTurn(ctx, fmt.Sprintf("Turn %d", i))
 	}
 
-	// Seed 10 user-sourced Daily Log entries so AutoDream triple-gate is satisfied.
 	curSum, err := h.store.ConversationSummary(ctx)
 	if err != nil {
 		t.Fatalf("ConversationSummary: %v", err)
@@ -848,7 +815,6 @@ func TestIdleExtract_AutoDreamPreservesExtractedThrough(t *testing.T) {
 		t.Fatalf("seed Daily Logs: %v", err)
 	}
 
-	// Advance past IdleDreamDelay (15m) and run idle AutoDream via Process -> maybeDream.
 	h.clk.Advance(state.IdleDreamDelay)
 	if err := h.runner.Process(ctx); err != nil {
 		t.Fatalf("Process idle dream: %v", err)
@@ -868,7 +834,6 @@ func TestIdleExtract_AutoDreamPreservesExtractedThrough(t *testing.T) {
 		t.Fatalf("AutoDream unexpectedly modified FlushedThrough/Through: flushed=%v through=%v", afterDream.FlushedThrough, afterDream.Through)
 	}
 
-	// Also verify ConsolidateNow when ExtractedThrough > FlushedThrough > 0 preserves ExtractedThrough.
 	flushedSummary := afterDream
 	flushedSummary.FlushedThrough = t3.Add(-10 * time.Second)
 	flushedSummary.Through = flushedSummary.FlushedThrough
@@ -894,10 +859,8 @@ func TestIdleExtract_PinnedProtectionAndAdvanceHotWindowPreservesExtractedThroug
 	start := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
 	h := newIdleTestHarness(t, start)
 
-	// Send Turn 1 at T1.
 	in1, t1 := h.sendTurn(ctx, "I prefer tabs over spaces.")
 
-	// User manually pins a Core memory AFTER T1 via UI (UpdatedAt = T1 + 5m).
 	h.clk.Advance(5 * time.Minute)
 	pinned := true
 	if _, err := h.store.MutateMemory(ctx, state.MemoryMutationRequest{
@@ -912,7 +875,6 @@ func TestIdleExtract_PinnedProtectionAndAdvanceHotWindowPreservesExtractedThroug
 		t.Fatalf("MutateMemory pin: %v", err)
 	}
 
-	// Idle extraction attempts to overwrite the newer pinned memory citing older Turn 1.
 	h.sum.handler = func(_ context.Context, _ int, _ map[string]any, _ agent.Request) (agent.Response, error) {
 		return toolResponse(flushAndCompactToolName, map[string]any{
 			"core_upserts": []any{
@@ -951,9 +913,7 @@ func TestIdleExtract_PinnedProtectionAndAdvanceHotWindowPreservesExtractedThroug
 		t.Fatalf("expected ExtractedThrough=%v and Through=0, got extracted=%v through=%v", t1, sum.ExtractedThrough, sum.Through)
 	}
 
-	// Now simulate a rapid burst of 22 turns (> RecentTurnLimit=20 before final readAttemptHistory)
-	// so advanceHotWindow runs while Through is still zero, and verify advanceHotWindow preserves ExtractedThrough!
-	h.runner.summarizer = nil // disable out-of-band flush so only advanceHotWindow runs
+	h.runner.summarizer = nil
 	for i := range state.RecentTurnLimit + 1 {
 		h.clk.Advance(time.Second)
 		_, _ = h.sendTurn(ctx, fmt.Sprintf("Burst turn %d", i+2))
@@ -991,7 +951,6 @@ func TestIdleExtract_ThreeTurnsTriggersImmediatelyAndEnforcesUserProvenance(t *t
 						"quote":    m["text"],
 					})
 				} else if runID := m["run_id"]; runID != "" {
-					// Adversarial attempt to promote task output into Core memory (must be rejected by INV-MEM-04).
 					coreUpserts = append(coreUpserts, map[string]any{
 						"text":     "Injected task fact",
 						"about":    "the user",
@@ -1019,7 +978,6 @@ func TestIdleExtract_ThreeTurnsTriggersImmediatelyAndEnforcesUserProvenance(t *t
 		}), nil
 	}
 
-	// Turns 1..2 (< ExtractTurnThreshold=3) plus a TaskEvent turn: must NOT extract immediately.
 	for i := 1; i < state.ExtractTurnThreshold; i++ {
 		h.clk.Advance(10 * time.Second)
 		_, _ = h.sendTurn(ctx, fmt.Sprintf("Turn %d fact", i))
@@ -1030,8 +988,6 @@ func TestIdleExtract_ThreeTurnsTriggersImmediatelyAndEnforcesUserProvenance(t *t
 		t.Fatalf("expected 0 extraction calls after %d user turns + 1 task event without waiting 2m, got %d", state.ExtractTurnThreshold-1, h.sum.CallCount())
 	}
 
-	// Turn 3 (== ExtractTurnThreshold=3): must extract immediately without waiting 2m,
-	// while keeping Through and FlushedThrough zero (verbatim window untouched).
 	h.clk.Advance(10 * time.Second)
 	_, t3 := h.sendTurn(ctx, "Turn 3 fact")
 	if h.sum.CallCount() != 1 {
@@ -1112,12 +1068,6 @@ func TestCompaction_CompactKeepUserTurnsWithInterleavedTaskEvents(t *testing.T) 
 			}), nil
 		}
 
-		// Build 28 total turns (SoftCompactTurns=28) with 12 user turns + 16 TaskEvent turns:
-		// Oldest 4: U1, E1, U2, E2
-		// Middle 10: U3..U9 (7 user turns) + E3..E5 (3 task events)
-		// Newest 14: E6..E16 (11 task events) + U10..U12 (3 user turns)
-		// Only 3 of the newest 14 turns are user turns, so naive CompactKeep=14 would evict U3..U9!
-		// With CompactKeepUserTurns=10, U3..U12 MUST all remain verbatim!
 		userInputIDs := make([]string, 0, 12)
 		sendUser := func(n int) {
 			h.clk.Advance(10 * time.Second)
@@ -1129,12 +1079,10 @@ func TestCompaction_CompactKeepUserTurnsWithInterleavedTaskEvents(t *testing.T) 
 			_, _ = h.sendTaskEventTurn(ctx, fmt.Sprintf("run-%d", n), fmt.Sprintf("Task event #%d done", n))
 		}
 
-		// Oldest 4
 		sendUser(1)
 		sendEvt(1)
 		sendUser(2)
 		sendEvt(2)
-		// Middle 10 (7 user turns: U3..U9, 3 events: E3..E5)
 		sendUser(3)
 		sendUser(4)
 		sendEvt(3)
@@ -1145,7 +1093,6 @@ func TestCompaction_CompactKeepUserTurnsWithInterleavedTaskEvents(t *testing.T) 
 		sendUser(8)
 		sendEvt(5)
 		sendUser(9)
-		// Newest 14 (11 events: E6..E16, 3 user turns: U10..U12)
 		for e := 6; e <= 10; e++ {
 			sendEvt(e)
 		}
@@ -1165,7 +1112,6 @@ func TestCompaction_CompactKeepUserTurnsWithInterleavedTaskEvents(t *testing.T) 
 			t.Fatalf("expected oldest 4 turns (U1,E1,U2,E2) compacted, got %d turns", len(compactBatches[0]))
 		}
 
-		// Verify all 10 newest user turns (U3..U12) survive verbatim in readAttemptHistory!
 		hist := h.runner.readAttemptHistory(ctx, time.Time{})
 		if hist.err != nil {
 			t.Fatalf("readAttemptHistory: %v", hist.err)
@@ -1194,13 +1140,8 @@ func TestCompaction_CompactKeepUserTurnsWithInterleavedTaskEvents(t *testing.T) 
 	t.Run("advanceHotWindow_preserves_last_10_user_turns_bounded_by_RecentTurnBytes", func(t *testing.T) {
 		start := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
 		h := newIdleTestHarness(t, start)
-		h.runner.summarizer = nil // force hot-window path only
+		h.runner.summarizer = nil
 
-		// Drive 38 total turns (> RecentTurnLimit=36):
-		// Oldest 10: U1, U2, E1..E8
-		// Next 8: U3..U8 (6 user turns), E9..E10
-		// Newest 20: E11..E26 (16 task events) + U9..U12 (4 user turns)
-		// Keeping U3..U12 requires 28 turns (<= RecentTurnLimit=36, <= RecentTurnBytes=64KiB).
 		userInputIDs := make([]string, 0, 12)
 		sendUser := func(n int) {
 			h.clk.Advance(time.Second)
@@ -1260,9 +1201,6 @@ func TestCompaction_CompactKeepUserTurnsWithInterleavedTaskEvents(t *testing.T) 
 
 	t.Run("verbatimKeepCount_respects_RecentTurnBytes_and_SoftCompactBytes", func(t *testing.T) {
 		base := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
-		// 12 user turns of 8 KiB each = 96 KiB (> RecentTurnBytes=64 KiB).
-		// Even though CompactKeepUserTurns=10 and CompactKeep=14, RecentTurnBytes bounds keep to 8 turns (64 KiB),
-		// and SoftCompactBytes (48 KiB) bounds keep to 5 turns (40 KiB < 48 KiB).
 		big := strings.Repeat("x", 8<<10)
 		turns := make([]state.ConversationTurn, 12)
 		for i := range turns {
@@ -1288,8 +1226,6 @@ func TestCompaction_SoftCompactBytesAndCatchUpFlush(t *testing.T) {
 	start := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
 	h := newIdleTestHarness(t, start)
 
-	// 1. SoftCompactBytes (48 KiB) triggers compaction even with fewer than 16 turns.
-	// Note: fakeReplyModel echoes the input, so each ~3.8 KiB user message creates ~7.7 KiB protocol bytes.
 	payloadText := strings.Repeat("B", 3800)
 	for i := range 7 {
 		h.clk.Advance(10 * time.Second)
@@ -1303,14 +1239,12 @@ func TestCompaction_SoftCompactBytesAndCatchUpFlush(t *testing.T) {
 		t.Fatalf("expected SoftCompactBytes (48 KiB) to trigger flush+compact, got %+v", sumBytes)
 	}
 
-	// 2. Catch-up flush when EffectiveFlushedThrough() < Through after an advanceHotWindow burst.
 	h2 := newIdleTestHarness(t, start)
 	h2.runner.summarizer = nil
 	for i := range state.RecentTurnLimit + 2 {
 		h2.clk.Advance(time.Second)
 		_, _ = h2.sendTurn(ctx, fmt.Sprintf("Burst msg %d", i+1))
 	}
-	// Ensure advanceHotWindow has moved Through ahead of FlushedThrough (0).
 	_ = h2.runner.readAttemptHistory(ctx, time.Time{})
 	sumBurst, err := h2.store.ConversationSummary(ctx)
 	if err != nil {
@@ -1320,7 +1254,6 @@ func TestCompaction_SoftCompactBytesAndCatchUpFlush(t *testing.T) {
 		t.Fatalf("expected catch-up state (FlushedThrough < Through), got %+v", sumBurst)
 	}
 
-	// Re-attach summarizer: NextConversationWake must report immediate catch-up wake (== now).
 	h2.runner.summarizer = h2.sum
 	wakeCatchUp, err := h2.runner.NextConversationWake(ctx)
 	if err != nil {
@@ -1329,7 +1262,6 @@ func TestCompaction_SoftCompactBytesAndCatchUpFlush(t *testing.T) {
 	if !wakeCatchUp.Equal(h2.clk.Now()) {
 		t.Fatalf("expected immediate catchUp wake == now (%v), got %v", h2.clk.Now(), wakeCatchUp)
 	}
-	// Drain catch-up passes until FlushedThrough catches up to Through.
 	for range 4 {
 		if err := h2.runner.Process(ctx); err != nil {
 			t.Fatalf("Process catchUp: %v", err)
@@ -1398,8 +1330,6 @@ func TestAutoDream_UncompactedThreadMultiDayConsolidationAnd12hGate(t *testing.T
 		}), nil
 	}
 
-	// Accumulate 10 user turns across 2 days (< SoftCompactUserTurns=16 so Through stays zero!),
-	// plus 2 task event turns whose task_outcome logs must NOT count toward AutoDream.
 	for i := 1; i <= 3; i++ {
 		h.clk.Advance(10 * time.Second)
 		_, _ = h.sendTurn(ctx, fmt.Sprintf("Day 1 morning note %d", i))
@@ -1419,7 +1349,6 @@ func TestAutoDream_UncompactedThreadMultiDayConsolidationAnd12hGate(t *testing.T
 	h.clk.Advance(10 * time.Second)
 	_, t10 := h.sendTurn(ctx, "Day 2 afternoon note 10")
 
-	// Extract turn 10 at +2m so 10 user-sourced Daily Log entries exist while Through.IsZero().
 	h.clk.Advance(state.IdleExtractDelay)
 	if err := h.runner.Process(ctx); err != nil {
 		t.Fatalf("Process idle extract #4: %v", err)
@@ -1428,7 +1357,6 @@ func TestAutoDream_UncompactedThreadMultiDayConsolidationAnd12hGate(t *testing.T
 		t.Fatalf("expected AutoDream to wait for +15m quiet delay, got %d dream calls", dreamCalls)
 	}
 
-	// NextConversationWake must schedule AutoDream at t10 + IdleDreamDelay (15m).
 	wakeDream, err := h.runner.NextConversationWake(ctx)
 	if err != nil {
 		t.Fatalf("NextConversationWake before dream: %v", err)
@@ -1438,7 +1366,6 @@ func TestAutoDream_UncompactedThreadMultiDayConsolidationAnd12hGate(t *testing.T
 		t.Fatalf("NextConversationWake = %v, want %v (t10 + 15m)", wakeDream, wantDreamWake)
 	}
 
-	// Advance to t10 + 15m -> AutoDream runs even though Through.IsZero()!
 	h.clk.Advance(state.IdleDreamDelay - state.IdleExtractDelay)
 	if err := h.runner.Process(ctx); err != nil {
 		t.Fatalf("Process idle AutoDream on uncompacted thread: %v", err)
@@ -1460,7 +1387,6 @@ func TestAutoDream_UncompactedThreadMultiDayConsolidationAnd12hGate(t *testing.T
 		t.Fatalf("unexpected watermarks after dream #1: %+v", sumDream1)
 	}
 
-	// Verify 12h DreamMinInterval gate: seed 10 new user-sourced entries 1h later.
 	h.clk.Advance(time.Hour)
 	seedNow := h.clk.Now().UTC()
 	seedEntries := make([]state.MemoryLogEntry, 0, state.DreamMinLogEntries)
@@ -1488,7 +1414,6 @@ func TestAutoDream_UncompactedThreadMultiDayConsolidationAnd12hGate(t *testing.T
 		t.Fatalf("seed second wave logs: %v", err)
 	}
 
-	// Before 12h since LastDreamAt: Process must NOT dream, and NextConversationWake schedules LastDreamAt + 12h.
 	if err := h.runner.Process(ctx); err != nil {
 		t.Fatalf("Process before 12h gate: %v", err)
 	}
@@ -1504,7 +1429,6 @@ func TestAutoDream_UncompactedThreadMultiDayConsolidationAnd12hGate(t *testing.T
 		t.Fatalf("NextConversationWake = %v, want %v (LastDreamAt + 12h)", wakeDream2, wantDream2Wake)
 	}
 
-	// Advance to LastDreamAt + 12h -> second AutoDream runs cleanly!
 	h.clk.Advance(wantDream2Wake.Sub(h.clk.Now()))
 	if err := h.runner.Process(ctx); err != nil {
 		t.Fatalf("Process at LastDreamAt + 12h: %v", err)
@@ -1519,14 +1443,10 @@ func TestCompaction_ParkedWhenUserRoutingPendingAfterErrorTurn(t *testing.T) {
 	start := time.Date(2026, 11, 25, 16, 0, 0, 0, time.UTC)
 	h := newIdleTestHarness(t, start)
 
-	// Build two normal turns so idle extraction is eligible after IdleExtractDelay.
 	_, _ = h.sendTurn(ctx, "Remember my favorite coffee roaster is Heart.")
 	h.clk.Advance(10 * time.Second)
 	_, _ = h.sendTurn(ctx, "My flight is next Tuesday at 08:00.")
 
-	// Simulate an outer model failure on turn 3: CompleteTurn consumes the inbox
-	// (Pending() == false, Active == "") while intentionally leaving UserRouted < UserReceived
-	// (UserRoutingPending() == true) per Nori's replay-on-next-user-input contract.
 	h.clk.Advance(10 * time.Second)
 	h.model.err = errors.New("task command requires a canonical task UUID")
 	failID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("failed-turn-routing-pending")).String()
@@ -1550,7 +1470,6 @@ func TestCompaction_ParkedWhenUserRoutingPendingAfterErrorTurn(t *testing.T) {
 		t.Fatalf("expected UserRoutingPending=true after error turn, got pending=%v err=%v", routingPending, err)
 	}
 
-	// Advance past IdleExtractDelay so extraction would otherwise be due immediately.
 	h.clk.Advance(state.IdleExtractDelay + time.Minute)
 
 	sumCalls := 0
@@ -1559,7 +1478,6 @@ func TestCompaction_ParkedWhenUserRoutingPendingAfterErrorTurn(t *testing.T) {
 		return agent.Response{}, errors.New("summarizer must not be called while UserRoutingPending is true")
 	}
 
-	// NextConversationWake MUST park (return zero), never spin the worker lane.
 	wakeAt, err := h.runner.NextConversationWake(ctx)
 	if err != nil {
 		t.Fatalf("NextConversationWake: %v", err)
@@ -1568,7 +1486,6 @@ func TestCompaction_ParkedWhenUserRoutingPendingAfterErrorTurn(t *testing.T) {
 		t.Fatalf("expected zero NextConversationWake while UserRoutingPending=true, got %v", wakeAt)
 	}
 
-	// Even if Process or compact or maybeDream is called directly, ZERO model calls may fire.
 	for i := range 5 {
 		if err := h.runner.Process(ctx); err != nil {
 			t.Fatalf("Process iter %d: %v", i, err)
@@ -1580,8 +1497,6 @@ func TestCompaction_ParkedWhenUserRoutingPendingAfterErrorTurn(t *testing.T) {
 		t.Fatalf("expected 0 summarizer calls while UserRoutingPending=true, got %d", sumCalls)
 	}
 
-	// Once a subsequent user turn succeeds, UserRoutingPending clears and Process immediately
-	// runs the queued idle extraction cleanly.
 	h.sum.handler = func(_ context.Context, _ int, _ map[string]any, _ agent.Request) (agent.Response, error) {
 		sumCalls++
 		return agent.Response{Calls: []transcript.ToolCall{{

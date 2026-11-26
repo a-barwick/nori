@@ -12,15 +12,11 @@ import (
 
 const MaxArtifactBytes = 2 << 20
 
-// ArtifactStore persists the bytes of private PNG artifacts, one object per run and artifact ID. An implementation
-// stores exactly the bytes it is given and never replaces an existing artifact. Compose validates the IDs and the
-// size before calling PutPNG or GetPNG, and GetPNG returns at most MaxArtifactBytes (see ReadArtifact).
 type ArtifactStore interface {
 	Artifacts
 	Close() error
 }
 
-// ValidateArtifactIDs requires canonical UUIDs, so an ID can never name anything but one object.
 func ValidateArtifactIDs(run, id string) error {
 	for _, value := range []string{run, id} {
 		parsed, err := uuid.Parse(value)
@@ -41,7 +37,6 @@ func ValidatePNG(run, id string, data []byte) error {
 	return nil
 }
 
-// ArtifactListed reports whether a run records the artifact. Only recorded artifacts can be read.
 func ArtifactListed(run Run, id string) bool {
 	for _, a := range run.Artifacts {
 		if a.ID == id {
@@ -53,7 +48,6 @@ func ArtifactListed(run Run, id string) bool {
 
 var ErrFileExists = errors.New("file already exists")
 
-// ReadFile reads a stored file, refusing anything over the limit without reading it all.
 func ReadFile(r io.Reader) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(r, MaxUploadBytes+1))
 	if len(data) > MaxUploadBytes {
@@ -62,7 +56,6 @@ func ReadFile(r io.Reader) ([]byte, error) {
 	return data, err
 }
 
-// ReadArtifact reads an artifact's bytes, refusing anything over MaxArtifactBytes without reading it all.
 func ReadArtifact(r io.Reader) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(r, MaxArtifactBytes+1))
 	if len(data) > MaxArtifactBytes {
@@ -71,8 +64,6 @@ func ReadArtifact(r io.Reader) ([]byte, error) {
 	return data, err
 }
 
-// Compose joins a document backend and an artifact store into the store the rest of Nori uses. Artifact IDs are
-// validated here, and an artifact can be read only when its run records it, so a blob adapter holds only bytes.
 func Compose(db Database, artifacts ArtifactStore) ConversationStore {
 	return &composed{Database: db, artifacts: artifacts}
 }
@@ -91,8 +82,6 @@ func (s *composed) UsageWindowSummary(ctx context.Context, hourCutoff, dayCutoff
 	return 0, 0, 0, nil
 }
 
-// ErrReserveUnsupported indicates the underlying Database does not implement atomic
-// single-transaction quota reservation and callers should fall back to WindowReader.
 var ErrReserveUnsupported = errors.New("state: atomic usage reservation unsupported")
 
 func (s *composed) ReserveUsage(

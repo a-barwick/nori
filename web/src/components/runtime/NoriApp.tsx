@@ -29,7 +29,6 @@ function partsOf(message: Pick<Message, "text" | "parts">) {
   };
 }
 
-/** The main assistant conversation. Runtime state lives in AssistantProvider so it survives navigation. */
 export function ChatScreen() {
   const { runtime, debug, capabilities } = useAssistant();
   const accepted = capabilities?.upload_accept;

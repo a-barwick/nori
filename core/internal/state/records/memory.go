@@ -23,8 +23,6 @@ func (d *Database) summary() *docstore.DocumentRef {
 	return d.root().Collection("conversation").Doc("summary")
 }
 
-// Memories returns every saved Core memory in deterministic prompt order
-// (Pinned DESC, CreatedAt ASC, ID ASC).
 func (d *Database) Memories(ctx context.Context) ([]state.Memory, error) {
 	it := d.memories().OrderBy("created_at", docstore.Asc).Documents(ctx)
 	defer it.Stop()
@@ -36,55 +34,50 @@ func (d *Database) Memories(ctx context.Context) ([]state.Memory, error) {
 	return memories, nil
 }
 
-// MemoryLogs reads owners/<owner>/memory_logs/*, merges shards per date, and
-// returns Daily Logs newest-date-first. When afterDate is non-empty, only dates
-// >= afterDate are included.
 func (d *Database) MemoryLogs(ctx context.Context, afterDate string, limit int) ([]state.MemoryLog, error) {
-	q := d.memoryLogs().OrderBy(docstore.DocumentID, docstore.Desc)
+	const pageSize = 64
+	query := d.memoryLogs().OrderBy(docstore.DocumentID, docstore.Desc).Limit(pageSize)
 	if afterDate != "" {
-		q = q.Where(docstore.DocumentID, ">=", afterDate)
+		query = query.Where(docstore.DocumentID, ">=", afterDate)
 	}
-	docs, err := q.Documents(ctx).GetAll()
-	if err != nil {
-		return nil, err
-	}
-	byDate := map[string][]state.MemoryLog{}
-	for _, doc := range docs {
-		var shard state.MemoryLog
-		if err := doc.DataTo(&shard); err != nil {
+	out := make([]state.MemoryLog, 0)
+	var date string
+	var shards []state.MemoryLog
+	for {
+		page, err := query.Documents(ctx).GetAll()
+		if err != nil {
 			return nil, err
 		}
-		if shard.Date == "" {
-			shard.Date = parseLogDateFromDocID(doc.Ref.ID)
+		for _, doc := range page {
+			shardDate := parseLogDateFromDocID(doc.Ref.ID)
+			if shardDate != date {
+				if merged, ok := mergeDailyLogShards(date, shards); ok {
+					out = append(out, merged)
+					if limit > 0 && len(out) == limit {
+						return out, nil
+					}
+				}
+				date, shards = shardDate, shards[:0]
+			}
+			var shard state.MemoryLog
+			if err := doc.DataTo(&shard); err != nil {
+				return nil, err
+			}
+			shard.Date = date
+			shard.Shard = effectiveLogShard(shard.Shard, doc.Ref.ID)
+			shards = append(shards, shard)
 		}
-		if afterDate != "" && shard.Date < afterDate {
-			continue
-		}
-		shard.Shard = effectiveLogShard(shard.Shard, doc.Ref.ID)
-		byDate[shard.Date] = append(byDate[shard.Date], shard)
-	}
-
-	dates := make([]string, 0, len(byDate))
-	for date := range byDate {
-		dates = append(dates, date)
-	}
-	slices.SortFunc(dates, func(a, b string) int { return cmp.Compare(b, a) })
-
-	out := make([]state.MemoryLog, 0, len(dates))
-	for _, date := range dates {
-		merged, ok := mergeDailyLogShards(date, byDate[date])
-		if !ok {
-			continue
-		}
-		out = append(out, merged)
-		if limit > 0 && len(out) >= limit {
+		if len(page) < pageSize {
 			break
 		}
+		query = query.StartAfter(page[len(page)-1])
+	}
+	if merged, ok := mergeDailyLogShards(date, shards); ok {
+		out = append(out, merged)
 	}
 	return out, nil
 }
 
-// MemoryLog reads and merges all shards for one YYYY-MM-DD Daily Log.
 func (d *Database) MemoryLog(ctx context.Context, date string) (state.MemoryLog, error) {
 	if !state.ValidMemoryDate(date) {
 		return state.MemoryLog{}, state.ErrNotFound
@@ -408,8 +401,6 @@ type memoryChangeReads struct {
 	shards  []state.MemoryLog
 }
 
-// readMemoryChanges reads all Core memories and today's Daily Log doc before
-// PublishConversation writes anything (Firestore read-before-write rule).
 func (d *Database) readMemoryChanges(tx *docstore.Transaction, changes []state.MemoryChange) (memoryChangeReads, error) {
 	if len(changes) == 0 {
 		return memoryChangeReads{}, nil
@@ -435,9 +426,6 @@ func (d *Database) readMemoryChanges(tx *docstore.Transaction, changes []state.M
 	return memoryChangeReads{byID: byID, logDate: logDate, shards: shards}, nil
 }
 
-// writeMemoryChanges applies a turn's remember/forget changes inside its publish
-// transaction, auto-demoting unpinned Core overflow into today's Daily Log,
-// syncing nori_memory_chunks, and emitting EventMemory.
 func (d *Database) writeMemoryChanges(
 	tx *docstore.Transaction, t state.ConversationTurn, reads memoryChangeReads, now time.Time,
 ) error {
@@ -570,8 +558,6 @@ func (d *Database) ConversationSummary(ctx context.Context) (state.ConversationS
 	return s, err
 }
 
-// SaveConversationSummary replaces the summary unless a newer one is already saved: one for a later context, or one
-// that covers more of this context.
 func (d *Database) SaveConversationSummary(ctx context.Context, s, expected state.ConversationSummary) error {
 	return d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		var saved state.ConversationSummary
@@ -588,8 +574,6 @@ func (d *Database) SaveConversationSummary(ctx context.Context, s, expected stat
 		if err != nil {
 			return err
 		}
-		// A summary is derived from one exact predecessor and context cutoff.
-		// A later summarizer or reset cannot be overwritten by stale maintenance.
 		if !control.ContextFrom.Equal(s.From) ||
 			!saved.From.Equal(expected.From) ||
 			!saved.ExtractedThrough.Equal(expected.ExtractedThrough) ||
@@ -603,8 +587,6 @@ func (d *Database) SaveConversationSummary(ctx context.Context, s, expected stat
 	})
 }
 
-// ConversationTurnsAfter returns up to HistoryTurnsExamined turns that started after a time, newest first. A zero time
-// returns the newest turns.
 func (d *Database) ConversationTurnsAfter(ctx context.Context, after time.Time) ([]state.ConversationTurn, error) {
 	return d.turnsAfter(ctx, after, docstore.Desc)
 }
@@ -623,8 +605,6 @@ func (d *Database) turnsAfter(ctx context.Context, after time.Time, dir docstore
 	return documents[state.ConversationTurn](it)
 }
 
-// ReadConversationMessage accepts visible message IDs and raw summary input IDs.
-// The retained-context cutoff is enforced in storage, including for task tools.
 func (d *Database) ReadConversationMessage(ctx context.Context, id string) (state.Message, error) {
 	if !state.ValidEvidenceID(id) {
 		return state.Message{}, state.ErrNotFound
@@ -653,7 +633,6 @@ func (d *Database) ReadConversationMessage(ctx context.Context, id string) (stat
 	return message, nil
 }
 
-// EditMemory replaces a memory's text if it has not changed since updatedAt (the client's revision).
 func (d *Database) EditMemory(ctx context.Context, id string, expectedUpdated int64, text string) (state.Memory, error) {
 	var out state.Memory
 	if err := validateCoreMemoryFields(text, "", ""); err != nil {
@@ -722,8 +701,6 @@ func (d *Database) EditMemory(ctx context.Context, id string, expectedUpdated in
 	return out, err
 }
 
-// ForgetMemory deletes a memory if it has not changed since updatedAt. It removes the memory from future use; it
-// does not touch transcripts.
 func (d *Database) ForgetMemory(ctx context.Context, id string, expectedUpdated int64) (state.Memory, error) {
 	var out state.Memory
 	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
@@ -774,13 +751,10 @@ func (d *Database) SearchMemory(ctx context.Context, query docstore.MemorySearch
 	return []docstore.MemorySearchHit{}, nil
 }
 
-// CommitFlushAndCompact atomically commits extracted Core memories, Daily Log
-// entries, summary eviction archives, FTS chunks, and the next ConversationSummary.
 func (d *Database) CommitFlushAndCompact(ctx context.Context, req state.FlushAndCompactRequest) (state.ConversationSummary, error) {
 	return d.commitMemoryCompaction(ctx, req, state.ProvenancePreCompactFlush)
 }
 
-// CommitDreamConsolidate atomically commits an idle AutoDream consolidation pass.
 func (d *Database) CommitDreamConsolidate(ctx context.Context, req state.DreamConsolidateRequest) (state.ConversationSummary, error) {
 	return d.commitMemoryCompaction(ctx, state.FlushAndCompactRequest(req), state.ProvenanceDreamCurated)
 }
@@ -970,8 +944,6 @@ func deterministicMemoryID(prefix, seed string) string {
 	return "mem_" + hex.EncodeToString(sum[:8])
 }
 
-// MutateMemory performs an idempotent, receipt-backed transactional mutation across
-// Core Memory, Daily Logs, or Working Memory, syncing nori_memory_chunks and logging EventMemory.
 func (d *Database) MutateMemory(ctx context.Context, req state.MemoryMutationRequest) (state.MutationReceipt, error) {
 	if !state.ValidResourceID(req.RequestID) {
 		return state.MutationReceipt{}, state.ErrInvalidResource
@@ -1365,8 +1337,6 @@ func (d *Database) MutateMemory(ctx context.Context, req state.MemoryMutationReq
 				CreatedAt:     now,
 				UpdatedAt:     now,
 			}
-			// Deduplicate repeat promotions of the same Daily Log entry so INV-MEM-05 holds
-			// even across distinct client request IDs.
 			if sourceInputID != "" && sourceInputID != "ui" {
 				for _, item := range existingCore {
 					if item.EffectiveProvenance() == state.ProvenanceUserExplicit && item.SourceInputID == sourceInputID && item.Text == text {
@@ -1508,8 +1478,6 @@ func (d *Database) MutateMemory(ctx context.Context, req state.MemoryMutationReq
 				CreatedAt:     now,
 				UpdatedAt:     now,
 			}
-			// Deduplicate repeat promotions of the same Working Memory item so INV-MEM-05 holds
-			// even across distinct client request IDs.
 			if sourceInputID != "" && sourceInputID != "ui" {
 				for _, cm := range existingCore {
 					if cm.EffectiveProvenance() == state.ProvenanceUserExplicit && cm.SourceInputID == sourceInputID && cm.Text == text {
@@ -1711,8 +1679,6 @@ func findDailyLogEntry(shards []state.MemoryLog, entryID string) (state.MemoryLo
 	return shards[si].Entries[ei], rev, true
 }
 
-// SaveMemoryActionReceipt idempotently persists a durable MutationReceipt for
-// out-of-band actions such as manual memory consolidation.
 func (d *Database) SaveMemoryActionReceipt(ctx context.Context, requestID, binding string, resource json.RawMessage) (state.MutationReceipt, error) {
 	if !state.ValidResourceID(requestID) || strings.TrimSpace(binding) == "" {
 		return state.MutationReceipt{}, state.ErrInvalidResource
@@ -1768,8 +1734,6 @@ func (d *Database) SaveMemoryActionReceipt(ctx context.Context, requestID, bindi
 	return receipt, err
 }
 
-// buildTaskOutcomeEntry formats a bounded factual summary for a completed task
-// to be appended to Layer 2 Daily Logs inside Publish (never Core Memory).
 func buildTaskOutcomeEntry(run state.Run, now time.Time) (state.MemoryLogEntry, bool) {
 	if run.Status != state.RunCompleted || strings.TrimSpace(run.ID) == "" {
 		return state.MemoryLogEntry{}, false
@@ -1805,8 +1769,6 @@ func buildTaskOutcomeEntry(run state.Run, now time.Time) (state.MemoryLogEntry, 
 	}, true
 }
 
-// monotonicRevisionTime guarantees that consecutive mutations to the same record
-// always advance UnixMilli strictly, even within the same millisecond or frozen clock tick.
 func monotonicRevisionTime(now, prev time.Time) time.Time {
 	nowUTC := now.UTC()
 	if !prev.IsZero() && nowUTC.UnixMilli() <= prev.UnixMilli() {

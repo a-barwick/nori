@@ -28,8 +28,6 @@ struct NoriApp: App {
 
     var body: some Scene {
         WindowGroup {
-            // NoriRootView attaches `.onOpenURL` -> `store.handleIncomingURL(_:)`
-            // for `nori://` OAuth callbacks and deep links registered in Info.plist.
             NoriRootView(store: store)
                 .tint(NoriColors.accent)
                 .preferredColorScheme(appearance.colorScheme)

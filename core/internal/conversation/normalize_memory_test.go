@@ -42,7 +42,6 @@ func TestNormalizeManualMemorySuccessAndDedup(t *testing.T) {
 		if len(req.Messages) != 2 {
 			t.Fatalf("expected 2 messages, got %d", len(req.Messages))
 		}
-		// Ensure task_outcome memory is never exposed as replaceable.
 		if strings.Contains(string(req.Messages[1]), "mem_task_outcome") {
 			t.Fatalf("task_outcome memory must not be included in normalizer input")
 		}

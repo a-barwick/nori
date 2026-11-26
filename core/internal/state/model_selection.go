@@ -1,8 +1,5 @@
 package state
 
-// PinnedProfile freezes the non-secret execution settings of an approved profile
-// at admission time so mid-run catalog edits or deletions never mutate an
-// in-flight turn or task.
 type PinnedProfile struct {
 	Backend            string   `json:"backend,omitempty" firestore:"backend,omitempty"`
 	Model              string   `json:"model,omitempty" firestore:"model,omitempty"`
@@ -24,9 +21,6 @@ func (p *PinnedProfile) Clone() *PinnedProfile {
 	return &cp
 }
 
-// ModelSelection pins the approved model profiles and reasoning levels chosen
-// for a conversation turn or background task. Nil or empty means use the
-// server's configured default.
 type ModelSelection struct {
 	ChatProfileID      string         `json:"chat_profile_id,omitempty" firestore:"chat_profile_id,omitempty"`
 	ChatProfileVersion string         `json:"chat_profile_version,omitempty" firestore:"chat_profile_version,omitempty"`
@@ -38,7 +32,6 @@ type ModelSelection struct {
 	TaskPinned         *PinnedProfile `json:"task_pinned,omitempty" firestore:"task_pinned,omitempty"`
 }
 
-// IsEmpty reports whether no explicit chat or task selection is set.
 func (s *ModelSelection) IsEmpty() bool {
 	if s == nil {
 		return true
@@ -46,7 +39,6 @@ func (s *ModelSelection) IsEmpty() bool {
 	return s.ChatProfileID == "" && s.ChatReasoning == "" && s.TaskProfileID == "" && s.TaskReasoning == ""
 }
 
-// Clone returns a deep copy of s, or nil if s is nil or empty.
 func (s *ModelSelection) Clone() *ModelSelection {
 	if s.IsEmpty() {
 		return nil
@@ -57,7 +49,6 @@ func (s *ModelSelection) Clone() *ModelSelection {
 	return &cp
 }
 
-// TaskOnly returns a copy carrying only the task profile fields, or nil when none are set.
 func (s *ModelSelection) TaskOnly() *ModelSelection {
 	if s == nil || (s.TaskProfileID == "" && s.TaskReasoning == "") {
 		return nil
@@ -70,9 +61,6 @@ func (s *ModelSelection) TaskOnly() *ModelSelection {
 	}
 }
 
-// ModelSelectionEqual reports whether a and b represent the same client-chosen
-// selection (comparing profile IDs and reasoning levels; version bumps across
-// catalog hot-reloads do not break idempotent replay).
 func ModelSelectionEqual(a, b *ModelSelection) bool {
 	if a.IsEmpty() && b.IsEmpty() {
 		return true

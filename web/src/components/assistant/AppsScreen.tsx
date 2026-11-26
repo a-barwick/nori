@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/primitives";
 import { mutate, newRequestID, sendSecret } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { plural, relative } from "@/lib/assistant/format";
-import { invalidate, useAction, useResource } from "@/lib/assistant/useResource";
+import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant/useResource";
 import type { AuthAttempt, Connection, HealthCode, MCPCredentialInput, MCPServer, MCPServerTool as MCPTool } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
 import { safeAuthorizeURL } from "./InteractionCard";
@@ -35,7 +35,6 @@ export function connectionState(connection: Connection): { tone: Tone; label: st
   return HEALTH[healthOf(connection) ?? "ready"] ?? { tone: "neutral", label: connection.status };
 }
 
-/** Start a server-issued sign-in and send the browser to it. */
 export async function startSignIn(connection: Pick<Connection, "id" | "revision">, action: "connect" | "repair", returnTo: string, capabilities?: string[]) {
   const receipt = await mutate<Connection>(`/connections/${encodeURIComponent(connection.id)}/actions`, {
     request_id: newRequestID(), expected_revision: connection.revision, value: { action, return_to: returnTo, ...(capabilities?.length ? { capabilities } : {}) },
@@ -45,10 +44,6 @@ export async function startSignIn(connection: Pick<Connection, "id" | "revision"
   window.location.assign(url);
 }
 
-/**
- * A sign-in returns with ?result= (and ?connection=). Read them once, then take them out of the address bar, so a
- * reload, a dev-server restart or a shared link never shows a sign-in result again.
- */
 function useReturnedResult() {
   const params = useSearchParams();
   const [returned] = useState(() => ({ result: params.get("result"), connection: params.get("connection") }));
@@ -65,7 +60,6 @@ export function AppsScreen() {
   const { has } = useAssistant();
   const params = useSearchParams();
   const router = useRouter();
-  // MCP sign-in returns to /apps?mcp=<id>&result=…; show the result on that server's page.
   const signedInServer = params.get("mcp");
   const signInResult = params.get("result");
   useEffect(() => {
@@ -125,6 +119,7 @@ function isValidMCPEndpoint(raw: string) {
 }
 
 function NewMCPServer({ onDone }: { onDone: () => void }) {
+  const invalidate = useResourceInvalidation();
   const router = useRouter();
   const action = useAction();
   const [name, setName] = useState("");
@@ -153,6 +148,7 @@ function NewMCPServer({ onDone }: { onDone: () => void }) {
 }
 
 function Credential({ server, onSaved }: { server: MCPServer; onSaved: (next: MCPServer) => void }) {
+  const invalidate = useResourceInvalidation();
   const action = useAction();
   const [token, setToken] = useState("");
   const [replacing, setReplacing] = useState(false);
@@ -179,6 +175,7 @@ function MCPStatus({ server }: { server: MCPServer }) {
 }
 
 export function MCPDetailScreen({ id }: { id: string }) {
+  const invalidate = useResourceInvalidation();
   const server = useResource<MCPServer>(`/mcp/${encodeURIComponent(id)}`, { poll: 5_000 });
   const tools = useResource<List<MCPTool>>(`/mcp/${encodeURIComponent(id)}/tools`, { poll: 0 });
   const action = useAction();
@@ -190,7 +187,6 @@ export function MCPDetailScreen({ id }: { id: string }) {
     const receipt = await mutate<MCPServer>(`/mcp/${encodeURIComponent(id)}/actions`, { request_id: newRequestID(), expected_revision: item.revision, value });
     server.apply(receipt.resource as MCPServer); invalidate(`/mcp/${encodeURIComponent(id)}/tools`);
   });
-  // OAuth servers open the provider's sign-in; the server returns here with ?result=.
   const signIn = () => action.run("sign_in", async () => {
     const receipt = await mutate<MCPServer>(`/mcp/${encodeURIComponent(id)}/actions`, { request_id: newRequestID(), expected_revision: item.revision, value: { action: "sign_in" } }) as { auth?: AuthAttempt };
     const url = receipt.auth && safeAuthorizeURL(receipt.auth.authorize_url);

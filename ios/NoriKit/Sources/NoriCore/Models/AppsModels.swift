@@ -1,6 +1,5 @@
 import Foundation
 
-// MARK: - MCP Server Models
 
 public enum MCPTransport: String, Sendable, Codable, Hashable {
     case http
@@ -248,7 +247,6 @@ public struct MCPServerInput: Sendable, Codable, Hashable {
     }
 }
 
-/// Write-only credential payload for `POST /v1/mcp/{id}/credential`.
 public struct MCPCredentialInput: Sendable, Codable, Hashable {
     public var requestID: String
     public var token: String
@@ -264,7 +262,6 @@ public struct MCPCredentialInput: Sendable, Codable, Hashable {
     }
 }
 
-// MARK: - Connections
 
 public enum ConnectionStatus: String, Sendable, Codable, Hashable {
     case notConnected = "not_connected"

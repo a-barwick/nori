@@ -21,7 +21,6 @@ const ROUTES: Record<Kind, { path: (id: string) => string; feature: AssistantFea
   result: { path: (id) => `/library/${id}`, feature: "library", href: (id) => `/library/${id}` },
 };
 
-/** A typed card in a message. It always reads the current server state; the part never carries actions. */
 export function CardView({ part }: { part: CardPart }) {
   const { has } = useAssistant();
   const route = ROUTES[part.resource.kind];

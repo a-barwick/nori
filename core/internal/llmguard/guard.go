@@ -1,9 +1,3 @@
-// Package llmguard provides the single guarded HTTP transport boundary for all
-// outbound LLM provider requests across Nori. Every model client (outer chat,
-// inner task/compaction/extraction/dream, intent classifier) routes through
-// Guard so rate limits, concurrency caps, duplicate-payload storm detection,
-// consecutive-abort circuit breakers, timeout ceilings, and test-mode network
-// locks are enforced fundamentally in one place rather than per caller.
 package llmguard
 
 import (
@@ -15,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"strings"
@@ -43,8 +38,6 @@ var (
 	ErrCallLimitExceeded     = errors.New("llmguard: total LLM call limit exceeded")
 )
 
-// IsGuardError reports whether err was returned by llmguard admission control
-// before any upstream provider request was sent.
 func IsGuardError(err error) bool {
 	return errors.Is(err, ErrLiveCallBlockedInTest) ||
 		errors.Is(err, ErrRateLimited) ||
@@ -55,7 +48,6 @@ func IsGuardError(err error) bool {
 		errors.Is(err, ErrCallLimitExceeded)
 }
 
-// CallMeta tags an outbound LLM request with its caller scope and identity.
 type CallMeta struct {
 	UserID          string
 	Scope           string
@@ -66,8 +58,6 @@ type CallMeta struct {
 
 type metaKey struct{}
 
-// WithMeta attaches or merges CallMeta onto ctx. Non-empty fields in meta
-// override existing context values.
 func WithMeta(ctx context.Context, meta CallMeta) context.Context {
 	cur := MetaFromContext(ctx)
 	if meta.UserID != "" {
@@ -88,17 +78,10 @@ func WithMeta(ctx context.Context, meta CallMeta) context.Context {
 	return context.WithValue(ctx, metaKey{}, cur)
 }
 
-// WithScope sets the LLM call scope on ctx.
 func WithScope(ctx context.Context, scope string) context.Context {
 	return WithMeta(ctx, CallMeta{Scope: scope})
 }
 
-// WithUser sets the user ID on ctx.
-func WithUser(ctx context.Context, userID string) context.Context {
-	return WithMeta(ctx, CallMeta{UserID: userID})
-}
-
-// MetaFromContext returns any CallMeta stored on ctx.
 func MetaFromContext(ctx context.Context) CallMeta {
 	if ctx == nil {
 		return CallMeta{}
@@ -107,14 +90,12 @@ func MetaFromContext(ctx context.Context) CallMeta {
 	return m
 }
 
-// ScopePolicy bounds request rate and concurrency for a single (user, scope).
 type ScopePolicy struct {
 	MaxPerMinute int
 	MaxPerHour   int
 	MaxInFlight  int
 }
 
-// Config controls Guard enforcement thresholds. Zero values use safe defaults.
 type Config struct {
 	Now func() time.Time
 
@@ -130,23 +111,15 @@ type Config struct {
 	BreakerBaseCooldown           time.Duration
 	BreakerMaxCooldown            time.Duration
 
-	// MaxEstimatedUSD optionally caps cumulative estimated + recorded USD spend
-	// across this Guard (including conservative worst-case estimates for in-flight
-	// and aborted / unknown-status calls). Zero disables the process USD cap.
 	MaxEstimatedUSD float64
 
-	// MaxTotalCalls optionally caps cumulative admitted LLM calls across this
-	// Guard's lifetime (useful for bounded simulation / gateway runs). Zero disables it.
 	MaxTotalCalls int
 
-	// AllowLiveInTests disables the automatic refusal of non-loopback hosts when
-	// testing.Testing() is true. Leave false except in explicit opt-in live tests.
 	AllowLiveInTests bool
 
 	Scopes map[string]ScopePolicy
 }
 
-// DefaultConfig returns production-safe guard limits.
 func DefaultConfig() Config {
 	return Config{
 		MaxTimeout:                    3 * time.Minute,
@@ -210,7 +183,6 @@ func normalizeConfig(cfg Config) Config {
 	return cfg
 }
 
-// Snapshot exposes read-only guard telemetry for diagnostics and tests.
 type Snapshot struct {
 	TotalAdmitted        int64
 	TotalBlocked         int64
@@ -250,8 +222,6 @@ type dupKey struct {
 	bodyHash string
 }
 
-// Guard enforces admission limits, storm/loop protection, and circuit breakers
-// across all LLM requests routed through it.
 type Guard struct {
 	cfg Config
 
@@ -268,7 +238,6 @@ var (
 	defaultGuard *Guard
 )
 
-// Default returns the process-wide shared Guard used by platform-wired clients.
 func Default() *Guard {
 	defaultOnce.Do(func() {
 		defaultGuard = New(DefaultConfig())
@@ -276,7 +245,6 @@ func Default() *Guard {
 	return defaultGuard
 }
 
-// New creates an isolated Guard instance with normalized defaults.
 func New(cfg Config) *Guard {
 	return &Guard{
 		cfg:        normalizeConfig(cfg),
@@ -299,7 +267,6 @@ func (g *Guard) policyFor(scope string) ScopePolicy {
 	return ScopePolicy{MaxPerMinute: 30, MaxPerHour: 600, MaxInFlight: 8}
 }
 
-// ClampTimeout enforces a positive per-call timeout no greater than MaxTimeout.
 func (g *Guard) ClampTimeout(timeout time.Duration) time.Duration {
 	if timeout <= 0 {
 		timeout = 90 * time.Second
@@ -310,8 +277,6 @@ func (g *Guard) ClampTimeout(timeout time.Duration) time.Duration {
 	return timeout
 }
 
-// Client returns an http.Client whose transport is wrapped by this Guard,
-// with redirects disabled and timeout clamped to MaxTimeout.
 func (g *Guard) Client(timeout time.Duration, defaults CallMeta) *http.Client {
 	return &http.Client{
 		Timeout:       g.ClampTimeout(timeout),
@@ -320,8 +285,6 @@ func (g *Guard) Client(timeout time.Duration, defaults CallMeta) *http.Client {
 	}
 }
 
-// WrapClient clones base (or creates a new client when nil) and ensures every
-// request passes through this Guard with clamped timeout and no redirects.
 func (g *Guard) WrapClient(base *http.Client, timeout time.Duration, defaults CallMeta) *http.Client {
 	if base == nil {
 		return g.Client(timeout, defaults)
@@ -348,7 +311,6 @@ func (g *Guard) WrapClient(base *http.Client, timeout time.Duration, defaults Ca
 	return &cloned
 }
 
-// Transport wraps base so every RoundTrip enforces Guard policies.
 func (g *Guard) Transport(base http.RoundTripper, defaults CallMeta) http.RoundTripper {
 	if base == nil {
 		base = http.DefaultTransport
@@ -356,28 +318,6 @@ func (g *Guard) Transport(base http.RoundTripper, defaults CallMeta) http.RoundT
 	return &guardedTransport{guard: g, base: base, defaults: defaults}
 }
 
-// RecordActualCost adds verified provider USD spend to this Guard's budget accounting.
-func (g *Guard) RecordActualCost(usd float64) {
-	if usd <= 0 {
-		return
-	}
-	g.mu.Lock()
-	g.stats.RecordedActualUSD += usd
-	g.mu.Unlock()
-}
-
-// RecordUnknownCost adds a conservative estimated USD exposure for a completed
-// call whose provider did not report a verifiable cost.
-func (g *Guard) RecordUnknownCost(usd float64) {
-	if usd <= 0 {
-		return
-	}
-	g.mu.Lock()
-	g.stats.EstimatedUnknownUSD += usd
-	g.mu.Unlock()
-}
-
-// SetMaxEstimatedUSD updates the process-wide estimated spend ceiling (0 disables).
 func (g *Guard) SetMaxEstimatedUSD(usd float64) {
 	if usd < 0 {
 		usd = 0
@@ -387,7 +327,6 @@ func (g *Guard) SetMaxEstimatedUSD(usd float64) {
 	g.mu.Unlock()
 }
 
-// SetMaxTotalCalls updates the total admitted call cap (0 disables).
 func (g *Guard) SetMaxTotalCalls(maxCalls int) {
 	if maxCalls < 0 {
 		maxCalls = 0
@@ -397,13 +336,6 @@ func (g *Guard) SetMaxTotalCalls(maxCalls int) {
 	g.mu.Unlock()
 }
 
-// EstimateWorstCaseCallUSD returns a conservative USD estimate for a request
-// based on serialized body size and max output tokens.
-func EstimateWorstCaseCallUSD(bodyBytes, maxOutputTokens int) float64 {
-	return estimateWorstCaseCallUSD(bodyBytes, maxOutputTokens)
-}
-
-// Stats returns a point-in-time snapshot of admission, block, and abort counters.
 func (g *Guard) Stats() Snapshot {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -448,32 +380,57 @@ func (t *guardedTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	}
 	endpoint := req.URL.Host + req.URL.Path
 
-	release, err := t.guard.admit(req.Context(), meta, endpoint, bodyHash, bodyBytes)
+	settle, err := t.guard.admit(req.Context(), meta, endpoint, bodyHash, bodyBytes)
 	if err != nil {
 		return nil, err
 	}
 
 	res, rtErr := t.base.RoundTrip(req)
-	t.guard.observe(req.Context(), meta, bodyBytes, res, rtErr)
-	if rtErr == nil && res != nil && res.Body != nil && res.StatusCode >= 200 && res.StatusCode < 300 {
-		res.Body = &releaseOnCloseBody{ReadCloser: res.Body, release: release}
+	status := 0
+	if res != nil {
+		status = res.StatusCode
+	}
+	if rtErr == nil && res != nil && res.Body != nil && status >= 200 && status < 300 {
+		body := &meteredBody{ReadCloser: res.Body, settle: settle, status: status}
+		res.Body = body
+		res.Request = req.WithContext(context.WithValue(req.Context(), responseMeterKey{}, body))
 		return res, nil
 	}
-	release()
+	settle(status, nil, rtErr)
 	return res, rtErr
 }
 
-type releaseOnCloseBody struct {
+type meteredBody struct {
 	io.ReadCloser
-	release func()
+	settle func(int, *float64, error)
+	status int
+	cost   *float64
+	failed error
 }
 
-func (b *releaseOnCloseBody) Close() error {
-	err := b.ReadCloser.Close()
-	if b.release != nil {
-		b.release()
+func (b *meteredBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil && err != io.EOF {
+		b.failed = err
 	}
+	return n, err
+}
+
+func (b *meteredBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.settle(b.status, b.cost, errors.Join(b.failed, err))
 	return err
+}
+
+type responseMeterKey struct{}
+
+func RecordResponseCost(res *http.Response, usd float64) {
+	if res.Request == nil {
+		return
+	}
+	if body, ok := res.Request.Context().Value(responseMeterKey{}).(*meteredBody); ok && usd >= 0 && !math.IsNaN(usd) && !math.IsInf(usd, 0) {
+		body.cost = &usd
+	}
 }
 
 func mergeMeta(base, override CallMeta) CallMeta {
@@ -531,18 +488,30 @@ func hashAndRestoreBody(req *http.Request) (string, int, error) {
 	return hex.EncodeToString(sum[:16]), len(data), nil
 }
 
-func estimateWorstCaseCallUSD(bodyBytes, maxOutputTokens int) float64 {
-	estInputTokens := max(bodyBytes/4, 256)
-	estOutputTokens := maxOutputTokens
-	if estOutputTokens <= 0 {
-		estOutputTokens = 1024
+func EstimateCallUSD(meta CallMeta, bodyBytes int) float64 {
+	inputRate, outputRate := 2.5, 10.0
+	model := strings.ToLower(meta.Model)
+	switch {
+	case strings.Contains(model, "opus-5.5"), strings.Contains(model, "opus-5-5"):
+		inputRate, outputRate = 5, 20
+	case strings.Contains(model, "opus"):
+		inputRate, outputRate = 18.75, 75
+	case strings.Contains(model, "claude"), meta.Provider == "anthropic":
+		inputRate, outputRate = 3.75, 15
+	case strings.Contains(model, "gpt-6.1-terra"):
+		inputRate, outputRate = 2.5, 7.5
+	case strings.Contains(model, "gpt-6"):
+	case meta.Provider == "gateway", meta.Provider == "openrouter":
+		inputRate, outputRate = 18.75, 75
 	}
-	// Conservative pricing envelope ($2/M input, $10/M output) so aborted calls
-	// never appear as $0.00 against guard spend ceilings.
-	return float64(estInputTokens)*2e-6 + float64(estOutputTokens)*10e-6
+	output := meta.MaxOutputTokens
+	if output <= 0 {
+		output = 1024
+	}
+	return (float64(max(bodyBytes, 256))*inputRate + float64(output)*outputRate) / 1e6
 }
 
-func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash string, bodyBytes int) (func(), error) {
+func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash string, bodyBytes int) (func(int, *float64, error), error) {
 	now := g.now()
 	sk := scopeKey{user: meta.UserID, scope: meta.Scope}
 	policy := g.policyFor(meta.Scope)
@@ -556,7 +525,6 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 		g.scopes[sk] = st
 	}
 
-	// 1. Circuit breaker check (consecutive aborts or provider errors).
 	if !st.circuitOpenUntil.IsZero() && now.Before(st.circuitOpenUntil) {
 		g.stats.TotalBlocked++
 		g.stats.BlockedCircuit++
@@ -566,7 +534,6 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 		return nil, fmt.Errorf("%w (%s, retry in %s)", ErrCircuitOpen, st.circuitReason, remaining)
 	}
 
-	// 2. Hard total call cap (for bounded gateway / simulation runs).
 	if g.cfg.MaxTotalCalls > 0 && g.stats.TotalAdmitted >= int64(g.cfg.MaxTotalCalls) {
 		g.stats.TotalBlocked++
 		g.stats.BlockedCallLimit++
@@ -576,8 +543,7 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 		return nil, fmt.Errorf("%w (admitted %d >= limit %d)", ErrCallLimitExceeded, g.stats.TotalAdmitted, g.cfg.MaxTotalCalls)
 	}
 
-	// 3. Hard spend ceiling (includes conservative estimate for in-flight and unknown/aborted calls).
-	estCallUSD := estimateWorstCaseCallUSD(bodyBytes, meta.MaxOutputTokens)
+	estCallUSD := EstimateCallUSD(meta, bodyBytes)
 	if g.cfg.MaxEstimatedUSD > 0 {
 		projected := g.stats.RecordedActualUSD + g.stats.EstimatedUnknownUSD + g.stats.InFlightEstimatedUSD + estCallUSD
 		if projected > g.cfg.MaxEstimatedUSD {
@@ -591,7 +557,6 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 		}
 	}
 
-	// 3. In-flight concurrency cap (global and per user+scope).
 	if g.globalInFlight >= g.cfg.GlobalMaxInFlight || (policy.MaxInFlight > 0 && st.inFlight >= policy.MaxInFlight) {
 		g.stats.TotalBlocked++
 		g.stats.BlockedConcurrency++
@@ -600,7 +565,6 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 		return nil, fmt.Errorf("%w (scope=%s in_flight=%d)", ErrConcurrencyLimited, meta.Scope, st.inFlight)
 	}
 
-	// 4. Sliding-window rate limits (global + per user+scope minute & hour).
 	minuteCutoff := now.Add(-time.Minute)
 	hourCutoff := now.Add(-time.Hour)
 	g.globalMinute = pruneBefore(g.globalMinute, minuteCutoff)
@@ -629,7 +593,6 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 		return nil, fmt.Errorf("%w (scope=%s %d/hr)", ErrRateLimited, meta.Scope, policy.MaxPerHour)
 	}
 
-	// 5. Duplicate-payload storm detector.
 	if bodyHash != "" && g.cfg.DuplicateMax > 0 {
 		dk := dupKey{user: meta.UserID, scope: meta.Scope, endpoint: endpoint, bodyHash: bodyHash}
 		dupCutoff := now.Add(-g.cfg.DuplicateWindow)
@@ -649,7 +612,6 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 		}
 	}
 
-	// Admitted: reserve in-flight & rate-limit slots.
 	g.globalInFlight++
 	st.inFlight++
 	g.stats.InFlightEstimatedUSD += estCallUSD
@@ -659,44 +621,29 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 	g.stats.TotalAdmitted++
 
 	var once sync.Once
-	release := func() {
+	settle := func(status int, actual *float64, resultErr error) {
 		once.Do(func() {
+			now := g.now()
 			g.mu.Lock()
-			if g.globalInFlight > 0 {
-				g.globalInFlight--
+			defer g.mu.Unlock()
+			g.globalInFlight--
+			st.inFlight--
+			g.stats.InFlightEstimatedUSD = max(0, g.stats.InFlightEstimatedUSD-estCallUSD)
+			if actual != nil {
+				g.stats.RecordedActualUSD += *actual
+			} else if resultErr != nil || status >= 200 && status < 300 {
+				g.stats.EstimatedUnknownUSD += estCallUSD
 			}
-			if st.inFlight > 0 {
-				st.inFlight--
-			}
-			g.stats.InFlightEstimatedUSD -= estCallUSD
-			if g.stats.InFlightEstimatedUSD < 1e-12 {
-				g.stats.InFlightEstimatedUSD = 0
-			}
-			g.mu.Unlock()
+			g.observeLocked(ctx, now, st, meta, status, resultErr)
 		})
 	}
-	return release, nil
+	return settle, nil
 }
 
-func (g *Guard) observe(ctx context.Context, meta CallMeta, bodyBytes int, res *http.Response, rtErr error) {
-	now := g.now()
-	sk := scopeKey{user: meta.UserID, scope: meta.Scope}
-
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	st := g.scopes[sk]
-	if st == nil {
-		return
-	}
-
-	if rtErr != nil {
-		// Transport error or client cancellation after bytes may have been sent.
-		// Track worst-case unbilled exposure and trip the abort circuit breaker
-		// if repeated aborts indicate a cancel/retry storm.
+func (g *Guard) observeLocked(ctx context.Context, now time.Time, st *scopeState, meta CallMeta, status int, resultErr error) {
+	if resultErr != nil {
 		st.consecutiveAborts++
 		g.stats.UnknownAborts++
-		g.stats.EstimatedUnknownUSD += estimateWorstCaseCallUSD(bodyBytes, meta.MaxOutputTokens)
 		if st.consecutiveAborts >= g.cfg.AbortBreakerThreshold {
 			st.breakerTrips++
 			cooldown := g.breakerCooldown(st.breakerTrips)
@@ -710,7 +657,7 @@ func (g *Guard) observe(ctx context.Context, meta CallMeta, bodyBytes int, res *
 		return
 	}
 
-	if res != nil && res.StatusCode >= 200 && res.StatusCode < 300 {
+	if status >= 200 && status < 300 {
 		st.consecutiveAborts = 0
 		st.consecutiveErrors = 0
 		st.breakerTrips = 0
@@ -719,9 +666,9 @@ func (g *Guard) observe(ctx context.Context, meta CallMeta, bodyBytes int, res *
 		return
 	}
 
-	if res != nil {
+	if status != 0 {
 		st.consecutiveAborts = 0
-		if res.StatusCode == http.StatusPaymentRequired {
+		if status == http.StatusPaymentRequired {
 			st.breakerTrips++
 			cooldown := min(5*time.Minute, g.cfg.BreakerMaxCooldown)
 			st.circuitOpenUntil = now.Add(cooldown)
@@ -730,16 +677,16 @@ func (g *Guard) observe(ctx context.Context, meta CallMeta, bodyBytes int, res *
 				"user_id", meta.UserID, "scope", meta.Scope, "cooldown", cooldown.String())
 			return
 		}
-		if res.StatusCode == http.StatusTooManyRequests || res.StatusCode == http.StatusUnauthorized ||
-			res.StatusCode == http.StatusForbidden || res.StatusCode >= 500 {
+		if status == http.StatusTooManyRequests || status == http.StatusUnauthorized ||
+			status == http.StatusForbidden || status >= 500 {
 			st.consecutiveErrors++
 			if st.consecutiveErrors >= g.cfg.ProviderErrorBreakerThreshold {
 				st.breakerTrips++
 				cooldown := g.breakerCooldown(st.breakerTrips)
 				st.circuitOpenUntil = now.Add(cooldown)
-				st.circuitReason = fmt.Sprintf("%d consecutive provider HTTP %d errors", st.consecutiveErrors, res.StatusCode)
+				st.circuitReason = fmt.Sprintf("%d consecutive provider HTTP %d errors", st.consecutiveErrors, status)
 				slog.ErrorContext(ctx, "llmguard circuit breaker opened on provider errors",
-					"user_id", meta.UserID, "scope", meta.Scope, "status", res.StatusCode,
+					"user_id", meta.UserID, "scope", meta.Scope, "status", status,
 					"consecutive_errors", st.consecutiveErrors, "cooldown", cooldown.String())
 			}
 		}

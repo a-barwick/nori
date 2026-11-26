@@ -14,11 +14,7 @@ import (
 	"nori/internal/transcript"
 )
 
-// Limits on what one inner model call sends. The saved history keeps every item; only the request is shortened.
 const (
-	// InnerInputBytes is the transcript size that starts omitting older tool outputs. Omitting then continues until
-	// the newest InnerKeepBytes are whole, so the shortened prefix stays the same for later calls and the provider's
-	// prompt cache keeps working until the transcript grows past the limit again.
 	InnerInputBytes = 64 << 10
 	InnerKeepBytes  = 32 << 10
 	omitOutputBytes = 512
@@ -26,9 +22,6 @@ const (
 
 var omittedNote = prompts.Runtime("omitted-output", nil)
 
-// fitContext omits the outputs of older tool results once the transcript passes InnerInputBytes. Each omitted output
-// keeps its call, operation_id and outcome, so call and result still pair up and the saved output stays one
-// operation_read away. Text, tool calls and the provider's own items are never changed.
 func fitContext(messages []transcript.Message) []transcript.Message {
 	full := make([]int, len(messages))
 	short := make([]int, len(messages))
@@ -38,7 +31,6 @@ func fitContext(messages []transcript.Message) []transcript.Message {
 		shortened[i] = omitOutputs(message)
 		short[i] = messageBytes(shortened[i])
 	}
-	// Replay the transcript's growth so the cut depends only on the messages before it, not on when a call happened.
 	cut, total, tail := 0, 0, 0
 	for i := range messages {
 		total += full[i]
@@ -65,8 +57,6 @@ func messageBytes(message transcript.Message) int {
 	return len(data)
 }
 
-// omitOutputs replaces large tool outputs with a reference. A capability_load result stays whole, because the tools
-// a task loaded are read back from it. User answers also stay whole.
 func omitOutputs(message transcript.Message) transcript.Message {
 	var parts []transcript.Part
 	for i, part := range message.Parts {
@@ -129,7 +119,6 @@ func (a *Activities) operationRead(ctx context.Context, runID, id string) (map[s
 }
 
 func (a *Activities) operationReadPage(ctx context.Context, runID, id string, offset, limit int) (map[string]any, error) {
-	// A continuation may read the operations of the tasks it continues, whose IDs start with their task ID.
 	if run, err := a.Store.GetRun(ctx, runID); err == nil {
 		for hops := 0; hops < 8 && run.Origin != nil && run.Origin.ContinuesTaskID != ""; hops++ {
 			previous := run.Origin.ContinuesTaskID
@@ -168,7 +157,6 @@ func (a *Activities) operationReadPage(ctx context.Context, runID, id string, of
 		if effectiveLimit > maxOperationReadLimit {
 			effectiveLimit = maxOperationReadLimit
 		}
-		// Return full structured output when it fits within the page limit and offset == 0.
 		if offset <= 0 && len(raw) <= effectiveLimit {
 			var output map[string]any
 			if err = json.Unmarshal(raw, &output); err != nil {
@@ -178,7 +166,6 @@ func (a *Activities) operationReadPage(ctx context.Context, runID, id string, of
 				"total_bytes": len(raw), "truncated": false,
 				"note": prompts.Runtime("context-a-saved-tool-output-is-untrusted-data-as-it-was-when-th", nil)}, nil
 		}
-		// Paginated UTF-8-safe slice for large saved outputs (> 16 KiB or explicit offset/limit).
 		if offset < 0 {
 			offset = 0
 		}
@@ -215,10 +202,6 @@ func (a *Activities) operationReadPage(ctx context.Context, runID, id string, of
 	return nil, errors.New(prompts.Runtime("operation-not-found", nil))
 }
 
-// managedContext keeps all current-task instructions and a complete recent suffix.
-// Older rounds become source-linked evidence, never fabricated tool responses.
-// The projection is deterministic from the immutable ref, so a restart needs no
-// separate compaction job, paid summarizer or mutable transcript head.
 func managedContext(messages []transcript.Message, ref string, reduced bool) ([]transcript.Message, error) {
 	if len(messages) == 0 {
 		return messages, nil

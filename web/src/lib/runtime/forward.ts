@@ -5,7 +5,6 @@ import { localDevelopment, runtimeMode, runtimeTarget, type Mode } from "./targe
 import { reportUpstreamFailure, reportUpstreamRejection, rejectionHeaders, upstreamTraceHeaders } from "@/lib/observability/upstream";
 import { MAX_FILE_BYTES } from "../submission";
 
-// A stream ends upstream first. This limit only catches one that stopped responding.
 const READ_TIMEOUT_MS = 170_000;
 const RELAYED = ["content-disposition", "content-security-policy", "content-length"];
 const json = (type: string) => type.includes("application/json");
@@ -23,7 +22,6 @@ async function relay(request: Request, { base, userID, mode }: ScopedRuntime, pa
   const label = operation ?? path.split("?")[0].replace(/^v1\/(uploads|results)\/.*/, "v1/$1/file");
   try {
     const trace = upstreamTraceHeaders(request);
-    // Construct a fresh header set so browser credentials never reach the runtime.
     const upstream = await fetch(new URL(`users/${encodeURIComponent(userID)}/${path}`, base), {
       ...init, headers: { ...(init.headers as Record<string, string>), ...await runtimeHeaders(mode), ...trace },
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(timeout)]), redirect: "error", cache: "no-store",
@@ -32,7 +30,6 @@ async function relay(request: Request, { base, userID, mode }: ScopedRuntime, pa
     if (mode === "hosted" && upstream.status === 429) {
       reportUpstreamRejection(operation ?? label, request, trace, upstream.headers);
       void upstream.body?.cancel().catch(() => undefined);
-      // Platforms can return private HTML error bodies. Relay only the throttling signal and sanitized headers.
       return Response.json({ error: "Nori is busy. Try again shortly." }, {
         status: 429,
         headers: { "Cache-Control": "no-store", ...rejectionHeaders(upstream.headers) },
@@ -62,9 +59,6 @@ async function relay(request: Request, { base, userID, mode }: ScopedRuntime, pa
   }
 }
 
-// The hosted runtime allows few queries per minute, and every open tab polls the same small lists. Answers to those
-// reads are shared per user for a few seconds, so a second tab or device costs no extra runtime queries. Any change
-// the user makes through this tier drops their shared answers, so their own actions show at once.
 const SHARED_READS = new Set(["v1/capabilities", "v1/assistant/summary", "v1/interactions?status=pending", "v1/work", "v1/integrations", "v1/connections"]);
 const SHARED_TTL_MS = 8_000;
 const sharedReads = new Map<string, { expires: number; text: Promise<string | null> }>();
@@ -212,7 +206,6 @@ export async function operationRoute(request: Request, operation: string) {
 function historyQuery(request: Request, afterAllowed: boolean, beforeAllowed: boolean) {
   const incoming = new URL(request.url).searchParams;
   const query = new URLSearchParams();
-  // Agent Runtime does not relay EventSource's Last-Event-ID header.
   const after = afterAllowed && (request.headers.get("last-event-id") || incoming.get("after"));
   if (after) query.set("after", after);
   const before = beforeAllowed && incoming.get("before");
@@ -254,8 +247,6 @@ export async function capabilitiesRoute(request: Request) {
   return forward(request, runtimeMode(request.headers), "v1/capabilities", {}, json);
 }
 
-// Assistant management API (contract r1+). Each family is an explicit allowlist; the
-// browser never chooses an arbitrary upstream path.
 const ASSISTANT_FAMILIES = new Set([
   "integrations", "connections", "interactions", "work", "automations", "goals", "library", "search", "permissions",
   "preferences", "mcp", "assistant", "mutations", "operations", "memory", "inbox", "tools",
@@ -290,8 +281,6 @@ export async function assistantRoute(request: Request, family: string, segments:
   return forward(request, mode, path, init, (type) => json(type) || (read && family === "library" && /^(application\/(pdf|octet-stream)|image\/(png|jpeg|webp)|text\/(plain|markdown|csv))/.test(type)));
 }
 
-// The provider redirects the browser here. Core validates state within this user only and
-// answers 303 to the attempt's relative return_to; only a relative Location is passed on.
 async function oauthCallback(request: Request, mode: Mode, path: string) {
   const target = runtimeTarget(mode);
   if (target instanceof Response) return target;
@@ -299,7 +288,6 @@ async function oauthCallback(request: Request, mode: Mode, path: string) {
   if ("status" in user) return accessFailureResponse(user);
   try {
     const upstream = await fetch(new URL(`users/${encodeURIComponent(user.userID)}/${path}${path.includes("?") ? "&" : "?"}nori_redirect=json`, user.base), {
-      // The hosted gateway drops a redirect's Location, so core returns the destination as JSON when asked.
       headers: { ...await runtimeHeaders(mode), ...upstreamTraceHeaders(request), "X-Nori-Redirect": "json" }, redirect: "manual", cache: "no-store",
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]),
     });

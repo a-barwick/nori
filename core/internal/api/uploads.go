@@ -12,16 +12,12 @@ import (
 	"nori/internal/state"
 )
 
-// upload saves one file. The body is read whole before anything is stored, so a dropped connection leaves nothing, and
-// a retry with the same ID is safe. The file goes to quarantined storage and is only ever read as data. The file's name
-// travels as `filename` because Agent Runtime's gateway takes a `name` parameter as a resource of its own and refuses it.
 func (s *server) upload(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	if !state.ValidUploadID(id) {
 		writeJSON(w, 400, map[string]string{"error": "An upload needs a UUID id."})
 		return
 	}
-	// The server's default read limit is too short for a large file on a slow connection.
 	http.NewResponseController(w).SetReadDeadline(time.Now().Add(3 * time.Minute))
 	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, state.MaxUploadBytes))
 	var tooLarge *http.MaxBytesError
@@ -45,8 +41,6 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, upload.Attachment)
 }
 
-// readUpload returns a saved file. An attachment header and a sandbox policy keep the browser from running anything in
-// it, even if a viewer opens the URL directly.
 func (s *server) readUpload(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !state.ValidUploadID(id) {

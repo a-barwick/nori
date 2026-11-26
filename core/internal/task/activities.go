@@ -24,20 +24,15 @@ import (
 )
 
 type Activities struct {
-	Agent *agent.Service
-	// ModelForRun, when set, resolves a per-run agent.Model from run.ModelSelection.
+	Agent       *agent.Service
 	ModelForRun func(*state.ModelSelection) agent.Model
 	Store       state.TaskStore
-	// Executor runs registry tools through App connectors and the MCP client. Nil leaves them
-	// unavailable.
-	Executor *Executor
-	// UserID and Wakes enable wake-driven cancellation inside bounded().
-	UserID string
-	Wakes  WakeNotifier
-	// Optional determinism hooks. Nil defaults to time.Now, a context-aware timer, and time.NewTicker.
-	Now       func() time.Time
-	Sleep     func(context.Context, time.Duration) error
-	NewTicker func(time.Duration) (<-chan time.Time, func())
+	Executor    *Executor
+	UserID      string
+	Wakes       WakeNotifier
+	Now         func() time.Time
+	Sleep       func(context.Context, time.Duration) error
+	NewTicker   func(time.Duration) (<-chan time.Time, func())
 }
 
 type receiptDeadlineKey struct{}
@@ -108,7 +103,6 @@ type ModelInput struct {
 	ContextRetry  bool
 }
 
-// ModelOutcome preserves billed usage even when the model response is unusable.
 type ModelOutcome struct {
 	Response        agent.Response
 	Failure         string
@@ -116,13 +110,11 @@ type ModelOutcome struct {
 }
 type ToolInput struct {
 	Step
-	OperationID string
-	Call        transcript.ToolCall
-	Exec        *extensions.Exec `json:",omitempty"`
-	// ReadOnly limits a compose call's nested calls to reads; ParentOperationID names the compose call a nested
-	// call belongs to.
-	ReadOnly          bool   `json:",omitempty"`
-	ParentOperationID string `json:",omitempty"`
+	OperationID       string
+	Call              transcript.ToolCall
+	Exec              *extensions.Exec `json:",omitempty"`
+	ReadOnly          bool             `json:",omitempty"`
+	ParentOperationID string           `json:",omitempty"`
 }
 type Publication struct {
 	Step
@@ -155,8 +147,6 @@ func (a *Activities) Context(ctx context.Context, id string) ([]transcript.Messa
 	if e != nil {
 		return nil, e
 	}
-	// Identify any prior task explicitly continued or revised by this run so its
-	// full output is preserved while other completed tasks stay a compact index.
 	pinnedRunIDs := map[string]bool{}
 	var currentRun *state.Run
 	for i := range session.Runs {
@@ -176,8 +166,6 @@ func (a *Activities) Context(ctx context.Context, id string) ([]transcript.Messa
 		}
 	}
 
-	// Only completed tasks provide background. Incomplete or cancelled user
-	// requests must not become dangling instructions for the next task.
 	completedRuns := make([]state.Run, 0, len(session.Runs))
 	completedSet := map[string]bool{}
 	for _, run := range session.Runs {
@@ -189,8 +177,6 @@ func (a *Activities) Context(ctx context.Context, id string) ([]transcript.Messa
 	if len(completedRuns) == 0 {
 		return nil, nil
 	}
-	// Sort completed runs newest-first by StartedAt (matching state.MergeOpenRuns) so the
-	// compact index always keeps the most recent tasks regardless of session.Runs order.
 	slices.SortStableFunc(completedRuns, func(a, b state.Run) int {
 		if a.StartedAt.After(b.StartedAt) {
 			return -1
@@ -210,7 +196,6 @@ func (a *Activities) Context(ctx context.Context, id string) ([]transcript.Messa
 	)
 	records := []json.RawMessage{}
 	total := 0
-	// First include full output for any directly continued/revised task.
 	if len(pinnedRunIDs) > 0 {
 		for i := len(session.Messages) - 1; i >= 0; i-- {
 			m := session.Messages[i]
@@ -228,7 +213,6 @@ func (a *Activities) Context(ctx context.Context, id string) ([]transcript.Messa
 			total += len(rec)
 		}
 	}
-	// Build a compact index of recent completed tasks (newest first, up to maxIndexTasks / maxIndexBytes).
 	indexBytes := 0
 	indexed := 0
 	for _, run := range completedRuns {
@@ -279,17 +263,12 @@ func (a *Activities) Reconcile(ctx context.Context, id string) (state.TaskSnapsh
 	if snap.Run.Status != state.RunRunning || snap.Run.Finishing != nil {
 		return snap, state.ErrBusy
 	}
-	// Reconciliation and publication do not start paid work. Their revision
-	// and cancellation checks remain valid even while admission is paused.
 	e = a.Store.Incorporate(ctx, state.IncorporateRequest{RunID: id, Revision: snap.Run.Revision, Position: snap.Run.Position})
 	return snap, e
 }
 
 const boundedSafetyTick = 10 * time.Second
 
-// bounded tracks pause, Stop, and interrupting steers throughout I/O using
-// wake-driven notifications plus a 10s safety tick. Corrections invalidate the
-// next boundary; already admitted bounded work is allowed to finish.
 func (a *Activities) bounded(parent context.Context, step Step, interruptible bool) (context.Context, func(), state.Run, error) {
 	var wakeCh <-chan struct{}
 	var unsub func()
@@ -397,11 +376,6 @@ func (a *Activities) Model(parent context.Context, in ModelInput) (ModelOutcome,
 		trace.ID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(trace.ID+":context")).String()
 	}
 	a.recordStep(in.RunID, trace)
-	// Detailed answers share the output allowance with thinking. Keep a bounded
-	// model deadline that leaves room for both, while bounded still observes Stop.
-	// The request also ends early enough to leave the step time to save its checkpoint (D-053): a request that ran
-	// into the step's own deadline lost its result and was then asked again after recovery, for about 15 minutes.
-	// Uses the runtime clock because context.WithDeadline compares against real time.
 	modelCtx, stop := context.WithDeadline(ctx, modelRequestDeadline(ctx, time.Now()))
 	defer stop()
 	response, e := svc.Decide(observability.SuppressErrorCapture(modelCtx), in.Messages, true, !in.Subtask)
@@ -458,18 +432,12 @@ func (a *Activities) Model(parent context.Context, in ModelInput) (ModelOutcome,
 }
 
 const (
-	// modelRequestLimit bounds one model request; modelSaveReserve is kept back from the activity deadline for the
-	// checkpoint write, which receiptContext allows up to 10 seconds.
-	modelRequestLimit = 2 * time.Minute
-	modelSaveReserve  = 15 * time.Second
-	// modelTimeoutFailure is what the user reads when the model does not answer in time.
+	modelRequestLimit   = 2 * time.Minute
+	modelSaveReserve    = 15 * time.Second
 	modelTimeoutFailure = "The model did not answer within 2 minutes, so the task stopped. This step changed nothing; ask again to retry."
-	// modelSaveFailure is what the user reads when the answer arrived but could not be stored.
-	modelSaveFailure = "Nori could not store the model's answer, so the task stopped. This step changed nothing; ask again to retry."
+	modelSaveFailure    = "Nori could not store the model's answer, so the task stopped. This step changed nothing; ask again to retry."
 )
 
-// modelRequestDeadline is the earlier of now plus modelRequestLimit and the activity deadline less modelSaveReserve. A
-// context-size retry in the same activity shares the remainder instead of adding a second full request.
 func modelRequestDeadline(ctx context.Context, now time.Time) time.Time {
 	until := now.Add(modelRequestLimit)
 	if deadline, ok := ctx.Deadline(); ok && deadline.Add(-modelSaveReserve).Before(until) {
@@ -486,7 +454,6 @@ func (a *Activities) finishStep(step *state.TaskStep, err error) {
 	}
 }
 
-// Trace projection never retries an external call or changes its outcome.
 func (a *Activities) recordStep(runID string, step state.TaskStep) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -539,15 +506,10 @@ func questionPayloadJSON(q state.Question) json.RawMessage {
 func (a *Activities) Ask(ctx context.Context, p QuestionProjection) (err error) {
 	ctx, span := startActivity(ctx, "task.question", "CHAIN", a.activityRun(ctx, p.RunID), p.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.question"); span.End() }()
-	// Fence before opening any interaction so a superseded or cancelled task never creates an orphaned card.
 	run, err := a.Store.Guard(ctx, p.RunID, p.Revision)
 	if err != nil {
 		return err
 	}
-	// Every user-facing task question is an Interaction card, opened BEFORE ProjectQuestion emits EventTask
-	// so clients reacting to SSE find the pending card immediately. Because the card itself is the single
-	// source of truth in chat, mark Interactive=true so ProjectQuestion does not wake the outer loop to emit
-	// a duplicate assistant text bubble. Work requests (kind="work") remain outer-loop proposals, not cards.
 	if p.Question.Kind != state.QuestionWork && a.Executor != nil && a.Executor.Permissions != nil {
 		revision := p.Revision
 		title := clip(run.Request, 200)
@@ -580,8 +542,6 @@ func (a *Activities) Publish(ctx context.Context, p Publication) (result state.R
 		if err != nil {
 			return state.Run{}, err
 		}
-		// Terminal cleanup cannot resume execution. Stop and unknown-cost facts
-		// apply to the whole task, including a correction accepted during cleanup.
 		if current.CancelRequested && p.StopConfirmed {
 			p.Status, p.Detail, p.Text, p.Revision = state.RunCancelled, prompts.Runtime("stopped", nil), "", current.Revision
 			p.BypassRouting = true
@@ -600,8 +560,6 @@ func (a *Activities) Project(ctx context.Context, p Projection) error {
 	return a.Store.Project(ctx, state.ProjectRequest{RunID: p.RunID, Revision: p.Revision, Kind: p.Kind, Text: p.Text})
 }
 
-// Spend is unguarded: cost already incurred is recorded even if a correction
-// superseded the revision that spent it.
 func (a *Activities) Spend(ctx context.Context, s Spending) error {
 	return a.Store.Spend(ctx, state.SpendUpdate{RunID: s.RunID, Spent: s.Spent, Budget: s.Budget, CostUnknown: s.CostUnknown})
 }

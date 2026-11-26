@@ -22,8 +22,6 @@ import (
 
 const manualMemoryNormalizeTimeout = 10 * time.Second
 
-// ManualMemoryInput carries the raw manual memory submission and existing Core memories
-// for lightweight AI normalization & deduplication.
 type ManualMemoryInput struct {
 	Text     string
 	About    string
@@ -31,7 +29,6 @@ type ManualMemoryInput struct {
 	Existing []state.Memory
 }
 
-// NormalizedMemory is the normalized result of a manual memory addition.
 type NormalizedMemory struct {
 	Text       string
 	About      string
@@ -39,13 +36,6 @@ type NormalizedMemory struct {
 	ReplacesID string
 }
 
-// NewMemoryNormalizer returns a lightweight AI normalizer backed by an outer ReplyModel.
-// When model is nil or the call fails/times out, callers fall back cleanly to raw fields.
-func NewMemoryNormalizer(model ReplyModel) func(ctx context.Context, in ManualMemoryInput) (NormalizedMemory, error) {
-	return NewMemoryNormalizerWithMeter(model, nil)
-}
-
-// NewMemoryNormalizerWithMeter wraps ReplyModel-based memory normalization with durable usage metering.
 func NewMemoryNormalizerWithMeter(model ReplyModel, meter usage.Meter) func(ctx context.Context, in ManualMemoryInput) (NormalizedMemory, error) {
 	if model == nil {
 		return nil
@@ -55,8 +45,6 @@ func NewMemoryNormalizerWithMeter(model ReplyModel, meter usage.Meter) func(ctx 
 	}
 }
 
-// NewSummaryModelMemoryNormalizer runs manual memory normalization on the lower-tier inner
-// SummaryModel (which already carries durable usage metering), falling back to raw user text on error.
 func NewSummaryModelMemoryNormalizer(model SummaryModel) func(ctx context.Context, in ManualMemoryInput) (NormalizedMemory, error) {
 	if model == nil {
 		return nil
@@ -66,8 +54,6 @@ func NewSummaryModelMemoryNormalizer(model SummaryModel) func(ctx context.Contex
 	}
 }
 
-// NormalizeManualMemory cleans up phrasing into concise third-person form, infers section and
-// about (respecting explicit caller overrides), and detects duplicate/updated existing memories.
 func NormalizeManualMemory(ctx context.Context, model ReplyModel, in ManualMemoryInput) (NormalizedMemory, error) {
 	return normalizeManualMemoryWithMeter(ctx, model, nil, in)
 }

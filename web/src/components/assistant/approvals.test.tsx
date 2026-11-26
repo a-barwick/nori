@@ -24,7 +24,7 @@ import {
   RULE_EFFECT_META,
   RULE_PRECEDENCE_NOTE,
 } from "@/lib/assistant/permissions";
-import { store, useResource } from "@/lib/assistant/useResource";
+import { useResource } from "@/lib/assistant/useResource";
 import type { Connection, Interaction, PermissionRule } from "@/lib/contracts/assistant";
 import { InteractionCard } from "./InteractionCard";
 import { NewRule } from "./SettingsScreen";
@@ -131,11 +131,6 @@ describe("submitInteractionResponse wire calls and live cache invalidation", () 
     const interaction = makeApprovalInteraction({ id: `int_always_${crypto.randomUUID()}` });
     const calls: { url: string; method: string; body?: Record<string, unknown> }[] = [];
 
-    // Seed shared cache paths as if Work, Chat, and Settings -> Permissions have loaded them.
-    store("/permissions", { items: [] });
-    store("/interactions?status=pending", { items: [interaction] });
-    store("/work", { items: [] });
-    store("/assistant/summary", { revision: 1, needs_you: 1, working: 1, apps_attention: 0, inbox_unread: 0 }, undefined, false);
 
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -168,11 +163,12 @@ describe("submitInteractionResponse wire calls and live cache invalidation", () 
       return Response.json({ items: [] });
     }) as unknown as typeof fetch;
 
+    const invalidated: string[] = [];
     const result = await submitInteractionResponse(
       interaction,
       buildApprovalResponse("always_allow", interaction.action_digest!),
+      (...prefixes) => invalidated.push(...prefixes),
     );
-    await new Promise((resolve) => setTimeout(resolve, 10));
 
     assert.equal(result.ok, true);
     if (result.ok) {
@@ -189,19 +185,16 @@ describe("submitInteractionResponse wire calls and live cache invalidation", () 
       remember_rule: true,
     });
 
-    const refreshedPaths = calls.filter((call) => call.method === "GET").map((call) => call.url);
-    assert.equal(refreshedPaths.includes("/api/v1/permissions"), true);
-    assert.equal(refreshedPaths.includes("/api/v1/interactions?status=pending"), true);
-    assert.equal(refreshedPaths.includes("/api/v1/work"), true);
-    assert.equal(refreshedPaths.includes("/api/v1/assistant/summary"), true);
+    assert.equal(invalidated.includes("/permissions"), true);
+    assert.equal(invalidated.includes("/interactions"), true);
+    assert.equal(invalidated.includes("/work"), true);
+    assert.equal(invalidated.includes("/assistant/summary"), true);
   });
 
   test("Allow once omits remember_rule and does not refresh /permissions", async () => {
     const interaction = makeApprovalInteraction({ id: `int_once_${crypto.randomUUID()}` });
     const calls: { url: string; method: string; body?: Record<string, unknown> }[] = [];
 
-    store("/permissions", { items: [] });
-    store("/interactions?status=pending", { items: [interaction] });
 
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -228,11 +221,12 @@ describe("submitInteractionResponse wire calls and live cache invalidation", () 
       return Response.json({ items: [] });
     }) as unknown as typeof fetch;
 
+    const invalidated: string[] = [];
     const result = await submitInteractionResponse(
       interaction,
       buildApprovalResponse("allow_once", interaction.action_digest!),
+      (...prefixes) => invalidated.push(...prefixes),
     );
-    await new Promise((resolve) => setTimeout(resolve, 10));
 
     assert.equal(result.ok, true);
     if (result.ok) {
@@ -247,9 +241,8 @@ describe("submitInteractionResponse wire calls and live cache invalidation", () 
     });
     assert.equal("remember_rule" in (post.body?.value as Record<string, unknown>), false);
 
-    const refreshedPaths = calls.filter((call) => call.method === "GET").map((call) => call.url);
-    assert.equal(refreshedPaths.includes("/api/v1/permissions"), false);
-    assert.equal(refreshedPaths.includes("/api/v1/interactions?status=pending"), true);
+    assert.equal(invalidated.includes("/permissions"), false);
+    assert.equal(invalidated.includes("/interactions"), true);
   });
 
   test("Deny sends decline with action_digest", async () => {
@@ -283,7 +276,6 @@ describe("submitInteractionResponse wire calls and live cache invalidation", () 
       kind: "decline",
       action_digest: interaction.action_digest,
     });
-    // Reference useResource so unused-import lint stays clean while verifying module compatibility.
     assert.equal(typeof useResource, "function");
   });
 });
@@ -363,7 +355,6 @@ describe("InteractionCard and inline chat stream rendering", () => {
       "2026-11-24T19:06:00Z",
     );
 
-    // Even before pending refetch removes int_1, higher resolved revision wins so there is no flicker.
     const mergedBeforeRefetch = mergeInlineInteractions([first, second], {
       [first.id]: { interaction: resolvedFirst, rememberedRule: true },
     });
@@ -375,7 +366,6 @@ describe("InteractionCard and inline chat stream rendering", () => {
       ],
     );
 
-    // After pending refetch removes int_1, int_1 remains visible for active-session confirmation.
     const mergedAfterRefetch = mergeInlineInteractions([second], {
       [first.id]: { interaction: resolvedFirst, rememberedRule: true },
     });
@@ -424,7 +414,6 @@ describe("InteractionCard and inline chat stream rendering", () => {
     assert.match(html, /Allow once/);
     assert.match(html, /Always allow/);
     assert.match(html, /Deny/);
-    // Inline interactions render after the chat message and before the active WorkLine status.
     const messageIdx = html.indexOf("Send the update");
     const inlineIdx = html.indexOf("data-inline-interactions");
     const statusIdx = html.indexOf("1 task in progress");

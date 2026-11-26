@@ -112,7 +112,6 @@ var taskToolDefinitions = func() []taskToolDefinition {
 	requestWork := defineTaskTool("request_work", params("request", "why"), "", unknown)
 	requestWork.access, requestWork.unavailable = delegationTools, "tool-request-work-is-not-available-in-a-subtask"
 
-	// Keep schema order stable for provider prompt caches.
 	operationReadParams := &transcript.Schema{
 		Type: transcript.TypeObject,
 		Properties: map[string]*transcript.Schema{
@@ -151,7 +150,6 @@ var taskToolsByName = func() map[string]taskToolDefinition {
 	return tools
 }()
 
-// TaskToolPolicy returns the durable policy for a built-in task tool name.
 func TaskToolPolicy(name string) ToolPolicy {
 	if definition, known := taskToolsByName[name]; known {
 		return definition.policy
@@ -159,9 +157,6 @@ func TaskToolPolicy(name string) ToolPolicy {
 	return ToolPolicy{Name: "unknown", Effect: "unknown"}
 }
 
-// ValidateCalls checks a whole tool batch before any call runs, so a batch
-// is either executed in order or rejected without effects.
-// Calls naming a definition outside the engine are checked against snapshot, the set the model was offered.
 func ValidateCalls(calls []transcript.ToolCall, wait, work bool, snapshot *extensions.Snapshot) error {
 	if len(calls) > 64 {
 		return errors.New(prompts.Runtime("tool-a-tool-batch-may-contain-at-most-64-calls", nil))

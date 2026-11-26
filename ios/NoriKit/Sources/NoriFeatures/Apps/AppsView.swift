@@ -289,7 +289,6 @@ public struct AppsView: View {
     }
 }
 
-// MARK: - Add MCP Server Sheet
 
 struct AddMCPServerSheet: View {
     @Bindable var store: NoriStore

@@ -89,7 +89,6 @@ public struct SignInView: View {
                 )
                 await store.completeGoogleSignIn(callbackURL: callbackURL, pkce: pkce)
             } catch let authErr as ASWebAuthenticationSessionError where authErr.code == .canceledLogin {
-                // User dismissed the sheet; stay quiet.
             } catch {
                 localError = error.localizedDescription
             }

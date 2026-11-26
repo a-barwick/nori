@@ -1081,7 +1081,6 @@ def validate_persona(persona_dir: Path, global_probe_ids: set[str]) -> tuple[lis
     if not isinstance(month, dict):
         return [f"{slug}/month.json: root must be object"], {}
 
-    # Validate profile.json
     required_profile = [
         "slug", "name", "email", "timezone", "sim_start_date",
         "presets", "preferences", "persona_responder_brief", "mcp_world",
@@ -1118,7 +1117,6 @@ def validate_persona(persona_dir: Path, global_probe_ids: set[str]) -> tuple[lis
     if "mcp_world" in profile:
         _validate_mcp_world(profile["mcp_world"], f"{slug}/profile.json:mcp_world", errors)
 
-    # Validate month.json
     if month.get("persona") != slug:
         errors.append(f"{slug}/month.json: persona {month.get('persona')!r} != {slug!r}")
     if month.get("sim_start_date") != profile.get("sim_start_date"):

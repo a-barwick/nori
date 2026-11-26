@@ -1,7 +1,6 @@
 #if DEBUG
 import Foundation
 
-/// In-memory preview transport used only when launching Debug builds with `-nori-preview`.
 final class PreviewNoriTransport: NoriTransport, @unchecked Sendable {
     private let snapshot: NoriFullSnapshot
     private let details: [String: WorkDetail]
@@ -33,7 +32,7 @@ final class PreviewNoriTransport: NoriTransport, @unchecked Sendable {
         AsyncThrowingStream { _ in }
     }
 
-    func sendTurn(id: String, message: String, attachmentIDs: [String]) async throws -> Session { snapshot.session }
+    func sendTurn(id: String, message: String, attachmentIDs: [String], modelSelection: ModelSelection?) async throws -> Session { snapshot.session }
     func retryTurn(turnID: String?, messageID: String?) async throws -> Session { snapshot.session }
     func sendTaskCommand(_ command: TaskCommand) async throws -> TaskCommandResponse {
         TaskCommandResponse(command: nil, run: nil, accepted: true, retryable: false, error: nil)
@@ -145,7 +144,6 @@ final class PreviewNoriTransport: NoriTransport, @unchecked Sendable {
 }
 
 public extension NoriStore {
-    /// Creates a pre-populated preview store for visual UI inspection in Debug builds.
     static func makePreviewStore() -> NoriStore {
         let iso = ISO8601DateFormatter()
         let now = Date()

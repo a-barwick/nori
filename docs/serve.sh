@@ -1,5 +1,4 @@
 #!/bin/sh
-# The local preview includes repo-only source references.
 cd "$(dirname "$0")/site" || exit 1
 exec python3 - "${1:-3220}" <<'PY'
 import subprocess

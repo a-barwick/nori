@@ -17,7 +17,6 @@ import (
 	"nori/internal/state/docstore"
 )
 
-// OpenTasks is operational state, independent of the bounded UI projection.
 func (d *Database) OpenTasks(ctx context.Context) ([]state.Run, error) {
 	runs, err := documents[state.Run](d.runs().Where("status", "==", "running").Documents(ctx))
 	if err != nil {
@@ -30,8 +29,6 @@ func (d *Database) OpenTasks(ctx context.Context) ([]state.Run, error) {
 func (d *Database) Pending(ctx context.Context, after string) (state.CommandPage, error) {
 	query := d.commands().Where("delivered", "==", false).OrderBy(docstore.DocumentID, docstore.Asc).Limit(state.PendingCommandLimit)
 	if after != "" {
-		// ID is the entire ordering key; a cursor needs no reread of the
-		// record that may already have left the pending set.
 		query = query.StartAfter(&docstore.DocumentSnapshot{Ref: d.commands().Doc(after)})
 	}
 	commands, err := documents[state.Command](query.Documents(ctx))
@@ -73,8 +70,6 @@ func (d *Database) Incorporate(ctx context.Context, req state.IncorporateRequest
 		}
 		plan, err := state.PlanIncorporation(run, req.Revision, req.Position)
 		if err != nil || plan.Noop {
-			// A wake without new commands must not rewrite the task while a user answers its question. The
-			// revision and position fence still applies, and the read transaction ends without writing.
 			return err
 		}
 		log, err := d.openLog(tx)
@@ -92,7 +87,6 @@ func (d *Database) Incorporate(ctx context.Context, req state.IncorporateRequest
 	})
 }
 
-// guard additionally fences new paid work while execution is paused.
 func (d *Database) guard(tx *docstore.Transaction, runID string, revision int64) (state.Run, error) {
 	run, err := decodeRun(tx.Get(d.runs().Doc(runID)))
 	if err != nil {
@@ -127,7 +121,6 @@ func (d *Database) Admit(ctx context.Context, runID string, revision int64, oper
 		if _, err := d.guard(tx, runID, revision); err != nil {
 			return err
 		}
-		// A second activity attempt cannot silently execute an admitted operation.
 		admitted := map[string]any{"id": operation, "revision": revision, "admitted_at": d.now(), "recovery_until": recoveryUntil}
 		if err := tx.Create(d.runs().Doc(runID).Collection("operations").Doc(operation), admitted); err != nil {
 			return err
@@ -157,15 +150,12 @@ func (d *Database) Project(ctx context.Context, req state.ProjectRequest) error 
 	})
 }
 
-// SetProgress replaces the task's latest progress line. Unlike Project it adds no event, so polling a long job can't
-// grow the task's saved record.
 func (d *Database) SetProgress(ctx context.Context, runID string, revision int64, text string) error {
 	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		run, err := d.guard(tx, runID, revision)
 		if err != nil {
 			return err
 		}
-		// A long job is polled often, and an unchanged line is nothing to save or send.
 		if run.Progress == text {
 			return nil
 		}
@@ -180,7 +170,6 @@ func (d *Database) SetProgress(ctx context.Context, runID string, revision int64
 	})
 }
 
-// ProjectQuestion commits the durable wait and its outer inbox event together.
 func (d *Database) ProjectQuestion(ctx context.Context, runID string, revision int64, question state.Question) error {
 	traceContext := observability.InjectTrace(ctx)
 	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
@@ -259,7 +248,6 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 			unfinished = unfinished || (child.Status == state.RunRunning && child.Finishing == nil)
 		}
 		if run.Finishing == nil && admitted.Status == state.RunCompleted && unfinished {
-			// Ending owned work is cleanup, not proof that the requested work succeeded.
 			detail := prompts.Runtime("completion-owned-work-unfinished", nil)
 			admitted.Status, admitted.Detail, admitted.ExpectedIncomplete = state.RunFailed, detail, true
 			admitted.Text += "\n\n" + detail
@@ -308,11 +296,8 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 		if run.ParentID != "" {
 			var waiting bool
 			parent, result, waiting = state.SettleSubtask(parent, run, finished, now)
-			// A waiting parent receives this outcome with no model call. Holds still need their answer, and a subtask
-			// that outlived its parent's wait may have done something the user has to hear about.
 			announce = len(event.Holds) > 0 || (!waiting && len(finished.OperationRefs) > 0)
 		}
-		// Read today's Daily Log shards BEFORE any writes (Firestore read-before-write rule).
 		var (
 			taskOutcomeDate   string
 			taskOutcomeShards []state.MemoryLog
@@ -395,7 +380,6 @@ func (d *Database) Publish(ctx context.Context, req state.PublishRequest) (state
 		err = state.ErrRoutingPending
 	}
 	if err == nil && run.Status != state.RunRunning && run.ParentID != "" {
-		// Child settlement is durable before this wake-up. A crash here is repaired by the open-parent scan.
 		err = d.finishPending(ctx, run.ParentID)
 	}
 	return run, err
@@ -409,13 +393,11 @@ func (d *Database) finishPending(ctx context.Context, id string) error {
 	if run.Finishing != nil {
 		_, err = d.Publish(ctx, *run.Finishing)
 	} else if run.Status != state.RunRunning && run.ParentID != "" {
-		// Older workers can publish a child before cleaning it up.
 		err = d.finishPending(ctx, run.ParentID)
 	}
 	return err
 }
 
-// publishInputs is what publishing a task reads. A Firestore transaction must finish its reads before it writes.
 type publishInputs struct {
 	existing []state.Result
 	prior    *state.Result
@@ -439,8 +421,6 @@ func (d *Database) publishReads(tx *docstore.Transaction, runID string, run stat
 			return in, err
 		}
 	}
-	// Terminal children can still have cleanup pending from an older worker. Read all owned children, not just
-	// the cached running links, before deciding that the parent's lifetime is over.
 	in.children = map[string]state.Run{}
 	for _, link := range run.Subtasks {
 		id := link.ID
@@ -488,11 +468,6 @@ func (d *Database) CleanupTasks(ctx context.Context) ([]state.Run, error) {
 	return runs, nil
 }
 
-// shouldWakeParentForSubtask reports whether a subtask reaching terminal state (or
-// completing terminal cleanup) should wake its parent's task lease. When no
-// subtask_result command is ready and the parent is still waiting on other running
-// siblings (QuestionWork or Finishing), waking the parent is redundant because the
-// final sibling will wake it.
 func shouldWakeParentForSubtask(parent state.Run, result *state.Command) bool {
 	if result != nil {
 		return true
@@ -517,12 +492,11 @@ func (d *Database) FinishCleanup(ctx context.Context, runID, detail string) erro
 		if err != nil {
 			return err
 		}
-		// An old cleanup attempt cannot erase a later admission on a still-executing task.
 		if run.Status == state.RunRunning && run.Finishing == nil {
 			return state.ErrBusy
 		}
 		if detail != "" && run.Status != state.RunRunning && !run.CleanupPending {
-			return nil // A late failed attempt cannot undo confirmed cleanup.
+			return nil
 		}
 		var parent state.Run
 		hasParent := false
@@ -554,10 +528,6 @@ func (d *Database) FinishCleanup(ctx context.Context, runID, detail string) erro
 					return err
 				}
 			}
-			// While run is still RunRunning (Finishing != nil), finishPending immediately
-			// invokes Publish(run) which settles the child on parent and wakes parent if needed.
-			// When run is already terminal (e.g. cleanup after publication), wake parent directly
-			// only if it is actually eligible to proceed.
 			if hasParent && shouldWakeParentForSubtask(parent, nil) {
 				if err = tx.WakeTask(d.user.ID, run.ParentID, now); err != nil {
 					return err
@@ -600,7 +570,6 @@ func (d *Database) RecordTaskStep(ctx context.Context, runID string, step state.
 	return err
 }
 
-// TaskSteps is fetched only when a trace is opened, not with every session poll.
 func (d *Database) TaskSteps(ctx context.Context, runID string) ([]state.TaskStep, error) {
 	if _, err := d.GetRun(ctx, runID); err != nil {
 		return nil, err
@@ -613,7 +582,6 @@ func (d *Database) TaskSteps(ctx context.Context, runID string) ([]state.TaskSte
 	return state.Chronological(steps), nil
 }
 
-// Terminal telemetry follows the committed outcome, including cleanup and recovery finalization.
 func observeTaskEnd(ctx context.Context, run state.Run, incomplete bool) {
 	if run.FinishedAt == nil || run.StartedAt.IsZero() || run.FinishedAt.Before(run.StartedAt) {
 		return

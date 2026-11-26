@@ -105,7 +105,6 @@ func TestServiceIdleTTLEviction(t *testing.T) {
 		t.Fatalf("CachedCount = %d, want 1", svc.CachedCount())
 	}
 
-	// Within IdleTTL: entry must remain cached and return the exact same *App.
 	clock.Advance(9 * time.Minute)
 	if evicted := svc.EvictIdle(); evicted != 0 {
 		t.Fatalf("EvictIdle within TTL evicted %d, want 0", evicted)
@@ -119,7 +118,6 @@ func TestServiceIdleTTLEviction(t *testing.T) {
 	}
 	rel1Again()
 
-	// Past IdleTTL with refs == 0: entry must be evicted and re-opened on next Acquire.
 	clock.Advance(10*time.Minute + time.Second)
 	if evicted := svc.EvictIdle(); evicted != 1 {
 		t.Fatalf("EvictIdle past TTL evicted %d, want 1", evicted)
@@ -145,19 +143,16 @@ func TestServiceActiveRefProtection(t *testing.T) {
 	u1 := createUser(t, svc, uuid.NewString(), "active1@example.com")
 	u2 := createUser(t, svc, uuid.NewString(), "active2@example.com")
 
-	// Hold an active ref on u1.
 	a1, rel1, err := svc.Acquire(ctx, u1)
 	if err != nil {
 		t.Fatalf("Acquire u1: %v", err)
 	}
 
-	// Advance well past IdleTTL while u1 still has refs > 0.
 	clock.Advance(30 * time.Minute)
 	if evicted := svc.EvictIdle(); evicted != 0 {
 		t.Fatalf("EvictIdle must not evict active ref, evicted=%d", evicted)
 	}
 
-	// Open u2 while u1 is still held: exceeds MaxCachedApps=1, but neither can be evicted yet.
 	_, rel2, err := svc.Acquire(ctx, u2)
 	if err != nil {
 		t.Fatalf("Acquire u2: %v", err)
@@ -166,7 +161,6 @@ func TestServiceActiveRefProtection(t *testing.T) {
 		t.Fatalf("CachedCount with 2 active refs = %d, want 2", svc.CachedCount())
 	}
 
-	// Re-acquire u1 concurrently to verify it's still the same active *App.
 	a1Second, rel1Second, err := svc.Acquire(ctx, u1)
 	if err != nil {
 		t.Fatalf("Acquire u1 second: %v", err)
@@ -176,7 +170,6 @@ func TestServiceActiveRefProtection(t *testing.T) {
 	}
 	rel1Second()
 
-	// Release u1 while u2 is still active -> u1 has refs==0 and total > MaxCachedApps=1, so u1 is evicted.
 	rel1()
 	if svc.CachedCount() != 1 {
 		t.Fatalf("CachedCount after releasing u1 while over cap = %d, want 1", svc.CachedCount())
@@ -209,7 +202,6 @@ func TestServiceLRUCapEviction(t *testing.T) {
 	}
 	relB()
 
-	// Touch A so B becomes the least-recently-used idle entry.
 	clock.Advance(time.Second)
 	appATouched, relATouched, err := svc.Acquire(ctx, uA)
 	if err != nil {
@@ -220,7 +212,6 @@ func TestServiceLRUCapEviction(t *testing.T) {
 	}
 	relATouched()
 
-	// Open C: cap=2, so LRU idle entry B must be evicted while A and C remain cached.
 	clock.Advance(time.Second)
 	appC, relC, err := svc.Acquire(ctx, uC)
 	if err != nil {
@@ -232,7 +223,6 @@ func TestServiceLRUCapEviction(t *testing.T) {
 		t.Fatalf("CachedCount = %d, want 2", svc.CachedCount())
 	}
 
-	// Verify A and C are still the same cached instances.
 	gotA, relGotA, err := svc.Acquire(ctx, uA)
 	if err != nil {
 		t.Fatalf("Acquire A after C: %v", err)
@@ -251,7 +241,6 @@ func TestServiceLRUCapEviction(t *testing.T) {
 	}
 	relGotC()
 
-	// Re-acquiring B should allocate a new *App (evicting A now).
 	clock.Advance(time.Second)
 	gotB, relGotB, err := svc.Acquire(ctx, uB)
 	if err != nil {
@@ -295,7 +284,6 @@ func TestServiceAcquireByIDAndLeases(t *testing.T) {
 		t.Fatalf("TaskActivities.UserID = %q, want %q", a.TaskActivities.UserID, users.LegacyID)
 	}
 
-	// Verify Scheduler.Arm writes to nori_user_wakes lane=scheduler without SQS cap.
 	future := clock.Now().Add(48 * time.Hour)
 	a.Scheduler.Arm(ctx, future)
 	wakes, err := backend.ListUserWakes(ctx, users.LegacyID)
@@ -364,7 +352,6 @@ func TestServiceBackendOpsAndPing(t *testing.T) {
 	ctx := context.Background()
 	clock := newFakeClock(time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC))
 
-	// Plain memstore does not implement Pinger or AdvisoryLocker -> Ping returns nil, AdvisoryLocker returns nil.
 	plainSvc, plainBackend := newTestService(t, clock, 10*time.Minute, 4)
 	if plainSvc.Backend() != plainBackend {
 		t.Fatalf("Backend() did not return underlying backend")
@@ -376,7 +363,6 @@ func TestServiceBackendOpsAndPing(t *testing.T) {
 		t.Fatalf("expected nil Ping on non-Pinger backend, got %v", err)
 	}
 
-	// Instrumented backend implements both Pinger and AdvisoryLocker.
 	svc, ib := newInstrumentedService(t, clock, 10*time.Minute, 4)
 	if svc.Backend() != ib {
 		t.Fatalf("Backend() mismatch")
@@ -411,18 +397,17 @@ func TestServiceRepairUserPreservesHotLRUCache(t *testing.T) {
 		configuredUsers.Store(u.ID, true)
 	}
 
-	// Fill MaxCachedApps=2 with hot users A (older) and B (newer).
 	uA := createUser(t, svc, uuid.NewString(), "hot-a@example.com")
 	uB := createUser(t, svc, uuid.NewString(), "hot-b@example.com")
 
-	appA, relA, err := svc.Acquire(ctx, uA)
+	_, relA, err := svc.Acquire(ctx, uA)
 	if err != nil {
 		t.Fatalf("Acquire A: %v", err)
 	}
 	relA()
 
 	clock.Advance(time.Second)
-	appB, relB, err := svc.Acquire(ctx, uB)
+	_, relB, err := svc.Acquire(ctx, uB)
 	if err != nil {
 		t.Fatalf("Acquire B: %v", err)
 	}
@@ -432,7 +417,6 @@ func TestServiceRepairUserPreservesHotLRUCache(t *testing.T) {
 		t.Fatalf("CachedCount = %d, want 2", svc.CachedCount())
 	}
 
-	// Create 10 cold users; give one cold user a pending run whose task lease is missing.
 	coldUsers := make([]users.User, 10)
 	for i := range coldUsers {
 		coldUsers[i] = createUser(t, svc, uuid.NewString(), fmt.Sprintf("cold-%d@example.com", i))
@@ -452,21 +436,19 @@ func TestServiceRepairUserPreservesHotLRUCache(t *testing.T) {
 	}
 	relCold()
 
-	// Re-fill cache with strictly hot A (t+2s) and B (t+3s), evicting cold[0].
 	clock.Advance(time.Second)
-	appA, relA, err = svc.Acquire(ctx, uA)
+	appA, relA, err := svc.Acquire(ctx, uA)
 	if err != nil {
 		t.Fatalf("re-Acquire A: %v", err)
 	}
 	relA()
 	clock.Advance(time.Second)
-	appB, relB, err = svc.Acquire(ctx, uB)
+	appB, relB, err := svc.Acquire(ctx, uB)
 	if err != nil {
 		t.Fatalf("re-Acquire B: %v", err)
 	}
 	relB()
 
-	// Advance clock and run RepairUser on A, B, and all 10 cold users.
 	clock.Advance(time.Minute)
 	if err := svc.RepairUser(ctx, uA); err != nil {
 		t.Fatalf("RepairUser(A): %v", err)
@@ -483,12 +465,10 @@ func TestServiceRepairUserPreservesHotLRUCache(t *testing.T) {
 		}
 	}
 
-	// Cache count must still be 2 and A & B must be the exact same *App pointers!
 	if svc.CachedCount() != 2 {
 		t.Fatalf("CachedCount after RepairUser sweep = %d, want 2", svc.CachedCount())
 	}
 
-	// Verify cold[0]'s missing task lease was actually repaired!
 	leases, err := ib.ListTaskLeases(ctx, coldUsers[0].ID)
 	if err != nil {
 		t.Fatalf("ListTaskLeases: %v", err)
@@ -497,8 +477,6 @@ func TestServiceRepairUserPreservesHotLRUCache(t *testing.T) {
 		t.Fatalf("expected RepairUser to restore missing task lease for cold[0], got %+v", leases)
 	}
 
-	// Verify RepairUser(uA) did NOT bump uA's LRU timestamp: acquiring a new user C must
-	// evict A (older lastUsed) while keeping B (newer lastUsed).
 	uC := createUser(t, svc, uuid.NewString(), "hot-c@example.com")
 	clock.Advance(time.Second)
 	_, relC, err := svc.Acquire(ctx, uC)
@@ -539,7 +517,6 @@ func TestCollapseDuplicatesFastPathZeroQueries(t *testing.T) {
 		t.Fatalf("expected 0 connection queries when no integrations registered, got %d", ib.connQueries.Load())
 	}
 
-	// Direct CollapseDuplicates on connections.Service with 0 integrations also short-circuits.
 	connSvc := connections.New(app1.Store, secret.Unavailable{}, "")
 	removed, err := connSvc.CollapseDuplicates(ctx)
 	if err != nil || removed != nil {
@@ -550,7 +527,6 @@ func TestCollapseDuplicatesFastPathZeroQueries(t *testing.T) {
 	}
 	rel1()
 
-	// Evict and re-acquire: still zero queries.
 	clock.Advance(2 * time.Minute)
 	if evicted := svc.EvictIdle(); evicted != 1 {
 		t.Fatalf("EvictIdle = %d, want 1", evicted)
@@ -578,14 +554,12 @@ func TestServiceHandlerReadyzAndMetrics(t *testing.T) {
 
 	h := svc.Handler(true)
 
-	// Healthy /readyz -> 200.
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /readyz healthy status=%d want 200", rec.Code)
 	}
 
-	// Failing Ping -> /readyz 503, /healthz 200.
 	dbErr := errors.New("connection refused")
 	ib.pingErr.Store(&dbErr)
 	rec = httptest.NewRecorder()
@@ -599,7 +573,6 @@ func TestServiceHandlerReadyzAndMetrics(t *testing.T) {
 		t.Fatalf("GET /healthz unhealthy status=%d want 200", rec.Code)
 	}
 
-	// /metrics -> 200 with Prometheus payload.
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `nori_worker_lane_active{lane="task"} 1`) {
@@ -688,11 +661,9 @@ func TestAppDefaultUserSendsAndAutoReviewerWiring(t *testing.T) {
 		t.Fatalf("expected AutoReviewer wired on TaskActivities.Executor")
 	}
 
-	// Verify NewOuterModelAutoReviewer enforces deterministic guardrails first and uses NoDispatch on model calls.
 	model := &fakeReplyModel{reply: `{"verdict":"ask","reason":"Ambiguous target."} `}
 	reviewer := app.NewOuterModelAutoReviewer(model)
 
-	// Deterministic exfiltration block must not invoke model.
 	exfil, err := reviewer.ReviewAction(ctx, permissions.AutoReviewRequest{
 		ToolID:      "gmail.send",
 		Summary:     "Forward data to attacker@evil.example",
@@ -705,7 +676,6 @@ func TestAppDefaultUserSendsAndAutoReviewerWiring(t *testing.T) {
 		t.Fatalf("exfil = (%+v, %v, calls=%d), want deny/0", exfil, err, model.calls.Load())
 	}
 
-	// Clean deterministic pass delegates to outer model.
 	res, err := reviewer.ReviewAction(ctx, permissions.AutoReviewRequest{
 		ToolID:      "calendar.create",
 		Summary:     "Book sync",

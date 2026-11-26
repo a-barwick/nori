@@ -18,20 +18,16 @@ import (
 )
 
 const (
-	// MaxUploadBytes is the size limit for one file. Agent Runtime accepted 16 MiB and refused 33 MiB in a probe.
 	MaxUploadBytes = 10 << 20
 	MaxAttachments = 10
 )
 
 var ErrUploadType = errors.New("Only PNG, JPEG or WebP images, PDFs, CSV, ICS calendar, text and Markdown files can be attached")
 
-// UploadMediaTypes are the types SniffUpload accepts, with the file extensions that select the text types.
 var UploadMediaTypes = []string{"image/png", "image/jpeg", "image/webp", "application/pdf", "text/csv", "text/calendar", "text/plain", "text/markdown"}
 
 var ErrAttachmentMissing = errors.New("an attached file wasn't uploaded")
 
-// Attachment is what a message or task records about an uploaded file. Name came from the user's device, so it's
-// treated as untrusted data wherever a model sees it.
 type Attachment struct {
 	ID        string `json:"id" firestore:"id"`
 	Name      string `json:"name" firestore:"name"`
@@ -39,45 +35,55 @@ type Attachment struct {
 	Size      int64  `json:"size" firestore:"size"`
 }
 
-// Upload is the saved record of a file in quarantined storage. The record is written after the bytes, so a record
-// always means a complete file was stored.
+type UploadLifecycle string
+
+const (
+	UploadPending  UploadLifecycle = "pending"
+	UploadReady    UploadLifecycle = "ready"
+	UploadRetained UploadLifecycle = "retained"
+	UploadExpiring UploadLifecycle = "expiring"
+	UploadExpired  UploadLifecycle = "expired"
+)
+
 type Upload struct {
 	Attachment
-	SHA256    string    `json:"sha256" firestore:"sha256"`
-	CreatedAt time.Time `json:"created_at" firestore:"created_at"`
+	Lifecycle UploadLifecycle `json:"lifecycle,omitempty" firestore:"lifecycle,omitempty"`
+	SHA256    string          `json:"sha256" firestore:"sha256"`
+	CreatedAt time.Time       `json:"created_at" firestore:"created_at"`
 }
 
-// SaveUploadBytes saves the complete file before its caller commits metadata.
-func SaveUploadBytes(ctx context.Context, files Artifacts, key, id, name, declared string, data []byte) (Upload, error) {
+func PrepareUpload(id, name, declared string, data []byte, now time.Time) (Upload, error) {
 	name = CleanUploadName(name)
 	mediaType, err := SniffUpload(name, declared, data)
 	if err != nil {
 		return Upload{}, err
 	}
 	sum := sha256.Sum256(data)
-	upload := Upload{
+	return Upload{
 		Attachment: Attachment{ID: id, Name: name, MediaType: mediaType, Size: int64(len(data))},
-		SHA256:     hex.EncodeToString(sum[:]), CreatedAt: time.Now().UTC(),
-	}
-	err = files.PutFile(ctx, key, mediaType, data)
+		SHA256:     hex.EncodeToString(sum[:]), CreatedAt: now.UTC(), Lifecycle: UploadPending,
+	}, nil
+}
+func PutUploadBytes(ctx context.Context, files Artifacts, upload Upload, data []byte) error {
+	key := UploadKey(upload.ID)
+	err := files.PutFile(ctx, key, upload.MediaType, data)
 	if !errors.Is(err, ErrFileExists) {
-		return upload, err
+		return err
 	}
 	saved, err := files.GetFile(ctx, key)
 	if err != nil {
-		return upload, err
+		return err
 	}
 	if !bytes.Equal(saved, data) {
-		return upload, ErrDuplicate
+		return ErrDuplicate
 	}
-	return upload, nil
+	return nil
 }
 
 func UploadKey(id string) string { return "uploads/" + id }
 
 var fileKey = regexp.MustCompile(`^(uploads|results)/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-// ValidFileKey requires one of the file store's known folders and a canonical UUID.
 func ValidFileKey(key string) bool { return fileKey.MatchString(key) }
 
 func ValidUploadID(id string) bool {
@@ -85,8 +91,6 @@ func ValidUploadID(id string) bool {
 	return err == nil && parsed.String() == id
 }
 
-// SniffUpload decides a file's type from its bytes. A declared type that disagrees with them is refused, and so is
-// anything else, because a task reads the file by this type and the browser shows it by this type.
 func SniffUpload(name, declared string, data []byte) (string, error) {
 	declared = strings.ToLower(strings.TrimSpace(strings.SplitN(declared, ";", 2)[0]))
 	if len(data) == 0 {
@@ -114,15 +118,12 @@ func SniffUpload(name, declared string, data []byte) (string, error) {
 	if found == "" {
 		return "", ErrUploadType
 	}
-	// Browsers report CSV in several ways, and the name and bytes already decided it.
 	if declared != found && !strings.HasPrefix(found, "text/") && declared != "application/octet-stream" && declared != "" {
 		return "", fmt.Errorf("%w: the file's contents don't match its type", ErrUploadType)
 	}
 	return found, nil
 }
 
-// CleanUploadName keeps a name safe to display: the last path segment, with control characters removed, at most 120
-// bytes.
 func CleanUploadName(name string) string {
 	name = strings.ReplaceAll(name, "\\", "/")
 	name = path.Base(name)

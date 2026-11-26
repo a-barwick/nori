@@ -155,7 +155,6 @@ func TestModelRefRecordsNativeWebSearchOperations(t *testing.T) {
 		}
 	}
 
-	// Verify operation_read can inspect the saved native web_search payload including citations.
 	readOut, err := act.operationRead(ctx, runID, ops[0].ID)
 	if err != nil {
 		t.Fatalf("operationRead: %v", err)
@@ -169,7 +168,6 @@ func TestModelRefRecordsNativeWebSearchOperations(t *testing.T) {
 		t.Fatalf("expected citations in saved native search output, got %s", string(rawCitations))
 	}
 
-	// Verify model TaskStep trace includes the native web_search calls.
 	steps, err := store.TaskSteps(ctx, runID)
 	if err != nil {
 		t.Fatalf("TaskSteps: %v", err)
@@ -208,7 +206,6 @@ func TestDurableToolRecordsFallbackWebSearchSummaryAndCreatedAt(t *testing.T) {
 		Now:   func() time.Time { return fixedNow },
 	}
 
-	// SearchKey is empty so Brave fallback returns available=false ("failed") without network I/O.
 	_, err := act.durableTool(ctx, ToolInput{
 		Step:        Step{RunID: runID, Revision: 1},
 		OperationID: runID + "-m1-t1",

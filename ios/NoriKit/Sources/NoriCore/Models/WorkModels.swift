@@ -345,7 +345,6 @@ public struct OperationProjection: Sendable, Codable, Hashable, Identifiable {
         return name
     }
 
-    /// Returns a human-readable authority phrase only when `authoritySource` is explicitly present.
     public var displayAuthorityLabel: String? {
         guard let raw = authoritySource?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
             return nil
@@ -364,9 +363,6 @@ public struct OperationProjection: Sendable, Codable, Hashable, Identifiable {
         displayAuthorityLabel ?? ""
     }
 
-    /// Outcome badge for Work Detail actions.
-    /// Reserves the green `"Confirmed"` badge for real external side effects/changes (`effectClass != .read`),
-    /// omitting the badge for routine confirmed read-only operations.
     public var statusBadge: OperationBadge? {
         if let cleared = cleared?.trimmingCharacters(in: .whitespacesAndNewlines), !cleared.isEmpty {
             switch cleared {
@@ -441,8 +437,6 @@ public enum WorkActionEntry: Sendable, Hashable, Identifiable {
         return nil
     }
 
-    /// Groups consecutive `web_search` operations (2+) into a single expandable `.webSearchGroup` entry,
-    /// while leaving single searches and non-search operations as `.single`.
     public static func group(_ operations: [OperationProjection]) -> [WorkActionEntry] {
         var entries: [WorkActionEntry] = []
         var searchRun: [OperationProjection] = []

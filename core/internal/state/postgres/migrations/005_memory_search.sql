@@ -1,7 +1,3 @@
--- Dedicated 32-way hash-partitioned full-text search index for Layer 1 (Core)
--- and Layer 2 (Daily Log) memory chunks. Kept separate from nori_records so
--- 004_index_and_ssi_tuning.sql's HOT-update bitmap and zero-SIREAD-escalation
--- properties on nori_records remain completely untouched.
 
 CREATE TABLE IF NOT EXISTS nori_memory_chunks (
     owner          text        NOT NULL,
@@ -43,7 +39,6 @@ CREATE INDEX IF NOT EXISTS nori_memory_chunks_tsv_gin
 CREATE INDEX IF NOT EXISTS nori_memory_chunks_owner_updated
     ON nori_memory_chunks (owner, layer, updated_at DESC);
 
--- Idempotent backfill of existing Layer 1 Core memories stored in nori_records.
 INSERT INTO nori_memory_chunks (
     owner,
     chunk_id,
