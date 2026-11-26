@@ -458,7 +458,13 @@ func (s *Service) Handler(local bool) http.Handler {
 		if err != nil {
 			return api.UserRoutes{}, nil, err
 		}
-		return api.UserRoutes{Handler: userApp.handler, Resume: userApp.Resume}, release, nil
+		resume := func(ctx context.Context) error {
+			if isAccountDeletePendingCtx(ctx) {
+				return nil
+			}
+			return userApp.Resume(ctx)
+		}
+		return api.UserRoutes{Handler: userApp.handler, Resume: resume}, release, nil
 	}, local, s.cfg.Models.Outer, api.UserHandlerOptions{
 		ReadyCheck:   s.Ping,
 		Metrics:      observability.MetricsHandler(),

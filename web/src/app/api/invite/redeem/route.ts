@@ -1,6 +1,13 @@
 import { accessFailureResponse, redeemInvite, sameOrigin } from "@/lib/runtime/auth";
+import { createIpRateLimiterFromEnv, rateLimitResponse } from "@/lib/runtime/rate-limit";
+
+const inviteRateLimiter = createIpRateLimiterFromEnv();
 
 export async function POST(request: Request) {
+  const limit = inviteRateLimiter.checkRequest(request.headers);
+  if (!limit.allowed) {
+    return rateLimitResponse(limit.retryAfterSeconds);
+  }
   if (!sameOrigin(request)) {
     return Response.json({ error: "Forbidden." }, { status: 403, headers: { "Cache-Control": "no-store" } });
   }

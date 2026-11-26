@@ -56,6 +56,11 @@ func (s *Service) resetUserData(ctx context.Context, row users.User, resumePendi
 	if err != nil {
 		return err
 	}
+	if pending, pErr := s.isAccountDeletePending(ctx, row.ID); pErr != nil {
+		return pErr
+	} else if pending {
+		return ErrAccountDeletePending
+	}
 	if resumePending && !row.ResetPending {
 		return docstore.ErrUserDataResetNotPending
 	}

@@ -64,6 +64,25 @@ func (p *postgresReferenceStore) InspectUser(ctx context.Context, user users.Use
 		snap.Locked = true
 		return snap, nil, nil
 	}
+	type accountDeleteChecker interface {
+		IsAccountDeletePending(ctx context.Context, userID string) (bool, error)
+	}
+	if checker, ok := p.backend.(accountDeleteChecker); ok {
+		pending, err := checker.IsAccountDeletePending(ctx, user.ID)
+		if err != nil {
+			if release != nil {
+				release()
+			}
+			return snap, nil, err
+		}
+		if pending {
+			if release != nil {
+				release()
+			}
+			snap.Locked = true
+			return snap, nil, nil
+		}
+	}
 
 	client := docstore.New(p.backend)
 	root := client.Collection("owners").Doc(user.DataOwner())

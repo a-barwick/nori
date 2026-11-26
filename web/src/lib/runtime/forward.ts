@@ -108,7 +108,7 @@ async function forward(request: Request, mode: Mode, path: string, init: Request
   if (read && mode === "hosted" && SHARED_READS.has(path)) return sharedRead(request, user, path, allowed);
   const response = await relay(request, user, path, init, { timeout: READ_TIMEOUT_MS, allowed });
   if (!read) forgetSharedReads(user.userID);
-  if (init.method === "POST" && path === "v1/settings/account/delete" && (response.status === 204 || response.status === 200)) {
+  if (init.method === "POST" && path.split("?")[0] === "v1/settings/account/delete" && (response.status === 204 || response.status === 200)) {
     evictResolvedUser(user.userID);
     const headers = new Headers(response.headers);
     headers.set("Cache-Control", "no-store");

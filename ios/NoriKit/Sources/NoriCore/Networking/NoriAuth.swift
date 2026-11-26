@@ -6,6 +6,21 @@ import Security
 public enum NoriConfig {
     public static let serverURL = URL(string: "https://nori-core-8273801370.us-central1.run.app")!
 
+    public static var webURL: URL {
+        if let raw = (Bundle.main.object(forInfoDictionaryKey: "NORI_WEB_URL") as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !raw.isEmpty,
+           let url = URL(string: raw) {
+            return url
+        }
+        return URL(string: "https://nori.app")!
+    }
+
+    public static func legalURL(path: String) -> URL {
+        let normalized = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        return webURL.appendingPathComponent(normalized)
+    }
+
     public static let oauthCallbackURL = "nori://oauth/callback"
 
     public static var googleOAuthClientID: String {

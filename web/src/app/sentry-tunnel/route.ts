@@ -1,7 +1,14 @@
 import { POST as forwardEnvelope } from "@sentry/nextjs/tunnel";
 import { accessFailureResponse, resolveUser, sameOrigin } from "@/lib/runtime/auth";
+import { createIpRateLimiterFromEnv, rateLimitResponse } from "@/lib/runtime/rate-limit";
+
+const tunnelRateLimiter = createIpRateLimiterFromEnv();
 
 export async function POST(request: Request) {
+  const limit = tunnelRateLimiter.checkRequest(request.headers);
+  if (!limit.allowed) {
+    return rateLimitResponse(limit.retryAfterSeconds);
+  }
   if (!sameOrigin(request)) {
     return new Response("Forbidden.", { status: 403 });
   }

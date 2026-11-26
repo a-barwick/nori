@@ -346,11 +346,7 @@ public struct AccountSettingsView: View {
     }
 
     private func legalURL(path: String) -> URL {
-        let host = store.serverHost.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !host.isEmpty, let url = URL(string: "https://\(host)\(path)") {
-            return url
-        }
-        return URL(string: "https://nori.app\(path)")!
+        NoriConfig.legalURL(path: path)
     }
 
     public var body: some View {

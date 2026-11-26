@@ -73,6 +73,9 @@ func (b *backend) FinishAccountDelete(ctx context.Context, userID, owner string)
 		if _, err := q.Exec(ctx, "DELETE FROM nori_records WHERE shard = $1", shard); err != nil {
 			return err
 		}
+		if _, err := q.Exec(ctx, "DELETE FROM nori_sequences WHERE path LIKE $1", shard+"/%"); err != nil {
+			return err
+		}
 		if _, err := q.Exec(ctx, "DELETE FROM nori_memory_chunks WHERE owner = $1", owner); err != nil {
 			return err
 		}
