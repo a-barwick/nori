@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strings"
 
+	"nori/internal/users"
+
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
@@ -32,6 +34,7 @@ var operationalKeys = map[string]bool{
 	"http.request.method": true, "http.route": true, "http.response.status_code": true,
 	"nori.input.id": true, "nori.turn.id": true, "nori.attempt.id": true, "nori.attempt.number": true,
 	"nori.task.id": true, "nori.task.revision": true, "nori.task.status": true,
+	"nori.user.id": true, "nori.client.platform": true,
 	"nori.operation.id": true, "nori.tool.outcome": true, "nori.tool.exit_code": true,
 	"nori.tool.call_count": true, "nori.command.count": true, "nori.command.id": true,
 	"nori.classification.intent": true, "nori.computer.operation": true, "nori.computer.allow_start": true, "nori.computer.reconnect_count": true,
@@ -48,6 +51,13 @@ func allowedAttribute(kv attribute.KeyValue, content bool) (attribute.KeyValue, 
 	}
 	if !operationalKeys[key] && !(strings.HasPrefix(key, "nori.phase.") && strings.HasSuffix(key, "_ms")) {
 		return attribute.KeyValue{}, false
+	}
+	switch key {
+	case "nori.user.id":
+		return kv, users.ValidID(kv.Value.AsString())
+	case "nori.client.platform":
+		value := kv.Value.AsString()
+		return kv, value == "ios" || value == "web"
 	}
 	switch kv.Value.Type() {
 	case attribute.STRING:

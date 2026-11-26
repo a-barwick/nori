@@ -58,6 +58,7 @@ public actor LiveNoriTransport: NoriTransport {
     private let sseInitialBackoffSeconds: Double
     private let sseRolloverDelayMilliseconds: Int
     private var resolvedUserID: String?
+    private var identityGeneration = 0
 
     public init(
         baseURL: URL = NoriConfig.serverURL,
@@ -93,26 +94,85 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func clearCachedIdentity() {
+        identityGeneration += 1
         resolvedUserID = nil
+        NoriTelemetryRuntime.shared.setUser(id: nil)
     }
 
     // MARK: - Identity & Auth Headers
 
     private func ensureUserID() async throws -> String {
         if let resolvedUserID { return resolvedUserID }
-        let url = try router.unscopedURL(path: "/api/users/resolve")
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.httpBody = try encoder.encode([String: String]())
-        let (data, response) = try await performAuthenticated(req, contentType: "application/json")
-        try validateHTTPResponse(response, data: data)
-        struct ResolveResponse: Decodable { let id: String }
-        let resolved = try decoder.decode(ResolveResponse.self, from: data)
-        self.resolvedUserID = resolved.id
-        return resolved.id
+        let generation = identityGeneration
+        return try await withRequestSpan(route: "/api/users/resolve", method: "POST") { span in
+            let url = try router.unscopedURL(path: "/api/users/resolve")
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.httpBody = try encoder.encode([String: String]())
+            let data = try await authenticatedData(req, contentType: "application/json", span: span)
+            struct ResolveResponse: Decodable { let id: String }
+            let resolved = try decoder.decode(ResolveResponse.self, from: data)
+            guard generation == identityGeneration, !Task.isCancelled else { throw CancellationError() }
+            self.resolvedUserID = resolved.id
+            NoriTelemetryRuntime.shared.setUser(id: resolved.id)
+            NoriLogger.auth.info("user.resolved", attributes: ["nori.user.id": resolved.id], breadcrumb: true)
+            return resolved.id
+        }
     }
 
-    private func performAuthenticated(_ baseRequest: URLRequest, contentType: String? = nil) async throws -> (Data, URLResponse) {
+    private func withRequestSpan<T>(
+        route: String,
+        method: String,
+        _ perform: (any NoriTelemetrySpan) async throws -> T
+    ) async throws -> T {
+        let telemetry = NoriTelemetryRuntime.shared
+        let span = telemetry.startSpan(
+            name: "\(method) \(route)",
+            operation: "http.client",
+            tags: ["http.route": route, "http.request.method": method]
+        )
+        return try await NoriTelemetryRuntime.$parentSpan.withValue(span) {
+            do {
+                let result = try await perform(span)
+                span.finish(status: .ok)
+                return result
+            } catch {
+                if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled {
+                    span.finish(status: .cancelled)
+                } else {
+                    recordTransportError(error, route: route, method: method)
+                    span.finish(status: .error)
+                }
+                throw error
+            }
+        }
+    }
+
+    private func authenticatedData(
+        _ request: URLRequest,
+        contentType: String? = nil,
+        span: any NoriTelemetrySpan
+    ) async throws -> Data {
+        let (data, response) = try await performAuthenticated(request, contentType: contentType, traceContext: span.traceContext)
+        if let http = response as? HTTPURLResponse {
+            span.setTag("http.response.status_code", value: String(http.statusCode))
+        }
+        try validateHTTPResponse(response, data: data)
+        return data
+    }
+
+    private nonisolated func applyTraceHeaders(to request: inout URLRequest, traceContext: NoriTraceContext, recordTrace: Bool = true) {
+        if recordTrace { NoriTelemetryRuntime.shared.recordTraceID(traceContext.traceID) }
+        request.setValue(traceContext.traceparentHeader, forHTTPHeaderField: "traceparent")
+        request.setValue(traceContext.sentryTraceHeader, forHTTPHeaderField: "sentry-trace")
+        request.setValue("ios", forHTTPHeaderField: "X-Nori-Client")
+    }
+
+    private func performAuthenticated(
+        _ baseRequest: URLRequest,
+        contentType: String? = nil,
+        traceContext: NoriTraceContext
+    ) async throws -> (Data, URLResponse) {
         let token = try await authProvider.validIDToken(forceRefresh: false)
         var req = baseRequest
         req.setValue("no-store", forHTTPHeaderField: "Cache-Control")
@@ -120,8 +180,10 @@ public actor LiveNoriTransport: NoriTransport {
         if let contentType {
             req.setValue(contentType, forHTTPHeaderField: "Content-Type")
         }
+        applyTraceHeaders(to: &req, traceContext: traceContext)
         let (data, response) = try await session.data(for: req)
         if let http = response as? HTTPURLResponse, http.statusCode == 401 {
+            NoriLogger.auth.warning("auth.token_refresh_retry", attributes: ["http.status_code": "401"], remote: false)
             // Retry once with a freshly refreshed Google ID token.
             let freshToken = try await authProvider.validIDToken(forceRefresh: true)
             var retryReq = baseRequest
@@ -130,9 +192,46 @@ public actor LiveNoriTransport: NoriTransport {
             if let contentType {
                 retryReq.setValue(contentType, forHTTPHeaderField: "Content-Type")
             }
+            applyTraceHeaders(to: &retryReq, traceContext: traceContext)
             return try await session.data(for: retryReq)
         }
         return (data, response)
+    }
+
+    private func recordTransportError(_ error: Error, route: String, method: String) {
+        var tags = NoriErrorDiagnostics.tags(for: error)
+        tags["http.route"] = route
+        tags["http.request.method"] = method
+        if error is DecodingError {
+            NoriLogger.network.error("network.decode_failed", attributes: tags)
+            NoriTelemetryRuntime.shared.captureError(error, category: "network.decode", tags: tags)
+        } else if let apiError = error as? NoriAPIError {
+            let status = apiError.statusCode
+            guard status == 0 || status == 429 || status >= 500 else { return }
+            NoriLogger.network.error("network.request_failed", attributes: tags)
+            NoriTelemetryRuntime.shared.captureError(error, category: "network.http", tags: tags)
+        } else {
+            NoriLogger.network.warning("network.transport_error", attributes: tags)
+        }
+    }
+
+    private func normalizedRoute(for path: String) -> String {
+        var parts = path.split(separator: "/").map(String.init)
+        guard parts.count > 2, parts[0] == "v1" else { return path }
+        switch parts[1] {
+        case "memory" where parts[2] == "logs":
+            if parts.count > 4 {
+                parts[3] = ":date"
+                parts[4] = ":id"
+            }
+        case "memory" where parts[2] == "working":
+            if parts.count > 3 { parts[3] = ":id" }
+        case "work", "interactions", "library", "memory", "automations", "permissions", "mutations", "mcp", "connections":
+            parts[2] = ":id"
+        default:
+            break
+        }
+        return "/" + parts.joined(separator: "/")
     }
 
     private func validateHTTPResponse(_ response: URLResponse, data: Data) throws {
@@ -166,13 +265,13 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     private func getJSON<T: Decodable>(_ path: String, queryItems: [URLQueryItem] = []) async throws -> T {
-        let userID = try await ensureUserID()
-        let url = try router.scopedURL(path: path, userID: userID, queryItems: queryItems)
-        var req = URLRequest(url: url)
-        req.httpMethod = "GET"
-        let (data, response) = try await performAuthenticated(req)
-        try validateHTTPResponse(response, data: data)
-        return try decoder.decode(T.self, from: data)
+        try await withRequestSpan(route: normalizedRoute(for: path), method: "GET") { span in
+            let userID = try await ensureUserID()
+            span.setTag("nori.user.id", value: userID)
+            let url = try router.scopedURL(path: path, userID: userID, queryItems: queryItems)
+            let data = try await authenticatedData(URLRequest(url: url), span: span)
+            return try decoder.decode(T.self, from: data)
+        }
     }
 
     private func sendJSON<Body: Encodable, Response: Decodable>(
@@ -180,14 +279,16 @@ public actor LiveNoriTransport: NoriTransport {
         method: String = "POST",
         body: Body
     ) async throws -> Response {
-        let userID = try await ensureUserID()
-        let url = try router.scopedURL(path: path, userID: userID)
-        var req = URLRequest(url: url)
-        req.httpMethod = method
-        req.httpBody = try encoder.encode(body)
-        let (data, response) = try await performAuthenticated(req, contentType: "application/json")
-        try validateHTTPResponse(response, data: data)
-        return try decoder.decode(Response.self, from: data)
+        try await withRequestSpan(route: normalizedRoute(for: path), method: method) { span in
+            let userID = try await ensureUserID()
+            span.setTag("nori.user.id", value: userID)
+            let url = try router.scopedURL(path: path, userID: userID)
+            var req = URLRequest(url: url)
+            req.httpMethod = method
+            req.httpBody = try encoder.encode(body)
+            let data = try await authenticatedData(req, contentType: "application/json", span: span)
+            return try decoder.decode(Response.self, from: data)
+        }
     }
 
     /// Idempotent `/v1/*` mutation with automatic `/v1/mutations/{request_id}` recovery on ambiguous transport drop.
@@ -329,6 +430,7 @@ public actor LiveNoriTransport: NoriTransport {
                 var retriedAuthOnCurrentCycle = false
                 var forceNextTokenRefresh = false
                 var hasEmittedInitialConnecting = false
+                var reportedReconnectFailure = false
 
                 func updateCursor(for event: NoriStreamEvent) {
                     if case .reset(let pos) = event {
@@ -344,6 +446,7 @@ public actor LiveNoriTransport: NoriTransport {
                         continuation.yield(.connectionState(.connecting))
                     }
 
+                    var traceID: String?
                     do {
                         let userID = try await self.ensureUserID()
                         let token = try await self.authProvider.validIDToken(forceRefresh: forceNextTokenRefresh)
@@ -359,6 +462,9 @@ public actor LiveNoriTransport: NoriTransport {
                         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                         req.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
                         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                        let sseTrace = NoriTraceContext.random(sampled: false)
+                        traceID = sseTrace.traceID
+                        self.applyTraceHeaders(to: &req, traceContext: sseTrace, recordTrace: false)
 
                         let (bytes, response) = try await self.streamSession.bytes(for: req)
                         guard let http = response as? HTTPURLResponse else {
@@ -405,6 +511,8 @@ public actor LiveNoriTransport: NoriTransport {
                         // Connected cleanly — reset backoff and auth retry state.
                         backoffSeconds = initialBackoff
                         retriedAuthOnCurrentCycle = false
+                        reportedReconnectFailure = false
+                        NoriLogger.sse.info("sse.connected", attributes: ["cursor": String(cursor)], breadcrumb: true)
                         continuation.yield(.connectionState(.connected))
 
                         var parser = SSEParser()
@@ -463,6 +571,16 @@ public actor LiveNoriTransport: NoriTransport {
                             transientState = .reconnecting
                         }
                         continuation.yield(.connectionState(transientState))
+                        var sseTags = NoriErrorDiagnostics.tags(for: error)
+                        sseTags["sse.state"] = transientState.rawValue
+                        sseTags["sse.backoff_s"] = String(Int(backoffSeconds))
+                        sseTags["nori.trace.id"] = traceID
+                        let report = !reportedReconnectFailure && backoffSeconds >= 4.0
+                        NoriLogger.sse.warning("sse.reconnecting", attributes: sseTags, remote: report)
+                        if report {
+                            reportedReconnectFailure = true
+                            NoriTelemetryRuntime.shared.captureError(error, category: "sse.reconnect", tags: sseTags)
+                        }
                         if forceNextTokenRefresh {
                             // Refresh attempt itself failed transiently; allow retrying it after backoff.
                             retriedAuthOnCurrentCycle = false
@@ -519,21 +637,23 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func uploadFile(id: String, filename: String, mediaType: String, data: Data) async throws -> Attachment {
-        let userID = try await ensureUserID()
-        let url = try router.scopedURL(
-            path: "/v1/uploads",
-            userID: userID,
-            queryItems: [
-                URLQueryItem(name: "id", value: id),
-                URLQueryItem(name: "filename", value: filename)
-            ]
-        )
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.httpBody = data
-        let (responseData, response) = try await performAuthenticated(req, contentType: mediaType)
-        try validateHTTPResponse(response, data: responseData)
-        return try decoder.decode(Attachment.self, from: responseData)
+        try await withRequestSpan(route: "/v1/uploads", method: "POST") { span in
+            let userID = try await ensureUserID()
+            span.setTag("nori.user.id", value: userID)
+            let url = try router.scopedURL(
+                path: "/v1/uploads",
+                userID: userID,
+                queryItems: [
+                    URLQueryItem(name: "id", value: id),
+                    URLQueryItem(name: "filename", value: filename)
+                ]
+            )
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.httpBody = data
+            let response = try await authenticatedData(req, contentType: mediaType, span: span)
+            return try decoder.decode(Attachment.self, from: response)
+        }
     }
 
     // MARK: - Work & Interactions
@@ -745,21 +865,23 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func fetchLibraryItemFile(id: String, format: String?) async throws -> LibraryFilePayload {
-        let userID = try await ensureUserID()
-        let encodedID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        var query: [URLQueryItem] = []
-        if let format, !format.isEmpty {
-            query.append(URLQueryItem(name: "format", value: format))
+        try await withRequestSpan(route: "/v1/library/:id/file", method: "GET") { span in
+            let userID = try await ensureUserID()
+            span.setTag("nori.user.id", value: userID)
+            let encodedID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+            var query: [URLQueryItem] = []
+            if let format, !format.isEmpty {
+                query.append(URLQueryItem(name: "format", value: format))
+            }
+            let url = try router.scopedURL(path: "/v1/library/\(encodedID)/file", userID: userID, queryItems: query)
+            let (data, response) = try await performAuthenticated(URLRequest(url: url), traceContext: span.traceContext)
+            let http = response as? HTTPURLResponse
+            if let http { span.setTag("http.response.status_code", value: String(http.statusCode)) }
+            try validateHTTPResponse(response, data: data)
+            let mediaType = http?.value(forHTTPHeaderField: "Content-Type") ?? "application/octet-stream"
+            let filename = Self.parseContentDispositionFilename(http?.value(forHTTPHeaderField: "Content-Disposition"))
+            return LibraryFilePayload(data: data, mediaType: mediaType, filename: filename)
         }
-        let url = try router.scopedURL(path: "/v1/library/\(encodedID)/file", userID: userID, queryItems: query)
-        var req = URLRequest(url: url)
-        req.httpMethod = "GET"
-        let (data, response) = try await performAuthenticated(req)
-        try validateHTTPResponse(response, data: data)
-        let http = response as? HTTPURLResponse
-        let mediaType = http?.value(forHTTPHeaderField: "Content-Type") ?? "application/octet-stream"
-        let filename = Self.parseContentDispositionFilename(http?.value(forHTTPHeaderField: "Content-Disposition"))
-        return LibraryFilePayload(data: data, mediaType: mediaType, filename: filename)
     }
 
     private static func parseContentDispositionFilename(_ header: String?) -> String? {

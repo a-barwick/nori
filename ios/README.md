@@ -76,3 +76,30 @@ The iOS Simulator shares the Mac's loopback network directly:
 1. Open **More → Server** (or **Settings**).
 2. Choose **Hosted BFF / OIDC** and enter your deployment's Nori BFF base URL (for example, `https://host.example.com/api/nori`).
 3. Sign in via the OAuth / OIDC flow (`nori://` is registered in `CFBundleURLTypes` for OAuth callback redirects). Tokens are stored in the iOS Keychain, and requests authenticate via Bearer token against the hosted `/api/nori` endpoints over HTTPS.
+
+## 5. Sentry Cocoa Observability & dSYM Uploads
+
+Nori for iOS ships with `sentry-cocoa` wired in `NoriApp` (`SentryNoriTelemetry.swift`), `os.Logger` + `OSLogStore` diagnostics in `NoriCore`, and W3C `traceparent` + `sentry-trace` + `X-Nori-Client: ios` propagation into Go Core.
+
+### Local and TestFlight Configuration
+Build settings live in `ios/Config/Base.xcconfig`, `Debug.xcconfig`, and `Release.xcconfig` (and are exposed in `Info.plist`). To enable Sentry locally without committing a DSN, create gitignored `ios/Config/Local.xcconfig`:
+```xcconfig
+// Note: in .xcconfig, `//` starts a comment, so write `https:/$()/`
+SENTRY_DSN = https:/$()/<public-key>@<host>/<project-id>
+SENTRY_ENVIRONMENT = development
+SENTRY_TRACES_SAMPLE_RATE = 1.0
+```
+
+For TestFlight or App Store archives, pass `SENTRY_DSN="$SENTRY_IOS_DSN"` as an Xcode build setting in CI. An empty DSN disables Sentry. For a Debug build with Sentry enabled, open **More → Diagnostics → Send Test Event** and look for `diagnostics.test` in the configured iOS project. Submitting a chat turn produces an iOS transaction whose trace ID can also be searched in Go Core's Sentry project when both projects have tracing enabled.
+
+### Uploading dSYMs for TestFlight / App Store Releases
+Release builds emit `dwarf-with-dsym`. After archiving in Xcode or CI, upload dSYMs so crash reports and app hangs symbolicate cleanly:
+```bash
+SENTRY_ORG=<your-org> \
+SENTRY_PROJECT_IOS=nori-ios \
+SENTRY_AUTH_TOKEN=<token> \
+  ./scripts/upload-ios-dsyms.sh /path/to/Nori.xcarchive
+```
+
+### In-App Diagnostics
+Open **More → Diagnostics** to inspect the current build, Sentry status, resolved User ID, and last Trace ID, or tap **Export Diagnostic Logs** to share a redacted report of recent `OSLogStore` entries. Every task detail view also includes a tap-to-copy **Task ID** at the bottom for jumping straight to its trace in Sentry.

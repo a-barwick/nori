@@ -50,6 +50,7 @@ var metricNames = map[string]bool{
 // Event logs only predefined operational names and allowlisted attributes.
 // It never forwards the application's unstructured log.Printf output.
 func Event(ctx context.Context, name string, attrs ...attribute.KeyValue) {
+	attrs = append(attrs, correlationAttributes(ctx)...)
 	if !eventNames[name] {
 		return
 	}

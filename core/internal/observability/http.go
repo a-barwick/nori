@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"nori/internal/users"
+
 	"github.com/felixge/httpsnoop"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -29,12 +31,18 @@ func HTTPHandler(next http.Handler) http.Handler {
 		}})
 		normalized := normalizeUserPath(r.URL.Path)
 		route := safeRoute(normalized)
-		ctx := r.Context()
+		clientPlatform := safeClientPlatform(r.Header.Get("X-Nori-Client"))
+		correlation := &httpCorrelation{platform: clientPlatform}
+		ctx := context.WithValue(r.Context(), httpCorrelationKey{}, correlation)
 		if hasBearerAuth(r) {
 			ctx = otel.GetTextMapPropagator().Extract(ctx, propagation.HeaderCarrier(r.Header))
 		}
+		var baseAttrs []attribute.KeyValue
+		if clientPlatform != "" {
+			baseAttrs = append(baseAttrs, attribute.String("nori.client.platform", clientPlatform))
+		}
 		if route == "" {
-			attrs := []attribute.KeyValue{attribute.String("http.route", failedPollRoute(normalized)), attribute.String("http.request.method", safeMethod(r.Method))}
+			attrs := append([]attribute.KeyValue{attribute.String("http.route", failedPollRoute(normalized)), attribute.String("http.request.method", safeMethod(r.Method))}, baseAttrs...)
 			pending := &atomic.Bool{}
 			ctx = context.WithValue(ctx, requestFlushKey{}, pending)
 			statusCode := 0
@@ -60,17 +68,18 @@ func HTTPHandler(next http.Handler) http.Handler {
 			return
 		}
 		started := time.Now()
-		ctx, span := otel.Tracer("nori/http").Start(ctx, "HTTP "+route, trace.WithSpanKind(trace.SpanKindServer), trace.WithAttributes(attribute.String("http.route", route), attribute.String("http.request.method", safeMethod(r.Method))))
+		spanAttrs := append([]attribute.KeyValue{attribute.String("http.route", route), attribute.String("http.request.method", safeMethod(r.Method))}, baseAttrs...)
+		ctx, span := otel.Tracer("nori/http").Start(ctx, "HTTP "+route, trace.WithSpanKind(trace.SpanKindServer), trace.WithAttributes(spanAttrs...))
 		statusCode := 0
 		defer func() {
 			panicValue := recover()
 			if panicValue != nil && panicValue != http.ErrAbortHandler {
-				RecordErrorCategory(ctx, "http.panic", errors.New("HTTP handler panicked"), attribute.String("http.route", route))
+				RecordErrorCategory(ctx, "http.panic", errors.New("HTTP handler panicked"), append([]attribute.KeyValue{attribute.String("http.route", route)}, baseAttrs...)...)
 			}
 			span.End()
 			if statusCode != http.StatusUnauthorized || panicValue != nil {
 				flushRequest()
-				slog.InfoContext(ctx, "nori handler completed", "duration_ms", time.Since(started).Milliseconds(), "http.route", route)
+				slog.InfoContext(ctx, "nori handler completed", "duration_ms", time.Since(started).Milliseconds(), "http.route", route, "nori.user.id", correlation.userID, "nori.client.platform", clientPlatform)
 			}
 			if panicValue != nil {
 				panic(panicValue)
@@ -82,9 +91,9 @@ func HTTPHandler(next http.Handler) http.Handler {
 		if result.Code == http.StatusUnauthorized {
 			return
 		}
-		if reportHTTPFailure(ctx, result.Code, []attribute.KeyValue{attribute.String("http.route", route), attribute.String("http.request.method", safeMethod(r.Method))}) {
+		if reportHTTPFailure(ctx, result.Code, spanAttrs) {
 			span.SetStatus(codes.Error, "request failed")
-			RecordErrorCategory(ctx, "http.request", httpFailure(result.Code), attribute.String("http.route", route), attribute.String("http.request.method", safeMethod(r.Method)), attribute.Int("http.response.status_code", result.Code))
+			RecordErrorCategory(ctx, "http.request", httpFailure(result.Code), append(spanAttrs, attribute.Int("http.response.status_code", result.Code))...)
 		}
 		Event(ctx, "nori request completed", attribute.String("http.route", route), attribute.Int("http.response.status_code", result.Code))
 		Metric(ctx, "nori.http.requests", 1)
@@ -98,15 +107,61 @@ func hasBearerAuth(r *http.Request) bool {
 	return ok && scheme == "Bearer" && token != ""
 }
 
+type httpCorrelationKey struct{}
+
+type httpCorrelation struct {
+	platform string
+	userID   string
+}
+
+// BindHTTPUser adds the authorized directory ID to the request's telemetry.
+func BindHTTPUser(ctx context.Context, id string) context.Context {
+	ctx = users.WithID(ctx, id)
+	if !users.ValidID(id) {
+		return ctx
+	}
+	if correlation, ok := ctx.Value(httpCorrelationKey{}).(*httpCorrelation); ok {
+		correlation.userID = id
+	}
+	trace.SpanFromContext(ctx).SetAttributes(attribute.String("nori.user.id", id))
+	return ctx
+}
+
+func correlationAttributes(ctx context.Context) []attribute.KeyValue {
+	id := users.ID(ctx)
+	var attrs []attribute.KeyValue
+	if correlation, ok := ctx.Value(httpCorrelationKey{}).(*httpCorrelation); ok {
+		if id == "" {
+			id = correlation.userID
+		}
+		if correlation.platform != "" {
+			attrs = append(attrs, attribute.String("nori.client.platform", correlation.platform))
+		}
+	}
+	if users.ValidID(id) {
+		attrs = append(attrs, attribute.String("nori.user.id", id))
+	}
+	return attrs
+}
+
+func safeClientPlatform(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "ios":
+		return "ios"
+	case "web":
+		return "web"
+	default:
+		return ""
+	}
+}
+
 func normalizeUserPath(path string) string {
-	if !strings.HasPrefix(path, "/users/") {
-		return path
+	if prefix, ok := strings.CutPrefix(path, "/users/"); ok {
+		if id, rest, found := strings.Cut(prefix, "/"); found && id != "" {
+			return "/" + rest
+		}
 	}
-	id, rest, ok := strings.Cut(strings.TrimPrefix(path, "/users/"), "/")
-	if !ok || id == "" {
-		return path
-	}
-	return "/" + rest
+	return path
 }
 
 var lastHTTPRejection atomic.Int64

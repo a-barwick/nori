@@ -82,12 +82,25 @@ function allow(kind: string, maximum: number): boolean {
  return false;
 }
 
+const safeIdentifier = (value: unknown) =>
+  typeof value === "string" && /^[A-Za-z0-9_.:-]{1,128}$/.test(value) ? value : undefined;
+
+const safeUserIdentifier = (value: unknown) =>
+  typeof value === "string" && (value === "owner" || /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(value)) ? value : undefined;
+
 const safeAttributes = (attributes: Record<string, unknown> = {}) => {
   const safe: Record<string, string | number> = {};
   if (typeof attributes.operation === "string" && isRuntimeMethod(attributes.operation)) safe.operation = attributes.operation;
   if (typeof attributes.status === "number" && attributes.status >= 100 && attributes.status <= 599) safe.status = attributes.status;
   if (attributes.mode === "local" || attributes.mode === "hosted") safe.mode = attributes.mode;
   if (["reply", "error", "timeout", "unobserved"].includes(String(attributes.outcome))) safe.outcome = String(attributes.outcome);
+  if (attributes["nori.client.platform"] === "ios" || attributes["nori.client.platform"] === "web") safe["nori.client.platform"] = attributes["nori.client.platform"];
+  const userId = safeUserIdentifier(attributes["nori.user.id"]);
+  if (userId) safe["nori.user.id"] = userId;
+  const taskId = safeIdentifier(attributes["nori.task.id"]);
+  if (taskId) safe["nori.task.id"] = taskId;
+  const turnId = safeIdentifier(attributes["nori.turn.id"]);
+  if (turnId) safe["nori.turn.id"] = turnId;
   return safe;
 };
 
@@ -117,7 +130,8 @@ function beforeSend(event: ErrorEvent, hint: EventHint): ErrorEvent | null {
   // the stack for diagnosis, but never send exception text or request details.
   delete event.message;
   delete event.logentry;
-  delete event.user;
+  const safeUserId = safeUserIdentifier(event.user?.id);
+  event.user = safeUserId ? { id: safeUserId } : undefined;
   delete event.extra;
   delete event.server_name;
   delete event.threads;
@@ -192,6 +206,9 @@ function beforeSendSpan(span: StreamedSpan): StreamedSpan {
     else if (/^browser\.web_vital\.[a-z]+\.(?:value|load_time|render_time|size|request_time)$/.test(key) && typeof value === "number") attrs[key] = value;
     else if (key === "nori.mode" && (value === "local" || value === "hosted")) attrs[key] = value;
     else if (key === "nori.outcome" && (value === "reply" || value === "error" || value === "timeout" || value === "unobserved")) attrs[key] = value;
+    else if (key === "nori.client.platform" && (value === "ios" || value === "web")) attrs[key] = value;
+    else if (key === "nori.user.id" && safeUserIdentifier(value)) attrs[key] = value;
+    else if ((key === "nori.task.id" || key === "nori.turn.id") && safeIdentifier(value)) attrs[key] = value;
   }
   return { ...span, name: safeSpanName(span.name), attributes: attrs, links: undefined };
 }

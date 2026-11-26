@@ -215,6 +215,9 @@ public struct WorkDetailView: View {
                 // Bottom Footer: Task budget & origin demoted to a compact single strip
                 taskFooterStrip(item: item)
                     .padding(.top, 18)
+
+                taskIdentifierStrip(item: item)
+                    .padding(.top, 8)
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -234,6 +237,32 @@ public struct WorkDetailView: View {
     }
 
     // MARK: - Subsections
+
+    private func taskIdentifierStrip(item: WorkItem) -> some View {
+        Button {
+            #if canImport(UIKit)
+            UIPasteboard.general.string = item.taskID
+            #endif
+            store.showToast("Copied Task ID")
+        } label: {
+            HStack(spacing: 6) {
+                Text("Task ID:")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(NoriColors.ink3)
+                Text(item.taskID)
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .foregroundStyle(NoriColors.ink2)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(NoriColors.ink3)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Copy Task ID \(item.taskID)")
+    }
 
     private func shouldShowContinueCard(for item: WorkItem) -> Bool {
         item.status == .failed || item.isBudgetExhausted

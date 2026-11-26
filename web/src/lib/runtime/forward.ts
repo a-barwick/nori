@@ -25,10 +25,10 @@ async function relay(request: Request, { base, userID, mode }: ScopedRuntime, pa
     const trace = upstreamTraceHeaders(request);
     // Construct a fresh header set so browser credentials never reach the runtime.
     const upstream = await fetch(new URL(`users/${encodeURIComponent(userID)}/${path}`, base), {
-      ...init, headers: { ...(init.headers as Record<string, string>), ...await runtimeHeaders(mode), ...trace },
+      ...init, headers: { ...(init.headers as Record<string, string>), ...await runtimeHeaders(mode), ...trace, "X-Nori-Client": "web" },
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(timeout)]), redirect: "error", cache: "no-store",
     });
-    if (upstream.status >= 500) reportUpstreamFailure(label, mode, upstream.status);
+    if (upstream.status >= 500) reportUpstreamFailure(label, mode, userID, upstream.status);
     if (mode === "hosted" && upstream.status === 429) {
       reportUpstreamRejection(operation ?? label, request, trace, upstream.headers);
       void upstream.body?.cancel().catch(() => undefined);
@@ -54,7 +54,7 @@ async function relay(request: Request, { base, userID, mode }: ScopedRuntime, pa
     }
     return new Response(upstream.body, { status: upstream.status, headers });
   } catch {
-    if (!request.signal.aborted) reportUpstreamFailure(label, mode);
+    if (!request.signal.aborted) reportUpstreamFailure(label, mode, userID);
     const error = !operation ? "Connection to Nori's runtime was interrupted."
       : mode === "local" ? "Could not reach the local agent. Check that the Go runner is running, then retry."
       : "Connection to Nori's runtime was interrupted. Refresh history to confirm the task's status.";
@@ -300,7 +300,7 @@ async function oauthCallback(request: Request, mode: Mode, path: string) {
   try {
     const upstream = await fetch(new URL(`users/${encodeURIComponent(user.userID)}/${path}${path.includes("?") ? "&" : "?"}nori_redirect=json`, user.base), {
       // The hosted gateway drops a redirect's Location, so core returns the destination as JSON when asked.
-      headers: { ...await runtimeHeaders(mode), ...upstreamTraceHeaders(request), "X-Nori-Redirect": "json" }, redirect: "manual", cache: "no-store",
+      headers: { ...await runtimeHeaders(mode), ...upstreamTraceHeaders(request), "X-Nori-Client": "web", "X-Nori-Redirect": "json" }, redirect: "manual", cache: "no-store",
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]),
     });
     let location = upstream.headers.get("location") ?? "";

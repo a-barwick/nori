@@ -191,6 +191,8 @@ public final class NoriStore {
     private var transport: any NoriTransport
     private var eventTask: Task<Void, Never>?
     private var toastTask: Task<Void, Never>?
+    @ObservationIgnored private var submitSpans: [String: (span: any NoriTelemetrySpan, timeout: Task<Void, Never>)] = [:]
+    private var reportedFailedTaskIDs: Set<String> = []
     var hasBootstrapped: Bool = false
 
     public init(
@@ -326,34 +328,42 @@ public final class NoriStore {
             let code = try pkce.extractAuthorizationCode(from: callbackURL)
             let session = try await pkce.exchangeCode(code)
             await authProvider.saveSession(session)
-            if let liveTransport {
-                await liveTransport.clearCachedIdentity()
-            }
+            await clearTransportIdentity()
             let snapshot = try await transport.fetchFullSnapshot()
             applySnapshot(snapshot)
             authState = .signedIn(email: session.email)
             connectionState = .connected
             lastError = nil
+            NoriLogger.auth.info("auth.signed_in", breadcrumb: true)
             startEventStream()
         } catch let apiErr as NoriAPIError where apiErr.statusCode == 401 || apiErr.statusCode == 403 {
             await authProvider.clearSession()
+            await clearTransportIdentity()
             authState = .signedOut
             connectionState = .offline
             authError = "This Google account is not authorized to access Nori."
+            NoriLogger.auth.warning("auth.unauthorized", attributes: ["http.status_code": String(apiErr.statusCode)])
         } catch {
             await authProvider.clearSession()
+            await clearTransportIdentity()
             authState = .signedOut
             connectionState = .offline
             authError = error.localizedDescription
+            let tags = NoriErrorDiagnostics.tags(for: error)
+            NoriLogger.auth.error("auth.sign_in_failed", attributes: tags)
+            NoriTelemetryRuntime.shared.captureError(error, category: "auth.sign_in", tags: tags)
         }
     }
 
     public func signOut() async {
         stopEventStream()
-        await authProvider.clearSession()
-        if let liveTransport {
-            await liveTransport.clearCachedIdentity()
+        for turnID in Array(submitSpans.keys) {
+            finishSubmitSpan(turnID: turnID, outcome: "cancelled", status: .cancelled)
         }
+        reportedFailedTaskIDs.removeAll()
+        NoriLogger.auth.info("auth.signed_out", breadcrumb: true)
+        await authProvider.clearSession()
+        await clearTransportIdentity()
         authState = .signedOut
         authError = nil
         connectionState = .offline
@@ -377,6 +387,14 @@ public final class NoriStore {
         permissions = []
         preferences = Preferences()
         isThinking = false
+    }
+
+    private func clearTransportIdentity() async {
+        if let liveTransport {
+            await liveTransport.clearCachedIdentity()
+        } else {
+            NoriTelemetryRuntime.shared.setUser(id: nil)
+        }
     }
 
     private func handleAuthFailureIfNeeded(_ error: Error) async -> Bool {
@@ -416,6 +434,7 @@ public final class NoriStore {
             let freshSession = try await transport.fetchSession(before: nil)
             self.session = freshSession
             self.isThinking = freshSession.conversation?.processing == true
+            finishObservedReplies(in: freshSession.messages)
         } catch {
             if !(await handleAuthFailureIfNeeded(error)) {
                 lastError = error.localizedDescription
@@ -440,6 +459,7 @@ public final class NoriStore {
 
         if case .success(let freshWork) = workRes {
             self.workItems = freshWork
+            reportFailedWorkItemsIfNeeded(freshWork)
         }
         if case .success(let freshInteractions) = interRes {
             self.interactions = freshInteractions
@@ -605,6 +625,62 @@ public final class NoriStore {
         self.permissions = snapshot.permissions
         self.preferences = snapshot.preferences
         self.isThinking = snapshot.session.conversation?.processing == true
+        finishObservedReplies(in: snapshot.session.messages)
+        reportFailedWorkItemsIfNeeded(snapshot.workItems)
+    }
+
+    private func finishSubmitSpan(turnID: String, outcome: String, status: NoriSpanStatus) {
+        guard let entry = submitSpans.removeValue(forKey: turnID) else { return }
+        entry.timeout.cancel()
+        entry.span.setTag("nori.outcome", value: outcome)
+        entry.span.finish(status: status)
+    }
+
+    private func finishObservedReplies(in messages: [Message]) {
+        guard !submitSpans.isEmpty else { return }
+        for message in messages where message.role == .assistant && !message.isSuperseded {
+            if let turnID = message.turnID {
+                if message.status == .failed {
+                    finishSubmitSpan(turnID: turnID, outcome: "error", status: .error)
+                } else {
+                    finishSubmitSpan(turnID: turnID, outcome: "reply", status: .ok)
+                }
+            }
+        }
+    }
+
+    private func reportFailedWorkItemsIfNeeded(_ items: [WorkItem]) {
+        for item in items where item.status == .failed {
+            let originMessageID = item.origin.messageID
+            let turnID = session.messages.first { $0.id == originMessageID }?.turnID
+            reportFailedTaskIfNeeded(taskID: item.taskID, errorCode: item.error?.code, turnID: turnID)
+        }
+    }
+
+    private func reportFailedTaskIfNeeded(taskID: String, errorCode: String? = nil, turnID: String? = nil) {
+        guard NoriErrorDiagnostics.isSafeIdentifier(taskID), reportedFailedTaskIDs.insert(taskID).inserted else { return }
+        var attrs: [String: String] = [
+            "nori.task.id": taskID,
+            "nori.task.status": "failed",
+            "nori.client.platform": "ios"
+        ]
+        if let uid = NoriTelemetryRuntime.shared.currentUserID {
+            attrs["nori.user.id"] = uid
+        }
+        if let errorCode, NoriErrorDiagnostics.isSafeIdentifier(errorCode) {
+            attrs["nori.error.code"] = errorCode
+        }
+        if let turnID, NoriErrorDiagnostics.isSafeIdentifier(turnID) {
+            attrs["nori.turn.id"] = turnID
+        }
+        NoriTelemetryRuntime.$parentSpan.withValue(turnID.flatMap { submitSpans[$0]?.span }) {
+            NoriLogger.store.error("nori.task.failed", attributes: attrs)
+            NoriTelemetryRuntime.shared.captureError(
+                NoriAPIError(message: "Task failed"),
+                category: "task.failed",
+                tags: attrs
+            )
+        }
     }
 
     public func startEventStream() {
@@ -668,6 +744,8 @@ public final class NoriStore {
                     streamingAssistantText = nil
                     streamingTurnID = nil
                 }
+                NoriLogger.store.info("reply received", attributes: message.turnID.map { ["nori.turn.id": $0] } ?? [:], breadcrumb: true)
+                finishObservedReplies(in: [message])
             }
         case .assistantDelta(let turnID, let text):
             if text.isEmpty {
@@ -686,6 +764,9 @@ public final class NoriStore {
                 session.runs.insert(run, at: 0)
             }
             await refreshWorkAndInteractions()
+            if !Task.isCancelled, run.status == .failed {
+                reportFailedTaskIfNeeded(taskID: run.id)
+            }
         case .result:
             if let items = try? await transport.fetchLibrary() {
                 self.libraryItems = items
@@ -732,14 +813,37 @@ public final class NoriStore {
         isThinking = true
         lastError = nil
 
+        var spanTags: [String: String] = [
+            "nori.turn.id": clientID,
+            "nori.client.platform": "ios"
+        ]
+        if let uid = NoriTelemetryRuntime.shared.currentUserID {
+            spanTags["nori.user.id"] = uid
+        }
+        let submitSpan = NoriTelemetryRuntime.shared.startSpan(
+            name: "nori.submit_to_reply",
+            operation: "nori.turn",
+            tags: spanTags
+        )
+        let timeout = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(120))
+                self?.finishSubmitSpan(turnID: clientID, outcome: "timeout", status: .unknown)
+            } catch {}
+        }
+        submitSpans[clientID] = (submitSpan, timeout)
+        NoriLogger.store.info("turn submitted", attributes: ["nori.turn.id": clientID], breadcrumb: true)
+
         do {
             let activeSelection = effectiveModelSelection
-            var updated = try await transport.sendTurn(
-                id: clientID,
-                message: trimmed,
-                attachmentIDs: attachments.map(\.id),
-                modelSelection: activeSelection.isEmpty ? nil : activeSelection
-            )
+            var updated = try await NoriTelemetryRuntime.$parentSpan.withValue(submitSpan) {
+                try await transport.sendTurn(
+                    id: clientID,
+                    message: trimmed,
+                    attachmentIDs: attachments.map(\.id),
+                    modelSelection: activeSelection.isEmpty ? nil : activeSelection
+                )
+            }
             // Keep the confirmed user message visible while the core worker processes the turn.
             if !updated.messages.contains(where: { $0.id == expectedUserMessageID || $0.turnID == clientID && $0.role == .user }) {
                 var savedBubble = optimistic
@@ -748,11 +852,20 @@ public final class NoriStore {
             }
             self.session = updated
             isThinking = updated.conversation?.processing == true || updated.conversation?.pending == true
+            finishObservedReplies(in: updated.messages)
             return true
         } catch {
             session.messages.removeAll { $0.id == expectedUserMessageID }
             isThinking = false
             lastError = error.localizedDescription
+            if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled {
+                finishSubmitSpan(turnID: clientID, outcome: "cancelled", status: .cancelled)
+            } else {
+                finishSubmitSpan(turnID: clientID, outcome: "error", status: .error)
+            }
+            var errTags = NoriErrorDiagnostics.tags(for: error)
+            errTags["nori.turn.id"] = clientID
+            NoriLogger.store.error("turn.submit_failed", attributes: errTags)
             showToast(error.localizedDescription)
             return false
         }

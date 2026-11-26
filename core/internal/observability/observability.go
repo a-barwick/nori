@@ -31,6 +31,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/time/rate"
 	"nori/internal/settings"
+	"nori/internal/users"
 )
 
 var tracerProvider atomic.Pointer[sdktrace.TracerProvider]
@@ -276,6 +277,7 @@ func RecordErrorCategory(ctx context.Context, category string, err error, attrs 
 	}
 	typeName := redactText(fmt.Sprintf("%T", err), 120)
 	reason := errorReason(err)
+	attrs = append(attrs, correlationAttributes(ctx)...)
 	attrs = append(attrs, attribute.String("nori.error.reason", reason))
 	span := trace.SpanFromContext(ctx)
 	span.SetStatus(codes.Error, "operation failed")
@@ -305,6 +307,7 @@ func RecordErrorCategory(ctx context.Context, category string, err error, attrs 
 			event.Tags[string(safe.Key)] = safe.Value.Emit()
 		}
 	}
+	event.User = sentry.User{ID: event.Tags["nori.user.id"]}
 	if client := sentry.CurrentHub().Client(); client != nil {
 		client.CaptureEvent(event, &sentry.EventHint{Context: ctx}, sentry.NewScope())
 	}
@@ -312,7 +315,11 @@ func RecordErrorCategory(ctx context.Context, category string, err error, attrs 
 
 func scrubEvent(event *sentry.Event) *sentry.Event {
 	event.Request = nil
+	id := event.User.ID
 	event.User = sentry.User{}
+	if users.ValidID(id) {
+		event.User.ID = id
+	}
 	event.ServerName = ""
 	event.Breadcrumbs = nil
 	event.Attachments = nil
@@ -363,10 +370,10 @@ func scrubEvent(event *sentry.Event) *sentry.Event {
 		event.Contexts["trace"] = traceContext
 	}
 	for key, value := range event.Tags {
-		if !operationalKeys[key] {
-			delete(event.Tags, key)
+		if safe, ok := allowedAttribute(attribute.String(key, value), false); ok {
+			event.Tags[key] = safe.Value.AsString()
 		} else {
-			event.Tags[key] = redactText(value, 256)
+			delete(event.Tags, key)
 		}
 	}
 	return event
