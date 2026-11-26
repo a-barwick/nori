@@ -37,6 +37,14 @@ export function accessFailureResponse(failure: AccessFailure, plainText = false)
 const RESOLVED_TTL_MS = 5 * 60_000;
 const resolved = new Map<string, { userID: string; expires: number }>();
 
+export function evictResolvedUser(userID: string): void {
+  for (const [key, entry] of resolved) {
+    if (entry.userID === userID) {
+      resolved.delete(key);
+    }
+  }
+}
+
 export async function resolveUser(headers: Headers, target = runtimeTarget(runtimeMode(headers))): Promise<ScopedRuntime | AccessFailure> {
   if (isSignedOut(headers)) return denied;
   if (target instanceof Response) return unavailable;
