@@ -73,8 +73,10 @@ final class SentryNoriTelemetry: NoriTelemetry, @unchecked Sendable {
             // Distributed Tracing & Performance
             options.tracesSampleRate = NSNumber(value: sampleRate)
             options.enableAutoPerformanceTracing = true
-            // LiveNoriTransport creates normalized HTTP spans with explicit traceparent/sentry-trace.
+            // LiveNoriTransport reports normalized routes without query strings.
             options.enableNetworkTracking = false
+            options.enableNetworkBreadcrumbs = false
+            options.enableCaptureFailedRequests = false
 
             options.experimental.enableLogs = true
             options.beforeSendLog = { log in
