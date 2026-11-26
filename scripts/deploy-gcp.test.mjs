@@ -74,7 +74,7 @@ test("combined rollout deploys nori-core and nori-web with NORI_CLOUD=gcp", (t) 
   assert.equal(result.status, 0, result.stderr);
   assert.match(
     log,
-    /deploy nori-core.*--update-env-vars=NORI_CLOUD=gcp[\s\S]+nori-core\.example\/readyz[\s\S]+deploy nori-web.*--update-env-vars=NORI_CLOUD=gcp[\s\S]+\/api\/health/,
+    /deploy nori-core.*--update-env-vars=\^\|\^NORI_CLOUD=gcp[\s\S]+nori-core\.example\/readyz[\s\S]+deploy nori-web.*--update-env-vars=NORI_CLOUD=gcp[\s\S]+\/api\/health/,
   );
   assert.doesNotMatch(log, /jobs update|deploy nori-worker/);
 });
@@ -86,10 +86,10 @@ test("default split rollout runs mandatory migration job, nori-core (api), nori-
     log,
     /jobs update nori-migrate.*--args=--migrate-only.*NORI_CLOUD=gcp[\s\S]+jobs execute nori-migrate[\s\S]+deploy nori-core[\s\S]+nori-core\.example\/readyz[\s\S]+deploy nori-worker[\s\S]+revisions describe nori-worker-fixture[\s\S]+deploy nori-web[\s\S]+\/api\/health/,
   );
-  assert.match(log, /deploy nori-core.*--update-env-vars=NORI_ROLE=api,NORI_CLOUD=gcp,NORI_POSTGRES_MAX_CONNS=8/);
+  assert.match(log, /deploy nori-core.*--update-env-vars=\^\|\^NORI_CLOUD=gcp\|NORI_ROLE=api\|NORI_POSTGRES_MAX_CONNS=8/);
   assert.match(
     log,
-    /deploy nori-worker.*--args=--metrics-addr=0\.0\.0\.0:8080.*--ingress=internal.*--no-cpu-throttling.*--min-instances=1.*--update-env-vars=NORI_ROLE=worker,NORI_CLOUD=gcp,NORI_POSTGRES_MAX_CONNS=10/,
+    /deploy nori-worker.*--args=--metrics-addr=0\.0\.0\.0:8080.*--ingress=internal.*--no-cpu-throttling.*--min-instances=1.*--update-env-vars=\^\|\^NORI_CLOUD=gcp\|NORI_ROLE=worker\|NORI_POSTGRES_MAX_CONNS=10/,
   );
   assert.doesNotMatch(log, /curl.*nori-worker\.example\/readyz/);
 });

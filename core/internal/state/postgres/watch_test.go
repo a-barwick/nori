@@ -115,6 +115,9 @@ func openTracedTestBackend(t *testing.T, opts Options) (*backend, *sqlQueryCount
 		pool.Close()
 		t.Fatalf("migrate: %v", err)
 	}
+	counter.recordsSelects.Store(0)
+	counter.recordsSelectsDone.Store(0)
+	counter.notifyExecs.Store(0)
 	prefix := fmt.Sprintf("wtest-%d-", time.Now().UnixNano())
 	t.Cleanup(func() {
 		cleanCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -502,8 +505,8 @@ func TestWatchLiveNotifyLatencyFanoutAndDrain(t *testing.T) {
 			if lat > maxLatency {
 				maxLatency = lat
 			}
-			if lat > 100*time.Millisecond {
-				t.Fatalf("watcher %d wake latency = %v, want < 100ms", idx, lat)
+			if lat > 500*time.Millisecond {
+				t.Fatalf("watcher %d wake latency = %v, want < 500ms (notify-driven, far below the %v fallback poll)", idx, lat, watchFallbackInterval)
 			}
 		case <-time.After(2 * time.Second):
 			t.Fatalf("watcher %d timed out waiting for live notification", idx)

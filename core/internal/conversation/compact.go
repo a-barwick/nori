@@ -200,8 +200,8 @@ func (r *Runner) compact(ctx context.Context) {
 		return
 	}
 	now := r.now()
-	canCompact := !now.Before(r.compactAfter)
-	canExtract := !now.Before(r.extractAfter)
+	canCompact := !now.Before(r.pause(&r.compactAfter))
+	canExtract := !now.Before(r.pause(&r.extractAfter))
 	if !canCompact && !canExtract {
 		return
 	}
@@ -224,7 +224,7 @@ func (r *Runner) compact(ctx context.Context) {
 			return
 		}
 	}
-	if watchCtx.Err() != nil || r.now().Before(r.extractAfter) {
+	if watchCtx.Err() != nil || r.now().Before(r.pause(&r.extractAfter)) {
 		return
 	}
 	if err := r.extractIdleMemory(watchCtx); err != nil && watchCtx.Err() == nil && !errors.Is(err, state.ErrConversationStale) {
@@ -615,7 +615,7 @@ func (r *Runner) handleFlushFailure(ctx context.Context, plan flushPlan, callErr
 		if err := r.tasks.Store.SaveConversationSummary(ctx, next, plan.expected); err != nil && !errors.Is(err, state.ErrConversationStale) {
 			slog.WarnContext(ctx, "failed to record flush retry counter", "err", err)
 		}
-		r.compactAfter = now.Add(flushBackoff(failures))
+		r.setPause(&r.compactAfter, now.Add(flushBackoff(failures)))
 		return callErr
 	}
 
@@ -627,7 +627,7 @@ func (r *Runner) handleFlushFailure(ctx context.Context, plan flushPlan, callErr
 		modelName = "extractive"
 	}
 	err := r.commitFlushWithRebase(ctx, plan, nil, fallbackEntries, slices.Clone(plan.base.Items), plan.base.Gist, modelName, nowUTC)
-	r.compactAfter = now.Add(flushBackoff(failures))
+	r.setPause(&r.compactAfter, now.Add(flushBackoff(failures)))
 	return err
 }
 
@@ -662,7 +662,7 @@ func (r *Runner) commitFlushWithRebase(
 			return ctx.Err()
 		}
 		if !errors.Is(err, state.ErrConversationStale) {
-			r.compactAfter = r.now().Add(flushBackoff(1))
+			r.setPause(&r.compactAfter, r.now().Add(flushBackoff(1)))
 			return err
 		}
 		if attempt >= maxRebaseAttempts {

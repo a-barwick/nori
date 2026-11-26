@@ -2,6 +2,15 @@ import Foundation
 import Testing
 @testable import NoriCore
 
+@MainActor
+func eventually(within timeout: Duration = .seconds(5), _ condition: @MainActor () async -> Bool) async -> Bool {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if await condition() { return true }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    return await condition()
+}
 
 private final class StubURLProtocol: URLProtocol, @unchecked Sendable {
     typealias Handler = @Sendable (URLRequest) throws -> (HTTPURLResponse, Data)
@@ -1088,17 +1097,18 @@ struct MemoryReceiptsAndStoreTests {
         defer {
             UserDefaults.standard.removeObject(forKey: markerKey)
         }
-        let store = NoriStore(transport: mock, resetMinimumDuration: .milliseconds(120))
+        let (released, release) = AsyncStream<Void>.makeStream()
+        let store = NoriStore(transport: mock, resetMinimumDisplay: { _ in
+            for await _ in released { break }
+        })
         store.authState = .signedIn(email: email)
         let resetting = Task { try await store.resetUserData(confirmation: "RESET") }
-        for _ in 0..<1_000 {
-            if store.authState == .signedOut { break }
-            await Task.yield()
-        }
-        #expect(store.authState == .signedOut)
+        #expect(await eventually { store.authState == .signedOut })
         #expect(store.isResettingData)
-        try await Task.sleep(for: .milliseconds(25))
+        for _ in 0..<100 { await Task.yield() }
         #expect(store.isResettingData)
+        release.yield()
+        release.finish()
         try await resetting.value
         #expect(!store.isResettingData)
         #expect(store.authState == .signedOut)
@@ -1524,6 +1534,7 @@ struct MemoryReceiptsAndStoreTests {
         let store = NoriStore(transport: mock)
         store.authState = .signedIn(email: "alex@example.com")
         store.session = Session(position: 50)
+        store.connectionState = .connected
 
         await mock.setStreamEvents([
             .connectionState(.connecting),
@@ -1532,14 +1543,12 @@ struct MemoryReceiptsAndStoreTests {
             .connectionState(.offline)
         ], terminalError: nil)
         store.startEventStream()
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(store.connectionState == .offline)
+        #expect(await eventually { store.connectionState == .offline })
 
         await mock.setShouldFailSnapshot(true)
         await mock.setStreamEvents([.reset(position: 8)], terminalError: nil)
         store.startEventStream()
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(store.session.position == 8)
+        #expect(await eventually { store.session.position == 8 })
         await mock.setShouldFailSnapshot(false)
 
         store.pauseForBackground()
@@ -1555,9 +1564,7 @@ struct MemoryReceiptsAndStoreTests {
 
         await mock.setStreamEvents([], terminalError: NoriAPIError(message: "Unauthorized", statusCode: 401))
         store.startEventStream()
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(store.authState == .signedOut)
-        #expect(store.authError != nil)
+        #expect(await eventually { store.authState == .signedOut && store.authError != nil })
     }
 
     @Test("NoriStore AssistantSummary drives badges and oauthCallback uses targeted refresh instead of fetchFullSnapshot")
@@ -1573,7 +1580,13 @@ struct MemoryReceiptsAndStoreTests {
         #expect(store.appsAttentionCount == 1)
 
         store.handleIncomingURL(URL(string: "nori://oauth/callback?result=connected")!)
-        try await Task.sleep(for: .milliseconds(60))
+        #expect(await eventually {
+            let servers = await mock.fetchMCPServersCallCount
+            let connections = await mock.fetchConnectionsCallCount
+            let work = await mock.fetchWorkItemsCallCount
+            let summaries = await mock.fetchSummaryCallCount
+            return servers >= 1 && connections >= 1 && work >= 1 && summaries >= 2
+        })
         #expect(await mock.fetchFullSnapshotCallCount == 0)
         #expect(await mock.fetchMCPServersCallCount >= 1)
         #expect(await mock.fetchConnectionsCallCount >= 1)

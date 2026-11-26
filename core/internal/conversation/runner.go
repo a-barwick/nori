@@ -89,6 +89,7 @@ type Runner struct {
 	compactAfter     time.Time
 	extractAfter     time.Time
 	dreamAfter       time.Time
+	pauses           sync.Mutex
 	tasks            *Tasks
 	process          sync.Mutex
 	Clock            Clock
@@ -106,6 +107,20 @@ func (r *Runner) runWork(work *sync.WaitGroup, fn func()) {
 		return
 	}
 	work.Go(fn)
+}
+
+// pause and setPause guard the backoff timestamps, which the worker's repair
+// loop reads through NextConversationWake while Process may be writing them.
+func (r *Runner) pause(at *time.Time) time.Time {
+	r.pauses.Lock()
+	defer r.pauses.Unlock()
+	return *at
+}
+
+func (r *Runner) setPause(at *time.Time, until time.Time) {
+	r.pauses.Lock()
+	defer r.pauses.Unlock()
+	*at = until
 }
 
 func (r *Runner) now() time.Time {
@@ -684,7 +699,7 @@ func (r *Runner) NextConversationWake(ctx context.Context) (time.Time, error) {
 		return time.Time{}, err
 	}
 	if flushState.hasWork {
-		consider(maxTime(now, r.compactAfter))
+		consider(maxTime(now, r.pause(&r.compactAfter)))
 	}
 
 	extractState, err := r.planExtract(ctx, control, summary, now, false)
@@ -696,7 +711,7 @@ func (r *Runner) NextConversationWake(ctx context.Context) (time.Time, error) {
 		if extractState.ready || target.IsZero() {
 			target = now
 		}
-		consider(maxTime(target, r.extractAfter))
+		consider(maxTime(target, r.pause(&r.extractAfter)))
 	}
 
 	latestTurnAt := maxTime(flushState.latestTurnAt, extractState.latestTurnAt)
@@ -706,8 +721,8 @@ func (r *Runner) NextConversationWake(ctx context.Context) (time.Time, error) {
 	}
 	if dreamState.eligible {
 		switch {
-		case r.dreamAfter.After(now):
-			consider(r.dreamAfter)
+		case r.pause(&r.dreamAfter).After(now):
+			consider(r.pause(&r.dreamAfter))
 		case !dreamState.wakeAt.IsZero():
 			consider(dreamState.wakeAt)
 		default:

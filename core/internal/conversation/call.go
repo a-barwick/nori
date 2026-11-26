@@ -887,7 +887,7 @@ func (r *Runner) readAttemptHistory(ctx context.Context, from time.Time) history
 				return result(maintenanceErr)
 			}
 			slog.WarnContext(ctx, "conversation indexing interrupted; using committed excerpts", "err", maintenanceErr)
-			r.compactAfter = r.now().Add(compactionPause)
+			r.setPause(&r.compactAfter, r.now().Add(compactionPause))
 		}
 		if !summary.Applies(from) || !summary.Through.After(before) {
 			break
