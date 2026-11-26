@@ -167,6 +167,21 @@ func main() {
 			}
 			slog.InfoContext(ctx, "worker pool stopped", "owner", pool.Owner())
 		}()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			timer := time.NewTimer(30 * time.Second)
+			defer timer.Stop()
+			for {
+				select {
+				case <-runCtx.Done():
+					return
+				case <-timer.C:
+					nori.SweepPendingAccountDeletions(runCtx)
+					timer.Reset(5 * time.Minute)
+				}
+			}
+		}()
 	}
 
 	if server != nil {

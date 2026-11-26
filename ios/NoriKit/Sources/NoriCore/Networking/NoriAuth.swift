@@ -13,7 +13,7 @@ public enum NoriConfig {
            let url = URL(string: raw) {
             return url
         }
-        return URL(string: "https://nori-web-elaoqxqkuq-uc.a.run.app")!
+        return URL(string: "https://nori-docs-elaoqxqkuq-uc.a.run.app")!
     }
 
     public static func legalURL(path: String) -> URL {

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy Policy · Nori</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.65; max-width: 720px; margin: 0 auto; padding: 48px 20px 72px; color: #190936; background: #ffffff; }
+    @media (prefers-color-scheme: dark) { body { color: #f2eff8; background: #000000; } a { color: #a98aff; } .muted { color: #a9a2b8; } }
+    h1 { font-size: 2rem; margin: 0 0 8px; }
+    h2 { font-size: 1.15rem; margin: 28px 0 8px; }
+    p, li { margin: 0 0 12px; }
+    ul { padding-left: 20px; }
+    .muted { color: #726d82; font-size: 0.92rem; }
+    a { color: #5000ff; }
+    footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid rgba(128,128,128,0.2); font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Privacy Policy</h1>
+    <p class="lede muted">Effective November 25, 2026</p>
+
+    <section>
+      <h2>Information We Collect</h2>
+      <p>When you sign in to Nori, we store your email address, display name, timezone, and the conversations, tasks, memory entries, preferences, and files you create or upload.</p>
+      <p>Model API keys you provide (BYOK) are encrypted at rest with Google Cloud KMS and tenant-scoped encryption keys before storage.</p>
+    </section>
+
+    <section>
+      <h2>Third-Party Model Providers</h2>
+      <p>When you send a message or run a task, Nori forwards the necessary conversation context and files to the AI model provider you selected using your configured API key. Your provider's privacy policy governs how they process those requests.</p>
+    </section>
+
+    <section>
+      <h2>Telemetry and Diagnostics</h2>
+      <p>Nori collects error diagnostics and performance telemetry (such as Sentry and Arize traces) with sensitive credentials and user content redacted, used solely to keep the service reliable.</p>
+    </section>
+
+    <section>
+      <h2>Retention, Data Reset, and Account Deletion</h2>
+      <p>We keep your account data while your account is active. You can reset your Nori data or permanently delete your entire account at any time from <strong>Settings &rarr; Account</strong> in the Web or iOS app.</p>
+      <p>Permanent account deletion removes your user directory record, conversations, tasks, memory, leases, encrypted API keys, and stored files from our database and cloud storage.</p>
+    </section>
+
+    <footer>
+      <a href="/terms">Terms of Service</a>
+    </footer>
+  </main>
+</body>
+</html>

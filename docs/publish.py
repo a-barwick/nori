@@ -149,7 +149,12 @@ def publish(out):
     nav = f'<nav aria-hidden="true" style="position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)"><p>Pages on this site. <a tabindex="-1" href="llms.txt">Plain text index</a></p><ul>{links}</ul></nav>\n'
     for page in pages:
         path = page["path"]
-        (out / path.name).write_text(public_html(page, nav), encoding="utf-8")
+        rendered = public_html(page, nav)
+        (out / path.name).write_text(rendered, encoding="utf-8")
+        if path.stem in ("privacy", "terms"):
+            clean_dir = out / path.stem
+            clean_dir.mkdir(exist_ok=True)
+            (clean_dir / "index.html").write_text(rendered, encoding="utf-8")
         body = "\n\n".join((f"## {s['title']}\n\n" if s["title"] != "Overview" else "") + s["text"] for s in page["sections"])
         (out / f"{path.stem}.md").write_text(body + "\n", encoding="utf-8")
     lines = ["# Nori Dokyu", "", "> How the Nori assistant engine works. Each page below has a plain text copy.", ""]
