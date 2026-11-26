@@ -20,7 +20,9 @@ jobs:
       group: ios-testflight-quiet-period
       cancel-in-progress: true
     steps:
-      - run: sleep 600
+      - name: Wait ten minutes for push-triggered builds
+        if: github.event_name == 'push'
+        run: sleep 600
 
   distribute:
     name: Archive and upload to private TestFlight
