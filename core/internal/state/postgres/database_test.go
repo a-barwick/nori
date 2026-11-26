@@ -589,13 +589,13 @@ func TestPostgresListenWithPoolParamsAndApplyMergeUniqueViolation(t *testing.T) 
 	if err := b.Apply(ctx, docstore.Mutation{Kind: "create", Path: u1, Fields: map[string]any{"email": email}}); err != nil {
 		t.Fatalf("create u1: %v", err)
 	}
-	if err := b.Apply(ctx, docstore.Mutation{Kind: "set", Merge: true, Path: u2, Fields: map[string]any{"email": email}}); !errors.Is(err, docstore.ErrExists) {
+	if err := b.Apply(ctx, docstore.Mutation{Kind: "set", Merge: true, Path: u2, Fields: map[string]any{"email": strings.ToUpper(email)}}); !errors.Is(err, docstore.ErrExists) {
 		t.Fatalf("merge insert duplicate email: got %v, want docstore.ErrExists", err)
 	}
 	if err := b.Apply(ctx, docstore.Mutation{Kind: "create", Path: u2, Fields: map[string]any{"email": prefix + "other@example.test"}}); err != nil {
 		t.Fatalf("create u2: %v", err)
 	}
-	if err := b.Apply(ctx, docstore.Mutation{Kind: "update", Path: u2, Updates: []docstore.Update{{Path: "email", Value: email}}}); !errors.Is(err, docstore.ErrExists) {
+	if err := b.Apply(ctx, docstore.Mutation{Kind: "update", Path: u2, Updates: []docstore.Update{{Path: "email", Value: strings.ToUpper(email)}}}); !errors.Is(err, docstore.ErrExists) {
 		t.Fatalf("update duplicate email: got %v, want docstore.ErrExists", err)
 	}
 }
