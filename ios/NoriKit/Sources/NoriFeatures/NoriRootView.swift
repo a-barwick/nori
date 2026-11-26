@@ -39,7 +39,11 @@ public struct NoriRootView: View {
     public var body: some View {
         Group {
             if store.authState.isSignedIn {
-                signedInBody
+                if store.shouldShowOnboarding {
+                    OnboardingView(store: store)
+                } else {
+                    signedInBody
+                }
             } else {
                 SignInView(store: store)
             }
@@ -337,6 +341,10 @@ public struct NoriRootView: View {
             presentedDocument = nil
             selectedTab = .more
             morePath = []
+        case .onboarding:
+            isActivitySheetPresented = false
+            presentedDocument = nil
+            store.isShowingOnboardingReplay = true
         case .workDetail(let taskID):
             openWorkTask(taskID)
         case .activitySheet:

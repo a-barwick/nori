@@ -98,18 +98,24 @@ function useLook(enabled: boolean, attentive: boolean) {
   return { svg, look };
 }
 
+export type MarkMood = "hello" | "hop" | "nod" | "shake" | "celebrate";
+
 export function NoriMark({
   size = 32,
   state,
   watch = false,
+  mood,
+  happy = false,
 }: {
   size?: number;
   state?: MarkState;
   watch?: boolean;
+  mood?: MarkMood;
+  happy?: boolean;
 }) {
   const s = state ?? "idle";
   const clip = useId().replace(/:/g, "");
-  const blink = useBlink(s === "idle" || s === "attentive");
+  const blink = useBlink(!happy && (s === "idle" || s === "attentive"));
   const { svg: svgRef, look: lookRef } = useLook(watch && s === "idle", watch && s === "attentive");
   const face = FACE_POS;
   const [lx, rx] = face.eyes;
@@ -123,6 +129,8 @@ export function NoriMark({
       className="mark shrink-0 overflow-visible"
       data-state={s}
       data-blink={blink}
+      data-mood={mood}
+      data-happy={happy}
       aria-hidden
     >
       <g className="mark-body-group">
@@ -131,6 +139,10 @@ export function NoriMark({
           <g className="mark-eyes">
             <ellipse className="mark-eye" cx={lx} cy={face.y} rx="3.4" ry="4" fill="var(--mark-ink)" />
             <ellipse className="mark-eye" cx={rx} cy={face.y} rx="3.4" ry="4" fill="var(--mark-ink)" />
+          </g>
+          <g className="mark-eyes-happy" stroke="var(--mark-ink)" strokeWidth="2.6" strokeLinecap="round" fill="none">
+            <path d="M35 47Q38.5 42.5 42 47" />
+            <path d="M54 47Q57.5 42.5 61 47" />
           </g>
         </g>
         <path d={`M44 ${face.mouthY}Q48 ${face.mouthY + 3.6} 52 ${face.mouthY}`} {...FACE} />

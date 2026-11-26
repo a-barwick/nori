@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect, useRef, type ReactNode } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { MotionConfig } from "motion/react";
 import { Tooltip } from "radix-ui";
 import { ListChecks, MoreHorizontal } from "lucide-react";
@@ -11,7 +11,10 @@ import { AppFrame } from "@/components/shell/AppFrame";
 import { useAppearance } from "@/lib/appearance";
 import { AssistantProvider, useAssistant } from "@/lib/assistant/context";
 import { useSummary } from "@/lib/assistant/sources";
+import { useResource } from "@/lib/assistant/useResource";
+import type { Preferences } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
+import { OnboardingFlow, shouldShowOnboarding } from "./OnboardingFlow";
 import { Badge } from "./ui";
 
 type NavItem = {
@@ -31,18 +34,56 @@ export function AppShell({ localMode, scope, children }: { localMode: boolean; s
     <Tooltip.Provider delayDuration={500}>
       <MotionConfig reducedMotion="user">
         <AssistantProvider localMode={localMode} scope={scope}>
-          <Frame>{children}</Frame>
+          <Suspense fallback={null}>
+            <Frame scope={scope}>{children}</Frame>
+          </Suspense>
         </AssistantProvider>
       </MotionConfig>
     </Tooltip.Provider>
   );
 }
 
-function Frame({ children }: { children: ReactNode }) {
+const ONBOARDING_STORAGE_PREFIX = "nori.onboarding.done:";
+
+function readLocalOnboardingDone(scope: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(`${ONBOARDING_STORAGE_PREFIX}${scope}`) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function Frame({ scope, children }: { scope: string; children: ReactNode }) {
   const { runtime } = useAssistant();
   const summary = useSummary();
+  const preferences = useResource<Preferences>("/preferences", { poll: 0 });
   const path = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const previous = useRef(path);
+  const [localDone, setLocalDone] = useState(() => readLocalOnboardingDone(scope));
+  const forceReplay = searchParams.get("onboarding") === "1";
+
+  const handleOnboardingComplete = useCallback(() => {
+    setLocalDone(true);
+    try {
+      window.localStorage.setItem(`${ONBOARDING_STORAGE_PREFIX}${scope}`, "1");
+    } catch {
+    }
+    if (forceReplay) {
+      router.replace("/");
+    }
+  }, [forceReplay, router, scope]);
+
+  const showOnboarding = shouldShowOnboarding({
+    forceReplay,
+    preferences: preferences.data,
+    preferencesLoaded: !preferences.loading && (!!preferences.data || !!preferences.error),
+    messageCount: runtime.session?.messages?.length ?? 0,
+    sessionLoaded: !runtime.loading && !!runtime.session,
+    localCompleted: localDone,
+  });
 
   useEffect(() => {
     if (previous.current === path) return;
@@ -153,6 +194,10 @@ function Frame({ children }: { children: ReactNode }) {
       })}
     </nav>
   );
+
+  if (showOnboarding) {
+    return <OnboardingFlow preferences={preferences.data} onComplete={handleOnboardingComplete} />;
+  }
 
   return (
     <>

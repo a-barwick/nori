@@ -1148,6 +1148,7 @@ public actor LiveNoriTransport: NoriTransport {
             let account_defaults: [String: String]
             let budgets: BudgetPreferences
             let input: InputPreferences?
+            let onboarding_completed_at: String?
         }
         struct PrefReq: Encodable {
             let request_id: String
@@ -1162,7 +1163,8 @@ public actor LiveNoriTransport: NoriTransport {
             default_destination_ids: preferences.defaultDestinationIDs,
             account_defaults: preferences.accountDefaults,
             budgets: preferences.budgets,
-            input: preferences.input
+            input: preferences.input,
+            onboarding_completed_at: preferences.onboardingCompletedAt
         )
         return try await mutate(
             "/v1/preferences",

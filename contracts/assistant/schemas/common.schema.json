@@ -738,6 +738,9 @@
           },
           "additionalProperties": false
         },
+        "onboarding_completed_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
+        },
         "updated_at": {
           "$ref": "common.schema.json#/$defs/Instant"
         }
@@ -818,6 +821,9 @@
             }
           },
           "additionalProperties": false
+        },
+        "onboarding_completed_at": {
+          "$ref": "common.schema.json#/$defs/Instant"
         }
       },
       "additionalProperties": false
