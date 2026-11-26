@@ -31,9 +31,6 @@ func (c *resetHTTPClient) Do(request *http.Request) (*http.Response, error) {
 	var body string
 	switch request.Method {
 	case http.MethodGet:
-		if request.Header.Get("x-goog-interop-list-objects-format") != "enabled" {
-			c.t.Error("Google Storage version listing lacks the interoperability header")
-		}
 		if request.URL.Query().Get("prefix") != "artifacts/" {
 			c.t.Error("listing used the wrong prefix")
 		}
@@ -69,7 +66,7 @@ func TestPurgeLegacyVersionsAndIsolation(t *testing.T) {
 		t.Run(map[bool]string{false: "success", true: "deletion failure"}[fail], func(t *testing.T) {
 			httpClient := &resetHTTPClient{t: t, failDeletion: fail}
 			client := sdk.New(sdk.Options{
-				BaseEndpoint: aws.String("https://storage.googleapis.com"),
+				BaseEndpoint: aws.String("https://s3.us-east-1.amazonaws.com"),
 				Region:       "us-central1", Credentials: aws.AnonymousCredentials{}, HTTPClient: httpClient, UsePathStyle: true,
 			})
 			store, err := New(client, "test-bucket", users.User{ID: users.LegacyID, Email: "owner@example.com", TimeZone: "UTC"})

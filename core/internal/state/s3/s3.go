@@ -13,8 +13,6 @@ import (
 	sdk "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
-	"github.com/aws/smithy-go/middleware"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"nori/internal/state"
 	"nori/internal/users"
 )
@@ -102,39 +100,30 @@ func (s *Store) DeleteFile(ctx context.Context, key string) error {
 	return err
 }
 
-func googleStorageListVersions(options *sdk.Options) {
-	options.APIOptions = append(options.APIOptions, func(stack *middleware.Stack) error {
-		return stack.Build.Add(middleware.BuildMiddlewareFunc("GoogleStorageListVersions", func(ctx context.Context, input middleware.BuildInput, next middleware.BuildHandler) (middleware.BuildOutput, middleware.Metadata, error) {
-			request, ok := input.Request.(*smithyhttp.Request)
-			if !ok {
-				return middleware.BuildOutput{}, middleware.Metadata{}, errors.New("unexpected object storage request")
-			}
-			request.Header.Set("x-goog-interop-list-objects-format", "enabled")
-			return next.HandleBuild(ctx, input)
-		}), middleware.After)
-	})
+func (s *Store) purgeObjectAllowed(key string) (bool, error) {
+	if !strings.HasPrefix(key, s.prefix) {
+		return false, errors.New("object listing returned a key outside the user's prefix")
+	}
+	return !s.legacy || !strings.HasPrefix(key, s.prefix+"users/"), nil
 }
 
 func (s *Store) Purge(ctx context.Context) error {
 	if s.bucket == "" {
 		return errors.New("ARTIFACT_BUCKET must be configured")
 	}
+	endpoint, err := url.Parse(aws.ToString(s.api.Options().BaseEndpoint))
+	if err == nil && (endpoint.Hostname() == "storage.googleapis.com" || strings.HasSuffix(endpoint.Hostname(), ".storage.googleapis.com")) {
+		return s.purgeGoogleStorage(ctx)
+	}
 	pages := sdk.NewListObjectVersionsPaginator(s.api, &sdk.ListObjectVersionsInput{
 		Bucket: aws.String(s.bucket),
 		Prefix: aws.String(s.prefix),
 	})
-	var listOptions []func(*sdk.Options)
-	endpoint, err := url.Parse(aws.ToString(s.api.Options().BaseEndpoint))
-	if err == nil && (endpoint.Hostname() == "storage.googleapis.com" || strings.HasSuffix(endpoint.Hostname(), ".storage.googleapis.com")) {
-		listOptions = append(listOptions, googleStorageListVersions)
-	}
 	var versions, markers []types.ObjectIdentifier
 	appendObject := func(objects *[]types.ObjectIdentifier, key, version *string) error {
-		if !strings.HasPrefix(aws.ToString(key), s.prefix) {
-			return errors.New("object listing returned a key outside the user's prefix")
-		}
-		if s.legacy && strings.HasPrefix(aws.ToString(key), s.prefix+"users/") {
-			return nil
+		allowed, err := s.purgeObjectAllowed(aws.ToString(key))
+		if err != nil || !allowed {
+			return err
 		}
 		if aws.ToString(version) == "" {
 			return errors.New("object listing returned a missing version ID")
@@ -143,7 +132,7 @@ func (s *Store) Purge(ctx context.Context) error {
 		return nil
 	}
 	for pages.HasMorePages() {
-		page, err := pages.NextPage(ctx, listOptions...)
+		page, err := pages.NextPage(ctx)
 		if err != nil {
 			return err
 		}

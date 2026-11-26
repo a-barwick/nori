@@ -1,3 +1,5 @@
+cloud.google.com/go/compute/metadata v0.9.0 h1:pDUj4QMoPejqq20dK0Pg2N4yG9zIkYGdBtwLoEkH9Zs=
+cloud.google.com/go/compute/metadata v0.9.0/go.mod h1:E0bWwX5wTnLPedCKqk3pJmVgCBSM6qQI1yTBdEb3C10=
 github.com/aws/aws-sdk-go-v2 v1.47.8 h1:fuClo7Un+Bi0EDTnSIPWxVEoJcze+wkGzNA4Vo3jRcQ=
 github.com/aws/aws-sdk-go-v2 v1.47.8/go.mod h1:I8lFSH4MGrZiw2m7miCrRYHsgpC1+HW8uiVGOiPYPcw=
 github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.26 h1:SJNA4XaM8Z09adeTHf/vME93jzl44lJV70pSawIBXac=
