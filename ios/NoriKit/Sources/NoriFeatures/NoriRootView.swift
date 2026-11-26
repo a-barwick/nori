@@ -39,7 +39,21 @@ public struct NoriRootView: View {
     public var body: some View {
         Group {
             if store.authState.isSignedIn {
-                if store.shouldShowOnboarding {
+                if store.dataResetRecoveryRequired {
+                    DataResetRecoveryView(store: store)
+                } else if store.dataResetCompletionRequired {
+                    if store.isResettingData {
+                        DataResetLoadingView()
+                    } else {
+                        DataResetCompleteView(store: store)
+                    }
+                } else if store.dataResetStatusRequired {
+                    if store.isResettingData {
+                        DataResetLoadingView()
+                    } else {
+                        DataResetStatusView(store: store)
+                    }
+                } else if store.shouldShowOnboarding {
                     OnboardingView(store: store)
                 } else {
                     signedInBody
@@ -95,22 +109,29 @@ public struct NoriRootView: View {
         }
         .onChange(of: store.shouldShowOnboarding) { _, showingOnboarding in
             if showingOnboarding {
-                tabRefreshTask?.cancel()
-                tabRefreshTask = nil
-                selectedTab = .chat
-                workPath = []
-                morePath = []
-                workTabFilter = .tasks
-                didApplyInitialWorkTab = false
-                selectedWorkTabExplicitly = false
-                isActivitySheetPresented = false
-                presentedDocument = nil
+                clearNavigation()
             }
+        }
+        .onChange(of: store.dataResetRecoveryRequired) { _, required in
+            if required { clearNavigation() }
         }
         .onChange(of: selectedTab) { _, nextTab in
             scheduleRefresh(for: nextTab)
         }
         .preferredColorScheme(appearance.colorScheme)
+    }
+
+    private func clearNavigation() {
+        tabRefreshTask?.cancel()
+        tabRefreshTask = nil
+        selectedTab = .chat
+        workPath = []
+        morePath = []
+        workTabFilter = .tasks
+        didApplyInitialWorkTab = false
+        selectedWorkTabExplicitly = false
+        isActivitySheetPresented = false
+        presentedDocument = nil
     }
 
     private func scheduleRefresh(for tab: NoriTab) {

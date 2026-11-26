@@ -1139,6 +1139,18 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func resetUserData(confirmation: String) async throws {
+        try await sendDataReset(confirmation: confirmation, resumePending: false)
+    }
+
+    public func resumePendingDataReset() async throws {
+        try await sendDataReset(confirmation: "RESET", resumePending: true)
+    }
+
+    private func sendDataReset(confirmation: String, resumePending: Bool) async throws {
+        struct ResetRequest: Encodable {
+            let confirmation: String
+            let resume_pending: Bool?
+        }
         let path = "/v1/settings/reset"
         try await withRequestSpan(route: path, method: "POST") { span in
             let userID = try await ensureUserID()
@@ -1147,7 +1159,10 @@ public actor LiveNoriTransport: NoriTransport {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.timeoutInterval = 90
-            request.httpBody = try encoder.encode(["confirmation": confirmation])
+            request.httpBody = try encoder.encode(ResetRequest(
+                confirmation: confirmation,
+                resume_pending: resumePending ? true : nil
+            ))
             _ = try await authenticatedData(request, contentType: "application/json", span: span)
         }
     }

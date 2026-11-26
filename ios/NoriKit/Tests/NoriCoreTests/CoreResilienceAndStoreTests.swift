@@ -102,6 +102,7 @@ struct AuthAndLiveTransportTests {
     @Test("Reset sends confirmation to the authenticated user and accepts an empty response")
     func resetDataWirePayload() async throws {
         let urlSession = StubURLProtocol.makeSession()
+        let resumeFlags = LockedArray<Bool>()
         let provider = makeProvider(session: urlSession)
         await provider.saveSession(AuthSession(
             idToken: makeFakeJWT(email: "alex@example.com"),
@@ -118,12 +119,15 @@ struct AuthAndLiveTransportTests {
             #expect(url.path == "/users/usr-1/v1/settings/reset")
             #expect(request.httpMethod == "POST")
             #expect(request.value(forHTTPHeaderField: "Authorization")?.hasPrefix("Bearer ") == true)
-            let body = try #require(JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: String])
-            #expect(body == ["confirmation": "RESET"])
+            let body = try #require(JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any])
+            #expect(body["confirmation"] as? String == "RESET")
+            resumeFlags.append(body["resume_pending"] as? Bool ?? false)
             return (httpResponse(url: url, statusCode: 204), Data())
         }
         let transport = LiveNoriTransport(baseURL: URL(string: "https://nori.test")!, authProvider: provider, urlSession: urlSession)
         try await transport.resetUserData(confirmation: "RESET")
+        try await transport.resumePendingDataReset()
+        #expect(resumeFlags.values == [false, true])
     }
 
 
@@ -807,7 +811,7 @@ struct MemoryReceiptsAndStoreTests {
         let provider = AuthTokenProvider(keychain: KeychainStore(service: "com.nori.ios.tests.\(UUID().uuidString)"))
         let session = AuthSession(idToken: "test-token", refreshToken: "refresh", expiresAt: Date().addingTimeInterval(3600), email: email)
         await provider.saveSession(session)
-        let store = NoriStore(transport: mock, authProvider: provider)
+        let store = NoriStore(transport: mock, authProvider: provider, resetMinimumDuration: .zero)
         store.authState = .signedIn(email: email)
         store.session = Session(messages: [Message(id: "old", role: .user, text: "Private", createdAt: "2026-11-24T10:00:00Z")])
         store.preferences = Preferences(onboardingCompletedAt: "2026-11-24T10:00:00Z")
@@ -840,7 +844,7 @@ struct MemoryReceiptsAndStoreTests {
             UserDefaults.standard.removeObject(forKey: localKey)
             UserDefaults.standard.removeObject(forKey: markerKey)
         }
-        let store = NoriStore(transport: mock)
+        let store = NoriStore(transport: mock, resetMinimumDuration: .zero)
         store.authState = .signedIn(email: email)
         store.session = Session(messages: [Message(id: "old", role: .user, text: "Private", createdAt: "2026-11-24T10:00:00Z")])
         store.hasLoadedSnapshot = true
@@ -913,6 +917,131 @@ struct MemoryReceiptsAndStoreTests {
         }
         #expect(store.shouldShowOnboarding)
         #expect(store.authState == .signedIn(email: email))
+        await store.signOut()
+    }
+
+    @Test("An interrupted reset offers recovery and confirms successful completion")
+    @MainActor
+    func resetRecoveryAndCompletion() async throws {
+        let mock = FullMockTransport()
+        let email = "reset-recovery-\(UUID().uuidString)@example.com"
+        let completionKey = "nori.data-reset.completion." + email.lowercased()
+        let markerKey = "nori.data-reset.observed." + email.lowercased()
+        defer {
+            UserDefaults.standard.removeObject(forKey: completionKey)
+            UserDefaults.standard.removeObject(forKey: markerKey)
+        }
+        let provider = AuthTokenProvider(keychain: KeychainStore(service: "com.nori.ios.tests.\(UUID().uuidString)"))
+        let session = AuthSession(idToken: "token", refreshToken: "refresh", expiresAt: Date().addingTimeInterval(3_600), email: email)
+        await provider.saveSession(session)
+        let store = NoriStore(transport: mock, authProvider: provider, resetMinimumDuration: .zero)
+        store.authState = .signedIn(email: email)
+        store.session = Session(messages: [Message(id: "old", role: .user, text: "Private")])
+        await mock.setFailAfterStartingReset(true)
+
+        await #expect(throws: NoriAPIError.self) { try await store.resetUserData(confirmation: "RESET") }
+        #expect(store.dataResetRecoveryRequired)
+        #expect(!store.dataResetCompletionRequired)
+        #expect(store.messages.isEmpty)
+        #expect(store.authState == .signedIn(email: email))
+
+        await mock.setFailResume(true)
+        await #expect(throws: NoriAPIError.self) { try await store.finishPendingDataReset() }
+        #expect(store.dataResetRecoveryRequired)
+        #expect(!store.dataResetCompletionRequired)
+        await mock.setFailResume(false)
+        try await store.finishPendingDataReset()
+        #expect(!store.dataResetRecoveryRequired)
+        #expect(store.dataResetCompletionRequired)
+        #expect(await mock.ordinaryResetCount == 1)
+        #expect(await mock.resumeResetCount == 2)
+        #expect(await provider.loadSession() == session)
+
+        let reopened = NoriStore(transport: mock, authProvider: provider, resetMinimumDuration: .zero)
+        await reopened.bootstrapIfNeeded()
+        #expect(reopened.dataResetCompletionRequired)
+        reopened.acknowledgeDataReset()
+        #expect(!reopened.dataResetCompletionRequired)
+        #expect(!UserDefaults.standard.bool(forKey: completionKey))
+        await reopened.signOut()
+        await store.signOut()
+    }
+
+    @Test("A stale recovery never starts a new reset or claims completion")
+    @MainActor
+    func staleResetRecovery() async throws {
+        let mock = FullMockTransport()
+        let email = "reset-stale-\(UUID().uuidString)@example.com"
+        let markerKey = "nori.data-reset.observed." + email.lowercased()
+        defer { UserDefaults.standard.removeObject(forKey: markerKey) }
+        let store = NoriStore(transport: mock, resetMinimumDuration: .zero)
+        store.authState = .signedIn(email: email)
+        await mock.setPreferences(Preferences(dataResetAt: "2026-11-24T20:00:00Z", dataResetPending: true))
+        try await store.refreshDataResetStatus()
+        #expect(store.dataResetRecoveryRequired)
+        await mock.setPreferences(Preferences(dataResetAt: "2026-11-24T20:00:00Z"))
+        try await store.finishPendingDataReset()
+        #expect(await mock.resumeResetCount == 1)
+        #expect(await mock.ordinaryResetCount == 0)
+        #expect(!store.dataResetRecoveryRequired)
+        #expect(!store.dataResetCompletionRequired)
+        #expect(store.dataResetStatusRequired)
+        await store.signOut()
+    }
+
+    @Test("Reset loading lasts for the minimum and while the server is working")
+    @MainActor
+    func resetLoadingDuration() async throws {
+        let mock = FullMockTransport()
+        let email = "reset-spinner-\(UUID().uuidString)@example.com"
+        let completionKey = "nori.data-reset.completion." + email.lowercased()
+        let markerKey = "nori.data-reset.observed." + email.lowercased()
+        defer {
+            UserDefaults.standard.removeObject(forKey: completionKey)
+            UserDefaults.standard.removeObject(forKey: markerKey)
+        }
+        let store = NoriStore(transport: mock, resetMinimumDuration: .milliseconds(80))
+        store.authState = .signedIn(email: email)
+        await mock.suspendNextReset()
+        let started = ContinuousClock.now
+        let resetting = Task { try await store.resetUserData(confirmation: "RESET") }
+        await mock.waitForSuspendedReset()
+        #expect(store.isResettingData)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(store.isResettingData)
+        #expect(!store.dataResetCompletionRequired)
+        await mock.finishSuspendedReset()
+        try await resetting.value
+        #expect(ContinuousClock.now - started >= .milliseconds(80))
+        #expect(!store.isResettingData)
+        #expect(store.dataResetCompletionRequired)
+        await store.signOut()
+    }
+
+    @Test("A fast reset still shows loading before its confirmation")
+    @MainActor
+    func fastResetLoadingDuration() async throws {
+        let mock = FullMockTransport()
+        let email = "reset-fast-\(UUID().uuidString)@example.com"
+        let completionKey = "nori.data-reset.completion." + email.lowercased()
+        let markerKey = "nori.data-reset.observed." + email.lowercased()
+        defer {
+            UserDefaults.standard.removeObject(forKey: completionKey)
+            UserDefaults.standard.removeObject(forKey: markerKey)
+        }
+        let store = NoriStore(transport: mock, resetMinimumDuration: .milliseconds(120))
+        store.authState = .signedIn(email: email)
+        let resetting = Task { try await store.resetUserData(confirmation: "RESET") }
+        for _ in 0..<1_000 {
+            if store.dataResetCompletionRequired { break }
+            await Task.yield()
+        }
+        #expect(store.dataResetCompletionRequired)
+        #expect(store.isResettingData)
+        try await Task.sleep(for: .milliseconds(25))
+        #expect(store.isResettingData)
+        try await resetting.value
+        #expect(!store.isResettingData)
         await store.signOut()
     }
 
@@ -1482,6 +1611,10 @@ actor FullMockTransport: NoriTransport {
     private var suspendedSession: CheckedContinuation<Session, Never>?
     private var sessionStarted: CheckedContinuation<Void, Never>?
     private var resetFails = false
+    private var failAfterStartingReset = false
+    private var failResume = false
+    private(set) var ordinaryResetCount = 0
+    private(set) var resumeResetCount = 0
     private var delayReset = false
     private var suspendedReset: CheckedContinuation<Void, Never>?
     private var resetStarted: CheckedContinuation<Void, Never>?
@@ -1500,6 +1633,8 @@ actor FullMockTransport: NoriTransport {
     }
 
     func setResetFails(_ fail: Bool) { resetFails = fail }
+    func setFailAfterStartingReset(_ fail: Bool) { failAfterStartingReset = fail }
+    func setFailResume(_ fail: Bool) { failResume = fail }
     func setPreferences(_ preferences: Preferences) { mockPreferences = preferences }
     func suspendNextReset() { delayReset = true }
 
@@ -1810,8 +1945,13 @@ actor FullMockTransport: NoriTransport {
     }
     func fetchPreferences() async throws -> Preferences { mockPreferences }
     func resetUserData(confirmation: String) async throws {
+        ordinaryResetCount += 1
         guard !resetFails, confirmation == "RESET" else {
             throw NoriAPIError(message: "Reset could not be completed.", statusCode: 409)
+        }
+        if failAfterStartingReset {
+            mockPreferences.dataResetPending = true
+            throw NoriAPIError(message: "Finish your reset.", statusCode: 502, code: "data_reset_pending")
         }
         if delayReset {
             delayReset = false
@@ -1823,6 +1963,16 @@ actor FullMockTransport: NoriTransport {
         } else {
             mockPreferences = Preferences(dataResetAt: "2026-11-25T20:00:00Z")
         }
+    }
+    func resumePendingDataReset() async throws {
+        resumeResetCount += 1
+        guard mockPreferences.dataResetPending == true else {
+            throw NoriAPIError(message: "Reset is no longer pending.", statusCode: 409, code: "data_reset_not_pending")
+        }
+        if failResume {
+            throw NoriAPIError(message: "Try again.", statusCode: 502, code: "data_reset_pending")
+        }
+        mockPreferences = Preferences(dataResetAt: "2026-11-25T20:00:00Z")
     }
     func savePreferences(_ preferences: Preferences, requestID: String) async throws -> MutationReceipt<Preferences> {
         MutationReceipt(requestID: requestID, resource: preferences)

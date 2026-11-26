@@ -648,6 +648,7 @@ public struct Preferences: Sendable, Codable, Hashable {
     public var input: InputPreferences?
     public var onboardingCompletedAt: String?
     public var dataResetAt: String?
+    public var dataResetPending: Bool?
     public var updatedAt: String?
 
     enum CodingKeys: String, CodingKey {
@@ -662,6 +663,7 @@ public struct Preferences: Sendable, Codable, Hashable {
         case input
         case onboardingCompletedAt = "onboarding_completed_at"
         case dataResetAt = "data_reset_at"
+        case dataResetPending = "data_reset_pending"
         case updatedAt = "updated_at"
     }
 
@@ -677,6 +679,7 @@ public struct Preferences: Sendable, Codable, Hashable {
         input: InputPreferences? = nil,
         onboardingCompletedAt: String? = nil,
         dataResetAt: String? = nil,
+        dataResetPending: Bool? = nil,
         updatedAt: String? = nil
     ) {
         self.revision = revision
@@ -690,6 +693,7 @@ public struct Preferences: Sendable, Codable, Hashable {
         self.input = input
         self.onboardingCompletedAt = onboardingCompletedAt
         self.dataResetAt = dataResetAt
+        self.dataResetPending = dataResetPending
         self.updatedAt = updatedAt
     }
 }

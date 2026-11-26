@@ -107,6 +107,10 @@ public final class NoriStore {
     public var lastPing: HealthCheckResult?
     public private(set) var modelSettings: ModelSettingsResponse?
     public var modelKeyError: String?
+    public private(set) var dataResetRecoveryRequired = false
+    public private(set) var dataResetCompletionRequired = false
+    public private(set) var dataResetStatusRequired = false
+    public private(set) var isResettingData = false
 
     public var session: Session
     public var workItems: [WorkItem]
@@ -143,9 +147,15 @@ public final class NoriStore {
     private var hasLoadedSession = false
     private var isAwaitingResetMarker = false
     private var dataResetGeneration: UInt64 = 0
+    private var resetRecoveryBaseline: String?
+    private var resetRecoveryBaselineKnown = false
+    private var resetRecoveryHasClearedData = false
+    private var preferencesReadSequence: UInt64 = 0
+    private var appliedPreferencesRead: UInt64 = 0
 
     private static let onboardingDoneKeyPrefix = "nori.onboarding.done."
     private static let observedResetKeyPrefix = "nori.data-reset.observed."
+    private static let resetCompletionKeyPrefix = "nori.data-reset.completion."
 
     private var onboardingDoneKey: String? {
         guard case .signedIn(let email) = authState else { return nil }
@@ -155,6 +165,31 @@ public final class NoriStore {
     private var observedResetKey: String? {
         guard case .signedIn(let email) = authState else { return nil }
         return Self.observedResetKeyPrefix + email.lowercased()
+    }
+
+    private var resetCompletionKey: String? {
+        guard case .signedIn(let email) = authState else { return nil }
+        return Self.resetCompletionKeyPrefix + email.lowercased()
+    }
+
+    private func loadResetCompletion() {
+        guard let key = resetCompletionKey else { return }
+        dataResetCompletionRequired = UserDefaults.standard.bool(forKey: key)
+    }
+
+    private func requireResetCompletion() {
+        guard let key = resetCompletionKey else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        dataResetCompletionRequired = true
+    }
+
+    public func acknowledgeDataReset() {
+        if let key = resetCompletionKey { UserDefaults.standard.removeObject(forKey: key) }
+        dataResetCompletionRequired = false
+    }
+
+    public func acknowledgeDataResetStatus() {
+        dataResetStatusRequired = false
     }
 
     public var isOnboardingLocallyCompleted: Bool {
@@ -206,16 +241,21 @@ public final class NoriStore {
                 seeds.append(("Context", "Currently working on: \(trimmedWorking)"))
             }
             for seed in seeds {
-                if let receipt = try? await transport.createMemory(
-                    text: seed.text,
-                    section: seed.section,
-                    about: nil,
-                    pinned: false,
-                    requestID: UUID().uuidString.lowercased()
-                ), generation == sessionGeneration {
+                do {
+                    let receipt = try await transport.createMemory(
+                        text: seed.text,
+                        section: seed.section,
+                        about: nil,
+                        pinned: false,
+                        requestID: UUID().uuidString.lowercased()
+                    )
+                    guard generation == sessionGeneration else { return }
                     if !coreMemories.contains(where: { $0.id == receipt.resource.id }) {
                         coreMemories.insert(receipt.resource, at: 0)
                     }
+                } catch {
+                    guard generation == sessionGeneration else { return }
+                    if await handleAuthFailureIfNeeded(error) { return }
                 }
             }
         }
@@ -223,17 +263,23 @@ public final class NoriStore {
         var nextPrefs = preferences
         nextPrefs.timezone = TimeZone.current.identifier
         nextPrefs.onboardingCompletedAt = ISO8601DateFormatter().string(from: Date())
-        if let receipt = try? await transport.savePreferences(
-            nextPrefs,
-            requestID: UUID().uuidString.lowercased()
-        ), generation == sessionGeneration {
+        do {
+            let receipt = try await transport.savePreferences(
+                nextPrefs,
+                requestID: UUID().uuidString.lowercased()
+            )
+            guard generation == sessionGeneration else { return }
+            appliedPreferencesRead = nextPreferencesRead()
             preferences = receipt.resource
-        } else if generation == sessionGeneration {
+        } catch {
+            guard generation == sessionGeneration else { return }
+            if await handleAuthFailureIfNeeded(error) { return }
             preferences = nextPrefs
         }
     }
 
     private let authProvider: AuthTokenProvider
+    private let resetMinimumDuration: Duration
     private let liveTransport: LiveNoriTransport?
     var transport: any NoriTransport
     var sessionGeneration: UInt64 = 0
@@ -252,9 +298,11 @@ public final class NoriStore {
 
     public init(
         transport: (any NoriTransport)? = nil,
-        authProvider: AuthTokenProvider = AuthTokenProvider()
+        authProvider: AuthTokenProvider = AuthTokenProvider(),
+        resetMinimumDuration: Duration = .seconds(2)
     ) {
         self.authProvider = authProvider
+        self.resetMinimumDuration = resetMinimumDuration
         if let transport {
             self.liveTransport = transport as? LiveNoriTransport
             self.transport = transport
@@ -384,6 +432,7 @@ public final class NoriStore {
         }
 
         authState = .signedIn(email: savedSession.email)
+        loadResetCompletion()
         isLoading = true
         connectionState = .connecting
         defer { if generation == sessionGeneration { isLoading = false } }
@@ -423,6 +472,7 @@ public final class NoriStore {
             guard generation == sessionGeneration else { return }
             applySession(initialSession)
             authState = .signedIn(email: session.email)
+            loadResetCompletion()
             connectionState = .connected
             lastError = nil
             NoriLogger.auth.info("auth.signed_in", breadcrumb: true)
@@ -461,12 +511,69 @@ public final class NoriStore {
     }
 
     public func resetUserData(confirmation: String) async throws {
+        try await performDataReset(confirmation: confirmation, resumePending: false)
+    }
+
+    public func finishPendingDataReset() async throws {
+        try await performDataReset(confirmation: "RESET", resumePending: true)
+    }
+
+    private func performDataReset(confirmation: String, resumePending: Bool) async throws {
+        guard !isResettingData else { throw NoriAPIError(message: "A reset is already in progress.") }
+        isResettingData = true
+        let duration = resetMinimumDuration
+        let minimumDisplay = Task.detached {
+            try? await Task.sleep(for: duration)
+        }
+        defer { isResettingData = false }
+        do {
+            try await executeDataReset(confirmation: confirmation, resumePending: resumePending)
+            _ = await minimumDisplay.value
+        } catch {
+            _ = await minimumDisplay.value
+            throw error
+        }
+    }
+
+    private func executeDataReset(confirmation: String, resumePending: Bool) async throws {
         let generation = sessionGeneration
         let resetGeneration = dataResetGeneration
         let signedInState = authState
-        try await transport.resetUserData(confirmation: confirmation)
+        let previousResetAt = preferences.dataResetAt
+        let previousResetKnown = hasLoadedPreferences
+        do {
+            if resumePending {
+                try await transport.resumePendingDataReset()
+            } else {
+                try await transport.resetUserData(confirmation: confirmation)
+            }
+        } catch {
+            guard signedInState == authState else { throw CancellationError() }
+            if let apiError = error as? NoriAPIError, apiError.code == "data_reset_pending" {
+                enterDataResetRecovery(baseline: previousResetAt, baselineKnown: previousResetKnown, confirmed: true)
+            }
+            let latest = try? await refreshDataResetStatus()
+            guard signedInState == authState else { throw CancellationError() }
+            if let apiError = error as? NoriAPIError, apiError.code == "data_reset_not_pending", latest != nil {
+                return
+            }
+            if let latest, latest.dataResetPending != true,
+               previousResetKnown, let resetAt = latest.dataResetAt, !resetAt.isEmpty,
+               resetAt != previousResetAt {
+                requireResetCompletion()
+                return
+            }
+            if latest == nil {
+                enterDataResetRecovery(baseline: previousResetAt, baselineKnown: previousResetKnown, confirmed: false)
+            }
+            throw error
+        }
         guard generation == sessionGeneration else {
-            if signedInState == authState && resetGeneration != dataResetGeneration { return }
+            if signedInState == authState && resetGeneration != dataResetGeneration {
+                dataResetRecoveryRequired = false
+                requireResetCompletion()
+                return
+            }
             throw CancellationError()
         }
         guard authState.isSignedIn else { throw CancellationError() }
@@ -475,10 +582,50 @@ public final class NoriStore {
         isAwaitingResetMarker = true
         preferences = Preferences(dataResetAt: "pending")
         hasLoadedSnapshot = true
+        requireResetCompletion()
         startChatSession()
         Task { [weak self] in
             await self?.refreshAll()
         }
+    }
+
+    private func enterDataResetRecovery(baseline: String?, baselineKnown: Bool, confirmed: Bool) {
+        guard authState.isSignedIn else { return }
+        if dataResetRecoveryRequired && (!confirmed || resetRecoveryHasClearedData) {
+            if !resetRecoveryBaselineKnown && baselineKnown {
+                resetRecoveryBaseline = baseline
+                resetRecoveryBaselineKnown = true
+            }
+            return
+        }
+        let savedBaseline = resetRecoveryBaselineKnown ? resetRecoveryBaseline : baseline
+        let savedBaselineKnown = resetRecoveryBaselineKnown || baselineKnown
+        if confirmed {
+            clearLocalDataForReset()
+        } else {
+            sessionGeneration &+= 1
+            stopEventStream()
+            chatContextTask?.cancel()
+            chatContextTask = nil
+        }
+        resetRecoveryBaseline = savedBaseline
+        resetRecoveryBaselineKnown = savedBaselineKnown
+        resetRecoveryHasClearedData = confirmed
+        dataResetRecoveryRequired = true
+        preferences.dataResetPending = true
+        hasLoadedPreferences = true
+        hasLoadedSnapshot = true
+        startChatSession()
+    }
+
+    @discardableResult
+    public func refreshDataResetStatus() async throws -> Preferences {
+        let generation = sessionGeneration
+        let readID = nextPreferencesRead()
+        let latest = try await transport.fetchPreferences()
+        guard generation == sessionGeneration else { throw CancellationError() }
+        applyPreferences(latest, readID: readID)
+        return latest
     }
 
     private func clearLocalDataForReset() {
@@ -493,22 +640,55 @@ public final class NoriStore {
         sessionGeneration &+= 1
         clearUserState(preserveIdentity: true)
         authState = signedInState
+        loadResetCompletion()
         connectionState = currentConnectionState
     }
 
+    private func nextPreferencesRead() -> UInt64 {
+        preferencesReadSequence &+= 1
+        return preferencesReadSequence
+    }
+
     @discardableResult
-    private func applyPreferences(_ latest: Preferences) -> Bool {
+    private func applyPreferences(_ latest: Preferences, readID: UInt64) -> Bool {
+        guard readID >= appliedPreferencesRead else { return true }
+        appliedPreferencesRead = readID
+        if latest.dataResetPending == true {
+            enterDataResetRecovery(baseline: latest.dataResetAt, baselineKnown: true, confirmed: true)
+            preferences = latest
+            hasLoadedPreferences = true
+            hasLoadedSnapshot = true
+            return true
+        }
+        let wasRecovering = dataResetRecoveryRequired
+        let recovered = wasRecovering && resetRecoveryBaselineKnown &&
+            latest.dataResetAt != nil && latest.dataResetAt != "" && latest.dataResetAt != resetRecoveryBaseline
+        if recovered && !resetRecoveryHasClearedData {
+            clearLocalDataForReset()
+        }
         var detectedReset = false
         if let resetAt = latest.dataResetAt, !resetAt.isEmpty,
            let key = observedResetKey,
            UserDefaults.standard.string(forKey: key) != resetAt {
-            if !isAwaitingResetMarker {
+            if !isAwaitingResetMarker && !wasRecovering {
                 clearLocalDataForReset()
                 detectedReset = true
             }
             UserDefaults.standard.set(resetAt, forKey: key)
         }
         isAwaitingResetMarker = false
+        if wasRecovering {
+            dataResetRecoveryRequired = false
+            resetRecoveryBaseline = nil
+            resetRecoveryBaselineKnown = false
+            resetRecoveryHasClearedData = false
+            detectedReset = true
+            if recovered {
+                requireResetCompletion()
+            } else {
+                dataResetStatusRequired = true
+            }
+        }
         preferences = latest
         hasLoadedPreferences = true
         if detectedReset {
@@ -576,6 +756,12 @@ public final class NoriStore {
         streamingTurnID = nil
         modelSettings = nil
         modelKeyError = nil
+        dataResetRecoveryRequired = false
+        dataResetCompletionRequired = false
+        dataResetStatusRequired = false
+        resetRecoveryBaseline = nil
+        resetRecoveryBaselineKnown = false
+        resetRecoveryHasClearedData = false
     }
 
     private func clearTransportIdentity() async {
@@ -587,6 +773,13 @@ public final class NoriStore {
     }
 
     func handleAuthFailureIfNeeded(_ error: Error) async -> Bool {
+        if let apiErr = error as? NoriAPIError, apiErr.code == "data_reset_pending" {
+            let baseline = preferences.dataResetAt
+            let baselineKnown = hasLoadedPreferences
+            enterDataResetRecovery(baseline: baseline, baselineKnown: baselineKnown, confirmed: true)
+            _ = try? await refreshDataResetStatus()
+            return true
+        }
         if let apiErr = error as? NoriAPIError, apiErr.isAuthError {
             let nextGeneration = sessionGeneration &+ 1
             await signOut()
@@ -781,6 +974,7 @@ public final class NoriStore {
 
     public func refreshPermissionsAndPreferences() async {
         let generation = sessionGeneration
+        let preferencesReadID = nextPreferencesRead()
         let activeTransport = transport
         async let permsResult: Result<[PermissionRule], Error> = {
             do { return .success(try await activeTransport.fetchPermissions()) }
@@ -800,16 +994,17 @@ public final class NoriStore {
             self.permissions = perms
         }
         if case .success(let prefs) = prefsRes {
-            applyPreferences(prefs)
+            applyPreferences(prefs, readID: preferencesReadID)
         }
     }
 
     private func refreshOnboardingStatus() async {
         let generation = sessionGeneration
+        let preferencesReadID = nextPreferencesRead()
         do {
             let latest = try await transport.fetchPreferences()
             guard generation == sessionGeneration, !Task.isCancelled else { return }
-            applyPreferences(latest)
+            applyPreferences(latest, readID: preferencesReadID)
             if hasLoadedSession { hasLoadedSnapshot = true }
         } catch {
             guard generation == sessionGeneration, !Task.isCancelled else { return }
@@ -819,13 +1014,14 @@ public final class NoriStore {
 
     public func refreshAll() async {
         let generation = sessionGeneration
+        let preferencesReadID = nextPreferencesRead()
         isLoading = true
         defer { if generation == sessionGeneration { isLoading = false } }
         connectionState = .connecting
         do {
             let snapshot = try await transport.fetchFullSnapshot()
             guard generation == sessionGeneration else { return }
-            applySnapshot(snapshot)
+            applySnapshot(snapshot, preferencesReadID: preferencesReadID)
             connectionState = .connected
             lastError = nil
         } catch let apiErr as NoriAPIError where apiErr.statusCode == 401 || apiErr.statusCode == 403 {
@@ -839,8 +1035,8 @@ public final class NoriStore {
         }
     }
 
-    private func applySnapshot(_ snapshot: NoriFullSnapshot) {
-        if snapshot.didLoadPreferences, applyPreferences(snapshot.preferences) {
+    private func applySnapshot(_ snapshot: NoriFullSnapshot, preferencesReadID: UInt64) {
+        if snapshot.didLoadPreferences, applyPreferences(snapshot.preferences, readID: preferencesReadID) {
             return
         }
         self.capabilities = snapshot.capabilities
@@ -1147,6 +1343,7 @@ public final class NoriStore {
             var errTags = NoriErrorDiagnostics.tags(for: error)
             errTags["nori.turn.id"] = clientID
             NoriLogger.store.error("turn.submit_failed", attributes: errTags)
+            if await handleAuthFailureIfNeeded(error) { return false }
             showToast(error.localizedDescription)
             return false
         }
@@ -1833,10 +2030,12 @@ public final class NoriStore {
         do {
             let receipt = try await transport.savePreferences(updated, requestID: UUID().uuidString.lowercased())
             guard generation == sessionGeneration else { return }
+            appliedPreferencesRead = nextPreferencesRead()
             preferences = receipt.resource
             showToast("Preferences saved")
         } catch {
             guard generation == sessionGeneration else { return }
+            if await handleAuthFailureIfNeeded(error) { return }
             lastError = error.localizedDescription
             showToast(error.localizedDescription)
         }
@@ -1884,7 +2083,7 @@ public final class NoriStore {
             showToast("Models saved")
         } catch {
             guard generation == sessionGeneration else { throw CancellationError() }
-            if let apiError = error as? NoriAPIError, apiError.isRevisionConflict {
+            if let apiError = error as? NoriAPIError, apiError.isRevisionConflict, apiError.code != "data_reset_pending" {
                 try? await refreshModelSettings()
             }
             _ = await handleAuthFailureIfNeeded(error)

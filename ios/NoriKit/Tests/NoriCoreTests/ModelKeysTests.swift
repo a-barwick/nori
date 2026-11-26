@@ -180,7 +180,7 @@ struct ModelKeysTests {
     @MainActor
     func resetClearsModelState() async throws {
         let mock = MockModelKeysTransport()
-        let store = NoriStore(transport: mock)
+        let store = NoriStore(transport: mock, resetMinimumDuration: .zero)
         let email = "model-reset-\(UUID().uuidString)@example.com"
         let legacySelectionKey = "nori.diagnostics.modelSelection.v1." + email.lowercased()
         defer { UserDefaults.standard.removeObject(forKey: legacySelectionKey) }
@@ -216,6 +216,26 @@ struct ModelKeysTests {
         #expect(store.modelSettings?.revision == 0)
         await store.signOut()
     }
+
+    @Test("A key save blocked by an interrupted reset opens recovery")
+    @MainActor
+    func keySaveDetectsPendingReset() async throws {
+        let mock = MockModelKeysTransport()
+        let store = NoriStore(transport: mock, resetMinimumDuration: .zero)
+        let email = "key-reset-\(UUID().uuidString)@example.com"
+        let markerKey = "nori.data-reset.observed." + email.lowercased()
+        defer { UserDefaults.standard.removeObject(forKey: markerKey) }
+        store.authState = .signedIn(email: email)
+        await mock.setPreferences(Preferences(dataResetPending: true))
+        await mock.setNextSaveError(NoriAPIError(message: "Finish your reset.", statusCode: 409, code: "data_reset_pending"))
+        await #expect(throws: NoriAPIError.self) {
+            _ = try await store.saveModelKey(provider: "vercel_ai_gateway", apiKey: "vck_test_a1b2")
+        }
+        #expect(store.dataResetRecoveryRequired)
+        #expect(!store.dataResetCompletionRequired)
+        #expect(!store.hasConfiguredModelKey)
+        await store.signOut()
+    }
 }
 
 private actor MockModelKeysTransport: NoriTransport {
@@ -230,6 +250,7 @@ private actor MockModelKeysTransport: NoriTransport {
         ]
     )
     private var nextSaveError: Error?
+    private var mockPreferences = Preferences()
     private var models = ModelSettingsResponse(
         modelProfiles: ModelProfileCatalog(), selection: ModelSelection(), revision: 0, recommendations: [:]
     )
@@ -299,6 +320,10 @@ private actor MockModelKeysTransport: NoriTransport {
 
     func setNextSaveError(_ error: Error?) {
         nextSaveError = error
+    }
+
+    func setPreferences(_ preferences: Preferences) {
+        mockPreferences = preferences
     }
 
     func fetchModelKeys() async throws -> ModelKeysResponse {
@@ -418,7 +443,7 @@ private actor MockModelKeysTransport: NoriTransport {
     func revokePermissionRule(id: String, expectedRevision: Int, requestID: String) async throws -> MutationReceipt<PermissionRule> {
         throw NoriAPIError(message: "unimplemented")
     }
-    func fetchPreferences() async throws -> Preferences { Preferences() }
+    func fetchPreferences() async throws -> Preferences { mockPreferences }
     func savePreferences(_ preferences: Preferences, requestID: String) async throws -> MutationReceipt<Preferences> {
         MutationReceipt(requestID: requestID, resource: preferences)
     }

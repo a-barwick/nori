@@ -439,7 +439,7 @@ struct ResetDataSheet: View {
                         }
                     } label: {
                         if isResetting {
-                            ProgressView()
+                            ProgressView("Resetting data…")
                         } else {
                             Text("Reset data")
                         }

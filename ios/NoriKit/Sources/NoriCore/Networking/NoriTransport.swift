@@ -199,6 +199,7 @@ public protocol NoriTransport: Sendable {
         requestID: String
     ) async throws -> MutationReceipt<Preferences>
     func resetUserData(confirmation: String) async throws
+    func resumePendingDataReset() async throws
 
     // Model API Keys (BYOK)
     func fetchModelKeys() async throws -> ModelKeysResponse
@@ -209,6 +210,9 @@ public protocol NoriTransport: Sendable {
 }
 
 public extension NoriTransport {
+    func resumePendingDataReset() async throws {
+        throw NoriAPIError(message: "Reset recovery is not supported by this transport.")
+    }
     func resetUserData(confirmation: String) async throws {
         throw NoriAPIError(message: "Reset is not supported by this transport.")
     }
