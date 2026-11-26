@@ -56,4 +56,6 @@ xcrun stapler validate /tmp/nori-mac-release/Nori-<version>-arm64.dmg
 spctl --assess --type execute --verbose=4 /tmp/nori-mac-release/mac-arm64/Nori.app
 ```
 
+If the signing key stays on the release Mac and the App Store Connect key is in GitHub Actions, build both disk images with the Developer ID identity and leave `NORI_MAC_RELEASE` and `NORI_MAC_NOTARY_PROFILE` unset. Upload the signed desktop and standalone disk images to the draft `nori-v<version>` release targeting the build commit on `main`. Run **Notarize the signed Nori Mac release** on `main` for that version. After Apple accepts both images, staple and validate each original disk image with `xcrun stapler`, then replace the draft downloads with the stapled copies before publishing.
+
 The desktop OAuth client must be accepted by the authentication configuration for the desktop Web origin. The relay, Core schema, and Home AI settings must be deployed and configured before the app can pair against that environment. See [Home AI Server](../core/infrastructure/home-ai.md) for the server rollout.

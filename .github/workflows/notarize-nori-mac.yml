@@ -1,0 +1,78 @@
+name: Notarize the signed Nori Mac release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version of the signed disk images on the draft Nori release
+        required: true
+        type: string
+
+permissions:
+  # GitHub only exposes draft releases to callers with push access.
+  contents: write
+
+jobs:
+  notarize:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    timeout-minutes: 45
+    environment: ios-testflight
+    steps:
+      - name: Download the signed disk images from the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          tag="nori-v$VERSION"
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft,targetCommitish |
+            jq -e --arg sha "$GITHUB_SHA" '.isDraft and .targetCommitish == $sha' >/dev/null
+          mkdir -p "$RUNNER_TEMP/nori-mac-notary"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/nori-mac-notary" \
+            --pattern "Nori-$VERSION-arm64.dmg" --pattern "Nori-Connector-$VERSION.dmg"
+          for name in "Nori-$VERSION-arm64.dmg" "Nori-Connector-$VERSION.dmg"; do
+            image="$RUNNER_TEMP/nori-mac-notary/$name"
+            codesign --verify --strict "$image"
+            codesign --display --verbose=4 "$image" 2>&1 | grep -Fx 'TeamIdentifier=GAB2UG6AMY'
+          done
+
+      - name: Submit both signed disk images to Apple
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${ASC_KEY_ID:?Set ASC_KEY_ID}" "${ASC_ISSUER_ID:?Set ASC_ISSUER_ID}" "${ASC_PRIVATE_KEY:?Set ASC_PRIVATE_KEY}"
+          umask 077
+          key_dir="$(mktemp -d "$RUNNER_TEMP/nori-notary-key.XXXXXX")"
+          trap 'rm -rf "$key_dir"' EXIT
+          printf '%s\n' "$ASC_PRIVATE_KEY" > "$key_dir/AuthKey.p8"
+          unset ASC_PRIVATE_KEY
+          result=0
+          submissions=()
+          for image in "$RUNNER_TEMP/nori-mac-notary/"*.dmg; do
+            xcrun notarytool submit "$image" --key "$key_dir/AuthKey.p8" \
+              --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" --wait --output-format json > "$image.json" &
+            submissions+=("$!")
+          done
+          for pid in "${submissions[@]}"; do
+            wait "$pid" || result=1
+          done
+          for image in "$RUNNER_TEMP/nori-mac-notary/"*.dmg; do
+            printf '%s\n' "$(basename "$image")"
+            if ! jq -e '.status == "Accepted"' "$image.json" >/dev/null; then
+              result=1
+              submission=$(jq -r '.id // empty' "$image.json")
+              if [[ -n "$submission" ]]; then
+                xcrun notarytool log "$submission" --key "$key_dir/AuthKey.p8" \
+                  --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" || true
+              fi
+            fi
+            cat "$image.json"
+          done
+          exit "$result"
