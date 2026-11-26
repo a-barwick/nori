@@ -78,7 +78,7 @@
          <ExecutionAction ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
             <ActionContent
                title = "Upload Nori dSYMs to Sentry"
-               scriptText = "if [ &quot;${NORI_UPLOAD_IOS_DSYMS:-NO}&quot; = YES ]; then&#10;  &quot;$SRCROOT/../scripts/upload-ios-dsyms.sh&quot; &quot;$ARCHIVE_PATH&quot;&#10;fi&#10;">
+               scriptText = "if [ &quot;${NORI_UPLOAD_IOS_DSYMS:-NO}&quot; = YES ]; then&#10;  &quot;$SRCROOT/../scripts/upload-ios-dsyms.sh&quot; &quot;$ARCHIVE_PATH&quot; &gt; &quot;$ARCHIVE_PATH/SentryUpload.log&quot; 2&gt;&amp;1&#10;fi&#10;">
                <EnvironmentBuildable>
                   <BuildableReference
                      BuildableIdentifier = "primary"

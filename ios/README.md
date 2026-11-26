@@ -101,7 +101,7 @@ SENTRY_ORG = your-org
 SENTRY_PROJECT_IOS = nori-ios
 ```
 
-Install `sentry-cli` and configure its organization token with `sentry-cli login` before choosing **Product → Archive**. Xcode records post-action output in the archive build log.
+Install `sentry-cli` and configure its organization token with `sentry-cli login` before choosing **Product → Archive**. The archive’s `SentryUpload.log` records the upload result.
 
 In a TestFlight CI job, install `sentry-cli` (`brew install --cask sentry-cli`), then call the repository action with the same archive you export for TestFlight. The action verifies the UUIDs and waits for Sentry to process the upload.
 
