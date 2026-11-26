@@ -14,7 +14,7 @@ After CI's checks pass on a `main` commit, the **Build images** job pushes `nori
 | Step | What happens |
 | --- | --- |
 | Choose services | Each revision carries a `nori-commit` label. A change under `core/` or `contracts/` releases the migration job, `nori-core` and `nori-worker`. A change under `web/` or `contracts/` releases `nori-web` and `nori-web-mac`, which share one image. A change under `site/` releases `nori-site`. The release skips `nori-site` when the commit has no `nori-site` image. |
-| Stage | Each service gets a new revision with no traffic. The revision must pass its HTTP startup probe (`/readyz`, `/api/health` or `/healthz`). `nori-core` must also return 200 from `/readyz` on its tagged URL, `nori-web-mac` must return 403 to anonymous requests, and `nori-site` must return 200 from `/` and `/healthz` to anonymous requests. |
+| Stage | Each service gets a new revision with no traffic. The revision must pass its HTTP startup probe (`/readyz`, `/api/health` or `/healthz`). `nori-core` must also return 200 from `/readyz` on its tagged URL, `nori-web-mac` must return 403 to anonymous requests, and `nori-site` must return 200 from `/` and `/privacy` to anonymous requests. Cloud Run reserves `/healthz` on public URLs, so only the startup probe uses it. |
 | Promote | Each staged revision receives all traffic. |
 | Watch | For 10 minutes, a 5xx or container crash from a new revision moves its services back to the revisions named in their `nori-prev` labels. |
 

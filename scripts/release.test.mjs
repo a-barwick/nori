@@ -99,7 +99,7 @@ url="\${@: -1}"
 case "$url" in
   */readyz|*/api/health) printf 200 ;;
   *nori-web-new.example/) printf '%s' "$FIXTURE_WEB_ROOT_STATUS" ;;
-  *nori-site-new.example/healthz) printf 200 ;;
+  *nori-site-new.example/privacy) printf 200 ;;
   *nori-site-new.example/) printf '%s' "$FIXTURE_SITE_ROOT_STATUS" ;;
   *) printf 403 ;;
 esac`);
@@ -232,7 +232,7 @@ test("transient gcloud logging read errors during bake are retried", (t) => {
   assert.equal(result.status, 0, result.stderr + result.stdout);
 });
 
-test("a site change releases only nori-site after checking / and /healthz", (t) => {
+test("a site change releases only nori-site after checking / and /privacy", (t) => {
   const { result, calls, head, deployed } = fixture(t, { change: "site/index.html" });
   assert.equal(result.status, 0, result.stderr + result.stdout);
   assert.deepEqual(deployed, ["nori-site"]);

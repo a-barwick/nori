@@ -309,8 +309,9 @@ check_staged() {
         [[ "$(http_status -H 'Authorization: Bearer invalid' "$url/")" == 403 ]]
       ;;
     nori-site)
+      # Cloud Run reserves /healthz on its public URLs, so check real pages from outside.
       [[ "$(http_status "$url/")" == 200 ]] &&
-        [[ "$(http_status "$url/healthz")" == 200 ]]
+        [[ "$(http_status "$url/privacy")" == 200 ]]
       ;;
     *) return 0 ;;
   esac
