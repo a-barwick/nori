@@ -850,6 +850,25 @@
         }
       ]
     },
+    "AccountDeleteRequest": {
+      "description": "Self-service account deletion request for POST /v1/settings/account/delete.",
+      "type": "object",
+      "required": [
+        "confirmation"
+      ],
+      "properties": {
+        "confirmation": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Signed-in account email typed by the user to confirm permanent deletion."
+        },
+        "resume_pending": {
+          "type": "boolean",
+          "description": "Set true when retrying an interrupted deletion in account_delete_pending state."
+        }
+      },
+      "additionalProperties": false
+    },
     "ErrorCode": {
       "description": "Codes agreed for new endpoints in r2. Clients treat an unknown code by its HTTP status.",
       "enum": [
@@ -859,7 +878,11 @@
         "validation_failed",
         "not_found",
         "credential_store_unavailable",
-        "provider_unavailable"
+        "provider_unavailable",
+        "account_delete_pending",
+        "account_delete_not_pending",
+        "account_delete_forbidden",
+        "account_delete_busy"
       ]
     }
   }

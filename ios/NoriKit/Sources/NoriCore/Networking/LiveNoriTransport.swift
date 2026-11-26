@@ -1180,6 +1180,27 @@ public actor LiveNoriTransport: NoriTransport {
         }
     }
 
+    public func deleteAccount(confirmation: String, resumePending: Bool) async throws {
+        struct DeleteAccountRequest: Encodable {
+            let confirmation: String
+            let resume_pending: Bool?
+        }
+        let path = "/v1/settings/account/delete"
+        try await withRequestSpan(route: path, method: "POST") { span in
+            let userID = try await ensureUserID()
+            span.setTag("nori.user.id", value: userID)
+            let url = try router.scopedURL(path: path, userID: userID)
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 90
+            request.httpBody = try encoder.encode(DeleteAccountRequest(
+                confirmation: confirmation,
+                resume_pending: resumePending ? true : nil
+            ))
+            _ = try await authenticatedData(request, contentType: "application/json", span: span)
+        }
+    }
+
     public func savePreferences(_ preferences: Preferences, requestID: String) async throws -> MutationReceipt<Preferences> {
         struct PrefVal: Encodable {
             let timezone: String

@@ -1,4 +1,4 @@
-import type { APIError, AccountSelectionPayload, ActionRequest, AdapterResult, ApprovalPayload, AssistantCapabilities, AssistantSummary, Attendee, AuthAttempt, Automation, AutomationAction, AutomationChange, AutomationEditable, AutomationPreview, AvailabilityProposal, AvailabilitySlot, AvailableTool, AvailableToolList, Binding, CalendarEvent, Capabilities, CardPart, Change, Connection, ConnectionAction, ConnectionChange, ConnectionEditable, ConnectionStatus, ContactCandidate, Cost, DefinitionRef, Delivery, Effect, ErrorCode, ErrorDetail, Goal, GoalAction, GoalChange, GoalEditable, Health, HealthCode, ID, InboxAction, InboxItem, Instant, Integration, Interaction, InteractionResponse, Invocation, JSON, LibraryAction, LibraryItem, LibraryItemChange, LibraryItemEditable, ListResponse, LocalDate, MCPCredentialInput, MCPServer, MCPServerAction, MCPServerChange, MCPServerEditable, MCPServerTool, MailAddress, MailDraft, MailMessage, MemoryAction, MemoryFact, MemoryFactEditable, MemoryLog, MemoryLogEntry, MemoryLogEntryAction, MemoryProvenance, MemorySearchHit, MemorySearchResponse, MissedRun, MutationReceipt, OAuthCallback, Occurrence, OccurrenceStatus, OperationProjection, Outcome, PermissionDecision, PermissionRule, PermissionRuleChange, PermissionRuleEditable, Policy, Preferences, PreferencesChange, PreferencesEditable, PreparedAction, Provenance, QuestionPayload, Recovery, RecurrenceScope, Resource, ResourceRef, Revision, RunEvent, SearchHit, SearchResponse, SignInPayload, Timezone, ToolDefinition, UUID, UploadAccept, WorkDetail, WorkItem, WorkRef, WorkingHours, WorkingMemory, WorkingMemoryItem, WorkingMemoryItemAction } from "./assistant";
+import type { APIError, AccountDeleteRequest, AccountSelectionPayload, ActionRequest, AdapterResult, ApprovalPayload, AssistantCapabilities, AssistantSummary, Attendee, AuthAttempt, Automation, AutomationAction, AutomationChange, AutomationEditable, AutomationPreview, AvailabilityProposal, AvailabilitySlot, AvailableTool, AvailableToolList, Binding, CalendarEvent, Capabilities, CardPart, Change, Connection, ConnectionAction, ConnectionChange, ConnectionEditable, ConnectionStatus, ContactCandidate, Cost, DefinitionRef, Delivery, Effect, ErrorCode, ErrorDetail, Goal, GoalAction, GoalChange, GoalEditable, Health, HealthCode, ID, InboxAction, InboxItem, Instant, Integration, Interaction, InteractionResponse, Invocation, JSON, LibraryAction, LibraryItem, LibraryItemChange, LibraryItemEditable, ListResponse, LocalDate, MCPCredentialInput, MCPServer, MCPServerAction, MCPServerChange, MCPServerEditable, MCPServerTool, MailAddress, MailDraft, MailMessage, MemoryAction, MemoryFact, MemoryFactEditable, MemoryLog, MemoryLogEntry, MemoryLogEntryAction, MemoryProvenance, MemorySearchHit, MemorySearchResponse, MissedRun, MutationReceipt, OAuthCallback, Occurrence, OccurrenceStatus, OperationProjection, Outcome, PermissionDecision, PermissionRule, PermissionRuleChange, PermissionRuleEditable, Policy, Preferences, PreferencesChange, PreferencesEditable, PreparedAction, Provenance, QuestionPayload, Recovery, RecurrenceScope, Resource, ResourceRef, Revision, RunEvent, SearchHit, SearchResponse, SignInPayload, Timezone, ToolDefinition, UUID, UploadAccept, WorkDetail, WorkItem, WorkRef, WorkingHours, WorkingMemory, WorkingMemoryItem, WorkingMemoryItemAction } from "./assistant";
 
 export const fx_common_change_valid: Change = {
   "request_id": "6f1c2a0e-1b7e-4f0a-9c2d-3e4f5a6b7c8d",
@@ -61,6 +61,17 @@ export const fx_common_api_error_409_valid: APIError = {
     "revision": 5,
     "status": "connected"
   }
+};
+
+export const fx_common_api_error_account_delete_pending_valid: APIError = {
+  "error": "Your account deletion is incomplete. Finish deleting your account to continue.",
+  "code": "account_delete_pending",
+  "retryable": true,
+  "accepted": false
+};
+
+export const fx_common_account_delete_request_valid: AccountDeleteRequest = {
+  "confirmation": "alice@example.com"
 };
 
 export const fx_common_list_valid: ListResponse = {

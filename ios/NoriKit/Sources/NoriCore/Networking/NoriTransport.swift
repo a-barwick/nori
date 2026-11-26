@@ -200,6 +200,7 @@ public protocol NoriTransport: Sendable {
     ) async throws -> MutationReceipt<Preferences>
     func resetUserData(confirmation: String) async throws
     func resumePendingDataReset() async throws
+    func deleteAccount(confirmation: String, resumePending: Bool) async throws
 
     // Model API Keys (BYOK)
     func fetchModelKeys() async throws -> ModelKeysResponse
@@ -215,6 +216,9 @@ public extension NoriTransport {
     }
     func resetUserData(confirmation: String) async throws {
         throw NoriAPIError(message: "Reset is not supported by this transport.")
+    }
+    func deleteAccount(confirmation: String, resumePending: Bool) async throws {
+        throw NoriAPIError(message: "Account deletion is not supported by this transport.")
     }
 
     func fetchModelKeys() async throws -> ModelKeysResponse {

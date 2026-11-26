@@ -259,6 +259,11 @@ func (s *Service) AcquireByID(ctx context.Context, userID string) (*App, func(),
 	if row.ResetPending {
 		return nil, nil, docstore.ErrUserDataResetPending
 	}
+	if pending, err := s.isAccountDeletePending(ctx, row.ID); err != nil {
+		return nil, nil, err
+	} else if pending {
+		return nil, nil, api.ErrAccountDeletePending
+	}
 	return s.acquire(ctx, row)
 }
 
@@ -271,7 +276,7 @@ func (s *Service) RepairUser(ctx context.Context, row users.User) error {
 		return err
 	}
 	defer done()
-	if row.ResetPending {
+	if row.ResetPending || isAccountDeletePendingCtx(ctx) {
 		return nil
 	}
 	s.mu.Lock()
@@ -385,10 +390,19 @@ func (s *Service) openUserApp(ctx context.Context, row users.User, done chan str
 	if s.ConfigureApp != nil {
 		s.ConfigureApp(row, opened)
 	}
+	if opened.Assistant != nil {
+		opened.Assistant.DeleteAccount = func(ctx context.Context, confirmation string, resumePending bool) error {
+			return s.deleteUserAccount(ctx, row, confirmation, resumePending)
+		}
+	}
 	opened.guardWakeRepair = func(ctx context.Context) (func(), error) {
-		_, current, done, err := s.userDataActivity(ctx, row)
+		ctx, current, done, err := s.userDataActivity(ctx, row)
 		if err != nil {
 			return nil, err
+		}
+		if isAccountDeletePendingCtx(ctx) {
+			done()
+			return nil, api.ErrAccountDeletePending
 		}
 		if current.ResetPending || current.DataResetAt != row.DataResetAt {
 			done()
@@ -396,7 +410,7 @@ func (s *Service) openUserApp(ctx context.Context, row users.User, done chan str
 		}
 		return done, nil
 	}
-	opened.handler = api.Handler(opened.apiDeps())
+	opened.handler = wrapAccountDeleteGuard(api.Handler(opened.apiDeps()))
 	var toClose []*App
 	var closeShared bool
 	now := s.now()
@@ -439,7 +453,7 @@ func (s *Service) openUserApp(ctx context.Context, row users.User, done chan str
 }
 
 func (s *Service) Handler(local bool) http.Handler {
-	return api.UserHandlerWithOptions(s.Users, func(ctx context.Context, row users.User) (api.UserRoutes, func(), error) {
+	return wrapAccountDeleteRequest(api.UserHandlerWithOptions(s.Users, func(ctx context.Context, row users.User) (api.UserRoutes, func(), error) {
 		userApp, release, err := s.acquire(ctx, row)
 		if err != nil {
 			return api.UserRoutes{}, nil, err
@@ -450,7 +464,7 @@ func (s *Service) Handler(local bool) http.Handler {
 		Metrics:      observability.MetricsHandler(),
 		UserActivity: s.userDataActivity,
 		ResetData:    s.resetUserData,
-	})
+	}))
 }
 
 func (s *Service) Close() {
