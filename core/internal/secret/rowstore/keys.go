@@ -100,7 +100,20 @@ func newMasterKey(prefix string, data []byte) (*MasterKey, error) {
 	return &MasterKey{key: copied, id: prefix + ":" + hex.EncodeToString(sum[:6])}, nil
 }
 
-func (k *MasterKey) Wrap(_ context.Context, dataKey []byte) ([]byte, string, error) {
+var _ AADKeyWrapper = (*MasterKey)(nil)
+
+func effectiveDataKeyAAD(aad []byte) []byte {
+	if len(aad) > 0 {
+		return aad
+	}
+	return dataKeyAAD
+}
+
+func (k *MasterKey) Wrap(ctx context.Context, dataKey []byte) ([]byte, string, error) {
+	return k.WrapWithAAD(ctx, dataKey, nil)
+}
+
+func (k *MasterKey) WrapWithAAD(_ context.Context, dataKey, aad []byte) ([]byte, string, error) {
 	gcm, err := newGCM(k.key)
 	if err != nil {
 		return nil, "", err
@@ -109,10 +122,14 @@ func (k *MasterKey) Wrap(_ context.Context, dataKey []byte) ([]byte, string, err
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, "", err
 	}
-	return append(nonce, gcm.Seal(nil, nonce, dataKey, dataKeyAAD)...), k.id, nil
+	return append(nonce, gcm.Seal(nil, nonce, dataKey, effectiveDataKeyAAD(aad))...), k.id, nil
 }
 
-func (k *MasterKey) Unwrap(_ context.Context, wrapped []byte, keyID string) ([]byte, error) {
+func (k *MasterKey) Unwrap(ctx context.Context, wrapped []byte, keyID string) ([]byte, error) {
+	return k.UnwrapWithAAD(ctx, wrapped, keyID, nil)
+}
+
+func (k *MasterKey) UnwrapWithAAD(_ context.Context, wrapped []byte, keyID string, aad []byte) ([]byte, error) {
 	if keyID != k.id {
 		return nil, fmt.Errorf("the row was wrapped by key %s, not this deployment's %s", keyID, k.id)
 	}
@@ -123,5 +140,5 @@ func (k *MasterKey) Unwrap(_ context.Context, wrapped []byte, keyID string) ([]b
 	if len(wrapped) < gcm.NonceSize() {
 		return nil, errors.New("wrapped key is too short")
 	}
-	return gcm.Open(nil, wrapped[:gcm.NonceSize()], wrapped[gcm.NonceSize():], dataKeyAAD)
+	return gcm.Open(nil, wrapped[:gcm.NonceSize()], wrapped[gcm.NonceSize():], effectiveDataKeyAAD(aad))
 }

@@ -1865,3 +1865,345 @@ func TestPoolScopedUserIsolationWakeAndRepair(t *testing.T) {
 		t.Fatal("expected lp2.RepairOnce to run concurrently without advisory lock contention with lp1")
 	}
 }
+
+func TestPoolMaxPerUserConcurrencyCapAndNoStarvation(t *testing.T) {
+	ctx := context.Background()
+	// Use a real-time backend/pool clock so deferred leases become runnable naturally.
+	backend := memstore.New()
+	artifacts := memstore.NewArtifacts()
+	storage := platform.NewStorage(backend, func(users.User) state.ArtifactStore {
+		return artifacts
+	})
+	cfg := settings.Settings{
+		Cloud:         "local",
+		Role:          "worker",
+		TaskBudgetUSD: 1.0,
+		Features:      settings.Features{DisableJev: true},
+		Models: settings.Models{
+			OpenAIKey:     "test-openai-key",
+			OpenRouterKey: "test-openrouter-key",
+			Outer:         "gpt-6.1-sol",
+			Inner:         "openai/gpt-6.1-terra",
+		},
+	}
+	svc := app.OpenServiceWithStorage(storage, nil, cfg)
+	t.Cleanup(svc.Close)
+
+	u1 := mustCreateUser(t, svc, uuid.NewString(), "u1-cap@example.com")
+	u2 := mustCreateUser(t, svc, uuid.NewString(), "u2-cap@example.com")
+
+	app1, rel1, err := svc.Acquire(ctx, u1)
+	if err != nil {
+		t.Fatalf("Acquire u1: %v", err)
+	}
+	defer rel1()
+	app2, rel2, err := svc.Acquire(ctx, u2)
+	if err != nil {
+		t.Fatalf("Acquire u2: %v", err)
+	}
+	defer rel2()
+
+	const (
+		maxPerUser = 2
+		u1Tasks    = 5
+		u2Tasks    = 2
+	)
+
+	var (
+		u1Active    atomic.Int32
+		u1MaxActive atomic.Int32
+		seenMu      sync.Mutex
+		u1Seen      = map[string]bool{}
+		u2Seen      = map[string]bool{}
+	)
+	u1Saturated := make(chan struct{})
+	var saturatedOnce sync.Once
+	releaseU1 := make(chan struct{})
+	u2Done := make(chan struct{})
+	var u2DoneOnce sync.Once
+	allU1Done := make(chan struct{})
+	var allU1DoneOnce sync.Once
+
+	pool, err := worker.New(svc, worker.Options{
+		Owner:                 "pool-per-user-cap",
+		TaskConcurrency:       8,
+		MaxPerUserConcurrency: maxPerUser,
+		PollInterval:          15 * time.Millisecond,
+		Backoff:               20 * time.Millisecond,
+		RepairInterval:        time.Hour,
+		DrainTimeout:          2 * time.Second,
+		RunTask: func(ctx context.Context, userApp *app.App, claim docstore.TaskLease, drain <-chan struct{}) (task.RunOutcome, error) {
+			if claim.UserID == u1.ID {
+				cur := u1Active.Add(1)
+				for {
+					prev := u1MaxActive.Load()
+					if cur <= prev || u1MaxActive.CompareAndSwap(prev, cur) {
+						break
+					}
+				}
+				if cur == maxPerUser {
+					saturatedOnce.Do(func() { close(u1Saturated) })
+				}
+				// Hold the initial wave until u2 proves it is not starved.
+				select {
+				case <-releaseU1:
+				case <-ctx.Done():
+					u1Active.Add(-1)
+					return task.OutcomeBackoff, ctx.Err()
+				}
+				u1Active.Add(-1)
+				_, _ = backend.DeleteTaskLease(ctx, claim.UserID, claim.RunID, 0)
+				seenMu.Lock()
+				u1Seen[claim.RunID] = true
+				n := len(u1Seen)
+				seenMu.Unlock()
+				if n == u1Tasks {
+					allU1DoneOnce.Do(func() { close(allU1Done) })
+				}
+				return task.OutcomeDone, nil
+			}
+
+			// u2 tasks complete immediately without waiting on releaseU1.
+			_, _ = backend.DeleteTaskLease(ctx, claim.UserID, claim.RunID, 0)
+			seenMu.Lock()
+			u2Seen[claim.RunID] = true
+			n := len(u2Seen)
+			seenMu.Unlock()
+			if n == u2Tasks {
+				u2DoneOnce.Do(func() { close(u2Done) })
+			}
+			return task.OutcomeDone, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("worker.New: %v", err)
+	}
+
+	// Enqueue 5 real tasks for u1 first (earlier wake_at than u2).
+	for i := 0; i < u1Tasks; i++ {
+		if _, err := app1.Store.AcceptCommandBatch(ctx, []state.Command{{
+			ID: uuid.NewString(), RunID: uuid.NewString(), Kind: state.CommandStart, Text: fmt.Sprintf("u1 task %d", i),
+		}}, nil); err != nil {
+			t.Fatalf("AcceptCommandBatch u1-%d: %v", i, err)
+		}
+	}
+	// Enqueue 2 real tasks for u2 after u1's tasks.
+	for i := 0; i < u2Tasks; i++ {
+		if _, err := app2.Store.AcceptCommandBatch(ctx, []state.Command{{
+			ID: uuid.NewString(), RunID: uuid.NewString(), Kind: state.CommandStart, Text: fmt.Sprintf("u2 task %d", i),
+		}}, nil); err != nil {
+			t.Fatalf("AcceptCommandBatch u2-%d: %v", i, err)
+		}
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	runErr := make(chan error, 1)
+	go func() { runErr <- pool.Run(runCtx) }()
+
+	// 1. Wait for u1 to reach its MaxPerUserConcurrency cap.
+	select {
+	case <-u1Saturated:
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatalf("u1 never reached MaxPerUserConcurrency=%d (active=%d)", maxPerUser, u1Active.Load())
+	}
+
+	// 2. While u1 is completely blocked at its cap, u2's tasks must still execute without starvation.
+	select {
+	case <-u2Done:
+	case <-time.After(3 * time.Second):
+		close(releaseU1)
+		cancel()
+		seenMu.Lock()
+		n := len(u2Seen)
+		seenMu.Unlock()
+		t.Fatalf("u2 tasks starved while u1 was at MaxPerUserConcurrency (u2Completed=%d/%d)", n, u2Tasks)
+	}
+
+	// Verify u1 stayed strictly at or below MaxPerUserConcurrency while blocked.
+	if got := u1MaxActive.Load(); got > maxPerUser {
+		close(releaseU1)
+		cancel()
+		t.Fatalf("u1 peak concurrency = %d, want <= %d", got, maxPerUser)
+	}
+
+	// 3. Unblock u1 and verify all remaining deferred u1 tasks complete cleanly without ever exceeding the cap.
+	close(releaseU1)
+	select {
+	case <-allU1Done:
+	case <-time.After(5 * time.Second):
+		cancel()
+		seenMu.Lock()
+		n := len(u1Seen)
+		seenMu.Unlock()
+		t.Fatalf("u1 deferred tasks did not finish (completed=%d/%d)", n, u1Tasks)
+	}
+
+	cancel()
+	if err := <-runErr; err != nil {
+		t.Fatalf("pool.Run: %v", err)
+	}
+
+	if got := u1MaxActive.Load(); got != maxPerUser {
+		t.Fatalf("u1 peak concurrency = %d, want %d", got, maxPerUser)
+	}
+	seenMu.Lock()
+	gotU1, gotU2 := len(u1Seen), len(u2Seen)
+	seenMu.Unlock()
+	if gotU1 != u1Tasks {
+		t.Fatalf("u1 distinct completed = %d, want %d", gotU1, u1Tasks)
+	}
+	if gotU2 != u2Tasks {
+		t.Fatalf("u2 distinct completed = %d, want %d", gotU2, u2Tasks)
+	}
+}
+
+func TestPoolPerUserConcurrencySharedAcrossTaskAndConversationLanes(t *testing.T) {
+	ctx := context.Background()
+	backend := memstore.New()
+	artifacts := memstore.NewArtifacts()
+	storage := platform.NewStorage(backend, func(users.User) state.ArtifactStore {
+		return artifacts
+	})
+	cfg := settings.Settings{
+		Cloud:         "local",
+		Role:          "worker",
+		TaskBudgetUSD: 1.0,
+		Features:      settings.Features{DisableJev: true},
+		Models: settings.Models{
+			OpenAIKey:     "test-openai-key",
+			OpenRouterKey: "test-openrouter-key",
+			Outer:         "gpt-6.1-sol",
+			Inner:         "openai/gpt-6.1-terra",
+		},
+	}
+	svc := app.OpenServiceWithStorage(storage, nil, cfg)
+	t.Cleanup(svc.Close)
+
+	u1 := mustCreateUser(t, svc, uuid.NewString(), "u1-cross@example.com")
+	u2 := mustCreateUser(t, svc, uuid.NewString(), "u2-cross@example.com")
+
+	app1, rel1, err := svc.Acquire(ctx, u1)
+	if err != nil {
+		t.Fatalf("Acquire u1: %v", err)
+	}
+	defer rel1()
+
+	u1TaskRunning := make(chan struct{})
+	var u1TaskOnce sync.Once
+	releaseU1Task := make(chan struct{})
+	u1ConvRan := make(chan struct{}, 1)
+	u2ConvRan := make(chan struct{}, 1)
+	var u1Active atomic.Int32
+	var u1MaxActive atomic.Int32
+
+	pool, err := worker.New(svc, worker.Options{
+		Owner:                   "pool-cross-lane",
+		TaskConcurrency:         4,
+		ConversationConcurrency: 4,
+		MaxPerUserConcurrency:   1,
+		PollInterval:            15 * time.Millisecond,
+		Backoff:                 20 * time.Millisecond,
+		RepairInterval:          time.Hour,
+		DrainTimeout:            2 * time.Second,
+		RunTask: func(ctx context.Context, userApp *app.App, claim docstore.TaskLease, drain <-chan struct{}) (task.RunOutcome, error) {
+			cur := u1Active.Add(1)
+			for {
+				prev := u1MaxActive.Load()
+				if cur <= prev || u1MaxActive.CompareAndSwap(prev, cur) {
+					break
+				}
+			}
+			u1TaskOnce.Do(func() { close(u1TaskRunning) })
+			select {
+			case <-releaseU1Task:
+			case <-ctx.Done():
+				u1Active.Add(-1)
+				return task.OutcomeBackoff, ctx.Err()
+			}
+			u1Active.Add(-1)
+			_, _ = backend.DeleteTaskLease(ctx, claim.UserID, claim.RunID, claim.WakeSeq)
+			return task.OutcomeDone, nil
+		},
+		RunConversation: func(ctx context.Context, userApp *app.App) error {
+			if userApp.UserID == u1.ID {
+				cur := u1Active.Add(1)
+				for {
+					prev := u1MaxActive.Load()
+					if cur <= prev || u1MaxActive.CompareAndSwap(prev, cur) {
+						break
+					}
+				}
+				u1Active.Add(-1)
+				select {
+				case u1ConvRan <- struct{}{}:
+				default:
+				}
+				return nil
+			}
+			select {
+			case u2ConvRan <- struct{}{}:
+			default:
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("worker.New: %v", err)
+	}
+
+	if _, err := app1.Store.AcceptCommandBatch(ctx, []state.Command{{
+		ID: uuid.NewString(), RunID: uuid.NewString(), Kind: state.CommandStart, Text: "u1 background task",
+	}}, nil); err != nil {
+		t.Fatalf("AcceptCommandBatch u1: %v", err)
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	runErr := make(chan error, 1)
+	go func() { runErr <- pool.Run(runCtx) }()
+
+	// Wait for u1's task to hold its sole per-user concurrency slot.
+	select {
+	case <-u1TaskRunning:
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("u1 task never started")
+	}
+
+	// Enqueue conversation wakes for both u1 and u2.
+	if err := backend.WakeUser(ctx, u1.ID, docstore.LaneConversation, time.Now().UTC().Add(-time.Second)); err != nil {
+		t.Fatalf("WakeUser u1: %v", err)
+	}
+	if err := backend.WakeUser(ctx, u2.ID, docstore.LaneConversation, time.Now().UTC().Add(-500*time.Millisecond)); err != nil {
+		t.Fatalf("WakeUser u2: %v", err)
+	}
+
+	// u2's conversation must execute immediately without being starved by u1.
+	select {
+	case <-u2ConvRan:
+	case <-time.After(2 * time.Second):
+		close(releaseU1Task)
+		cancel()
+		t.Fatal("u2 conversation starved while u1 held its per-user cap")
+	}
+
+	// Conversation lane is exempt from MaxPerUserConcurrency so u1's interactive
+	// chat turn STILL runs immediately while u1's task lane is at cap.
+	select {
+	case <-u1ConvRan:
+	case <-time.After(2 * time.Second):
+		close(releaseU1Task)
+		cancel()
+		t.Fatal("u1 conversation blocked while u1 task lane was at MaxPerUserConcurrency")
+	}
+
+	// Release u1's task and shut down cleanly.
+	close(releaseU1Task)
+	cancel()
+	if err := <-runErr; err != nil {
+		t.Fatalf("pool.Run: %v", err)
+	}
+	if got := u1MaxActive.Load(); got < 2 {
+		t.Fatalf("expected u1 conversation to overlap with u1 task (peak >= 2), got %d", got)
+	}
+}

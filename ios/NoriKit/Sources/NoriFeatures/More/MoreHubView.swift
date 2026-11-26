@@ -8,6 +8,7 @@ public enum MoreRoute: Hashable, Sendable {
     case memory
     case permissions
     case preferences
+    case apiKeys
     case appearance
     case account
     case diagnostics
@@ -56,6 +57,17 @@ public struct MoreHubView: View {
         return "\(tz) · $\(String(format: "%.2f", store.preferences.budgets.taskUSD)) / task"
     }
 
+    private var apiKeysDetail: String? {
+        let configuredCount = store.modelKeys.providers.filter(\.configured).count
+        if configuredCount > 0 {
+            return "\(configuredCount) configured"
+        }
+        if store.modelKeys.byokRequired || !store.modelKeys.providers.isEmpty {
+            return "Not configured"
+        }
+        return nil
+    }
+
     private var diagnosticsDetail: String? {
         switch store.connectionState {
         case .reconnecting: return "Reconnecting"
@@ -85,7 +97,8 @@ public struct MoreHubView: View {
             async let appsTask: Void = store.refreshApps()
             async let memoryTask: Void = store.refreshMemory()
             async let permsPrefsTask: Void = store.refreshPermissionsAndPreferences()
-            _ = await (summaryTask, appsTask, memoryTask, permsPrefsTask)
+            async let modelKeysTask: Void = store.refreshModelKeys()
+            _ = await (summaryTask, appsTask, memoryTask, permsPrefsTask, modelKeysTask)
         }
         .background(NoriColors.canvas.ignoresSafeArea())
         .navigationTitle("More")
@@ -151,6 +164,22 @@ public struct MoreHubView: View {
                     showChevron: true,
                     showDivider: true
                 )
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink(value: MoreRoute.apiKeys) {
+                NoriRow(
+                    title: "API Keys",
+                    detail: apiKeysDetail,
+                    systemImage: "key.fill",
+                    iconTone: store.needsModelKeySetup ? .warning : .neutral,
+                    showChevron: true,
+                    showDivider: true
+                ) {
+                    if store.needsModelKeySetup {
+                        NoriPill("Required", tone: .warning)
+                    }
+                }
             }
             .buttonStyle(.plain)
 

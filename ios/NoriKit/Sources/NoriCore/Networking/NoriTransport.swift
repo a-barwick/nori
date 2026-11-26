@@ -16,6 +16,7 @@ public struct NoriFullSnapshot: Sendable, Hashable {
     public var goals: [Goal]
     public var permissions: [PermissionRule]
     public var preferences: Preferences
+    public var modelKeys: ModelKeysResponse
 
     public init(
         capabilities: Capabilities? = nil,
@@ -32,7 +33,8 @@ public struct NoriFullSnapshot: Sendable, Hashable {
         automations: [Automation] = [],
         goals: [Goal] = [],
         permissions: [PermissionRule] = [],
-        preferences: Preferences = Preferences()
+        preferences: Preferences = Preferences(),
+        modelKeys: ModelKeysResponse = ModelKeysResponse()
     ) {
         self.capabilities = capabilities
         self.session = session
@@ -49,6 +51,7 @@ public struct NoriFullSnapshot: Sendable, Hashable {
         self.goals = goals
         self.permissions = permissions
         self.preferences = preferences
+        self.modelKeys = modelKeys
     }
 }
 
@@ -183,9 +186,25 @@ public protocol NoriTransport: Sendable {
         _ preferences: Preferences,
         requestID: String
     ) async throws -> MutationReceipt<Preferences>
+
+    // Model API Keys (BYOK)
+    func fetchModelKeys() async throws -> ModelKeysResponse
+    func saveModelKey(provider: String, apiKey: String) async throws -> ModelKeyProvider
+    func deleteModelKey(provider: String) async throws -> ModelKeyProvider
 }
 
 public extension NoriTransport {
+    func fetchModelKeys() async throws -> ModelKeysResponse {
+        ModelKeysResponse()
+    }
+
+    func saveModelKey(provider: String, apiKey: String) async throws -> ModelKeyProvider {
+        throw NoriAPIError(message: "Model keys are not supported by this transport.")
+    }
+
+    func deleteModelKey(provider: String) async throws -> ModelKeyProvider {
+        throw NoriAPIError(message: "Model keys are not supported by this transport.")
+    }
     func performMCPAction(
         serverID: String,
         expectedRevision: Int,

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Activity, Brain, History, Monitor, Moon, ShieldCheck, SlidersHorizontal, Sun, UserCircle } from "lucide-react";
+import { Activity, Brain, History, KeyRound, Monitor, Moon, ShieldCheck, SlidersHorizontal, Sun, UserCircle } from "lucide-react";
 import { NoriMark } from "@/components/mark/NoriMark";
 import { Button } from "@/components/ui/primitives";
 import { APPEARANCE_OPTIONS, useAppearance, type NoriAppearance } from "@/lib/appearance";
@@ -25,16 +25,18 @@ import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant
 import type { Connection, MCPServer, OperationProjection as Operation, PermissionRule, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
 import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "@/lib/runtime/messages";
 import { cn } from "@/lib/utils";
+import { ApiKeysSettings } from "./ApiKeysSettings";
 import { OperationRows, shownOperations } from "./WorkScreen";
 import { Confirm, Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, Row, Rows, Screen, Section, Tabs } from "./ui";
 
 type List<T> = { items: T[] };
-export type SettingsSection = "permissions" | "preferences" | "appearance" | "account" | "history" | "diagnostics";
+export type SettingsSection = "permissions" | "preferences" | "appearance" | "api-keys" | "account" | "history" | "diagnostics";
 
 const SECTIONS: { id: SettingsSection | "memory"; title: string; icon: typeof ShieldCheck; href?: string; feature?: Parameters<ReturnType<typeof useAssistant>["has"]>[0] }[] = [
   { id: "permissions", title: "Standing Permissions", icon: ShieldCheck, feature: "permissions" },
   { id: "preferences", title: "Preferences & Budgets", icon: SlidersHorizontal, feature: "preferences" },
   { id: "appearance", title: "Appearance", icon: Monitor },
+  { id: "api-keys", title: "API Keys", icon: KeyRound },
   { id: "memory", title: "Memory", icon: Brain, href: "/memory", feature: "memory" },
   { id: "account", title: "Account", icon: UserCircle },
   { id: "history", title: "Action History", icon: History, feature: "operations" },
@@ -60,11 +62,13 @@ export function SettingsScreen({ section }: { section: SettingsSection }) {
         ? <PreferencesForm />
         : section === "appearance"
           ? <AppearanceSettings />
-          : section === "account"
-            ? <AccountSettings />
-            : section === "history"
-              ? <ActionHistory />
-              : <Diagnostics />}
+          : section === "api-keys"
+            ? <ApiKeysSettings />
+            : section === "account"
+              ? <AccountSettings />
+              : section === "history"
+                ? <ActionHistory />
+                : <Diagnostics />}
   </Screen>;
 }
 

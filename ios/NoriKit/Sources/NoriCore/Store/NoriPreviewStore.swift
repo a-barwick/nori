@@ -141,6 +141,36 @@ final class PreviewNoriTransport: NoriTransport, @unchecked Sendable {
     func savePreferences(_ preferences: Preferences, requestID: String) async throws -> MutationReceipt<Preferences> {
         MutationReceipt(requestID: requestID, resource: preferences)
     }
+
+    func fetchModelKeys() async throws -> ModelKeysResponse {
+        snapshot.modelKeys
+    }
+
+    func saveModelKey(provider: String, apiKey: String) async throws -> ModelKeyProvider {
+        let now = ISO8601DateFormatter().string(from: Date())
+        let label = snapshot.modelKeys.providers.first(where: { $0.provider == provider })?.label ?? provider
+        let suffix = String(apiKey.suffix(4))
+        return ModelKeyProvider(
+            provider: provider,
+            label: label,
+            configured: true,
+            last4: suffix,
+            updatedAt: now,
+            validatedAt: now
+        )
+    }
+
+    func deleteModelKey(provider: String) async throws -> ModelKeyProvider {
+        let label = snapshot.modelKeys.providers.first(where: { $0.provider == provider })?.label ?? provider
+        return ModelKeyProvider(
+            provider: provider,
+            label: label,
+            configured: false,
+            last4: nil,
+            updatedAt: nil,
+            validatedAt: nil
+        )
+    }
 }
 
 public extension NoriStore {
@@ -394,7 +424,20 @@ public extension NoriStore {
                     actionClasses: [.read],
                     summary: "Read calendar events automatically"
                 )
-            ]
+            ],
+            modelKeys: ModelKeysResponse(
+                byokRequired: false,
+                providers: [
+                    ModelKeyProvider(
+                        provider: "vercel_ai_gateway",
+                        label: "Vercel AI Gateway",
+                        configured: true,
+                        last4: "a1b2",
+                        updatedAt: tMinus30m,
+                        validatedAt: tMinus30m
+                    )
+                ]
+            )
         )
 
         let transport = PreviewNoriTransport(snapshot: snapshot, details: ["task-1": detail])
@@ -410,6 +453,7 @@ public extension NoriStore {
         store.workingMemory = snapshot.workingMemory
         store.automations = snapshot.automations
         store.permissions = snapshot.permissions
+        store.modelKeys = snapshot.modelKeys
         store.assistantSummary = AssistantSummary(needsYou: 2, working: 1, appsAttention: 0)
         return store
     }

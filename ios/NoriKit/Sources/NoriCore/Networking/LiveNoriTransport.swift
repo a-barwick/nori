@@ -290,6 +290,15 @@ public actor LiveNoriTransport: NoriTransport {
         }
     }
 
+    private func deleteJSON<Response: Decodable>(_ path: String) async throws -> Response {
+        let userID = try await ensureUserID()
+        let url = try router.scopedURL(path: path, userID: userID)
+        var req = URLRequest(url: url)
+        req.httpMethod = "DELETE"
+        let (data, response) = try await performAuthenticated(req)
+        try validateHTTPResponse(response, data: data)
+        return try decoder.decode(Response.self, from: data)
+    }
     private func mutate<Body: Encodable, Resource: Sendable & Codable & Hashable>(
         _ path: String,
         method: String = "POST",
@@ -373,6 +382,7 @@ public actor LiveNoriTransport: NoriTransport {
         async let goalsTask = (try? await fetchGoals()) ?? []
         async let permissionsTask = (try? await fetchPermissions()) ?? []
         async let preferencesTask = (try? await fetchPreferences()) ?? Preferences()
+        async let modelKeysTask = (try? await fetchModelKeys()) ?? ModelKeysResponse()
 
         let servers = await mcpTask
         let toolsByServer = await withTaskGroup(
@@ -410,7 +420,8 @@ public actor LiveNoriTransport: NoriTransport {
             automations: automationsTask,
             goals: goalsTask,
             permissions: permissionsTask,
-            preferences: preferencesTask
+            preferences: preferencesTask,
+            modelKeys: modelKeysTask
         )
     }
 
@@ -1151,5 +1162,25 @@ public actor LiveNoriTransport: NoriTransport {
             requestID: requestID,
             body: PrefReq(request_id: requestID, expected_revision: preferences.revision, value: val)
         )
+    }
+
+    // MARK: - Model API Keys (BYOK)
+
+    public func fetchModelKeys() async throws -> ModelKeysResponse {
+        try await getJSON("/v1/settings/model-keys")
+    }
+
+    public func saveModelKey(provider: String, apiKey: String) async throws -> ModelKeyProvider {
+        let encodedProvider = provider.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? provider
+        return try await sendJSON(
+            "/v1/settings/model-keys/\(encodedProvider)",
+            method: "PUT",
+            body: SaveModelKeyRequest(apiKey: apiKey)
+        )
+    }
+
+    public func deleteModelKey(provider: String) async throws -> ModelKeyProvider {
+        let encodedProvider = provider.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? provider
+        return try await deleteJSON("/v1/settings/model-keys/\(encodedProvider)")
     }
 }

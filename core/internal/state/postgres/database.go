@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"nori/internal/state/docstore"
+	"nori/internal/users"
 )
 
 const (
@@ -286,6 +287,18 @@ func (b *backend) TryAdvisoryLock(ctx context.Context, key int64) (func(), bool,
 	return unlock, true, nil
 }
 
+// OwnerFromCollection extracts the tenant owner ID from a collection path of the
+// form "owners/<owner>/..." (or "owners/<owner>"). Shared collections such as
+// "system" or "users" return "".
+func OwnerFromCollection(collection string) string {
+	rest, ok := strings.CutPrefix(collection, "owners/")
+	if !ok || rest == "" {
+		return ""
+	}
+	owner, _, _ := strings.Cut(rest, "/")
+	return owner
+}
+
 func recordShard(collection string) string {
 	if rest, ok := strings.CutPrefix(collection, "owners/"); ok {
 		if owner, _, found := strings.Cut(rest, "/"); found && owner != "" {
@@ -326,6 +339,12 @@ func (b *backend) DeleteBatch(ctx context.Context, paths []string) error {
 			return err
 		}
 		shards[i] = recordShard(collections[i])
+	}
+	if users.ID(ctx) != "" {
+		return b.readCommitted(ctx, false, func(q executor) error {
+			_, err := q.Exec(ctx, "DELETE FROM nori_records WHERE (shard,collection,id) IN (SELECT unnest($1::text[]),unnest($2::text[]),unnest($3::text[]))", shards, collections, ids)
+			return err
+		})
 	}
 	_, err := b.pool.Exec(ctx, "DELETE FROM nori_records WHERE (shard,collection,id) IN (SELECT unnest($1::text[]),unnest($2::text[]),unnest($3::text[]))", shards, collections, ids)
 	return err
@@ -401,6 +420,16 @@ func (t *transaction) ensureTx(ctx context.Context, shard string) error {
 		}
 		return err
 	}
+	if ownerID := users.ID(ctx); ownerID != "" {
+		if _, err := tx.Exec(ctx, "SELECT set_config('app.current_owner', $1, true)", ownerID); err != nil {
+			_ = tx.Rollback(context.WithoutCancel(ctx))
+			if t.unlockShard != nil {
+				t.unlockShard()
+				t.unlockShard = nil
+			}
+			return err
+		}
+	}
 	t.tx = tx
 	return nil
 }
@@ -439,6 +468,15 @@ func get(ctx context.Context, q executor, path string) (docstore.Record, error) 
 	return docstore.Record{Path: path, Fields: data}, e
 }
 func (b *backend) Get(ctx context.Context, path string) (docstore.Record, error) {
+	if users.ID(ctx) != "" {
+		var rec docstore.Record
+		err := b.readCommitted(ctx, true, func(q executor) error {
+			var err error
+			rec, err = get(ctx, q, path)
+			return err
+		})
+		return rec, err
+	}
 	return get(ctx, b.pool, path)
 }
 func (t *transaction) Get(ctx context.Context, path string) (docstore.Record, error) {
@@ -450,6 +488,15 @@ func (t *transaction) Get(ctx context.Context, path string) (docstore.Record, er
 	return get(ctx, t.q, path)
 }
 func (b *backend) Query(ctx context.Context, s docstore.QuerySpec) ([]docstore.Record, error) {
+	if users.ID(ctx) != "" {
+		var recs []docstore.Record
+		err := b.readCommitted(ctx, true, func(q executor) error {
+			var err error
+			recs, err = query(ctx, q, s)
+			return err
+		})
+		return recs, err
+	}
 	return query(ctx, b.pool, s)
 }
 func (t *transaction) Query(ctx context.Context, s docstore.QuerySpec) ([]docstore.Record, error) {
@@ -556,6 +603,12 @@ func (b *backend) Apply(ctx context.Context, m docstore.Mutation) error {
 	shard := recordShard(collection)
 	switch m.Kind {
 	case "delete":
+		if users.ID(ctx) != "" {
+			return b.readCommitted(ctx, false, func(q executor) error {
+				_, err := q.Exec(ctx, "DELETE FROM nori_records WHERE shard=$1 AND collection=$2 AND id=$3", shard, collection, id)
+				return err
+			})
+		}
 		_, e = b.pool.Exec(ctx, "DELETE FROM nori_records WHERE shard=$1 AND collection=$2 AND id=$3", shard, collection, id)
 		return e
 	case "create", "set", "update":
@@ -571,7 +624,14 @@ func (b *backend) Apply(ctx context.Context, m docstore.Mutation) error {
 		if m.Kind != "create" {
 			sql += " ON CONFLICT(shard,collection,id) DO UPDATE SET data=EXCLUDED.data"
 		}
-		_, e = b.pool.Exec(ctx, sql, shard, collection, id, data)
+		if users.ID(ctx) != "" {
+			e = b.readCommitted(ctx, false, func(q executor) error {
+				_, err := q.Exec(ctx, sql, shard, collection, id, data)
+				return err
+			})
+		} else {
+			_, e = b.pool.Exec(ctx, sql, shard, collection, id, data)
+		}
 		var p *pgconn.PgError
 		if errors.As(e, &p) && p.Code == "23505" {
 			return docstore.ErrExists

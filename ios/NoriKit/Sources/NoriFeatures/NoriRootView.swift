@@ -108,7 +108,8 @@ public struct NoriRootView: View {
             async let appsTask: Void = store.refreshApps()
             async let memoryTask: Void = store.refreshMemory()
             async let permsPrefsTask: Void = store.refreshPermissionsAndPreferences()
-            _ = await (summaryTask, appsTask, memoryTask, permsPrefsTask)
+            async let modelKeysTask: Void = store.refreshModelKeys()
+            _ = await (summaryTask, appsTask, memoryTask, permsPrefsTask, modelKeysTask)
         }
     }
 
@@ -165,6 +166,8 @@ public struct NoriRootView: View {
                                 StandingPermissionsView(store: store)
                             case .preferences:
                                 PreferencesBudgetsView(store: store)
+                            case .apiKeys:
+                                APIKeysSettingsView(store: store)
                             case .appearance:
                                 AppearanceSettingsView()
                             case .account:

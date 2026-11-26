@@ -10,9 +10,9 @@ func clearModelEnv(t *testing.T) {
 	t.Helper()
 	keys := []string{
 		"NORI_CLOUD", "NORI_ENV_PROFILE", "NORI_ENV_FILE", "NORI_TASK_ENV_FILE",
-		"NORI_STORE_BACKEND", "NORI_POSTGRES_URL",
+		"NORI_STORE_BACKEND", "NORI_POSTGRES_URL", "NORI_CREDENTIAL_STORE",
 		"NORI_MODEL_PROVIDER", "NORI_OUTER_PROVIDER", "NORI_INNER_PROVIDER",
-		"NORI_MODEL_GATEWAY_URL", "NORI_MODEL_GATEWAY_API_KEY", "NORI_MODEL_TEST_URL",
+		"NORI_MODEL_GATEWAY_URL", "NORI_MODEL_GATEWAY_API_KEY", "NORI_BYOK_REQUIRED", "NORI_MODEL_TEST_URL",
 		"NORI_AGENT_MODEL", "MODEL_NAME", "NORI_LLM_MAX_USD",
 		"OPENAI_API_KEY", "OPENAI_PROD_API_KEY", "OPENAI_DEV_API_KEY", "OPENAI_TEST_API_KEY",
 		"ANTHROPIC_API_KEY", "ANTHROPIC_PROD_API_KEY", "ANTHROPIC_DEV_API_KEY", "ANTHROPIC_TEST_API_KEY",
@@ -144,5 +144,42 @@ func TestProviderSwitchingAndMaxUSD(t *testing.T) {
 	}
 	if s.Models.MaxUSD != 12.50 {
 		t.Fatalf("expected MaxUSD=12.50, got %v", s.Models.MaxUSD)
+	}
+}
+
+func TestBYOKRequiredAllowsEmptyDeploymentGatewayKey(t *testing.T) {
+	clearModelEnv(t)
+	t.Setenv("NORI_CLOUD", "local")
+	t.Setenv("NORI_MODEL_PROVIDER", "gateway")
+	t.Setenv("NORI_MODEL_GATEWAY_URL", "https://ai-gateway.vercel.sh/v1")
+	t.Setenv("NORI_BYOK_REQUIRED", "true")
+	t.Setenv("NORI_CREDENTIAL_STORE", "database")
+	t.Setenv("NORI_AGENT_MODEL", "anthropic/claude-haiku-4.5")
+	t.Setenv("MODEL_NAME", "anthropic/claude-haiku-4.5")
+
+	s, err := LoadDefaultCloud("local")
+	if err != nil {
+		t.Fatalf("LoadDefaultCloud with BYOK required: %v", err)
+	}
+	if !s.Models.BYOKRequired {
+		t.Fatal("expected BYOKRequired=true")
+	}
+	if s.Models.GatewayKey != "" {
+		t.Fatalf("expected empty deployment GatewayKey, got %q", s.Models.GatewayKey)
+	}
+}
+
+func TestBYOKRequiredRejectsMissingCredentialStore(t *testing.T) {
+	clearModelEnv(t)
+	t.Setenv("NORI_CLOUD", "local")
+	t.Setenv("NORI_MODEL_PROVIDER", "gateway")
+	t.Setenv("NORI_MODEL_GATEWAY_URL", "https://ai-gateway.vercel.sh/v1")
+	t.Setenv("NORI_BYOK_REQUIRED", "true")
+	t.Setenv("NORI_AGENT_MODEL", "anthropic/claude-haiku-4.5")
+	t.Setenv("MODEL_NAME", "anthropic/claude-haiku-4.5")
+
+	_, err := LoadDefaultCloud("local")
+	if err == nil || !strings.Contains(err.Error(), "NORI_CREDENTIAL_STORE=database") {
+		t.Fatalf("expected NORI_CREDENTIAL_STORE=database error, got %v", err)
 	}
 }

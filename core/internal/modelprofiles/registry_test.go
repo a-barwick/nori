@@ -179,3 +179,48 @@ func TestRegistryHotReloadFileAndFallback(t *testing.T) {
 		t.Fatalf("expected fallback to last-good v2 on bad JSON, got %+v (ok=%v)", p, ok)
 	}
 }
+
+func TestRegistryBYOKRequiredAllowsEmptyDeploymentGatewayKey(t *testing.T) {
+	cfg := settings.Settings{
+		Cloud:      "aws",
+		EnvProfile: "prod",
+		Models: settings.Models{
+			Provider:     "gateway",
+			GatewayURL:   "https://ai-gateway.vercel.sh/v1",
+			GatewayKey:   "",
+			BYOKRequired: true,
+			Outer:        "anthropic/claude-opus-5.5",
+			Inner:        "anthropic/claude-haiku-5.5",
+		},
+	}
+	reg, err := NewRegistry(cfg)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	cat := reg.Snapshot()
+	if len(cat.Profiles) != 4 {
+		t.Fatalf("expected 4 cloud gateway profiles in BYOK mode without deployment key, got %d", len(cat.Profiles))
+	}
+
+	sel, err := reg.ValidateAndResolve(&state.ModelSelection{
+		ChatProfileID: "cloud-claude-opus-5-5",
+		ChatReasoning: "medium",
+		TaskProfileID: "cloud-claude-haiku-5-5",
+	})
+	if err != nil {
+		t.Fatalf("ValidateAndResolve: %v", err)
+	}
+	if sel.ChatPinned == nil || sel.TaskPinned == nil {
+		t.Fatalf("expected pinned profiles, got %+v", sel)
+	}
+
+	pChat, reasoning, explicit, err := reg.ResolveChat(sel)
+	if err != nil || !explicit || pChat.Backend != BackendGateway || pChat.Endpoint != cfg.Models.GatewayURL || reasoning != "medium" {
+		t.Fatalf("ResolveChat pinned BYOK profile = (%+v, %q, %v, %v)", pChat, reasoning, explicit, err)
+	}
+
+	pTask, _, explicitTask, err := reg.ResolveTask(sel)
+	if err != nil || !explicitTask || pTask.Backend != BackendGateway || pTask.Endpoint != cfg.Models.GatewayURL {
+		t.Fatalf("ResolveTask pinned BYOK profile = (%+v, %v, %v)", pTask, explicitTask, err)
+	}
+}

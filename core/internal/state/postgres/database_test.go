@@ -781,3 +781,48 @@ func BenchmarkPostgresMemoryLogs(b *testing.B) {
 		}
 	})
 }
+
+func TestOwnerFromCollection(t *testing.T) {
+	cases := []struct {
+		collection string
+		want       string
+	}{
+		{collection: "owners/u1/tasks", want: "u1"},
+		{collection: "owners/u1/tasks/r1/events", want: "u1"},
+		{collection: "owners/user-abc-123/memories", want: "user-abc-123"},
+		{collection: "owners/u1", want: "u1"},
+		{collection: "owners/", want: ""},
+		{collection: "owners//tasks", want: ""},
+		{collection: "owners", want: ""},
+		{collection: "system", want: ""},
+		{collection: "users", want: ""},
+		{collection: "other/u1/tasks", want: ""},
+		{collection: "", want: ""},
+	}
+	for _, tc := range cases {
+		if got := OwnerFromCollection(tc.collection); got != tc.want {
+			t.Errorf("OwnerFromCollection(%q) = %q, want %q", tc.collection, got, tc.want)
+		}
+	}
+}
+
+func TestTenantRLSMigrationEmbedded(t *testing.T) {
+	raw, err := migrations.ReadFile("migrations/006_tenant_rls.sql")
+	if err != nil {
+		t.Fatalf("read 006_tenant_rls.sql: %v", err)
+	}
+	sql := string(raw)
+	for _, want := range []string{
+		"ALTER TABLE nori_records",
+		"ALTER TABLE nori_task_leases",
+		"ALTER TABLE nori_user_wakes",
+		"GENERATED ALWAYS AS",
+		"ENABLE ROW LEVEL SECURITY",
+		"FORCE ROW LEVEL SECURITY",
+		"app.current_owner",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("006_tenant_rls.sql missing %q", want)
+		}
+	}
+}

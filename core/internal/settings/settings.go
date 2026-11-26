@@ -28,6 +28,7 @@ type Settings struct {
 	Models         Models
 	Metering       usage.Config
 	Store          Store
+	ExaSearchKey   string
 	SearchKey      string
 	TimeZone       string
 	TaskBudgetUSD  float64
@@ -36,11 +37,11 @@ type Settings struct {
 }
 
 type Connections struct {
-	RedirectURL                                           string
-	CredentialStore                                       string
-	CredentialKey, CredentialKeySecret, CredentialKeyFile string
-	UnattendedWrites, UserSends                           string
-	MCPCommands                                           map[string][]string
+	RedirectURL                                                             string
+	CredentialStore                                                         string
+	CredentialKMSKey, CredentialKey, CredentialKeySecret, CredentialKeyFile string
+	UnattendedWrites, UserSends                                             string
+	MCPCommands                                                             map[string][]string
 }
 
 type Features struct {
@@ -59,6 +60,7 @@ type Models struct {
 	OuterReasoning, InnerReasoning                 string
 	Provider, OuterProvider, InnerProvider         string
 	GatewayURL, GatewayKey                         string
+	BYOKRequired                                   bool
 	LocalURL, LocalModel                           string
 	ProfilesFile, ProfilesJSON                     string
 	PickerUsers                                    []string
@@ -163,6 +165,9 @@ func LoadDefaultCloud(defaultCloud string) (Settings, error) {
 	if err := s.Models.validateModels(s.Cloud); err != nil {
 		return Settings{}, err
 	}
+	if s.Models.BYOKRequired && s.Connections.CredentialStore != "database" {
+		return Settings{}, fmt.Errorf("NORI_BYOK_REQUIRED=true requires NORI_CREDENTIAL_STORE=database")
+	}
 	if s.Models.TestURL != "" {
 		u, err := url.Parse(s.Models.TestURL)
 		if err != nil || s.Cloud != "local" || u.Scheme != "http" || (u.Hostname() != "127.0.0.1" && u.Hostname() != "localhost") {
@@ -179,6 +184,7 @@ func connectionsFromEnvironment() Connections {
 	return Connections{
 		RedirectURL:         os.Getenv("NORI_OAUTH_REDIRECT_URL"),
 		CredentialStore:     os.Getenv("NORI_CREDENTIAL_STORE"),
+		CredentialKMSKey:    strings.TrimSpace(os.Getenv("NORI_CREDENTIAL_KMS_KEY")),
 		CredentialKey:       os.Getenv("NORI_CREDENTIAL_KEY"),
 		CredentialKeySecret: os.Getenv("NORI_CREDENTIAL_KEY_SECRET"),
 		CredentialKeyFile:   os.Getenv("NORI_CREDENTIAL_KEY_FILE"),
@@ -226,6 +232,7 @@ func fromEnvironment(defaultCloud string) Settings {
 		"OPENROUTER_DEV_API_KEY",
 		"OPENROUTER_TEST_API_KEY",
 		"JEV_API_KEY",
+		"EXA_API_KEY",
 		"BRAVE_SEARCH_API_KEY",
 		"SENTRY_AUTH_TOKEN",
 		"ARIZE_API_KEY",
@@ -259,7 +266,8 @@ func fromEnvironment(defaultCloud string) Settings {
 		Models:        modelsFromEnvironment(envProfile),
 		Store:         store,
 		Metering:      usage.Config{Mode: get("NORI_USAGE_METER", "store"), Endpoint: os.Getenv("NORI_USAGE_ENDPOINT"), Token: os.Getenv("NORI_USAGE_TOKEN"), MaxCallsPerHour: int(parseEnvInt32Default("NORI_USER_MAX_CALLS_PER_HOUR", 300)), MaxUSDPerDay: parseOptionalNonNegativeFloatDefault("NORI_USER_MAX_USD_PER_DAY", 15.0)},
-		SearchKey:     os.Getenv("BRAVE_SEARCH_API_KEY"),
+		ExaSearchKey:  strings.TrimSpace(os.Getenv("EXA_API_KEY")),
+		SearchKey:     strings.TrimSpace(os.Getenv("BRAVE_SEARCH_API_KEY")),
 		TaskBudgetUSD: taskBudget,
 		Observability: Observability{
 			SentryDSN: strings.TrimSpace(os.Getenv("SENTRY_DSN")), SentryEnvironment: os.Getenv("SENTRY_ENVIRONMENT"), SentryRelease: os.Getenv("SENTRY_RELEASE"),

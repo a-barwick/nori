@@ -57,6 +57,8 @@ var contentPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\b(?:authorization|password|passphrase|api[_ -]?key|access[_ -]?token|refresh[_ -]?token|secret)["']?\s*[:=]\s*["']?[^\s"',;]+`),
 	regexp.MustCompile(`\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b`),
 	regexp.MustCompile(`\b(?:sk-(?:proj-)?[A-Za-z0-9_-]{16,}|AIza[A-Za-z0-9_-]{20,})\b`),
+	regexp.MustCompile(`\bvck_[A-Za-z0-9_-]{16,}\b`),
+	regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{16,}\b`),
 	regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`),
 	regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})\b`),
 	regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{10,}\b`),

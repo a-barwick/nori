@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, test } from "node:test";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { MAX_FILE_BYTES } from "../submission";
 import { assistantRoute, fileRoute, operationRoute, uploadRoute, validSegment } from "./forward";
+import * as settingsRoute from "@/app/api/v1/settings/[[...path]]/route";
 
 const RUN_ID = crypto.randomUUID();
 const ISSUER = `https://oidc-forward-${RUN_ID}.example.test`;
@@ -422,5 +423,111 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     assert.equal(res2.status, 200);
     assert.deepEqual(await res2.json(), { recovered: true });
     assert.equal(calls, 2);
+  });
+
+  test("assistantRoute proxies settings/model-keys GET, PUT, and DELETE to user-scoped runtime path", async () => {
+    const email = "byok-user@example.test";
+    const userID = "22222222-2222-4222-8222-222222222209";
+    const seen: { method: string; pathname: string; body?: string }[] = [];
+
+    await mockUpstream({ [email]: userID }, async (url, init) => {
+      seen.push({
+        method: init?.method ?? "GET",
+        pathname: url.pathname,
+        body: typeof init?.body === "string" ? init.body : undefined,
+      });
+      if (init?.method === "PUT") {
+        return Response.json({
+          provider: "vercel_ai_gateway",
+          label: "Vercel AI Gateway",
+          configured: true,
+          last4: "a1b2",
+        });
+      }
+      if (init?.method === "DELETE") {
+        return Response.json({
+          provider: "vercel_ai_gateway",
+          label: "Vercel AI Gateway",
+          configured: false,
+        });
+      }
+      return Response.json({
+        byok_required: true,
+        providers: [{ provider: "vercel_ai_gateway", label: "Vercel AI Gateway", configured: false }],
+      });
+    });
+
+    const headers = await authHeaders(email, { "content-type": "application/json" });
+    const getRes = await assistantRoute(
+      new Request(`${APP_ORIGIN}/api/v1/settings/model-keys`, { method: "GET", headers }),
+      "settings",
+      ["model-keys"],
+    );
+    assert.equal(getRes.status, 200);
+    assert.equal((await getRes.json()).byok_required, true);
+
+    const putRes = await assistantRoute(
+      new Request(`${APP_ORIGIN}/api/v1/settings/model-keys/vercel_ai_gateway`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ api_key: "vck_secret_a1b2" }),
+      }),
+      "settings",
+      ["model-keys", "vercel_ai_gateway"],
+    );
+    assert.equal(putRes.status, 200);
+    assert.equal((await putRes.json()).last4, "a1b2");
+
+    const delRes = await assistantRoute(
+      new Request(`${APP_ORIGIN}/api/v1/settings/model-keys/vercel_ai_gateway`, { method: "DELETE", headers }),
+      "settings",
+      ["model-keys", "vercel_ai_gateway"],
+    );
+    assert.equal(delRes.status, 200);
+    assert.equal((await delRes.json()).configured, false);
+
+    assert.deepEqual(seen, [
+      { method: "GET", pathname: `/users/${userID}/v1/settings/model-keys`, body: undefined },
+      {
+        method: "PUT",
+        pathname: `/users/${userID}/v1/settings/model-keys/vercel_ai_gateway`,
+        body: JSON.stringify({ api_key: "vck_secret_a1b2" }),
+      },
+      { method: "DELETE", pathname: `/users/${userID}/v1/settings/model-keys/vercel_ai_gateway`, body: "{}" },
+    ]);
+  });
+
+  test("settings route only exports GET/PUT/DELETE and restricts first segment to model-keys", async () => {
+    assert.equal(typeof settingsRoute.GET, "function");
+    assert.equal(typeof settingsRoute.PUT, "function");
+    assert.equal(typeof settingsRoute.DELETE, "function");
+    assert.equal("POST" in settingsRoute, false);
+
+    const headers = { "sec-fetch-site": "same-origin" };
+    const rootRes = await settingsRoute.GET(
+      new Request(`${APP_ORIGIN}/api/v1/settings`, { method: "GET", headers }),
+      { params: Promise.resolve({}) },
+    );
+    assert.equal(rootRes.status, 404);
+
+    const otherRes = await settingsRoute.GET(
+      new Request(`${APP_ORIGIN}/api/v1/settings/internal`, { method: "GET", headers }),
+      { params: Promise.resolve({ path: ["internal"] }) },
+    );
+    assert.equal(otherRes.status, 404);
+
+    const email = "settings-route-user@example.test";
+    const userID = "22222222-2222-4222-8222-222222222210";
+    await mockUpstream({ [email]: userID }, () =>
+      Response.json({ byok_required: false, providers: [] }),
+    );
+    const okRes = await settingsRoute.GET(
+      new Request(`${APP_ORIGIN}/api/v1/settings/model-keys`, {
+        method: "GET",
+        headers: await authHeaders(email),
+      }),
+      { params: Promise.resolve({ path: ["model-keys"] }) },
+    );
+    assert.equal(okRes.status, 200);
   });
 });

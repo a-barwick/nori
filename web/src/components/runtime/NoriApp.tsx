@@ -1,11 +1,16 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Dialog } from "radix-ui";
+import { byokPromptLabel, needsByokSetup } from "@/components/assistant/ApiKeysSettings";
+import { Notice } from "@/components/assistant/ui";
 import { Thread } from "@/components/chat/Thread";
+import type { ModelKeysResponse } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { mergeInlineInteractions, type InlineInteractionEntry } from "@/lib/assistant/interactions";
 import { usePendingInteractions } from "@/lib/assistant/sources";
+import { useResource } from "@/lib/assistant/useResource";
 import type { Interaction } from "@/lib/contracts/assistant";
 import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "@/lib/runtime/messages";
 import type { Message, Part, Thread as Conversation, TextItem } from "@/lib/types";
@@ -35,6 +40,8 @@ export function ChatScreen() {
   const uploadAccept = accepted ? [...accepted.media_types, ...(accepted.extensions ?? [])].join(",") : undefined;
   const { session, pending, activeTasks, selected, loading, error } = runtime;
   const pendingInteractions = usePendingInteractions();
+  const modelKeys = useResource<ModelKeysResponse>("/settings/model-keys", { poll: 60_000, versioned: false });
+  const requiresByok = needsByokSetup(modelKeys.data);
   const [sessionResolved, setSessionResolved] = useState<Record<string, InlineInteractionEntry>>({});
   const handleInteractionResolved = useCallback((resolved: Interaction, meta?: { rememberRule?: boolean }) => {
     setSessionResolved((current) => ({
@@ -230,6 +237,23 @@ export function ChatScreen() {
             </div>
           );
         })}
+
+      {requiresByok && (
+        <div className="nori-page-col shrink-0 pb-2">
+          <div className="max-w-[680px]">
+            <Notice
+              tone="warning"
+              action={
+                <Link href="/settings/api-keys" className="font-semibold underline underline-offset-2">
+                  Add API key
+                </Link>
+              }
+            >
+              Add your {byokPromptLabel(modelKeys.data)} API key in Settings to use Nori.
+            </Notice>
+          </div>
+        </div>
+      )}
 
       {notice && (
         <div className="nori-page-col shrink-0 pb-2">

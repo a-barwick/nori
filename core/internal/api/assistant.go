@@ -17,6 +17,7 @@ import (
 	"nori/internal/conversation"
 	"nori/internal/extensions"
 	"nori/internal/httpjson"
+	"nori/internal/modelkeys"
 	"nori/internal/permissions"
 	"nori/internal/scheduler"
 	"nori/internal/secret"
@@ -40,6 +41,7 @@ type Assistant struct {
 	Features            map[string]bool
 	Scheduler           *scheduler.Service
 	MCP                 *mcp.Service
+	ModelKeys           *modelkeys.Service
 	UnattendedWrites    string
 	NextScheduled       func(ctx context.Context) *time.Time
 	InboxUnread         func(ctx context.Context) int
@@ -71,10 +73,17 @@ func writeAPIError(w http.ResponseWriter, err error, requestID string, current a
 		status, code, message, retryable = 409, "interaction_stale", "This question or approval is no longer pending.", false
 	case errors.Is(err, httpjson.ErrTooLarge):
 		status, code, message, retryable = http.StatusRequestEntityTooLarge, "payload_too_large", "Request body is too large.", false
-	case errors.Is(err, state.ErrInvalidResource), errors.Is(err, connections.ErrInvalidAction), errors.Is(err, connections.ErrUnknownIntegration):
+	case errors.Is(err, state.ErrInvalidResource), errors.Is(err, connections.ErrInvalidAction), errors.Is(err, connections.ErrUnknownIntegration),
+		errors.Is(err, modelkeys.ErrUnknownProvider), errors.Is(err, modelkeys.ErrEmptyAPIKey):
 		status, code, message, retryable = 400, "validation_failed", err.Error(), false
+	case errors.Is(err, modelkeys.ErrInvalidAPIKey):
+		status, code, message, retryable = http.StatusUnprocessableEntity, "invalid_api_key", err.Error(), false
+	case errors.Is(err, modelkeys.ErrMissingAPIKey):
+		status, code, message, retryable = http.StatusUnprocessableEntity, "missing_api_key", err.Error(), false
+	case errors.Is(err, modelkeys.ErrValidationFailed):
+		status, code, message, retryable = http.StatusServiceUnavailable, "provider_unavailable", "Could not reach the model provider to validate your API key. Try again shortly.", true
 	case errors.Is(err, secret.ErrCredentialUnavailable):
-		status, code, message, retryable = 503, "credential_store_unavailable", err.Error(), false
+		status, code, message, retryable = http.StatusServiceUnavailable, "credential_store_unavailable", "Credential storage is temporarily unavailable. Try again shortly.", true
 	case errors.Is(err, connections.ErrBadPassword):
 		status, code, message, retryable = 400, "validation_failed", "The provider rejected the username or app-specific password. Create a new app-specific password and try again.", false
 	case errors.Is(err, connections.ErrNotConfigured):
@@ -195,6 +204,9 @@ func (a *Assistant) register(mux *http.ServeMux) {
 	}
 	if a.MCP != nil {
 		a.registerMCP(mux)
+	}
+	if a.ModelKeys != nil {
+		a.registerModelKeys(mux)
 	}
 	mux.HandleFunc("GET /v1/diagnostics", a.diagnostics)
 	mux.HandleFunc("POST /v1/diagnostics/actions", jsonBody(a.diagnosticsAction))

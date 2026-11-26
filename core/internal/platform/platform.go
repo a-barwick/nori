@@ -9,9 +9,11 @@ import (
 	"sync"
 	"time"
 
+	"nori/internal/secret/tenantkey"
 	"nori/internal/settings"
 	"nori/internal/state"
 	"nori/internal/state/docstore"
+	"nori/internal/state/encrypted"
 	"nori/internal/state/localfs"
 	"nori/internal/state/postgres"
 	"nori/internal/state/records"
@@ -26,6 +28,7 @@ type Storage struct {
 	Now       func() time.Time
 	mu        sync.Mutex
 	s3        *s3.Client
+	dekCache  *tenantkey.Cache
 }
 
 func OpenStorage(ctx context.Context, s settings.Settings) (*Storage, error) {
@@ -33,11 +36,18 @@ func OpenStorage(ctx context.Context, s settings.Settings) (*Storage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Storage{docs: docs}, nil
+	return &Storage{
+		docs:     docs,
+		dekCache: tenantkey.NewCache(tenantkey.DefaultCacheTTL),
+	}, nil
 }
 
 func NewStorage(docs docstore.Backend, artifacts func(users.User) state.ArtifactStore) *Storage {
-	return &Storage{docs: docs, artifacts: artifacts}
+	return &Storage{
+		docs:      docs,
+		artifacts: artifacts,
+		dekCache:  tenantkey.NewCache(tenantkey.DefaultCacheTTL),
+	}
 }
 
 func (p *Storage) Backend() docstore.Backend {
@@ -76,7 +86,12 @@ func (p *Storage) OpenStore(ctx context.Context, s settings.Settings, user users
 		documents.Now = p.Now
 	}
 	if p.artifacts != nil {
-		return meteredStore(s, user, state.Compose(documents, p.artifacts(user)))
+		artifacts, err := p.wrapUserArtifacts(s, user, documents, p.artifacts(user))
+		if err != nil {
+			_ = documents.Close()
+			return nil, err
+		}
+		return meteredStore(s, user, state.Compose(documents, artifacts))
 	}
 	local, err := openLocalArtifacts(s, user)
 	if err != nil {
@@ -84,14 +99,54 @@ func (p *Storage) OpenStore(ctx context.Context, s settings.Settings, user users
 		return nil, err
 	}
 	if local != nil {
-		return meteredStore(s, user, state.Compose(documents, local))
+		artifacts, err := p.wrapUserArtifacts(s, user, documents, local)
+		if err != nil {
+			_ = local.Close()
+			_ = documents.Close()
+			return nil, err
+		}
+		return meteredStore(s, user, state.Compose(documents, artifacts))
 	}
 	objects, err := p.openObjects(ctx, s, user)
 	if err != nil {
 		_ = documents.Close()
 		return nil, err
 	}
-	return meteredStore(s, user, state.Compose(documents, objects))
+	artifacts, err := p.wrapUserArtifacts(s, user, documents, objects)
+	if err != nil {
+		_ = objects.Close()
+		_ = documents.Close()
+		return nil, err
+	}
+	return meteredStore(s, user, state.Compose(documents, artifacts))
+}
+
+func (p *Storage) getDEKCache() *tenantkey.Cache {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.dekCache == nil {
+		p.dekCache = tenantkey.NewCache(tenantkey.DefaultCacheTTL)
+	}
+	return p.dekCache
+}
+
+func (p *Storage) wrapUserArtifacts(s settings.Settings, user users.User, resources state.ResourceStore, inner state.ArtifactStore) (state.ArtifactStore, error) {
+	if s.Connections.CredentialStore != "database" {
+		return inner, nil
+	}
+	keys, err := credentialKeys(s)
+	if err != nil {
+		return nil, err
+	}
+	mgr, err := tenantkey.NewManager(resources, keys, user.ID)
+	if err != nil {
+		return nil, err
+	}
+	mgr.Cache = p.getDEKCache()
+	if p.Now != nil {
+		mgr.Now = p.Now
+	}
+	return encrypted.NewArtifactStore(inner, mgr)
 }
 
 func (p *Storage) openObjects(ctx context.Context, s settings.Settings, user users.User) (state.ArtifactStore, error) {
@@ -111,6 +166,12 @@ func (p *Storage) openObjects(ctx context.Context, s settings.Settings, user use
 }
 
 func (p *Storage) Close() error {
+	p.mu.Lock()
+	cache := p.dekCache
+	p.mu.Unlock()
+	if cache != nil {
+		cache.Close()
+	}
 	return p.docs.Close()
 }
 

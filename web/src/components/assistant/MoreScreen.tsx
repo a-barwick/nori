@@ -1,15 +1,18 @@
 "use client";
 
-import { Activity, Brain, History, LayoutGrid, Monitor, Moon, ShieldCheck, SlidersHorizontal, Sun, UserCircle } from "lucide-react";
+import Link from "next/link";
+import { Activity, Brain, History, KeyRound, LayoutGrid, Monitor, Moon, ShieldCheck, SlidersHorizontal, Sun, UserCircle } from "lucide-react";
 import { appearanceLabel, useAppearance, type NoriAppearance } from "@/lib/appearance";
+import type { ModelKeysResponse } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { money, plural } from "@/lib/assistant/format";
 import { useSummary } from "@/lib/assistant/sources";
 import { useResource } from "@/lib/assistant/useResource";
 import type { Connection, MCPServer, MemoryFact, PermissionRule, Preferences, WorkingMemory } from "@/lib/contracts/assistant";
 import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "@/lib/runtime/messages";
+import { byokPromptLabel, needsByokSetup } from "./ApiKeysSettings";
 import { coreBudgetStats, formatByteBudget } from "./MemoryScreen";
-import { Pill, Row, Rows, Screen, Section } from "./ui";
+import { Notice, Pill, Row, Rows, Screen, Section } from "./ui";
 
 type List<T> = { items: T[] };
 
@@ -30,6 +33,7 @@ export function MoreScreen() {
   const working = useResource<WorkingMemory>(has("memory") ? "/memory/working" : null, { poll: 30_000 });
   const permissions = useResource<List<PermissionRule>>(has("permissions") ? "/permissions" : null, { poll: 30_000 });
   const preferences = useResource<Preferences>(has("preferences") ? "/preferences" : null, { poll: 60_000 });
+  const modelKeys = useResource<ModelKeysResponse>("/settings/model-keys", { poll: 60_000, versioned: false });
 
   const mcpItems = mcp.data?.items ?? [];
   const connItems = (connections.data?.items ?? []).filter((c) => c.status !== "disconnected");
@@ -54,9 +58,25 @@ export function MoreScreen() {
       : undefined;
 
   const AppearanceIcon = APPEARANCE_ICON[appearance];
+  const configuredKeysCount = modelKeys.data?.providers.filter((p) => p.configured).length ?? 0;
+  const requiresByok = needsByokSetup(modelKeys.data);
 
   return (
     <Screen title="More" hideHeaderTitle>
+      {requiresByok && (
+        <div className="mb-6">
+          <Notice
+            tone="warning"
+            action={
+              <Link href="/settings/api-keys" className="font-semibold underline underline-offset-2">
+                Add key
+              </Link>
+            }
+          >
+            Add your {byokPromptLabel(modelKeys.data)} API key to use Nori.
+          </Notice>
+        </div>
+      )}
       <Section title="Workspace">
         <Rows label="Workspace">
           <Row
@@ -114,6 +134,17 @@ export function MoreScreen() {
             }
             title="Appearance"
             detail={appearanceLabel(appearance)}
+          />
+          <Row
+            href="/settings/api-keys"
+            leading={
+              <span className="grid size-9 place-items-center rounded-[10px] bg-fill-1 text-ink-2">
+                <KeyRound size={18} strokeWidth={1.85} aria-hidden />
+              </span>
+            }
+            title="API Keys"
+            detail={configuredKeysCount > 0 ? plural(configuredKeysCount, "configured") : undefined}
+            trailing={requiresByok ? <Pill tone="warning">Required</Pill> : undefined}
           />
         </Rows>
       </Section>

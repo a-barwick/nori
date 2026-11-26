@@ -152,6 +152,7 @@ public final class NoriStore {
     public var goals: [Goal]
     public var permissions: [PermissionRule]
     public var preferences: Preferences
+    public var modelKeys: ModelKeysResponse
 
     public var isLoading: Bool = false
     public var isThinking: Bool = false
@@ -205,6 +206,7 @@ public final class NoriStore {
         self.goals = []
         self.permissions = []
         self.preferences = Preferences()
+        self.modelKeys = ModelKeysResponse()
     }
 
 
@@ -282,6 +284,13 @@ public final class NoriStore {
         min(1.0, Double(coreMemoryUsedBytes) / Double(coreMemoryBudgetBytes))
     }
 
+    public var hasConfiguredModelKey: Bool {
+        modelKeys.providers.contains(where: \.configured)
+    }
+
+    public var needsModelKeySetup: Bool {
+        modelKeys.byokRequired && !hasConfiguredModelKey
+    }
 
     public func bootstrapIfNeeded() async {
         guard !hasBootstrapped else { return }
@@ -390,6 +399,7 @@ public final class NoriStore {
         goals = []
         permissions = []
         preferences = Preferences()
+        modelKeys = ModelKeysResponse()
         isThinking = false
         isLoading = false
         isComposerFocused = false
@@ -647,6 +657,7 @@ public final class NoriStore {
         self.goals = snapshot.goals
         self.permissions = snapshot.permissions
         self.preferences = snapshot.preferences
+        self.modelKeys = snapshot.modelKeys
         self.isThinking = snapshot.session.conversation?.processing == true
         finishObservedReplies(in: snapshot.session.messages)
         reportFailedWorkItemsIfNeeded(snapshot.workItems)
@@ -1592,6 +1603,78 @@ public final class NoriStore {
         }
     }
 
+    public func refreshModelKeys() async {
+        let generation = sessionGeneration
+        do {
+            try await refreshModelKeysThrowing()
+        } catch is CancellationError {
+            return
+        } catch {
+            guard generation == sessionGeneration else { return }
+            lastError = error.localizedDescription
+        }
+    }
+
+    public func refreshModelKeysThrowing() async throws {
+        let generation = sessionGeneration
+        do {
+            let latest = try await transport.fetchModelKeys()
+            guard generation == sessionGeneration else { return }
+            modelKeys = latest
+        } catch {
+            guard generation == sessionGeneration else { return }
+            if await handleAuthFailureIfNeeded(error) {
+                return
+            }
+            throw error
+        }
+    }
+
+    @discardableResult
+    public func saveModelKey(provider: String, apiKey: String) async throws -> ModelKeyProvider {
+        let generation = sessionGeneration
+        do {
+            let updated = try await transport.saveModelKey(provider: provider, apiKey: apiKey)
+            guard generation == sessionGeneration else { throw CancellationError() }
+            upsertModelKeyProvider(updated)
+            showToast("\(updated.label) key saved")
+            return updated
+        } catch {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            if await handleAuthFailureIfNeeded(error) {
+                throw error
+            }
+            lastError = error.localizedDescription
+            throw error
+        }
+    }
+
+    @discardableResult
+    public func deleteModelKey(provider: String) async throws -> ModelKeyProvider {
+        let generation = sessionGeneration
+        do {
+            let updated = try await transport.deleteModelKey(provider: provider)
+            guard generation == sessionGeneration else { throw CancellationError() }
+            upsertModelKeyProvider(updated)
+            showToast("\(updated.label) key removed")
+            return updated
+        } catch {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            if await handleAuthFailureIfNeeded(error) {
+                throw error
+            }
+            lastError = error.localizedDescription
+            throw error
+        }
+    }
+
+    private func upsertModelKeyProvider(_ updated: ModelKeyProvider) {
+        if let idx = modelKeys.providers.firstIndex(where: { $0.provider == updated.provider }) {
+            modelKeys.providers[idx] = updated
+        } else {
+            modelKeys.providers.append(updated)
+        }
+    }
 
     public func pingServer() async -> HealthCheckResult {
         let generation = sessionGeneration

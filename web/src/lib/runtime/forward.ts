@@ -249,7 +249,7 @@ export async function capabilitiesRoute(request: Request) {
 
 const ASSISTANT_FAMILIES = new Set([
   "integrations", "connections", "interactions", "work", "automations", "goals", "library", "search", "permissions",
-  "preferences", "mcp", "assistant", "mutations", "operations", "memory", "inbox", "tools",
+  "preferences", "mcp", "assistant", "mutations", "operations", "memory", "inbox", "tools", "settings",
 ]);
 
 export async function assistantRoute(request: Request, family: string, segments: string[]) {

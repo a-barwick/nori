@@ -21,6 +21,16 @@ type KeyWrapper interface {
 	Unwrap(ctx context.Context, wrapped []byte, keyID string) ([]byte, error)
 }
 
+// AADKeyWrapper is an optional extension of KeyWrapper that authenticates
+// caller-supplied Additional Authenticated Data (AAD) when wrapping and
+// unwrapping data keys. When aad is empty, implementations fall back to the
+// default dataKeyAAD.
+type AADKeyWrapper interface {
+	KeyWrapper
+	WrapWithAAD(ctx context.Context, dataKey, aad []byte) (wrapped []byte, keyID string, err error)
+	UnwrapWithAAD(ctx context.Context, wrapped []byte, keyID string, aad []byte) ([]byte, error)
+}
+
 type row struct {
 	WrappedKey []byte `json:"wrapped_key"`
 	KeyID      string `json:"key_id"`

@@ -138,6 +138,7 @@ func modelsFromEnvironment(profile string) Models {
 		InnerProvider:  strings.ToLower(strings.TrimSpace(os.Getenv("NORI_INNER_PROVIDER"))),
 		GatewayURL:     strings.TrimSpace(os.Getenv("NORI_MODEL_GATEWAY_URL")),
 		GatewayKey:     strings.TrimSpace(os.Getenv("NORI_MODEL_GATEWAY_API_KEY")),
+		BYOKRequired:   strings.EqualFold(strings.TrimSpace(os.Getenv("NORI_BYOK_REQUIRED")), "true"),
 		LocalURL:       strings.TrimSpace(os.Getenv("NORI_LOCAL_MODEL_URL")),
 		LocalModel:     strings.TrimSpace(os.Getenv("NORI_LOCAL_MODEL_TAG")),
 		ProfilesFile:   strings.TrimSpace(os.Getenv("NORI_MODEL_PROFILES_FILE")),
@@ -322,7 +323,7 @@ func (m Models) validateGateway(cloud string) error {
 			return fmt.Errorf("NORI_MODEL_GATEWAY_URL must use a valid port")
 		}
 	}
-	if !bearerToken.MatchString(m.GatewayKey) {
+	if (!m.BYOKRequired || m.GatewayKey != "") && !bearerToken.MatchString(m.GatewayKey) {
 		return fmt.Errorf("NORI_MODEL_GATEWAY_API_KEY must contain a bearer token")
 	}
 	var checks [][2]string

@@ -78,3 +78,47 @@ export async function sendSecret<T>(path: string, body: { request_id: string } &
 async function receiptFor<T>(requestID: string) {
   return getJSON<MutationReceipt & { resource: T }>(`/mutations/${encodeURIComponent(requestID)}`);
 }
+export function errorText(error: unknown) {
+  return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+export type ModelKeyProvider = {
+  provider: string;
+  label: string;
+  configured: boolean;
+  last4?: string;
+  updated_at?: string;
+  validated_at?: string;
+};
+
+export type ModelKeysResponse = {
+  byok_required: boolean;
+  providers: ModelKeyProvider[];
+};
+
+export function fetchModelKeys(signal?: AbortSignal): Promise<ModelKeysResponse> {
+  return getJSON<ModelKeysResponse>("/settings/model-keys", signal);
+}
+
+/**
+ * Saves or replaces a provider API key. Never persists the secret in browser storage.
+ */
+export async function saveModelKey(provider: string, apiKey: string): Promise<ModelKeyProvider> {
+  const response = await fetch(assistantURL(`/settings/model-keys/${encodeURIComponent(provider)}`), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ api_key: apiKey }),
+    cache: "no-store",
+    redirect: "error",
+  });
+  return readJSON<ModelKeyProvider>(response);
+}
+
+export async function deleteModelKey(provider: string): Promise<ModelKeyProvider> {
+  const response = await fetch(assistantURL(`/settings/model-keys/${encodeURIComponent(provider)}`), {
+    method: "DELETE",
+    cache: "no-store",
+    redirect: "error",
+  });
+  return readJSON<ModelKeyProvider>(response);
+}

@@ -349,7 +349,7 @@ func (r *Registry) profileFromPin(id, version, lane string, pin *state.PinnedPro
 	if p.Backend == BackendGateway {
 		p.Endpoint = r.models.GatewayURL
 		p.Paid = true
-		if p.Endpoint == "" || r.models.GatewayKey == "" {
+		if !hasCloudGateway(r.models) {
 			return Profile{}, fmt.Errorf("pinned gateway profile %q requires configured gateway credentials", id)
 		}
 	} else if p.Backend == BackendLocal {
@@ -547,7 +547,7 @@ func buildDefaultCatalog(cloud, envProfile string, m settings.Models) Catalog {
 }
 
 func hasCloudGateway(m settings.Models) bool {
-	if m.GatewayURL == "" || m.GatewayKey == "" {
+	if m.GatewayURL == "" || (m.GatewayKey == "" && !m.BYOKRequired) {
 		return false
 	}
 	u, err := url.Parse(m.GatewayURL)

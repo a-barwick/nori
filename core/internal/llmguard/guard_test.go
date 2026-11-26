@@ -313,3 +313,137 @@ func TestSuccessfulHeadersSettleExactlyOneOutcome(t *testing.T) {
 		})
 	}
 }
+
+func TestForUser_IsolatesCircuitBreakerAndSpendLimit(t *testing.T) {
+	if ForUser("") != Default() {
+		t.Fatal("expected ForUser(\"\") to fall back to Default()")
+	}
+
+	u1 := "test-iso-user-1-" + t.Name()
+	u2 := "test-iso-user-2-" + t.Name()
+	g1 := ForUser(u1)
+	g2 := ForUser(u2)
+	if g1 != ForUser(u1) {
+		t.Fatal("expected ForUser to return the same Guard for the same userID")
+	}
+	if g1 == g2 {
+		t.Fatal("expected distinct Guard instances for distinct users")
+	}
+
+	// 1. Trip user 1's circuit breaker via HTTP 402; user 2 must remain unaffected.
+	rt1Fail := g1.Transport(fakeRT{fn: func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusPaymentRequired,
+			Body:       io.NopCloser(strings.NewReader(`{"error":"payment required"}`)),
+			Header:     http.Header{},
+		}, nil
+	}}, CallMeta{UserID: u1, Scope: ScopeOuter})
+	req1, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/chat/completions", strings.NewReader(`{"u":1,"n":1}`))
+	resp1, err := rt1Fail.RoundTrip(req1)
+	if err != nil {
+		t.Fatalf("unexpected transport error on 402: %v", err)
+	}
+	_ = resp1.Body.Close()
+
+	req1Blocked, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/chat/completions", strings.NewReader(`{"u":1,"n":2}`))
+	if _, err := rt1Fail.RoundTrip(req1Blocked); !errors.Is(err, ErrCircuitOpen) {
+		t.Fatalf("expected user 1 to hit ErrCircuitOpen, got %v", err)
+	}
+
+	rt2OK := g2.Transport(fakeRT{fn: func(*http.Request) (*http.Response, error) {
+		return okResp(), nil
+	}}, CallMeta{UserID: u2, Scope: ScopeOuter})
+	req2, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/chat/completions", strings.NewReader(`{"u":2,"n":1}`))
+	resp2, err := rt2OK.RoundTrip(req2)
+	if err != nil {
+		t.Fatalf("expected user 2 to succeed despite user 1 circuit open, got %v", err)
+	}
+	_ = resp2.Body.Close()
+
+	// 2. Exhaust spend limit on a third user; user 2 must remain unaffected.
+	u3 := "test-iso-user-3-" + t.Name()
+	g3 := ForUser(u3)
+	g3.SetMaxEstimatedUSD(0.001)
+	rt3 := g3.Transport(fakeRT{fn: func(*http.Request) (*http.Response, error) {
+		return okResp(), nil
+	}}, CallMeta{UserID: u3, Scope: ScopeOuter})
+	req3, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/chat/completions", strings.NewReader(`{"u":3,"n":1}`))
+	if _, err := rt3.RoundTrip(req3); !errors.Is(err, ErrBudgetExceeded) {
+		t.Fatalf("expected user 3 to hit ErrBudgetExceeded, got %v", err)
+	}
+
+	req2Again, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/chat/completions", strings.NewReader(`{"u":2,"n":2}`))
+	resp2Again, err := rt2OK.RoundTrip(req2Again)
+	if err != nil {
+		t.Fatalf("expected user 2 to succeed despite user 3 budget exceeded, got %v", err)
+	}
+	_ = resp2Again.Body.Close()
+}
+
+func TestForUser_EnforcesDefaultGlobalBudgetWhileIsolatingCircuitBreaker(t *testing.T) {
+	def := Default()
+	t.Cleanup(func() {
+		def.SetMaxEstimatedUSD(0)
+	})
+
+	uA := "test-global-user-a-" + t.Name()
+	uB := "test-global-user-b-" + t.Name()
+	gA := ForUser(uA)
+	gB := ForUser(uB)
+
+	// Set a tight process-wide spend ceiling on Default() relative to current accumulated stats.
+	baseStats := def.Stats()
+	baseSpend := baseStats.RecordedActualUSD + baseStats.EstimatedUnknownUSD
+	def.SetMaxEstimatedUSD(baseSpend + 0.025)
+
+	rtA := gA.Transport(fakeRT{fn: func(*http.Request) (*http.Response, error) {
+		return okResp(), nil
+	}}, CallMeta{UserID: uA, Scope: ScopeOuter})
+	rtB := gB.Transport(fakeRT{fn: func(*http.Request) (*http.Response, error) {
+		return okResp(), nil
+	}}, CallMeta{UserID: uB, Scope: ScopeOuter})
+
+	// User A makes a call and records actual cost that consumes most of the shared global budget.
+	reqA1, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/chat/completions", strings.NewReader(`{"u":"a","n":1}`))
+	respA1, err := rtA.RoundTrip(reqA1)
+	if err != nil {
+		t.Fatalf("user A first call failed: %v", err)
+	}
+	_ = respA1.Body.Close()
+	gA.RecordActualCost(0.020)
+
+	// User B's call would push combined global spend over Default().MaxEstimatedUSD and must be blocked.
+	reqB1, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/chat/completions", strings.NewReader(`{"u":"b","n":1}`))
+	if _, err := rtB.RoundTrip(reqB1); !errors.Is(err, ErrBudgetExceeded) {
+		t.Fatalf("expected user B to hit ErrBudgetExceeded from shared Default() budget, got %v", err)
+	}
+
+	// Lift the global budget cap, then trip user A's circuit breaker; user B must remain unaffected.
+	def.SetMaxEstimatedUSD(0)
+
+	rtAFail := gA.Transport(fakeRT{fn: func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusPaymentRequired,
+			Body:       io.NopCloser(strings.NewReader(`{"error":"payment required"}`)),
+			Header:     http.Header{},
+		}, nil
+	}}, CallMeta{UserID: uA, Scope: ScopeOuter})
+	reqA402, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/chat/completions", strings.NewReader(`{"u":"a","n":2}`))
+	respA402, err := rtAFail.RoundTrip(reqA402)
+	if err != nil {
+		t.Fatalf("unexpected transport error on 402: %v", err)
+	}
+	_ = respA402.Body.Close()
+
+	reqABlocked, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/chat/completions", strings.NewReader(`{"u":"a","n":3}`))
+	if _, err := rtAFail.RoundTrip(reqABlocked); !errors.Is(err, ErrCircuitOpen) {
+		t.Fatalf("expected user A to hit ErrCircuitOpen, got %v", err)
+	}
+
+	reqB2, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/chat/completions", strings.NewReader(`{"u":"b","n":2}`))
+	respB2, err := rtB.RoundTrip(reqB2)
+	if err != nil {
+		t.Fatalf("expected user B to succeed despite user A circuit open, got %v", err)
+	}
+	_ = respB2.Body.Close()
+}

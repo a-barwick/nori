@@ -11,6 +11,7 @@ import (
 	"nori/internal/connectors/nori"
 	"nori/internal/extensions"
 	"nori/internal/invoke"
+	"nori/internal/modelkeys"
 	"nori/internal/permissions"
 	"nori/internal/scheduler"
 	"nori/internal/secret"
@@ -26,6 +27,7 @@ type AssistantServices struct {
 	Adapters    *invoke.Registry
 	Scheduler   *scheduler.Service
 	MCP         *mcp.Service
+	ModelKeys   *modelkeys.Service
 	Tools       extensions.Source
 }
 
@@ -41,17 +43,35 @@ func credentialKeys(s settings.Settings) (rowstore.KeyWrapper, error) {
 		return wrapper, nil
 	}
 	c := s.Connections
-	switch {
-	case c.CredentialKey != "" || c.CredentialKeySecret != "":
+	var staticWrapper rowstore.KeyWrapper
+	if c.CredentialKey != "" || c.CredentialKeySecret != "" {
 		raw, err := secret.Resolve(context.Background(), Secrets(s), c.CredentialKey, c.CredentialKeySecret, "NORI_CREDENTIAL_KEY_SECRET")
 		if err != nil {
 			return nil, err
 		}
-		master, err := rowstore.ParseMasterKey(raw)
+		ring, err := rowstore.ParseKeyRing(raw)
 		if err != nil {
 			return nil, err
 		}
-		wrapper = master
+		staticWrapper = ring
+	}
+	switch {
+	case c.CredentialKMSKey != "":
+		kmsKey, err := rowstore.NewGCPKMSKey(rowstore.GCPKMSConfig{KeyName: c.CredentialKMSKey})
+		if err != nil {
+			return nil, err
+		}
+		if staticWrapper != nil {
+			ring, err := rowstore.NewKeyRing(kmsKey, staticWrapper)
+			if err != nil {
+				return nil, err
+			}
+			wrapper = ring
+		} else {
+			wrapper = kmsKey
+		}
+	case staticWrapper != nil:
+		wrapper = staticWrapper
 	case c.CredentialKeyFile != "":
 		if s.Cloud != "local" {
 			return nil, fmt.Errorf("NORI_CREDENTIAL_KEY_FILE is for local development only and requires NORI_CLOUD=local")
@@ -62,7 +82,7 @@ func credentialKeys(s settings.Settings) (rowstore.KeyWrapper, error) {
 		}
 		wrapper = local
 	default:
-		return nil, fmt.Errorf("NORI_CREDENTIAL_STORE=database needs NORI_CREDENTIAL_KEY, NORI_CREDENTIAL_KEY_SECRET (or NORI_CREDENTIAL_KEY_FILE on the local stack)")
+		return nil, fmt.Errorf("NORI_CREDENTIAL_STORE=database needs NORI_CREDENTIAL_KMS_KEY, NORI_CREDENTIAL_KEY, NORI_CREDENTIAL_KEY_SECRET (or NORI_CREDENTIAL_KEY_FILE on the local stack)")
 	}
 	return wrapper, nil
 }
@@ -121,8 +141,16 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 	nori.Register(adapters, nori.Adapter{Scheduler: sched, Unattended: s.Connections.UnattendedWrites})
 	servers := &mcp.Service{Store: store, Credentials: credentials, LocalProcesses: s.Cloud == "local", Commands: localCommands(s), RedirectURL: s.Connections.RedirectURL}
 	adapters.Register(extensions.AdapterMCP, "", mcp.Adapter{Service: servers})
+	var mk *modelkeys.Service
+	if s.Connections.CredentialStore == "database" {
+		mk = &modelkeys.Service{
+			Store:        credentials,
+			GatewayURL:   s.Models.GatewayURL,
+			BYOKRequired: s.Models.BYOKRequired,
+		}
+	}
 	return &AssistantServices{
-		Connections: conn, Permissions: perms, Adapters: adapters, Scheduler: sched, MCP: servers,
+		Connections: conn, Permissions: perms, Adapters: adapters, Scheduler: sched, MCP: servers, ModelKeys: mk,
 		Tools: extensions.Sources{nori.Source{}, conn, servers},
 	}, nil
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"nori/internal/state/docstore"
+	"nori/internal/users"
 )
 
 const (
@@ -101,6 +102,11 @@ func (b *backend) runReadCommittedAttempt(ctx context.Context, opts pgx.TxOption
 		return err
 	}
 	defer tx.Rollback(context.WithoutCancel(ctx))
+	if ownerID := users.ID(ctx); ownerID != "" {
+		if _, err := tx.Exec(ctx, "SELECT set_config('app.current_owner', $1, true)", ownerID); err != nil {
+			return err
+		}
+	}
 	if err := fn(tx); err != nil {
 		return err
 	}

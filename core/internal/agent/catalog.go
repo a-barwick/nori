@@ -11,8 +11,13 @@ import (
 )
 
 type Capabilities struct {
-	SearchKey string
-	Location  *time.Location
+	ExaSearchKey string
+	SearchKey    string
+	Location     *time.Location
+}
+
+func (c Capabilities) hasWebSearchKey() bool {
+	return c.ExaSearchKey != "" || c.SearchKey != ""
 }
 
 type Capability struct {
@@ -46,7 +51,7 @@ func (s *Service) catalog(dynamic []extensions.CapabilityState, snapshot *extens
 		}
 	}
 	search := prompts.Runtime("capability-available", nil)
-	if !s.usesNativeWebSearch() && s.Capabilities.SearchKey == "" {
+	if !s.usesNativeWebSearch() && !s.Capabilities.hasWebSearchKey() {
 		search = prompts.Runtime("capability-search-unavailable", nil)
 	}
 	catalog := []Capability{

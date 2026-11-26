@@ -24,12 +24,14 @@ const (
 	DefaultTaskConcurrency               = 64
 	DefaultConversationConcurrency       = 32
 	DefaultSchedulerConcurrency          = 16
+	DefaultMaxPerUserConcurrency         = 4
 	DefaultPollInterval                  = 2 * time.Second
 	DefaultRepairInterval                = 60 * time.Second
 	DefaultRenewInterval                 = 10 * time.Second
 	DefaultDrainTimeout                  = 25 * time.Second
 	DefaultCancelGrace                   = 5 * time.Second
 	DefaultBackoff                       = 2 * time.Second
+	perUserDeferMaxDelay                 = 500 * time.Millisecond
 	userWakeRenewTimeout                 = 5 * time.Second
 	repairAdvisoryLockKey          int64 = 7162384102
 )
@@ -42,6 +44,7 @@ type Options struct {
 	TaskConcurrency         int
 	ConversationConcurrency int
 	SchedulerConcurrency    int
+	MaxPerUserConcurrency   int
 
 	PollInterval   time.Duration
 	RepairInterval time.Duration
@@ -83,6 +86,9 @@ type Pool struct {
 	taskActive  atomic.Int64
 	convActive  atomic.Int64
 	schedActive atomic.Int64
+
+	userMu       sync.Mutex
+	activeByUser map[string]int
 
 	subMu     sync.Mutex
 	subs      map[docstore.TaskKey]map[uint64]chan struct{}
@@ -126,6 +132,9 @@ func New(svc *app.Service, opts Options) (*Pool, error) {
 	if opts.SchedulerConcurrency <= 0 {
 		opts.SchedulerConcurrency = DefaultSchedulerConcurrency
 	}
+	if opts.MaxPerUserConcurrency <= 0 {
+		opts.MaxPerUserConcurrency = DefaultMaxPerUserConcurrency
+	}
 	if opts.PollInterval <= 0 {
 		opts.PollInterval = DefaultPollInterval
 	}
@@ -155,11 +164,49 @@ func New(svc *app.Service, opts Options) (*Pool, error) {
 		taskWakeCh:   make(chan struct{}, 1),
 		convWakeCh:   make(chan struct{}, 1),
 		schedWakeCh:  make(chan struct{}, 1),
+		activeByUser: map[string]int{},
 		subs:         map[docstore.TaskKey]map[uint64]chan struct{}{},
 		drainCh:      make(chan struct{}),
 	}, nil
 }
 
+func (p *Pool) tryAcquireUser(userID string) bool {
+	if userID == "" || p.opts.MaxPerUserConcurrency <= 0 {
+		return true
+	}
+	p.userMu.Lock()
+	defer p.userMu.Unlock()
+	if p.activeByUser[userID] >= p.opts.MaxPerUserConcurrency {
+		return false
+	}
+	p.activeByUser[userID]++
+	return true
+}
+
+func (p *Pool) releaseUser(userID string) {
+	if userID == "" || p.opts.MaxPerUserConcurrency <= 0 {
+		return
+	}
+	p.userMu.Lock()
+	wasAtCap := p.activeByUser[userID] >= p.opts.MaxPerUserConcurrency
+	if n := p.activeByUser[userID]; n <= 1 {
+		delete(p.activeByUser, userID)
+	} else {
+		p.activeByUser[userID] = n - 1
+	}
+	p.userMu.Unlock()
+	if wasAtCap {
+		signalChan(p.taskWakeCh)
+		signalChan(p.schedWakeCh)
+	}
+}
+
+func (p *Pool) perUserDeferDelay() time.Duration {
+	if p.opts.Backoff > 0 && p.opts.Backoff < perUserDeferMaxDelay {
+		return p.opts.Backoff
+	}
+	return perUserDeferMaxDelay
+}
 func (p *Pool) Owner() string { return p.owner }
 
 func (p *Pool) LaneStats() LaneStats {
@@ -493,10 +540,20 @@ func (p *Pool) runTaskLoop(claimCtx, workCtx context.Context, workWG *sync.WaitG
 			}
 			continue
 		}
+		if !p.tryAcquireUser(claim.UserID) {
+			<-sem
+			rctx, cancel := context.WithTimeout(context.WithoutCancel(claimCtx), p.opts.CancelGrace)
+			if relErr := p.leases.ReleaseTask(rctx, claim.UserID, claim.RunID, p.owner, claim.WakeSeq, p.now().Add(p.perUserDeferDelay())); relErr != nil {
+				slog.WarnContext(claimCtx, "worker release deferred task failed", "owner", p.owner, "lane", "task", "user_id", claim.UserID, "run_id", claim.RunID, "err", relErr)
+			}
+			cancel()
+			continue
+		}
 		workWG.Add(1)
 		p.taskActive.Add(1)
 		go func(claim docstore.TaskLease) {
 			defer workWG.Done()
+			defer p.releaseUser(claim.UserID)
 			defer func() { <-sem }()
 			defer p.taskActive.Add(-1)
 			p.handleTask(workCtx, claim)
@@ -761,10 +818,20 @@ func (p *Pool) runSchedulerLoop(claimCtx, workCtx context.Context, workWG *sync.
 			}
 			continue
 		}
+		if !p.tryAcquireUser(uw.UserID) {
+			<-sem
+			rctx, cancel := context.WithTimeout(context.WithoutCancel(claimCtx), p.opts.CancelGrace)
+			if relErr := p.leases.ReleaseUserWake(rctx, uw.UserID, docstore.LaneScheduler, p.owner, uw.WakeSeq, p.now().Add(p.perUserDeferDelay())); relErr != nil {
+				slog.WarnContext(claimCtx, "worker release deferred user wake failed", "owner", p.owner, "lane", docstore.LaneScheduler, "user_id", uw.UserID, "err", relErr)
+			}
+			cancel()
+			continue
+		}
 		workWG.Add(1)
 		p.schedActive.Add(1)
 		go func(uw docstore.UserWake) {
 			defer workWG.Done()
+			defer p.releaseUser(uw.UserID)
 			defer func() { <-sem }()
 			defer p.schedActive.Add(-1)
 			p.handleScheduler(workCtx, uw)

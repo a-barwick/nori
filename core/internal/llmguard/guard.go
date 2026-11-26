@@ -223,7 +223,8 @@ type dupKey struct {
 }
 
 type Guard struct {
-	cfg Config
+	cfg    Config
+	parent *Guard
 
 	mu             sync.Mutex
 	globalInFlight int
@@ -233,9 +234,19 @@ type Guard struct {
 	stats          Snapshot
 }
 
+const maxUserGuards = 4096
+
+type userGuardEntry struct {
+	guard    *Guard
+	lastUsed time.Time
+}
+
 var (
 	defaultOnce  sync.Once
 	defaultGuard *Guard
+
+	userGuardsMu sync.Mutex
+	userGuards   = map[string]*userGuardEntry{}
 )
 
 func Default() *Guard {
@@ -245,6 +256,35 @@ func Default() *Guard {
 	return defaultGuard
 }
 
+func ForUser(userID string) *Guard {
+	if userID == "" {
+		return Default()
+	}
+	now := time.Now()
+	userGuardsMu.Lock()
+	defer userGuardsMu.Unlock()
+	if entry, ok := userGuards[userID]; ok {
+		entry.lastUsed = now
+		return entry.guard
+	}
+	if len(userGuards) >= maxUserGuards {
+		var oldestKey string
+		var oldestTime time.Time
+		for k, e := range userGuards {
+			if oldestKey == "" || e.lastUsed.Before(oldestTime) {
+				oldestKey = k
+				oldestTime = e.lastUsed
+			}
+		}
+		if oldestKey != "" {
+			delete(userGuards, oldestKey)
+		}
+	}
+	g := New(DefaultConfig())
+	g.parent = Default()
+	userGuards[userID] = &userGuardEntry{guard: g, lastUsed: now}
+	return g
+}
 func New(cfg Config) *Guard {
 	return &Guard{
 		cfg:        normalizeConfig(cfg),
@@ -318,6 +358,29 @@ func (g *Guard) Transport(base http.RoundTripper, defaults CallMeta) http.RoundT
 	return &guardedTransport{guard: g, base: base, defaults: defaults}
 }
 
+func (g *Guard) RecordActualCost(usd float64) {
+	if usd <= 0 {
+		return
+	}
+	g.mu.Lock()
+	g.stats.RecordedActualUSD += usd
+	g.mu.Unlock()
+	if g.parent != nil {
+		g.parent.RecordActualCost(usd)
+	}
+}
+
+func (g *Guard) RecordUnknownCost(usd float64) {
+	if usd <= 0 {
+		return
+	}
+	g.mu.Lock()
+	g.stats.EstimatedUnknownUSD += usd
+	g.mu.Unlock()
+	if g.parent != nil {
+		g.parent.RecordUnknownCost(usd)
+	}
+}
 func (g *Guard) SetMaxEstimatedUSD(usd float64) {
 	if usd < 0 {
 		usd = 0
@@ -593,25 +656,54 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 		return nil, fmt.Errorf("%w (scope=%s %d/hr)", ErrRateLimited, meta.Scope, policy.MaxPerHour)
 	}
 
+	var (
+		hasDup    bool
+		dk        dupKey
+		dupCutoff time.Time
+		dupRecent []time.Time
+	)
 	if bodyHash != "" && g.cfg.DuplicateMax > 0 {
-		dk := dupKey{user: meta.UserID, scope: meta.Scope, endpoint: endpoint, bodyHash: bodyHash}
-		dupCutoff := now.Add(-g.cfg.DuplicateWindow)
-		recent := pruneBefore(g.duplicates[dk], dupCutoff)
-		if len(recent) >= g.cfg.DuplicateMax {
-			g.duplicates[dk] = recent
+		hasDup = true
+		dk = dupKey{user: meta.UserID, scope: meta.Scope, endpoint: endpoint, bodyHash: bodyHash}
+		dupCutoff = now.Add(-g.cfg.DuplicateWindow)
+		dupRecent = pruneBefore(g.duplicates[dk], dupCutoff)
+		if len(dupRecent) >= g.cfg.DuplicateMax {
+			g.duplicates[dk] = dupRecent
 			g.stats.TotalBlocked++
 			g.stats.BlockedDuplicate++
 			slog.ErrorContext(ctx, "llmguard rejected call: identical payload storm detected",
 				"user_id", meta.UserID, "scope", meta.Scope, "endpoint", endpoint,
-				"repeats", len(recent), "window", g.cfg.DuplicateWindow.String())
-			return nil, fmt.Errorf("%w (scope=%s repeated %d times in %s)", ErrDuplicateStorm, meta.Scope, len(recent), g.cfg.DuplicateWindow)
+				"repeats", len(dupRecent), "window", g.cfg.DuplicateWindow.String())
+			return nil, fmt.Errorf("%w (scope=%s repeated %d times in %s)", ErrDuplicateStorm, meta.Scope, len(dupRecent), g.cfg.DuplicateWindow)
 		}
-		g.duplicates[dk] = append(recent, now)
+	}
+
+	var parentSettle func(int, *float64, error)
+	if g.parent != nil {
+		var err error
+		parentSettle, err = g.parent.admitGlobal(ctx, meta, now, estCallUSD)
+		if err != nil {
+			g.stats.TotalBlocked++
+			switch {
+			case errors.Is(err, ErrBudgetExceeded):
+				g.stats.BlockedBudget++
+			case errors.Is(err, ErrCallLimitExceeded):
+				g.stats.BlockedCallLimit++
+			case errors.Is(err, ErrConcurrencyLimited):
+				g.stats.BlockedConcurrency++
+			case errors.Is(err, ErrRateLimited):
+				g.stats.BlockedRate++
+			}
+			return nil, err
+		}
+	}
+
+	if hasDup {
+		g.duplicates[dk] = append(dupRecent, now)
 		if len(g.duplicates) > 2048 {
 			g.gcDuplicatesLocked(dupCutoff)
 		}
 	}
-
 	g.globalInFlight++
 	st.inFlight++
 	g.stats.InFlightEstimatedUSD += estCallUSD
@@ -625,19 +717,96 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 		once.Do(func() {
 			now := g.now()
 			g.mu.Lock()
-			defer g.mu.Unlock()
-			g.globalInFlight--
-			st.inFlight--
+			if g.globalInFlight > 0 {
+				g.globalInFlight--
+			}
+			if st.inFlight > 0 {
+				st.inFlight--
+			}
 			g.stats.InFlightEstimatedUSD = max(0, g.stats.InFlightEstimatedUSD-estCallUSD)
 			if actual != nil {
 				g.stats.RecordedActualUSD += *actual
-			} else if resultErr != nil || status >= 200 && status < 300 {
+			} else if resultErr != nil || (status >= 200 && status < 300) {
 				g.stats.EstimatedUnknownUSD += estCallUSD
 			}
 			g.observeLocked(ctx, now, st, meta, status, resultErr)
+			g.mu.Unlock()
+			if parentSettle != nil {
+				parentSettle(status, actual, resultErr)
+			}
 		})
 	}
 	return settle, nil
+}
+
+func (g *Guard) admitGlobal(ctx context.Context, meta CallMeta, now time.Time, estCallUSD float64) (func(int, *float64, error), error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.cfg.MaxTotalCalls > 0 && g.stats.TotalAdmitted >= int64(g.cfg.MaxTotalCalls) {
+		g.stats.TotalBlocked++
+		g.stats.BlockedCallLimit++
+		slog.ErrorContext(ctx, "llmguard rejected call: global total call limit exceeded",
+			"user_id", meta.UserID, "scope", meta.Scope,
+			"total_admitted", g.stats.TotalAdmitted, "max_calls", g.cfg.MaxTotalCalls)
+		return nil, fmt.Errorf("%w (admitted %d >= limit %d)", ErrCallLimitExceeded, g.stats.TotalAdmitted, g.cfg.MaxTotalCalls)
+	}
+
+	if g.cfg.MaxEstimatedUSD > 0 {
+		projected := g.stats.RecordedActualUSD + g.stats.EstimatedUnknownUSD + g.stats.InFlightEstimatedUSD + estCallUSD
+		if projected > g.cfg.MaxEstimatedUSD {
+			g.stats.TotalBlocked++
+			g.stats.BlockedBudget++
+			slog.ErrorContext(ctx, "llmguard rejected call: global estimated spend ceiling exceeded",
+				"user_id", meta.UserID, "scope", meta.Scope,
+				"recorded_usd", g.stats.RecordedActualUSD, "estimated_unknown_usd", g.stats.EstimatedUnknownUSD,
+				"in_flight_estimated_usd", g.stats.InFlightEstimatedUSD, "limit_usd", g.cfg.MaxEstimatedUSD)
+			return nil, fmt.Errorf("%w (projected $%.4f > limit $%.4f)", ErrBudgetExceeded, projected, g.cfg.MaxEstimatedUSD)
+		}
+	}
+
+	if g.globalInFlight >= g.cfg.GlobalMaxInFlight {
+		g.stats.TotalBlocked++
+		g.stats.BlockedConcurrency++
+		slog.WarnContext(ctx, "llmguard rejected call: global concurrency limit reached",
+			"user_id", meta.UserID, "scope", meta.Scope, "global_in_flight", g.globalInFlight)
+		return nil, fmt.Errorf("%w (global in_flight=%d)", ErrConcurrencyLimited, g.globalInFlight)
+	}
+
+	minuteCutoff := now.Add(-time.Minute)
+	g.globalMinute = pruneBefore(g.globalMinute, minuteCutoff)
+	if len(g.globalMinute) >= g.cfg.GlobalMaxPerMinute {
+		g.stats.TotalBlocked++
+		g.stats.BlockedRate++
+		slog.ErrorContext(ctx, "llmguard rejected call: global per-minute rate limit exceeded",
+			"user_id", meta.UserID, "scope", meta.Scope, "global_per_min", len(g.globalMinute))
+		return nil, fmt.Errorf("%w (global %d/min)", ErrRateLimited, g.cfg.GlobalMaxPerMinute)
+	}
+
+	g.globalInFlight++
+	g.stats.InFlightEstimatedUSD += estCallUSD
+	g.globalMinute = append(g.globalMinute, now)
+	g.stats.TotalAdmitted++
+
+	var once sync.Once
+	return func(status int, actual *float64, resultErr error) {
+		once.Do(func() {
+			g.mu.Lock()
+			defer g.mu.Unlock()
+			if g.globalInFlight > 0 {
+				g.globalInFlight--
+			}
+			g.stats.InFlightEstimatedUSD = max(0, g.stats.InFlightEstimatedUSD-estCallUSD)
+			if actual != nil {
+				g.stats.RecordedActualUSD += *actual
+			} else if resultErr != nil || (status >= 200 && status < 300) {
+				g.stats.EstimatedUnknownUSD += estCallUSD
+			}
+			if resultErr != nil {
+				g.stats.UnknownAborts++
+			}
+		})
+	}, nil
 }
 
 func (g *Guard) observeLocked(ctx context.Context, now time.Time, st *scopeState, meta CallMeta, status int, resultErr error) {
