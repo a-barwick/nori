@@ -15,6 +15,7 @@ import (
 	"nori/internal/state"
 	"nori/internal/state/docstore"
 	"nori/internal/state/encrypted"
+	"nori/internal/state/gcs"
 	"nori/internal/state/localfs"
 	"nori/internal/state/postgres"
 	"nori/internal/state/records"
@@ -29,6 +30,7 @@ type Storage struct {
 	Now       func() time.Time
 	mu        sync.Mutex
 	s3        *s3.Client
+	gcs       *gcs.Client
 	dekCache  *tenantkey.Cache
 }
 
@@ -166,19 +168,32 @@ func (p *Storage) wrapUserArtifacts(s settings.Settings, user users.User, resour
 }
 
 func (p *Storage) openObjects(ctx context.Context, s settings.Settings, user users.User) (state.ArtifactStore, error) {
-	if s.Cloud != "aws" {
-		return nil, fmt.Errorf("object storage requires NORI_CLOUD=aws (or NORI_LOCAL_ARTIFACT_DIR on NORI_CLOUD=local)")
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.s3 == nil {
-		c, err := s3.OpenClient(ctx, s.AWS.Region)
-		if err != nil {
-			return nil, err
+	switch s.Cloud {
+	case "aws":
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.s3 == nil {
+			c, err := s3.OpenClient(ctx, s.AWS.Region)
+			if err != nil {
+				return nil, err
+			}
+			p.s3 = c
 		}
-		p.s3 = c
+		return p.s3.ForUser(s.Store.ArtifactBucket, user)
+	case "gcp":
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.gcs == nil {
+			c, err := gcs.OpenClient(ctx)
+			if err != nil {
+				return nil, err
+			}
+			p.gcs = c
+		}
+		return p.gcs.ForUser(s.Store.ArtifactBucket, user)
+	default:
+		return nil, fmt.Errorf("object storage requires NORI_CLOUD=aws or NORI_CLOUD=gcp (or NORI_LOCAL_ARTIFACT_DIR on NORI_CLOUD=local)")
 	}
-	return p.s3.ForUser(s.Store.ArtifactBucket, user)
 }
 
 func (p *Storage) Close() error {
@@ -233,11 +248,16 @@ func OpenStore(ctx context.Context, s settings.Settings, user users.User) (state
 	if local != nil {
 		return meteredStore(s, user, state.Compose(documents, local))
 	}
-	if s.Cloud != "aws" {
+	var objects state.ArtifactStore
+	switch s.Cloud {
+	case "aws":
+		objects, err = s3.Open(ctx, s.AWS.Region, s.Store.ArtifactBucket, user)
+	case "gcp":
+		objects, err = gcs.Open(ctx, s.Store.ArtifactBucket, user)
+	default:
 		_ = documents.Close()
-		return nil, fmt.Errorf("object storage requires NORI_CLOUD=aws (or NORI_LOCAL_ARTIFACT_DIR on NORI_CLOUD=local)")
+		return nil, fmt.Errorf("object storage requires NORI_CLOUD=aws or NORI_CLOUD=gcp (or NORI_LOCAL_ARTIFACT_DIR on NORI_CLOUD=local)")
 	}
-	objects, err := s3.Open(ctx, s.AWS.Region, s.Store.ArtifactBucket, user)
 	if err != nil {
 		_ = documents.Close()
 		return nil, err
