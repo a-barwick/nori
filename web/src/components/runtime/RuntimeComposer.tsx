@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Plus, RotateCw, X } from "lucide-react";
+import { stripSearchParams } from "@/lib/browser";
 import { useBlobURL } from "@/lib/useBlobURL";
 import { hasSubmission, MAX_FILE_BYTES, MAX_MESSAGE_BYTES } from "@/lib/submission";
 import type { DraftFile } from "@/lib/types";
@@ -75,8 +76,7 @@ export function RuntimeComposer({
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
     if (url.searchParams.get("compose") !== "1") return;
-    url.searchParams.delete("compose");
-    window.history.replaceState(window.history.state, "", url);
+    stripSearchParams(["compose"]);
     requestAnimationFrame(() => {
       const el = area.current;
       if (!el) return;

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
+import { asFetch } from "@/lib/test-fetch";
 import { MAX_FILE_BYTES } from "../submission";
 import { assistantRoute, fileRoute, operationRoute, uploadRoute, validSegment } from "./forward";
 import * as settingsRoute from "@/app/api/v1/settings/[[...path]]/route";
@@ -119,7 +120,7 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     onRuntime: (url: URL, init?: RequestInit) => Response | Promise<Response>,
   ) {
     const { jwks } = await getKeys();
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = asFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url === `${ISSUER}/.well-known/openid-configuration`) {
         return Response.json({ issuer: ISSUER, jwks_uri: JWKS_URI });
@@ -134,7 +135,7 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
         return onRuntime(new URL(url), init);
       }
       throw new Error(`Unexpected fetch URL: ${url}`);
-    }) as unknown as typeof fetch;
+    });
   }
 
   test("validSegment and assistantRoute reject path traversal, encoded dots, invalid chars, and unknown families with 404", async () => {

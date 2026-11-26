@@ -9,6 +9,7 @@ import {
   saveModelKey,
   type ModelKeysResponse,
 } from "@/lib/assistant/api";
+import { asFetch } from "@/lib/test-fetch";
 import { ApiKeysContent, needsByokSetup } from "./ApiKeysSettings";
 
 describe("BYOK API Keys client and Settings UI", () => {
@@ -20,7 +21,7 @@ describe("BYOK API Keys client and Settings UI", () => {
 
   test("fetchModelKeys, saveModelKey, and deleteModelKey match the REST contract and surface server errors", async () => {
     const calls: { url: string; method: string; body?: string }[] = [];
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = asFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       calls.push({
         url,
@@ -62,7 +63,7 @@ describe("BYOK API Keys client and Settings UI", () => {
         });
       }
       return Response.json({ error: "not found" }, { status: 404 });
-    }) as unknown as typeof fetch;
+    });
 
     const list = await fetchModelKeys();
     assert.equal(list.byok_required, false);

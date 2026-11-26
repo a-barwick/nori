@@ -37,7 +37,6 @@ function clearLocalData(scope: string) {
     for (const key of [
       `nori.onboarding.done:${scope}`,
       `nori-draft-assistant-v1:${scope}`,
-      `nori-diagnostics-model-selection-v1:${scope}`,
       "nori-diagnostics-debug",
       "nori.appearance",
     ]) localStorage.removeItem(key);

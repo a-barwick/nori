@@ -1,21 +1,104 @@
 "use client";
 
-import type { APIError as APIErrorBody, MutationReceipt } from "@/lib/contracts/assistant";
-import type { ModelSelection } from "@/lib/types";
+import type { APIError as APIErrorBody, AutomationEditable, AutomationPreview, MutationReceipt } from "@/lib/contracts/assistant";
+import type { ModelSelection, Session } from "@/lib/types";
+import { SERVICE_UNAVAILABLE } from "@/lib/runtime/messages";
+import { SIGNED_OUT_EVENT_KEY } from "@/lib/runtime/session";
 import { beginReset, finishReset, requestResetCheck } from "./resetState";
 
 export const assistantURL = (path: string) => `/api/v1${path}`;
+export const ACCOUNT_DELETED_REDIRECT = "/signed-out?deleted=1";
 
 export class APIError extends Error {
   constructor(message: string, readonly status: number, readonly body?: Partial<APIErrorBody> & Record<string, unknown>) { super(message); }
   get code() { return this.body?.code; }
   get accepted() { return !!this.body?.accepted; }
   get stale() { return this.status === 409; }
+  get unavailable() { return this.status === 503 || this.code === "service_unavailable"; }
+}
+
+export function isUnavailableError(error: unknown): boolean {
+  if (error instanceof APIError) return error.unavailable;
+  return error instanceof Error && error.message === SERVICE_UNAVAILABLE;
 }
 
 export async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(assistantURL(path), { cache: "no-store", signal, redirect: "error" });
   return readJSON<T>(response);
+}
+
+export async function postJSON<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(assistantURL(path), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store",
+    redirect: "error",
+    signal,
+  });
+  return readJSON<T>(response);
+}
+
+export async function postRuntimeOperation<T>(
+  operation: string,
+  payload: object,
+  options?: { signal?: AbortSignal; headers?: Record<string, string> },
+): Promise<T> {
+  const response = await fetch(`/api/${operation}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+    redirect: "error",
+    signal: options?.signal,
+  });
+  return readJSON<T>(response);
+}
+
+export function fetchSnapshot(before?: string, signal?: AbortSignal): Promise<Session> {
+  const query = before ? `?before=${encodeURIComponent(before)}` : "";
+  return getJSON<Session>(`/snapshot${query}`, signal);
+}
+
+export function previewAutomation(value: AutomationEditable, signal?: AbortSignal): Promise<AutomationPreview> {
+  return postJSON<AutomationPreview>("/automations/preview", value, signal);
+}
+
+export function startGoogleDrivePicker(connectionId: string, returnTo = "/apps"): Promise<{ authorize_url?: string }> {
+  return postJSON<{ authorize_url?: string }>(
+    `/connections/${encodeURIComponent(connectionId)}/google-drive/picker`,
+    { return_to: returnTo },
+  );
+}
+
+export async function fetchLibraryText(itemId: string, live: boolean, signal?: AbortSignal): Promise<string | undefined> {
+  const path = live ? assistantURL(`/library/${encodeURIComponent(itemId)}/file`) : assistantURL(`/results/${encodeURIComponent(itemId)}`);
+  const response = await fetch(path, { cache: "no-store", redirect: "error", signal });
+  if (!response.ok) return undefined;
+  const type = response.headers.get("content-type") ?? "";
+  const body = type.includes("json") ? (await response.json().catch(() => null))?.text : await response.text();
+  return typeof body === "string" ? body : undefined;
+}
+
+export async function fetchFileBlob(url: string, mediaType: string | undefined, signal?: AbortSignal): Promise<Blob> {
+  const response = await fetch(url, { cache: "no-store", redirect: "error", signal });
+  if (!response.ok) throw new APIError("This file is no longer available.", response.status);
+  return new Blob([await response.arrayBuffer()], { type: mediaType });
+}
+
+export async function deleteAccount(confirmation: string, resumePending = false): Promise<void> {
+  const response = await fetch(assistantURL("/settings/account/delete"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmation, ...(resumePending ? { resume_pending: true } : {}) }),
+    cache: "no-store",
+    redirect: "error",
+  });
+  if (response.status === 204 || response.status === 200) {
+    try { window.localStorage.setItem(SIGNED_OUT_EVENT_KEY, String(Date.now())); } catch {}
+    return;
+  }
+  await readJSON(response, false);
 }
 
 async function readJSON<T>(response: Response, signalReset = true): Promise<T> {
@@ -196,7 +279,6 @@ export async function deleteModelKey(provider: string): Promise<ModelKeyProvider
 }
 
 export async function resetUserData(resumePending = false): Promise<void> {
-  const started = performance.now();
   let failure: unknown;
   beginReset();
   try {
@@ -211,8 +293,6 @@ export async function resetUserData(resumePending = false): Promise<void> {
   } catch (error) {
     failure = error instanceof APIError ? error : new APIError("Nori could not confirm the reset. Try again.", 0);
   } finally {
-    const remaining = Math.max(0, 2_000 - (performance.now() - started));
-    if (remaining) await new Promise<void>((resolve) => setTimeout(resolve, remaining));
     finishReset();
   }
   if (failure) {

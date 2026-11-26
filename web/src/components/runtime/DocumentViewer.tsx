@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
 import { Check, Copy, Download, X } from "lucide-react";
 import { Dialog } from "radix-ui";
 import { Markdown } from "@/components/chat/Markdown";
 import { Button, IconButton } from "@/components/ui/primitives";
+import { downloadBlob, useCopyToClipboard } from "@/lib/browser";
 import { documentTitle } from "@/lib/utils";
 import { shortDate } from "@/lib/time";
 
@@ -15,17 +15,12 @@ export function DocumentViewer({
   document: { body: string; at: number } | null;
   onClose: () => void;
 }) {
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyToClipboard();
   const title = documentTitle(document?.body ?? "");
 
   const download = () => {
     if (!document) return;
-    const url = URL.createObjectURL(new Blob([document.body], { type: "text/markdown" }));
-    const link = window.document.createElement("a");
-    link.href = url;
-    link.download = `${title.replace(/[^\p{L}\p{N} -]/gu, "").slice(0, 80) || "Nori document"}.md`;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    downloadBlob(document.body, `${title.replace(/[^\p{L}\p{N} -]/gu, "").slice(0, 80) || "Nori document"}.md`);
   };
 
   return (
@@ -51,10 +46,7 @@ export function DocumentViewer({
                 size="sm"
                 variant="quiet"
                 onClick={() => {
-                  if (!document) return;
-                  void navigator.clipboard?.writeText(document.body);
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 1400);
+                  if (document) copy(document.body);
                 }}
               >
                 {copied ? <Check size={14} strokeWidth={1.8} /> : <Copy size={14} strokeWidth={1.8} />}

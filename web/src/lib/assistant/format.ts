@@ -24,6 +24,26 @@ function localCalendarDay(value: number, timeZone: string) {
   return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(value);
 }
 
+export function localDateString(date: Date): string {
+  if (!Number.isFinite(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const dayOfMonth = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${dayOfMonth}`;
+}
+
+export function localTimeString(date: Date): string {
+  if (!Number.isFinite(date.getTime())) return "";
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
+export function toValidISOString(value: string): string | undefined {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+}
+
 export function scheduleDate(iso: string | undefined, timeZone: string): string {
   if (!iso || !Number.isFinite(Date.parse(iso))) return "";
   return localCalendarDay(Date.parse(iso), timeZone);

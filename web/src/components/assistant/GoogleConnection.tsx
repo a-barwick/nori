@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/primitives";
-import { APIError, assistantURL, mutate, newRequestID } from "@/lib/assistant/api";
+import { APIError, mutate, newRequestID, startGoogleDrivePicker } from "@/lib/assistant/api";
 import { useAction, useResource, useResourceInvalidation } from "@/lib/assistant/useResource";
+import { useStripSearchParams } from "@/lib/browser";
 import type { Connection, Integration, Resource } from "@/lib/contracts/assistant";
 import { startSignIn, connectionState } from "./AppsScreen";
 import { safeAuthorizeURL } from "./InteractionCard";
@@ -25,16 +26,12 @@ const services: Service[] = [
   { id: "gmail", title: "Gmail", description: "Send messages and attachments after your approval.", capabilities: ["mail.send"] },
 ];
 
+const RETURN_PARAMS = ["result", "connection"] as const;
+
 function useGoogleReturn() {
   const params = useSearchParams();
-  const [result] = useState(() => params.get("mcp") ? null : params.get("result"));
-  useEffect(() => {
-    if (!result) return;
-    const url = new URL(window.location.href);
-    url.searchParams.delete("result");
-    url.searchParams.delete("connection");
-    window.history.replaceState(window.history.state, "", url);
-  }, [result]);
+  const [result] = useState(() => (params.get("mcp") ? null : params.get("result")));
+  useStripSearchParams(RETURN_PARAMS, !!result);
   return result;
 }
 
@@ -122,12 +119,8 @@ function GoogleDriveFiles({ connection }: { connection: Connection }) {
   const action = useAction();
   const files = resources.data?.items.filter((item) => item.kind === "drive_file") ?? [];
   const chooseFiles = () => action.run("choose", async () => {
-    const response = await fetch(assistantURL(`/connections/${encodeURIComponent(connection.id)}/google-drive/picker`), {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ return_to: "/apps" }), cache: "no-store", redirect: "error",
-    });
-    const data = await response.json().catch(() => null) as { authorize_url?: string; error?: string } | null;
-    if (!response.ok) throw new Error(data?.error || "Couldn’t open Google Drive. Try again.");
-    const url = data?.authorize_url && safeAuthorizeURL(data.authorize_url);
+    const data = await startGoogleDrivePicker(connection.id, "/apps");
+    const url = data.authorize_url && safeAuthorizeURL(data.authorize_url);
     if (!url) throw new Error("Nori didn’t return a Google Drive link. Try again.");
     window.location.assign(url);
   });

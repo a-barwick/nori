@@ -6,8 +6,8 @@ import { useState } from "react";
 import { ArrowUpRight, CalendarCheck2, Check, CheckCircle2, ChevronRight, Circle, FileText, MailCheck, Plane, Plus, Sparkles, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { APIError, mutate, newRequestID } from "@/lib/assistant/api";
-import { useAssistant } from "@/lib/assistant/context";
-import { day, relative } from "@/lib/assistant/format";
+import { useAssistant, useAssistantConfig } from "@/lib/assistant/context";
+import { day, relative, toValidISOString } from "@/lib/assistant/format";
 import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant/useResource";
 import type { Automation, Goal, GoalEditable, LibraryItem, WorkItem } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
@@ -288,14 +288,14 @@ export function GoalsScreen() {
 
 export function GoalDetailScreen({ id }: { id: string }) {
   const invalidate = useResourceInvalidation();
-  const { has } = useAssistant();
+  const { has } = useAssistantConfig();
   const goal = useResource<Goal>(`/goals/${encodeURIComponent(id)}`, { poll: 20_000 });
-  const work = useResource<List<WorkItem>>(has("work") ? "/work" : null, { poll: 0 });
-  const automations = useResource<List<Automation>>(has("automations") ? "/automations" : null, { poll: 0 });
-  const library = useResource<List<LibraryItem>>(has("library") ? "/library" : null, { poll: 0 });
+  const item = goal.data;
+  const work = useResource<List<WorkItem>>(has("work") && item?.linked.task_ids.length ? "/work" : null, { poll: 0 });
+  const automations = useResource<List<Automation>>(has("automations") && item?.linked.automation_ids.length ? "/automations" : null, { poll: 0 });
+  const library = useResource<List<LibraryItem>>(has("library") && item?.linked.result_ids.length ? "/library" : null, { poll: 0 });
   const action = useAction();
   const [keepMonitors, setKeepMonitors] = useState(false);
-  const item = goal.data;
 
   if (goal.loading) {
     return (
@@ -498,7 +498,7 @@ export function GoalDetailScreen({ id }: { id: string }) {
               body="Nori stops following up and its routines stop. Saved results stay in Artifacts."
               onConfirm={() => void act({ action: "abandon" }, "abandon")}
               trigger={
-                <Button variant="quiet" className="text-danger!" disabled={!!action.pending}>
+                <Button variant="danger-quiet" disabled={!!action.pending}>
                   Drop
                 </Button>
               }
@@ -511,7 +511,7 @@ export function GoalDetailScreen({ id }: { id: string }) {
 }
 
 export function GoalEditorScreen({ id }: { id?: string }) {
-  const { has } = useAssistant();
+  const { has } = useAssistantConfig();
   const existing = useResource<Goal>(id ? `/goals/${encodeURIComponent(id)}` : null, { poll: 0 });
   if (!has("goals")) {
     return (
@@ -530,28 +530,38 @@ export function GoalEditorScreen({ id }: { id?: string }) {
   return <GoalEditor key={existing.data?.revision ?? "new"} existing={existing.data} />;
 }
 
+type CriterionDraft = { key: string; id?: string; text: string };
+
+function newCriterion(text = "", id?: string): CriterionDraft {
+  return { key: id ?? crypto.randomUUID(), ...(id ? { id } : {}), text };
+}
+
 function GoalEditor({ existing }: { existing?: Goal }) {
   const invalidate = useResourceInvalidation();
   const router = useRouter();
   const action = useAction();
   const [title, setTitle] = useState(existing?.title ?? "");
   const [outcome, setOutcome] = useState(existing?.outcome ?? "");
-  const [criteria, setCriteria] = useState<{ id?: string; text: string }[]>(
-    existing?.completion_criteria.map(({ id, text }) => ({ id, text })) ?? [{ text: "" }],
+  const [criteria, setCriteria] = useState<CriterionDraft[]>(
+    () => existing?.completion_criteria.map(({ id, text }) => newCriterion(text, id)) ?? [newCriterion()],
   );
   const [deadline, setDeadline] = useState(existing?.deadline?.slice(0, 10) ?? "");
   const [followUp, setFollowUp] = useState<NonNullable<GoalEditable["follow_up"]>>(existing?.follow_up ?? "remind");
 
   const save = () =>
     action.run("save", async () => {
+      const deadlineISO = deadline ? toValidISOString(`${deadline}T23:59:59`) : undefined;
+      if (deadline && !deadlineISO) {
+        throw new Error("Enter a valid target date.");
+      }
       const value: GoalEditable = {
         title: title.trim(),
         outcome: outcome.trim(),
         completion_criteria: criteria
           .filter((criterion) => criterion.text.trim())
-          .map((criterion) => ({ ...criterion, text: criterion.text.trim() })),
+          .map(({ id, text }) => ({ ...(id ? { id } : {}), text: text.trim() })),
         follow_up: followUp,
-        ...(deadline ? { deadline: new Date(`${deadline}T23:59:59`).toISOString() } : {}),
+        ...(deadlineISO ? { deadline: deadlineISO } : {}),
       };
       const receipt = existing
         ? await mutate<Goal>(
@@ -590,12 +600,12 @@ function GoalEditor({ existing }: { existing?: Goal }) {
           <legend className="mb-1.5 text-meta font-medium">Done when</legend>
           <ul className="space-y-2">
             {criteria.map((criterion, index) => (
-              <li key={index} className="flex gap-2">
+              <li key={criterion.key} className="flex gap-2">
                 <input
                   aria-label={`Criterion ${index + 1}`}
                   value={criterion.text}
                   onChange={(event) =>
-                    setCriteria(criteria.map((other, n) => (n === index ? { ...other, text: event.target.value } : other)))
+                    setCriteria(criteria.map((other) => (other.key === criterion.key ? { ...other, text: event.target.value } : other)))
                   }
                   className={inputClass}
                   placeholder="Appointment exists on my calendar"
@@ -604,7 +614,7 @@ function GoalEditor({ existing }: { existing?: Goal }) {
                   <Button
                     variant="quiet"
                     aria-label={`Remove criterion ${index + 1}`}
-                    onClick={() => setCriteria(criteria.filter((_, n) => n !== index))}
+                    onClick={() => setCriteria(criteria.filter((other) => other.key !== criterion.key))}
                   >
                     <Trash2 size={15} aria-hidden />
                   </Button>
@@ -612,7 +622,7 @@ function GoalEditor({ existing }: { existing?: Goal }) {
               </li>
             ))}
           </ul>
-          <Button size="sm" variant="quiet" className="mt-2" onClick={() => setCriteria([...criteria, { text: "" }])}>
+          <Button size="sm" variant="quiet" className="mt-2" onClick={() => setCriteria([...criteria, newCriterion()])}>
             <Plus size={14} aria-hidden />
             Add
           </Button>

@@ -91,6 +91,14 @@
   --dur-arrive: 450ms;
   --dur-spring: 320ms;
   --panel-w: 440px;
+
+  --swatch-light-bg: #ffffff;
+  --swatch-dark-bg: #000000;
+  --swatch-light-bubble: #5000ff;
+  --swatch-dark-bubble: #7a3df6;
+  --swatch-light-line: #e7e2ef;
+  --swatch-dark-line: #261f38;
+  --swatch-system-line: rgba(169, 138, 255, 0.6);
 }
 
 :root[data-appearance="dark"] {

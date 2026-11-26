@@ -61,30 +61,72 @@ export function evictResolvedUser(userID: string): void {
   }
 }
 
-export async function resolveUser(headers: Headers, target = runtimeTarget(runtimeMode(headers))): Promise<ScopedRuntime | AccessFailure> {
+const USER_ID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+
+async function requestUserAccount(
+  headers: Headers,
+  target: RuntimeTarget | Response,
+  options: {
+    endpoint: string;
+    stage: string;
+    extraPayload?: Record<string, string>;
+    useCache?: boolean;
+    onClientError: (response: Response) => Promise<AccessFailure>;
+  },
+): Promise<ScopedRuntime | AccessFailure> {
   if (isSignedOut(headers)) return denied;
   if (target instanceof Response) return unavailable;
   if (target.mode === "local" && !localDevelopment(headers)) return denied;
   const identity = await identify(headers);
   if (!identity) return denied;
   const key = identityKey(target, identity);
-  const known = resolved.get(key);
-  if (known && known.expires > Date.now()) return { ...target, userID: known.userID, identity };
+  if (options.useCache) {
+    const known = resolved.get(key);
+    if (known && known.expires > Date.now()) return { ...target, userID: known.userID, identity };
+  }
   try {
-    const payload: Record<string, string> = { email: identity.email };
+    const payload: Record<string, string> = { email: identity.email, ...options.extraPayload };
     if (identity.name) payload.name = identity.name;
-    const response = await fetch(new URL("api/users/resolve", target.base), {
-      method: "POST", headers: { "Content-Type": "application/json", ...await runtimeHeaders(target.mode), ...identityHeaders(identity) },
-      body: JSON.stringify(payload), cache: "no-store", redirect: "error",
+    const response = await fetch(new URL(options.endpoint, target.base), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...await runtimeHeaders(target.mode), ...identityHeaders(identity) },
+      body: JSON.stringify(payload),
+      cache: "no-store",
+      redirect: "error",
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) {
-      rejected("user_resolution", response.status);
+      rejected(options.stage, response.status);
       if (response.status === 429) {
         void response.body?.cancel().catch(() => undefined);
         const retryAfter = response.headers.get("retry-after") ?? "";
         return { status: 429, error: "Nori is busy. Try again shortly.", retryAfter: /^\d{1,6}$/.test(retryAfter) ? retryAfter : undefined };
       }
+      if (response.status === 400 || response.status === 403) {
+        return options.onClientError(response);
+      }
+      void response.body?.cancel().catch(() => undefined);
+      return unavailable;
+    }
+    const value = await response.json();
+    if (typeof value.id !== "string" || !(value.id === "owner" || USER_ID_PATTERN.test(value.id))) return unavailable;
+    if (resolved.size >= 1000) resolved.clear();
+    if (target.mode === "local" || response.headers.get("x-nori-identity-bound") === "1") {
+      resolved.set(key, { userID: value.id, expires: Date.now() + RESOLVED_TTL_MS });
+    }
+    return { ...target, userID: value.id, identity };
+  } catch {
+    rejected(`${options.stage}_connection`);
+    return unavailable;
+  }
+}
+
+export async function resolveUser(headers: Headers, target = runtimeTarget(runtimeMode(headers))): Promise<ScopedRuntime | AccessFailure> {
+  return requestUserAccount(headers, target, {
+    endpoint: "api/users/resolve",
+    stage: "user_resolution",
+    useCache: true,
+    onClientError: async (response) => {
       if (response.status === 403) {
         try {
           const body = await response.json() as { error?: unknown; code?: unknown };
@@ -102,18 +144,8 @@ export async function resolveUser(headers: Headers, target = runtimeTarget(runti
       }
       void response.body?.cancel().catch(() => undefined);
       return unavailable;
-    }
-    const value = await response.json();
-    if (typeof value.id !== "string" || !(value.id === "owner" || /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value.id))) return unavailable;
-    if (resolved.size >= 1000) resolved.clear();
-    if (target.mode === "local" || response.headers.get("x-nori-identity-bound") === "1") {
-      resolved.set(key, { userID: value.id, expires: Date.now() + RESOLVED_TTL_MS });
-    }
-    return { ...target, userID: value.id, identity };
-  } catch {
-    rejected("user_resolution_connection");
-    return unavailable;
-  }
+    },
+  });
 }
 
 export async function redeemInvite(
@@ -121,60 +153,32 @@ export async function redeemInvite(
   inviteCode: string,
   target = runtimeTarget(runtimeMode(headers)),
 ): Promise<ScopedRuntime | AccessFailure> {
-  if (isSignedOut(headers)) return denied;
-  if (target instanceof Response) return unavailable;
-  if (target.mode === "local" && !localDevelopment(headers)) return denied;
-  const identity = await identify(headers);
-  if (!identity) return denied;
   const trimmedCode = inviteCode.trim();
   if (!trimmedCode) {
+    if (isSignedOut(headers)) return denied;
+    if (target instanceof Response) return unavailable;
+    if (target.mode === "local" && !localDevelopment(headers)) return denied;
+    if (!(await identify(headers))) return denied;
     return { status: 400, error: "Invite code is required.", code: "invite_code_required" };
   }
-  const key = identityKey(target, identity);
-  try {
-    const payload: Record<string, string> = { email: identity.email, invite_code: trimmedCode };
-    if (identity.name) payload.name = identity.name;
-    const response = await fetch(new URL("api/users/redeem", target.base), {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...await runtimeHeaders(target.mode), ...identityHeaders(identity) },
-      body: JSON.stringify(payload),
-      cache: "no-store",
-      redirect: "error",
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) {
-      rejected("invite_redemption", response.status);
-      if (response.status === 429) {
-        void response.body?.cancel().catch(() => undefined);
-        const retryAfter = response.headers.get("retry-after") ?? "";
-        return { status: 429, error: "Nori is busy. Try again shortly.", retryAfter: /^\d{1,6}$/.test(retryAfter) ? retryAfter : undefined };
+  return requestUserAccount(headers, target, {
+    endpoint: "api/users/redeem",
+    stage: "invite_redemption",
+    extraPayload: { invite_code: trimmedCode },
+    onClientError: async (response) => {
+      const status = response.status as 400 | 403;
+      try {
+        const body = await response.json() as { error?: unknown; code?: unknown };
+        return {
+          status,
+          error: typeof body.error === "string" && body.error ? body.error : "Invalid invite code.",
+          ...(typeof body.code === "string" && body.code ? { code: body.code } : {}),
+        };
+      } catch {
+        return { status, error: "Invalid invite code." };
       }
-      if (response.status === 400 || response.status === 403) {
-        try {
-          const body = await response.json() as { error?: unknown; code?: unknown };
-          return {
-            status: response.status,
-            error: typeof body.error === "string" && body.error ? body.error : "Invalid invite code.",
-            ...(typeof body.code === "string" && body.code ? { code: body.code } : {}),
-          };
-        } catch {
-          return { status: response.status, error: "Invalid invite code." };
-        }
-      }
-      void response.body?.cancel().catch(() => undefined);
-      return unavailable;
-    }
-    const value = await response.json();
-    if (typeof value.id !== "string" || !(value.id === "owner" || /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value.id))) return unavailable;
-    if (resolved.size >= 1000) resolved.clear();
-    if (target.mode === "local" || response.headers.get("x-nori-identity-bound") === "1") {
-      resolved.set(key, { userID: value.id, expires: Date.now() + RESOLVED_TTL_MS });
-    }
-    return { ...target, userID: value.id, identity };
-  } catch {
-    rejected("invite_redemption_connection");
-    return unavailable;
-  }
+    },
+  });
 }
 
 export function sameOrigin(request: Request) {

@@ -74,7 +74,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
 });
 
 type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "primary" | "neutral" | "tonal" | "quiet" | "danger";
+  variant?: "primary" | "neutral" | "tonal" | "quiet" | "danger" | "danger-quiet";
   size?: "sm" | "md";
 };
 
@@ -95,6 +95,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         variant === "tonal" && "bg-fill-2 text-accent-text hover:bg-accent-muted",
         variant === "quiet" && "text-ink-2 hover:bg-fill-1 hover:text-ink disabled:bg-transparent",
         variant === "danger" && "bg-danger-bg text-danger hover:opacity-90",
+        variant === "danger-quiet" && "text-danger hover:bg-danger-bg disabled:bg-transparent",
         className,
       )}
       {...rest}

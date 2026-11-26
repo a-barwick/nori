@@ -6,8 +6,8 @@ import { Activity, BarChart3, Brain, History, KeyRound, Monitor, Moon, RotateCcw
 import { NoriMark } from "@/components/mark/NoriMark";
 import { Button } from "@/components/ui/primitives";
 import { APPEARANCE_OPTIONS, useAppearance, type NoriAppearance } from "@/lib/appearance";
-import { APIError, mutate, newRequestID, resetUserData } from "@/lib/assistant/api";
-import { useAssistant } from "@/lib/assistant/context";
+import { ACCOUNT_DELETED_REDIRECT, APIError, deleteAccount, errorText, mutate, newRequestID, resetUserData } from "@/lib/assistant/api";
+import { useAssistant, useAssistantConfig } from "@/lib/assistant/context";
 import { markBrowserReset } from "@/lib/assistant/resetState";
 import { EFFECT_LABEL, when } from "@/lib/assistant/format";
 import {
@@ -24,7 +24,6 @@ import {
 } from "@/lib/assistant/permissions";
 import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant/useResource";
 import type { Connection, MCPServer, OperationProjection as Operation, PermissionRule, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
-import { SERVICE_UNAVAILABLE, STREAM_RECONNECTING } from "@/lib/runtime/messages";
 import { cn } from "@/lib/utils";
 import { ApiCosts } from "./ApiCosts";
 import { ModelsSettings } from "./ModelsSettings";
@@ -49,7 +48,7 @@ const SECTIONS: { id: SettingsSection | "memory"; title: string; icon: typeof Sh
 ];
 
 export function SettingsIndex() {
-  const { has } = useAssistant();
+  const { has } = useAssistantConfig();
   return <Screen title="Settings" back="/more" backLabel="More">
     <Rows>{SECTIONS.map((section) => <Row key={section.id} href={section.href ?? `/settings/${section.id}`} leading={<section.icon size={18} className="text-ink-2" aria-hidden />} title={section.title}
       trailing={section.feature && !has(section.feature) ? <Pill>Not yet</Pill> : undefined} />)}</Rows>
@@ -57,7 +56,7 @@ export function SettingsIndex() {
 }
 
 export function SettingsScreen({ section }: { section: SettingsSection }) {
-  const { has } = useAssistant();
+  const { has } = useAssistantConfig();
   const meta = SECTIONS.find((item) => item.id === section)!;
   if (meta.feature && !has(meta.feature)) return <Screen title={meta.title} back="/more" backLabel="More"><NotYet what={meta.title} /></Screen>;
   return <Screen title={meta.title} back="/more" backLabel="More">
@@ -83,7 +82,7 @@ export function SettingsScreen({ section }: { section: SettingsSection }) {
 
 function Permissions() {
   const invalidate = useResourceInvalidation();
-  const { has } = useAssistant();
+  const { has } = useAssistantConfig();
   const rules = useResource<List<PermissionRule>>("/permissions", { poll: 30_000 });
   const connections = useResource<List<Connection>>(has("connections") ? "/connections" : null, { poll: 0 });
   const servers = useResource<List<MCPServer>>(has("mcp") ? "/mcp" : null, { poll: 0 });
@@ -328,7 +327,7 @@ function AppearanceSettings() {
 
 function AccountSettings() {
   const { localMode, runtime } = useAssistant();
-  const reconnecting = runtime.error === SERVICE_UNAVAILABLE || runtime.error === STREAM_RECONNECTING;
+  const reconnecting = runtime.reconnecting;
   const offline = !!runtime.error && !reconnecting;
   const statusPill = reconnecting
     ? { tone: "warning" as const, label: "Reconnecting" }
@@ -374,25 +373,13 @@ function DeleteAccountSection() {
     setPending(true);
     setError("");
     try {
-      const response = await fetch("/api/v1/settings/account/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirmation: email, ...(resumePending ? { resume_pending: true } : {}) }),
-        cache: "no-store",
-        redirect: "error",
-      });
-      if (!response.ok) {
-        const data = await response.json().catch(() => null) as { error?: string; code?: string } | null;
-        if (data?.code === "account_delete_pending") {
-          setDeletePending(true);
-        }
-        setError(data?.error || `Could not delete your account (${response.status}).`);
-        setPending(false);
-        return;
+      await deleteAccount(email, resumePending);
+      window.location.replace(ACCOUNT_DELETED_REDIRECT);
+    } catch (reason) {
+      if (reason instanceof APIError && reason.code === "account_delete_pending") {
+        setDeletePending(true);
       }
-      window.location.replace("/signed-out");
-    } catch {
-      setError("Could not reach Nori to confirm account deletion. Try again.");
+      setError(reason instanceof APIError ? errorText(reason) : "Could not reach Nori to confirm account deletion. Try again.");
       setPending(false);
     }
   };
@@ -456,7 +443,7 @@ function DeleteAccountSection() {
 }
 
 function ResetData() {
-  const { scope } = useAssistant();
+  const { scope } = useAssistantConfig();
   const [confirmation, setConfirmation] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -487,7 +474,7 @@ function ResetData() {
 }
 
 function Diagnostics() {
-  const { capabilities, debug, setDebug, localMode } = useAssistant();
+  const { capabilities, debug, setDebug, localMode } = useAssistantConfig();
   const features = capabilities?.assistant_features ?? {};
 
   return <>

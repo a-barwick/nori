@@ -10,7 +10,7 @@ import {
 } from "@/lib/assistant/api";
 import { announce } from "@/lib/assistant/announce";
 import { relative } from "@/lib/assistant/format";
-import { useAssistant } from "@/lib/assistant/context";
+import { useAssistantConfig } from "@/lib/assistant/context";
 import { useResource, useResourceInvalidation } from "@/lib/assistant/useResource";
 import { useHydrated } from "@/lib/hooks";
 import type { DesktopBridge, DesktopHomeStatus } from "@/lib/desktop";
@@ -104,7 +104,7 @@ function DesktopHomeSettings(props: {
   devices: HomeConnector[];
   available: boolean;
 }) {
-  const { scope } = useAssistant();
+  const { scope } = useAssistantConfig();
   return <DesktopHomeSharing {...props} scope={scope} />;
 }
 

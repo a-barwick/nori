@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useAssistant } from "@/lib/assistant/context";
+import { useAssistantConfig } from "@/lib/assistant/context";
 import { cadence, eventTime, relative } from "@/lib/assistant/format";
 import { useResource } from "@/lib/assistant/useResource";
 import type { AssistantFeature, Automation, CardPart, Connection, Goal, Interaction, LibraryItem, WorkDetail } from "@/lib/contracts/assistant";
@@ -12,8 +12,8 @@ import { statusPill } from "./WorkScreen";
 import { Pill } from "./ui";
 
 type Kind = CardPart["resource"]["kind"];
-const ROUTES: Record<Kind, { path: (id: string) => string; feature: AssistantFeature; href: (id: string) => string }> = {
-  interaction: { path: (id) => `/interactions/${id}`, feature: "interactions", href: () => "/work?tab=needs_you" },
+const ROUTES: Record<Kind, { path: (id: string) => string; feature: AssistantFeature; href?: (id: string) => string }> = {
+  interaction: { path: (id) => `/interactions/${id}`, feature: "interactions" },
   automation: { path: (id) => `/automations/${id}`, feature: "automations", href: (id) => `/routines/${id}` },
   goal: { path: (id) => `/goals/${id}`, feature: "goals", href: (id) => `/goals/${id}` },
   connection: { path: (id) => `/connections/${id}`, feature: "connections", href: () => "/apps" },
@@ -22,7 +22,7 @@ const ROUTES: Record<Kind, { path: (id: string) => string; feature: AssistantFea
 };
 
 export function CardView({ part }: { part: CardPart }) {
-  const { has } = useAssistant();
+  const { has } = useAssistantConfig();
   const route = ROUTES[part.resource.kind];
   const id = encodeURIComponent(part.resource.id);
   const enabled = !!route && has(route.feature);
@@ -30,9 +30,9 @@ export function CardView({ part }: { part: CardPart }) {
   if (!enabled) return <p className="text-body">{part.fallback}</p>;
   if (loading) return <div className="h-16 animate-pulse rounded-card bg-fill-1 motion-reduce:animate-none" role="status" aria-label="Loading" />;
   if (!data) return <div className="rounded-card border border-dashed border-hairline-strong px-4 py-3 text-meta text-ink-2" role="note">{part.fallback}{error ? <span className="block text-caption text-ink-3">No longer available.</span> : null}</div>;
-  const href = route.href(id);
+  if (part.resource.kind === "interaction") return <InteractionCard interaction={data as Interaction} />;
+  const href = route.href!(id);
   switch (part.resource.kind) {
-    case "interaction": return <InteractionCard interaction={data as Interaction} />;
     case "task": {
       const { item } = data as WorkDetail;
       const pill = statusPill(item);

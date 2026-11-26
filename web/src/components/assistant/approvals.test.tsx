@@ -25,6 +25,7 @@ import {
   RULE_PRECEDENCE_NOTE,
 } from "@/lib/assistant/permissions";
 import { useResource } from "@/lib/assistant/useResource";
+import { asFetch } from "@/lib/test-fetch";
 import type { Connection, Interaction, PermissionRule } from "@/lib/contracts/assistant";
 import { InteractionCard } from "./InteractionCard";
 import { NewRule } from "./SettingsScreen";
@@ -132,7 +133,7 @@ describe("submitInteractionResponse wire calls and live cache invalidation", () 
     const calls: { url: string; method: string; body?: Record<string, unknown> }[] = [];
 
 
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = asFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
       const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : undefined;
@@ -161,7 +162,7 @@ describe("submitInteractionResponse wire calls and live cache invalidation", () 
         return Response.json({ items: [] });
       }
       return Response.json({ items: [] });
-    }) as unknown as typeof fetch;
+    });
 
     const invalidated: string[] = [];
     const result = await submitInteractionResponse(
@@ -196,7 +197,7 @@ describe("submitInteractionResponse wire calls and live cache invalidation", () 
     const calls: { url: string; method: string; body?: Record<string, unknown> }[] = [];
 
 
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = asFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
       const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : undefined;
@@ -219,7 +220,7 @@ describe("submitInteractionResponse wire calls and live cache invalidation", () 
         });
       }
       return Response.json({ items: [] });
-    }) as unknown as typeof fetch;
+    });
 
     const invalidated: string[] = [];
     const result = await submitInteractionResponse(
@@ -249,7 +250,7 @@ describe("submitInteractionResponse wire calls and live cache invalidation", () 
     const interaction = makeApprovalInteraction({ id: `int_deny_${crypto.randomUUID()}` });
     const calls: { url: string; method: string; body?: Record<string, unknown> }[] = [];
 
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = asFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
       const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : undefined;
@@ -264,7 +265,7 @@ describe("submitInteractionResponse wire calls and live cache invalidation", () 
         status: "applied",
         resource: resolveInteractionLocally(interaction, buildApprovalResponse("deny", interaction.action_digest!)),
       });
-    }) as unknown as typeof fetch;
+    });
 
     const result = await submitInteractionResponse(
       interaction,

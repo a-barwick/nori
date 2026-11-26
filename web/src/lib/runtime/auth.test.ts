@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
+import { asFetch } from "@/lib/test-fetch";
 import { accessFailureResponse, redeemInvite, resolveUser, sameOrigin, sameOriginRead } from "./auth";
 import { oidcIdentity } from "./oidc";
 import { iapIdentity } from "./iap";
@@ -167,7 +168,7 @@ describe("oidcIdentity and resolveUser", () => {
 
   async function installOIDCFetch(onResolve?: (req: Request) => Response | Promise<Response>, issuer = ISSUER) {
     const { jwks } = await getKeys();
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = asFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url === `${issuer}/.well-known/openid-configuration`) {
         return Response.json({ issuer, jwks_uri: JWKS_URI });
@@ -182,7 +183,7 @@ describe("oidcIdentity and resolveUser", () => {
         return onResolve(new Request(url, init));
       }
       throw new Error(`Unexpected fetch URL: ${url}`);
-    }) as unknown as typeof fetch;
+    });
   }
 
   test("verifies valid Bearer and HttpOnly cookie ID tokens and rejects unverified or non-ID tokens", async () => {
@@ -246,7 +247,7 @@ describe("oidcIdentity and resolveUser", () => {
     env.NORI_OIDC_IAP_ALLOWED_IDENTITIES = JSON.stringify({
       "123": "allowed@gmail.com", "456": "staff@workspace.test", "789": "person@thirdparty.test",
     });
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = asFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url.startsWith("http://metadata.google.internal/")) {
         return Response.json({ access_token: "test-policy-token" });
@@ -257,7 +258,7 @@ describe("oidcIdentity and resolveUser", () => {
         ] }] });
       }
       return oidcFetch(input, init);
-    }) as unknown as typeof fetch;
+    });
 
     const allowed = await signIDToken({ sub: "123", email: "allowed@gmail.com", email_verified: true }, { issuer: GOOGLE_ISSUER });
     const denied = await signIDToken({ sub: "other-subject", email: "allowed@gmail.com", email_verified: true }, { issuer: GOOGLE_ISSUER });
@@ -280,7 +281,7 @@ describe("oidcIdentity and resolveUser", () => {
     const audience = "/projects/example/global/backendServices/example";
     env.IAP_AUDIENCE = audience;
     const { privateKey, jwks } = await getKeys();
-    globalThis.fetch = (async () => Response.json(jwks)) as unknown as typeof fetch;
+    globalThis.fetch = asFetch(async () => Response.json(jwks));
     async function signedIap(claims: Record<string, unknown>) {
       const token = await new SignJWT(claims)
         .setProtectedHeader({ alg: "ES256", kid: "auth-k1" })

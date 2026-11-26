@@ -5,9 +5,10 @@ import { useEffect, useState } from "react";
 import { Plus, Server } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { mutate, newRequestID, sendSecret } from "@/lib/assistant/api";
-import { useAssistant } from "@/lib/assistant/context";
+import { useAssistantConfig } from "@/lib/assistant/context";
 import { plural, relative } from "@/lib/assistant/format";
 import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant/useResource";
+import { useStripSearchParams } from "@/lib/browser";
 import type { AuthAttempt, Connection, HealthCode, MCPCredentialInput, MCPServer, MCPServerTool as MCPTool } from "@/lib/contracts/assistant";
 import { useHydrated } from "@/lib/hooks";
 import "@/lib/desktop";
@@ -51,20 +52,17 @@ export async function startSignIn(connection: Pick<Connection, "id" | "revision"
   window.location.assign(url);
 }
 
+const RETURN_PARAMS = ["result", "connection"] as const;
+
 function useReturnedResult() {
   const params = useSearchParams();
   const [returned] = useState(() => ({ result: params.get("result"), connection: params.get("connection") }));
-  useEffect(() => {
-    const url = new URL(window.location.href);
-    if (!url.searchParams.has("result") && !url.searchParams.has("connection")) return;
-    url.searchParams.delete("result"); url.searchParams.delete("connection");
-    window.history.replaceState(window.history.state, "", url);
-  }, []);
+  useStripSearchParams(RETURN_PARAMS);
   return returned;
 }
 
 export function AppsScreen() {
-  const { has } = useAssistant();
+  const { has } = useAssistantConfig();
   const params = useSearchParams();
   const router = useRouter();
   const signedInServer = params.get("mcp");
