@@ -89,7 +89,7 @@ var taskToolDefinitions = func() []taskToolDefinition {
 	runtimeRead := ToolPolicy{Effect: "read", Runtime: true}
 	runtimeControl := ToolPolicy{Effect: "control", Runtime: true}
 	paidRead := ToolPolicy{Effect: "read", Runtime: true, InterruptedCostUnknown: true}
-	search := ToolPolicy{Effect: "read", Runtime: true, InterruptedCostUSD: SearchCostUSD}
+	search := ToolPolicy{Effect: "read", Runtime: true, InterruptedCostUSD: ExaSearchCostUSD}
 	requestInputOption := &transcript.Schema{
 		Type: transcript.TypeObject,
 		Properties: map[string]*transcript.Schema{

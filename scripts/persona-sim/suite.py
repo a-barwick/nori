@@ -21,11 +21,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import secrets
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import urllib.error
@@ -43,8 +41,11 @@ sys.path.insert(0, str(HERE))
 
 import grader  # noqa: E402
 from llm_client import (  # noqa: E402
+    DEFAULT_LOCAL_MODEL,
     LLMClient,
+    is_loopback_http_url,
     load_dotenv,
+    normalize_local_v1_url,
     resolve_dotenv_path,
     strip_raw_provider_keys,
 )
@@ -135,117 +136,54 @@ def _probe_chat_endpoint(
         return exc.code, msg
 
 
-def preflight_credits(
-    min_usd: float,
+def preflight_local_model(
     extra: list[str] | None = None,
     env: dict[str, str] | None = None,
 ) -> None:
-    """Validate configured model providers (OpenAI direct, OpenRouter, or gateway) before running."""
+    """Validate that persona-sim is running with --stub-models or a reachable loopback local model."""
     if extra and "--stub-models" in extra:
-        print("[suite] --stub-models enabled; skipping live provider preflight.", flush=True)
+        print("[suite] --stub-models enabled; skipping local model preflight.", flush=True)
         return
 
     if env is None:
-        env = {**load_dotenv(resolve_dotenv_path(ROOT)), **os.environ}
+        env = strip_raw_provider_keys({**load_dotenv(resolve_dotenv_path(ROOT)), **os.environ})
 
-    provider = (env.get("NORI_MODEL_PROVIDER") or "").strip().lower()
-    if provider == "gateway":
-        gw_url = (env.get("NORI_MODEL_GATEWAY_URL") or "").strip()
-        gw_key = (env.get("NORI_MODEL_GATEWAY_API_KEY") or "").strip()
-        outer_gw = (env.get("NORI_AGENT_MODEL") or "").strip()
-        inner_gw = (env.get("MODEL_NAME") or "").strip()
-        missing = [
-            name for name, val in (
-                ("NORI_MODEL_GATEWAY_URL", gw_url),
-                ("NORI_MODEL_GATEWAY_API_KEY", gw_key),
-                ("NORI_AGENT_MODEL", outer_gw),
-                ("MODEL_NAME", inner_gw),
-            ) if not val
-        ]
-        if missing:
-            raise SystemExit(
-                f"[suite] ABORT: NORI_MODEL_PROVIDER=gateway requires {', '.join(missing)}"
-            )
-        print(f"[suite] gateway mode configured ({gw_url}; outer={outer_gw}, inner={inner_gw})", flush=True)
-        return
-
-    outer_model = (env.get("NORI_AGENT_MODEL") or "gpt-6.1-sol").strip()
-    inner_model = (env.get("MODEL_NAME") or "openai/gpt-6.1-terra").strip()
-    uses_openai_inner = inner_model == "gpt-6.1-terra"
-
-    openai_key = (env.get("OPENAI_API_KEY") or "").strip()
-    if not openai_key:
+    local_url = (env.get("NORI_MODEL_TEST_URL") or env.get("NORI_LOCAL_MODEL_URL") or "").strip()
+    if not local_url:
         raise SystemExit(
-            f"[suite] ABORT: OPENAI_API_KEY is required for outer model {outer_model!r} (and/or direct inner model)."
+            "[suite] ABORT: persona-sim requires --stub-models or a local loopback model URL "
+            "(NORI_LOCAL_MODEL_URL=http://127.0.0.1:11434 or NORI_MODEL_TEST_URL). "
+            "Operator cloud-LLM API keys are not used."
         )
+    if not is_loopback_http_url(local_url):
+        raise SystemExit(
+            f"[suite] ABORT: local model URL must be an http:// loopback address (got {local_url!r})."
+        )
+
+    outer_model = (
+        env.get("NORI_AGENT_MODEL")
+        or env.get("NORI_LOCAL_MODEL_TAG")
+        or DEFAULT_LOCAL_MODEL
+    ).strip()
+    endpoint = f"{normalize_local_v1_url(local_url)}/chat/completions"
     try:
         status, msg = _probe_chat_endpoint(
-            "https://api.openai.com/v1/chat/completions",
-            openai_key,
+            endpoint,
+            "local-inkling",
             outer_model,
-            use_completion_tokens=outer_model.startswith(("gpt-6", "gpt-5", "o1", "o3", "o4")),
-        )
-        if status in (401, 402, 403) or (status == 429 and "insufficient_quota" in msg.lower()):
-            raise SystemExit(
-                f"[suite] ABORT: OpenAI outer model {outer_model!r} rejected preflight (HTTP {status}): {msg}"
-            )
-        if status >= 400:
-            print(f"[suite] WARN OpenAI preflight call returned HTTP {status}: {msg}", flush=True)
-        else:
-            print(f"[suite] OpenAI preflight OK ({outer_model})", flush=True)
-    except SystemExit:
-        raise
-    except Exception as exc:
-        print(f"[suite] WARN OpenAI preflight call skipped: {exc}", flush=True)
-
-    if uses_openai_inner:
-        return
-
-    or_key = (env.get("OPENROUTER_API_KEY") or "").strip()
-    if not or_key:
-        raise SystemExit(
-            f"[suite] ABORT: OPENROUTER_API_KEY is required for OpenRouter inner model {inner_model!r} "
-            "(or set MODEL_NAME=gpt-6.1-terra for OpenAI direct)."
-        )
-
-    if min_usd > 0:
-        try:
-            req = urllib.request.Request(
-                "https://openrouter.ai/api/v1/credits",
-                headers={"Authorization": f"Bearer {or_key}"},
-            )
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                data = json.loads(resp.read()).get("data") or {}
-            remaining = float(data.get("total_credits", 0)) - float(data.get("total_usage", 0))
-            print(f"[suite] OpenRouter credits remaining: ${remaining:.2f}", flush=True)
-            if remaining < min_usd:
-                raise SystemExit(
-                    f"[suite] ABORT: OpenRouter credits ${remaining:.2f} < --min-credits ${min_usd:.2f}; top up before running."
-                )
-        except SystemExit:
-            raise
-        except Exception as exc:
-            print(f"[suite] WARN OpenRouter credit preflight skipped: {exc}", flush=True)
-
-    try:
-        status, msg = _probe_chat_endpoint(
-            "https://openrouter.ai/api/v1/chat/completions",
-            or_key,
-            inner_model,
             use_completion_tokens=False,
         )
-        if status in (401, 402, 403) or (status == 429 and "insufficient_quota" in msg.lower()):
-            raise SystemExit(
-                f"[suite] ABORT: OpenRouter inner model {inner_model!r} rejected preflight (HTTP {status}): {msg}"
-            )
         if status >= 400:
-            print(f"[suite] WARN OpenRouter preflight call returned HTTP {status}: {msg}", flush=True)
-        else:
-            print(f"[suite] OpenRouter preflight OK ({inner_model})", flush=True)
+            raise SystemExit(
+                f"[suite] ABORT: local model preflight at {endpoint} for {outer_model!r} failed (HTTP {status}): {msg}"
+            )
+        print(f"[suite] local model preflight OK ({endpoint}; model={outer_model})", flush=True)
     except SystemExit:
         raise
     except Exception as exc:
-        print(f"[suite] WARN OpenRouter preflight call skipped: {exc}", flush=True)
+        raise SystemExit(
+            f"[suite] ABORT: local model endpoint {endpoint} is unreachable: {exc}"
+        ) from exc
 
 
 def provider_fatal(bundle_or_log: Path) -> str | None:
@@ -491,215 +429,47 @@ def _terminate_active_procs() -> None:
 
 def resolve_suite_env(
     env_file: Path | None = None,
-    allow_dev_key: bool = False,
     extra: list[str] | None = None,
     root: Path = ROOT,
     environ: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    """Resolve provider credentials for suite.py while refusing default local dev keys unless overridden.
+    """Resolve a sanitized local-only environment for suite.py.
 
-    Resolution order for isolated test keys:
-      1. Explicit --env-file (if provided) or <root>/.env.vst (if present)
-      2. Dedicated *_TEST_API_KEY variables (OPENAI_TEST_API_KEY, OPENROUTER_TEST_API_KEY, ANTHROPIC_TEST_API_KEY)
-      3. External NORI_MODEL_PROVIDER=gateway (if already configured)
-      4. Default local .env dev keys ONLY when allow_dev_key=True
+    Strips all operator cloud-LLM API keys (OPENAI*, OPENROUTER*, ANTHROPIC*,
+    NORI_MODEL_GATEWAY_API_KEY) from both .env files and process environment.
+    Unless --stub-models is enabled, requires a loopback local model URL
+    (NORI_LOCAL_MODEL_URL or NORI_MODEL_TEST_URL, e.g. local Ollama running Inkling Mini 2).
     """
-    proc_env = dict(os.environ if environ is None else environ)
-    default_dev_env_path = resolve_dotenv_path(root)
-    dev_dotenv = load_dotenv(default_dev_env_path)
+    proc_env = strip_raw_provider_keys(dict(os.environ if environ is None else environ))
+    dotenv_path = env_file if env_file is not None else resolve_dotenv_path(root)
+    dotenv = strip_raw_provider_keys(load_dotenv(dotenv_path))
+    merged = {**dotenv, **proc_env}
+    for forbidden in (
+        "NORI_MODEL_GATEWAY_URL",
+        "NORI_MODEL_GATEWAY_API_KEY",
+        "NORI_MODEL_PROVIDER",
+        "NORI_OUTER_PROVIDER",
+        "NORI_INNER_PROVIDER",
+    ):
+        merged.pop(forbidden, None)
 
     if extra and "--stub-models" in extra:
-        return {**dev_dotenv, **proc_env}
+        return merged
 
-    if (proc_env.get("NORI_MODEL_PROVIDER") or "").strip().lower() == "gateway":
-        return {**strip_raw_provider_keys(dev_dotenv), **proc_env}
-
-    vst_path = env_file if env_file is not None else (root / ".env.vst")
-    using_vst_file = vst_path.is_file() and vst_path.resolve() != default_dev_env_path.resolve()
-    vst_dotenv = load_dotenv(vst_path) if using_vst_file else {}
-
-    base_dev = dev_dotenv if allow_dev_key else strip_raw_provider_keys(dev_dotenv)
-    merged = {**base_dev, **vst_dotenv, **proc_env}
-
-    test_keys: dict[str, str] = {}
-    for prefix in ("OPENAI", "OPENROUTER", "ANTHROPIC"):
-        test_val = (merged.get(f"{prefix}_TEST_API_KEY") or "").strip()
-        vst_base = (vst_dotenv.get(f"{prefix}_API_KEY") or "").strip()
-        chosen = test_val or vst_base
-        if chosen:
-            test_keys[f"{prefix}_API_KEY"] = chosen
-
-    if test_keys and not allow_dev_key:
-        for base_var, val in test_keys.items():
-            dev_val = (dev_dotenv.get(base_var) or "").strip()
-            dev_explicit = (dev_dotenv.get(base_var.replace("_API_KEY", "_DEV_API_KEY")) or "").strip()
-            prod_explicit = (dev_dotenv.get(base_var.replace("_API_KEY", "_PROD_API_KEY")) or "").strip()
-            if val and val in (dev_val, dev_explicit, prod_explicit):
-                raise SystemExit(
-                    f"[suite] ABORT: test key for {base_var} matches the default local dev key in {default_dev_env_path}. "
-                    "Use a dedicated test project key in .env.vst / *_TEST_API_KEY, or pass --allow-dev-key explicitly."
-                )
-
-    if test_keys:
-        out = strip_raw_provider_keys(merged) if not allow_dev_key else dict(merged)
-        out.update(test_keys)
-        return out
-
-    if not allow_dev_key:
+    local_url = (merged.get("NORI_MODEL_TEST_URL") or merged.get("NORI_LOCAL_MODEL_URL") or "").strip()
+    if not local_url:
         raise SystemExit(
-            "[suite] ABORT: refusing to run persona-sim against the default local dev key. "
-            "Provide isolated test keys via .env.vst or *_TEST_API_KEY (OPENAI_TEST_API_KEY / OPENROUTER_TEST_API_KEY / "
-            "ANTHROPIC_TEST_API_KEY), or pass --allow-dev-key to override explicitly."
+            "[suite] ABORT: persona-sim requires --stub-models or a local loopback model URL "
+            "(NORI_LOCAL_MODEL_URL=http://127.0.0.1:11434, NORI_LOCAL_MODEL_TAG=inkling-mini-2). "
+            "Operator cloud-LLM API keys are not used."
         )
+    if not is_loopback_http_url(local_url):
+        raise SystemExit(
+            f"[suite] ABORT: local model URL must be an http:// loopback address (got {local_url!r})."
+        )
+    if merged.get("NORI_LOCAL_MODEL_URL", "").strip() and not merged.get("NORI_LOCAL_MODEL_TAG", "").strip():
+        merged["NORI_LOCAL_MODEL_TAG"] = DEFAULT_LOCAL_MODEL
     return merged
-
-
-class LocalGateway:
-    """Manages a local loopback `nori-gateway` process enforcing real-time --max-usd / --max-calls."""
-
-    def __init__(
-        self,
-        upstream_env: dict[str, str],
-        max_usd: float | None = None,
-        max_calls: int | None = None,
-        log_path: Path | None = None,
-    ) -> None:
-        self.upstream_env = upstream_env
-        self.max_usd = max_usd or 0.0
-        self.max_calls = max_calls or 0
-        self.log_path = log_path
-        self.token = secrets.token_urlsafe(32)
-        self.url = ""
-        self.addr = ""
-        self._proc: subprocess.Popen[Any] | None = None
-        self._tmp: tempfile.TemporaryDirectory[str] | None = None
-        self._log_fh: Any = None
-
-    def __enter__(self) -> "LocalGateway":
-        self._tmp = tempfile.TemporaryDirectory(prefix="nori-gateway-")
-        tmp_dir = Path(self._tmp.name)
-        bin_path = tmp_dir / "nori-gateway"
-        ready_file = tmp_dir / "ready.json"
-
-        build = subprocess.run(
-            ["go", "build", "-o", str(bin_path), "./cmd/nori-gateway"],
-            cwd=CORE,
-            text=True,
-            capture_output=True,
-            timeout=300,
-        )
-        if build.returncode != 0:
-            raise RuntimeError(f"failed building cmd/nori-gateway: {(build.stderr or build.stdout)[:500]}")
-
-        gw_env = {
-            "PATH": os.environ.get("PATH", ""),
-            "HOME": os.environ.get("HOME", ""),
-            "NORI_GATEWAY_TOKEN": self.token,
-        }
-        for key in (
-            "OPENAI_API_KEY",
-            "OPENAI_TEST_API_KEY",
-            "OPENROUTER_API_KEY",
-            "OPENROUTER_TEST_API_KEY",
-            "ANTHROPIC_API_KEY",
-            "ANTHROPIC_TEST_API_KEY",
-        ):
-            val = (self.upstream_env.get(key) or "").strip()
-            if val:
-                gw_env[key] = val
-
-        cmd = [
-            str(bin_path),
-            "--listen", "127.0.0.1:0",
-            "--ready-file", str(ready_file),
-        ]
-        if self.max_usd > 0:
-            cmd.extend(["--max-usd", f"{self.max_usd:.6f}"])
-        if self.max_calls > 0:
-            cmd.extend(["--max-calls", str(self.max_calls)])
-
-        if self.log_path is not None:
-            self._log_fh = self.log_path.open("w", encoding="utf-8")
-            stdout_dst = self._log_fh
-        else:
-            stdout_dst = subprocess.DEVNULL
-
-        self._proc = subprocess.Popen(
-            cmd,
-            cwd=tmp_dir,
-            env=gw_env,
-            stdout=stdout_dst,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-
-        deadline = time.monotonic() + 20.0
-        while time.monotonic() < deadline:
-            if self._proc.poll() is not None:
-                raise RuntimeError(f"nori-gateway exited early (rc={self._proc.returncode})")
-            if ready_file.is_file():
-                info = json.loads(ready_file.read_text(encoding="utf-8"))
-                self.addr = str(info["addr"])
-                self.url = str(info["url"])
-                break
-            time.sleep(0.05)
-        if not self.url:
-            self.__exit__(None, None, None)
-            raise RuntimeError("nori-gateway did not become ready in time")
-
-        print(
-            f"[suite] local gateway ready at {self.url} "
-            f"(max_usd={self.max_usd or 'unlimited'}, max_calls={self.max_calls or 'unlimited'})",
-            flush=True,
-        )
-        return self
-
-    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-        if self._proc is not None and self._proc.poll() is None:
-            self._proc.terminate()
-            try:
-                self._proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._proc.kill()
-                self._proc.wait()
-        if self._log_fh is not None:
-            try:
-                self._log_fh.close()
-            except Exception:
-                pass
-            self._log_fh = None
-        if self._tmp is not None:
-            self._tmp.cleanup()
-            self._tmp = None
-
-    def stats(self) -> dict[str, Any]:
-        if not self.addr:
-            return {}
-        req = urllib.request.Request(
-            f"http://{self.addr}/stats",
-            headers={"Authorization": f"Bearer {self.token}"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except Exception:
-            return {}
-
-    def child_env(self, base_env: dict[str, str], outer_model: str, inner_model: str) -> dict[str, str]:
-        """Build a sanitized child environment containing ONLY the short-lived gateway token."""
-        env = strip_raw_provider_keys(base_env)
-        for override in ("NORI_OUTER_PROVIDER", "NORI_INNER_PROVIDER", "NORI_MODEL_TEST_URL", "NORI_ENV_PROFILE"):
-            env.pop(override, None)
-        env.update({
-            "NORI_MODEL_PROVIDER": "gateway",
-            "NORI_MODEL_GATEWAY_URL": self.url,
-            "NORI_MODEL_GATEWAY_API_KEY": self.token,
-            "NORI_AGENT_MODEL": outer_model,
-            "MODEL_NAME": inner_model,
-            "SIM_GATEWAY_URL": self.url,
-            "SIM_GATEWAY_TOKEN": self.token,
-        })
-        return env
 
 
 def run_persona(
@@ -713,12 +483,10 @@ def run_persona(
     max_usd: float | None = None,
     running_cost: list[float] | None = None,
     child_env: dict[str, str] | None = None,
-    gateway: LocalGateway | None = None,
 ) -> tuple[str, Path | None, str]:
     for attempt in range(retries + 1):
         _staggered_wait(stagger)
-        if _budget_abort.is_set() or (gateway is not None and gateway.stats().get("budget_exceeded")):
-            _budget_abort.set()
+        if _budget_abort.is_set():
             print(f"[suite] SKIP  {slug}: suite aborted after exceeding budget/call cap", flush=True)
             return slug, None, "budget_exceeded"
         if _abort.is_set():
@@ -740,22 +508,11 @@ def run_persona(
             with _active_procs_lock:
                 _active_procs.add(proc)
             try:
-                while proc.poll() is None:
-                    if gateway is not None and gateway.stats().get("budget_exceeded"):
-                        _budget_abort.set()
-                        _terminate_active_procs()
-                        break
-                    time.sleep(0.5)
                 rc = proc.wait()
             finally:
                 with _active_procs_lock:
                     _active_procs.discard(proc)
         bundle = _find_bundle(sub_tag, slug, started)
-        if gateway is not None and gateway.stats().get("budget_exceeded"):
-            _budget_abort.set()
-            _terminate_active_procs()
-            print(f"[suite] KILLED {slug}: local gateway tripped real-time budget/call kill switch", flush=True)
-            return slug, bundle, "budget_exceeded"
         fatal = provider_fatal(bundle) if bundle is not None else provider_fatal(log)
         if fatal:
             if fatal == "local_budget_exceeded":
@@ -870,16 +627,10 @@ def main() -> int:
     ap.add_argument("--compare", type=Path, help="Baseline scorecard.json to diff against")
     ap.add_argument("--keep-db", action="store_true", help="Keep each persona's ephemeral DB for inspection")
     ap.add_argument("--no-grade", action="store_true")
-    ap.add_argument("--min-credits", type=float, default=15.0,
-                    help="Abort before starting if OpenRouter credits are below this (USD; 0 disables). Default 15")
     ap.add_argument("--max-usd", type=float, default=None,
-                    help="Real-time hard USD spend ceiling enforced across all personas + responder + judge.")
-    ap.add_argument("--max-calls", type=int, default=None,
-                    help="Real-time hard total LLM call ceiling enforced across all personas + responder + judge.")
+                    help="Hard cumulative USD spend ceiling across personas.")
     ap.add_argument("--env-file", type=Path, default=None,
-                    help="Isolated test env file (defaults to .env.vst if present).")
-    ap.add_argument("--allow-dev-key", action="store_true",
-                    help="Explicitly allow running against the default local .env dev key instead of isolated test keys.")
+                    help="Optional local env file (defaults to .env if present; cloud-LLM keys are always stripped).")
     ap.add_argument("--outer-model", default=None, help="Outer conversation model ID (overrides NORI_AGENT_MODEL, e.g. gpt-6.2-sol)")
     ap.add_argument("--outer-reasoning", choices=["low", "medium", "high"], default=None,
                     help="Outer conversation reasoning effort (overrides NORI_OUTER_REASONING_EFFORT)")
@@ -922,47 +673,17 @@ def main() -> int:
 
     results: list[tuple[str, Path | None, str]] = []
     running_cost = [0.0]
-    gateway_stats: dict[str, Any] = {}
-    with ExitStack() as stack:
-        gw: LocalGateway | None = None
+    with ExitStack():
         child_env: dict[str, str] | None = None
         if args.collect_only:
             results = [(p.resolve().name, p.resolve(), "collected") for p in args.collect_only]
         else:
             suite_env = resolve_suite_env(
                 env_file=args.env_file,
-                allow_dev_key=args.allow_dev_key,
                 extra=extra,
             )
-            stub_mode = "--stub-models" in extra
-            external_gateway = (suite_env.get("NORI_MODEL_PROVIDER") or "").strip().lower() == "gateway"
-            if not stub_mode and not external_gateway:
-                outer_model = (suite_env.get("NORI_AGENT_MODEL") or "gpt-6.1-sol").strip()
-                inner_model = (suite_env.get("MODEL_NAME") or "openai/gpt-6.1-terra").strip()
-                gw = stack.enter_context(
-                    LocalGateway(
-                        upstream_env=suite_env,
-                        max_usd=args.max_usd,
-                        max_calls=args.max_calls,
-                        log_path=logs / "nori-gateway.log",
-                    )
-                )
-                child_env = gw.child_env(os.environ, outer_model, inner_model)
-                os.environ["SIM_GATEWAY_URL"] = gw.url
-                os.environ["SIM_GATEWAY_TOKEN"] = gw.token
-                status, msg = _probe_chat_endpoint(
-                    f"{gw.url}/chat/completions",
-                    gw.token,
-                    outer_model,
-                    use_completion_tokens=outer_model.startswith(("gpt-6", "gpt-5", "o1", "o3", "o4")),
-                )
-                if status >= 400:
-                    raise SystemExit(
-                        f"[suite] ABORT: gateway preflight for {outer_model!r} failed (HTTP {status}): {msg}"
-                    )
-                print(f"[suite] gateway preflight OK ({outer_model})", flush=True)
-            else:
-                preflight_credits(args.min_credits, extra=extra, env=suite_env)
+            preflight_local_model(extra=extra, env=suite_env)
+            child_env = suite_env
 
             if args.persona:
                 slugs = args.persona
@@ -975,7 +696,7 @@ def main() -> int:
                 futs = [
                     ex.submit(
                         run_persona, s, args.tag, logs, args.keep_db, args.stagger,
-                        args.retries, extra, args.max_usd, running_cost, child_env, gw,
+                        args.retries, extra, args.max_usd, running_cost, child_env,
                     )
                     for s in slugs
                 ]
@@ -1000,11 +721,6 @@ def main() -> int:
         cost_summary = aggregate_suite_usage(copied_bundles)
         print(format_cost_table(cost_summary), flush=True)
 
-        if gw is not None:
-            gateway_stats = gw.stats()
-            if gateway_stats.get("budget_exceeded"):
-                _budget_abort.set()
-
         budget_exceeded = (
             args.max_usd is not None and cost_summary["total_cost_usd"] > args.max_usd
         ) or _budget_abort.is_set()
@@ -1019,9 +735,7 @@ def main() -> int:
             "models": model_overrides,
             "max_days": effective_max_days,
             "cost_summary": cost_summary,
-            "gateway_stats": gateway_stats,
             "max_usd": args.max_usd,
-            "max_calls": args.max_calls,
             "budget_exceeded": budget_exceeded,
         }
         (run_root / "suite_manifest.json").write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
@@ -1039,10 +753,6 @@ def main() -> int:
         redone = rejudge_errors(run_root)
         if redone:
             print(f"[suite] re-judged {len(redone)} judge-error items", flush=True)
-        if gw is not None:
-            gateway_stats = gw.stats()
-            manifest_payload["gateway_stats"] = gateway_stats
-            (run_root / "suite_manifest.json").write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
         print((run_root / "scorecard.md").read_text(encoding="utf-8"))
         print(f"[suite] scorecard: {run_root / 'scorecard.json'}")
         return 0 if (sc["all_tier_a_passed"] and not failed and not budget_exceeded) else 1

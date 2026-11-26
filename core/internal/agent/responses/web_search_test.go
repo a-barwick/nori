@@ -265,7 +265,7 @@ func TestResponsesWebSearchDisabledForCompactionAndNonDirectClients(t *testing.T
 	if _, err := gateway.Respond(ctx, agent.Request{
 		Instructions:    "test",
 		Messages:        []transcript.Message{transcript.UserText("hi")},
-		Tools:           []transcript.Tool{{Name: "web_search", Description: "brave fallback"}},
+		Tools:           []transcript.Tool{{Name: "web_search", Description: "exa fallback"}},
 		MaxOutputTokens: 128,
 		WebSearch:       true,
 	}); err != nil {
@@ -280,7 +280,7 @@ func TestResponsesWebSearchDisabledForCompactionAndNonDirectClients(t *testing.T
 	}
 }
 
-func TestAgentDecideWiresNativeWebSearchWithoutBraveKey(t *testing.T) {
+func TestAgentDecideWiresNativeWebSearchWithoutExaKey(t *testing.T) {
 	ctx := context.Background()
 	client := responses.New("test-key", settings.DefaultInnerModel, &captureMeter{})
 
@@ -307,7 +307,7 @@ func TestAgentDecideWiresNativeWebSearchWithoutBraveKey(t *testing.T) {
 
 	instructions, _ := captured["instructions"].(string)
 	if strings.Contains(instructions, "no API key on this worker") {
-		t.Fatalf("expected Web search capability to be available without Brave key on native OpenAI client, got instructions: %s", instructions)
+		t.Fatalf("expected Web search capability to be available without Exa key on native OpenAI client, got instructions: %s", instructions)
 	}
 	rawTools, _ := captured["tools"].([]any)
 	var sawNative, sawFunc bool

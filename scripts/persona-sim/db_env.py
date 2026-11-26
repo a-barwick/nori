@@ -215,14 +215,17 @@ def persona_runtime_env(
     dotenv: dict[str, str], postgres_url: str, artifacts_dir: Path, cred_key_file: Path,
     email: str, port: int, stub_model_url: str | None,
 ) -> dict[str, str]:
-    env = dict(os.environ)
-    if env.get("NORI_MODEL_PROVIDER", "").strip().lower() == "gateway":
-        for k, v in strip_raw_provider_keys(dotenv).items():
-            env.setdefault(k, v)
-        env = strip_raw_provider_keys(env)
-    else:
-        for k, v in dotenv.items():
-            env.setdefault(k, v)
+    env = strip_raw_provider_keys(dict(os.environ))
+    for k, v in strip_raw_provider_keys(dotenv).items():
+        env.setdefault(k, v)
+    for forbidden in (
+        "NORI_MODEL_GATEWAY_URL",
+        "NORI_MODEL_GATEWAY_API_KEY",
+        "NORI_MODEL_PROVIDER",
+        "NORI_OUTER_PROVIDER",
+        "NORI_INNER_PROVIDER",
+    ):
+        env.pop(forbidden, None)
     env.update({
         "NORI_ENV_FILE": os.devnull,
         "NORI_TASK_ENV_FILE": os.devnull,
@@ -238,22 +241,15 @@ def persona_runtime_env(
         "NORI_JEV_ENABLED": "false" if stub_model_url else env.get("NORI_JEV_ENABLED", "false"),
     })
     if stub_model_url:
-        env = strip_raw_provider_keys(env)
         env.update({
             "NORI_MODEL_TEST_URL": stub_model_url,
             "NORI_ENV_PROFILE": "test",
-            "NORI_MODEL_PROVIDER": "openai",
-            "NORI_OUTER_PROVIDER": "openai",
-            "NORI_INNER_PROVIDER": "openai",
             "NORI_AGENT_MODEL": "gpt-6.1-sol",
             "MODEL_NAME": "gpt-6.1-terra",
-            "OPENAI_TEST_API_KEY": "nori-loopback-stub",
             "NORI_MODEL_PROFILES": "",
             "NORI_MODEL_PROFILES_FILE": "",
             "NORI_LOCAL_MODEL_URL": "",
             "NORI_LOCAL_MODEL_TAG": "",
-            "NORI_MODEL_GATEWAY_URL": "",
-            "NORI_MODEL_GATEWAY_API_KEY": "",
             "NORI_LLM_MAX_USD": "",
         })
     return env

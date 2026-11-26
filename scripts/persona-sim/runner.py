@@ -614,8 +614,8 @@ def run_single_persona(
             effective_pg_url = pg_url or os.environ.get("NORI_POSTGRES_URL") or dotenv.get("NORI_POSTGRES_URL") or "postgres://nori@127.0.0.1:15432/nori?sslmode=disable"
             user_id = str(uuid4())
             if nori_user_bin:
-                env = dict(os.environ)
-                env.update(dotenv)
+                env = strip_raw_provider_keys(dict(os.environ))
+                env.update(strip_raw_provider_keys(dotenv))
                 env["NORI_CLOUD"] = "local"
                 env["NORI_STORE_BACKEND"] = "postgres"
                 env["NORI_POSTGRES_URL"] = effective_pg_url

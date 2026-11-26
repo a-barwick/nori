@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
-"""Zero-dependency OpenAI/OpenRouter compatible chat client for Adaptive Persona Responder & LLM Judge."""
+"""Zero-dependency local OpenAI-compatible chat client for Adaptive Persona Responder & LLM Judge."""
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import os
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_LOCAL_MODEL = "inkling-mini-2"
 
 RAW_PROVIDER_KEY_VARS: tuple[str, ...] = (
     "OPENAI_API_KEY",
@@ -27,6 +31,19 @@ RAW_PROVIDER_KEY_VARS: tuple[str, ...] = (
     "ANTHROPIC_PROD_API_KEY",
     "ANTHROPIC_DEV_API_KEY",
     "ANTHROPIC_TEST_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "GOOGLE_API_KEY",
+    "GOOGLE_PROD_API_KEY",
+    "GOOGLE_DEV_API_KEY",
+    "GOOGLE_TEST_API_KEY",
+    "GEMINI_API_KEY",
+    "GEMINI_PROD_API_KEY",
+    "GEMINI_DEV_API_KEY",
+    "GEMINI_TEST_API_KEY",
+    "AI_GATEWAY_API_KEY",
+    "NORI_MODEL_GATEWAY_API_KEY",
+    "NORI_GATEWAY_TOKEN",
+    "BRAVE_SEARCH_API_KEY",
     "JEV_API_KEY",
     "SIM_RESPONDER_API_KEY",
     "SIM_JUDGE_API_KEY",
@@ -39,6 +56,35 @@ def strip_raw_provider_keys(env: dict[str, str]) -> dict[str, str]:
     for k in RAW_PROVIDER_KEY_VARS:
         cleaned.pop(k, None)
     return cleaned
+
+
+def is_loopback_http_url(raw_url: str) -> bool:
+    """Return True iff raw_url is an http:// loopback URL without credentials, query, or fragment."""
+    raw = (raw_url or "").strip()
+    if not raw:
+        return False
+    parsed = urllib.parse.urlparse(raw)
+    if parsed.scheme != "http" or not parsed.hostname:
+        return False
+    if parsed.username is not None or parsed.password is not None:
+        return False
+    if parsed.query or parsed.fragment:
+        return False
+    host = parsed.hostname.lower()
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def normalize_local_v1_url(raw_url: str) -> str:
+    """Normalize a local OpenAI-compatible base URL so it ends with /v1."""
+    trimmed = raw_url.strip().rstrip("/")
+    if trimmed.endswith("/v1"):
+        return trimmed
+    return f"{trimmed}/v1"
 
 
 def resolve_dotenv_path(root: Path, explicit: Path | None = None) -> Path:
@@ -87,7 +133,7 @@ def load_dotenv(env_path: Path) -> dict[str, str]:
 
 
 class LLMClient:
-    """Minimal stdlib client supporting OpenAI Chat Completions and OpenRouter."""
+    """Minimal stdlib client for local loopback OpenAI-compatible endpoints (e.g. Ollama/Inkling)."""
 
     def __init__(
         self,
@@ -105,64 +151,57 @@ class LLMClient:
 
     @classmethod
     def from_env(cls, role: str, dotenv: dict[str, str] | None = None) -> "LLMClient | None":
-        """Resolve provider credentials for role ('responder' or 'judge').
+        """Resolve local loopback OpenAI-compatible client for role ('responder' or 'judge').
 
-        When the unified local loopback gateway (SIM_GATEWAY_URL/SIM_GATEWAY_TOKEN
-        or NORI_MODEL_PROVIDER=gateway) is active, always route through it using
-        the short-lived gateway token instead of any raw provider keys.
+        Operator cloud-LLM keys (OPENAI*, OPENROUTER*, ANTHROPIC*, NORI_MODEL_GATEWAY_API_KEY)
+        are never read or used. Only explicit loopback HTTP URLs (SIM_<ROLE>_BASE_URL,
+        NORI_LOCAL_MODEL_URL, or NORI_MODEL_TEST_URL) are accepted.
         """
         env = dict(dotenv or {})
         env.update(os.environ)
 
         prefix = f"SIM_{role.upper()}_"
-        default_model = "gpt-6-luna"
-        model = env.get(prefix + "MODEL", "").strip()
+        model = (
+            env.get(prefix + "MODEL", "").strip()
+            or env.get("NORI_LOCAL_MODEL_TAG", "").strip()
+            or DEFAULT_LOCAL_MODEL
+        )
 
-        sim_gw_url = env.get("SIM_GATEWAY_URL", "").strip()
-        sim_gw_tok = env.get("SIM_GATEWAY_TOKEN", "").strip()
-        if sim_gw_url and sim_gw_tok:
+        role_base = env.get(prefix + "BASE_URL", "").strip()
+        if role_base:
+            if not is_loopback_http_url(role_base):
+                raise ValueError(f"{prefix}BASE_URL must be a loopback http:// URL (got {role_base!r})")
+            api_key = env.get(prefix + "API_KEY", "").strip() or "local-inkling"
             return cls(
-                api_key=sim_gw_tok,
-                base_url=sim_gw_url,
-                model=model or default_model,
+                api_key=api_key,
+                base_url=normalize_local_v1_url(role_base),
+                model=model,
                 scope=f"sim_{role}",
             )
 
-        if env.get("NORI_MODEL_PROVIDER", "").strip().lower() == "gateway":
-            gw_url = env.get("NORI_MODEL_GATEWAY_URL", "").strip()
-            gw_tok = env.get("NORI_MODEL_GATEWAY_API_KEY", "").strip()
-            if gw_url and gw_tok:
-                return cls(
-                    api_key=gw_tok,
-                    base_url=gw_url,
-                    model=model or default_model,
-                    scope=f"sim_{role}",
-                )
+        local_url = env.get("NORI_LOCAL_MODEL_URL", "").strip()
+        if local_url:
+            if not is_loopback_http_url(local_url):
+                raise ValueError(f"NORI_LOCAL_MODEL_URL must be a loopback http:// URL (got {local_url!r})")
+            return cls(
+                api_key="local-inkling",
+                base_url=normalize_local_v1_url(local_url),
+                model=model,
+                scope=f"sim_{role}",
+            )
 
-        api_key = env.get(prefix + "API_KEY", "").strip()
-        base_url = env.get(prefix + "BASE_URL", "").strip()
+        test_url = env.get("NORI_MODEL_TEST_URL", "").strip()
+        if test_url:
+            if not is_loopback_http_url(test_url):
+                raise ValueError(f"NORI_MODEL_TEST_URL must be a loopback http:// URL (got {test_url!r})")
+            return cls(
+                api_key="nori-loopback-stub",
+                base_url=normalize_local_v1_url(test_url),
+                model=model,
+                scope=f"sim_{role}",
+            )
 
-        if not api_key:
-            openai_key = env.get("OPENAI_TEST_API_KEY", "").strip() or env.get("OPENAI_API_KEY", "").strip()
-            openrouter_key = env.get("OPENROUTER_TEST_API_KEY", "").strip() or env.get("OPENROUTER_API_KEY", "").strip()
-            if openai_key:
-                api_key = openai_key
-                base_url = base_url or "https://api.openai.com/v1"
-                model = model or default_model
-            elif openrouter_key:
-                api_key = openrouter_key
-                base_url = base_url or "https://openrouter.ai/api/v1"
-                model = model or "openai/gpt-6-luna"
-            elif env.get("NORI_MODEL_GATEWAY_API_KEY", "").strip() and env.get("NORI_MODEL_GATEWAY_URL", "").strip():
-                api_key = env["NORI_MODEL_GATEWAY_API_KEY"].strip()
-                base_url = base_url or env["NORI_MODEL_GATEWAY_URL"].strip()
-                model = model or env.get("NORI_AGENT_MODEL", default_model).strip()
-
-        if not api_key:
-            return None
-        base_url = base_url or "https://api.openai.com/v1"
-        model = model or default_model
-        return cls(api_key=api_key, base_url=base_url, model=model, scope=f"sim_{role}")
+        return None
 
     def chat_json(
         self,

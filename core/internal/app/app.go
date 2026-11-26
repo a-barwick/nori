@@ -216,7 +216,7 @@ func wireBackgroundRuntime(result *App, cfg settings.Settings, user users.User, 
 	}
 
 	taskService := agent.New(store, models.defaultTaskModel)
-	taskService.Capabilities = agent.Capabilities{ExaSearchKey: cfg.ExaSearchKey, SearchKey: cfg.SearchKey, Location: location}
+	taskService.Capabilities = agent.Capabilities{ExaSearchKey: cfg.ExaSearchKey, Location: location}
 	taskService.UserFacts = userFacts
 	taskService.Extensions = services.Tools
 	taskService.Profile = platform.Profile(user, services.Connections)

@@ -12,12 +12,11 @@ import (
 
 type Capabilities struct {
 	ExaSearchKey string
-	SearchKey    string
 	Location     *time.Location
 }
 
 func (c Capabilities) hasWebSearchKey() bool {
-	return c.ExaSearchKey != "" || c.SearchKey != ""
+	return c.ExaSearchKey != ""
 }
 
 type Capability struct {

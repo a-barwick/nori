@@ -696,75 +696,33 @@ class SuiteTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             suite.select_area_personas(["nonexistent"])
 
-    def test_preflight_stub_gateway_openai_direct_and_openrouter(self) -> None:
+    def test_preflight_local_model_requires_loopback_and_ignores_cloud_keys(self) -> None:
         with mock.patch("urllib.request.urlopen") as m_open:
-            suite.preflight_credits(15.0, extra=["--stub-models"], env={})
+            suite.preflight_local_model(extra=["--stub-models"], env={})
             m_open.assert_not_called()
 
-        with self.assertRaises(SystemExit):
-            suite.preflight_credits(15.0, env={"NORI_MODEL_PROVIDER": "gateway"})
         with mock.patch("urllib.request.urlopen") as m_open:
-            suite.preflight_credits(
-                15.0,
-                env={
-                    "NORI_MODEL_PROVIDER": "gateway",
-                    "NORI_MODEL_GATEWAY_URL": "https://gw.example.com/v1",
-                    "NORI_MODEL_GATEWAY_API_KEY": "tok_123",
-                    "NORI_AGENT_MODEL": "gw-sol",
-                    "MODEL_NAME": "gw-terra",
-                },
-            )
-            m_open.assert_not_called()
-
-        with self.assertRaises(SystemExit):
-            suite.preflight_credits(15.0, env={"OPENROUTER_API_KEY": "or_123"})
-
-        called_urls: list[str] = []
-
-        class OkResp:
-            status = 200
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                return False
-
-            def read(self):
-                return b'{"data":{"total_credits":50,"total_usage":10}}'
-
-        def fake_urlopen(req, timeout=20):
-            called_urls.append(req.full_url)
-            return OkResp()
-
-        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            suite.preflight_credits(15.0, env={"OPENAI_API_KEY": "oa_123", "MODEL_NAME": "gpt-6.1-terra"})
-        self.assertEqual(called_urls, ["https://api.openai.com/v1/chat/completions"])
-
-        called_urls.clear()
-        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            suite.preflight_credits(15.0, env={"OPENAI_API_KEY": "oa_123", "OPENROUTER_API_KEY": "or_123", "MODEL_NAME": "openai/gpt-6.1-terra"})
-        self.assertEqual(
-            called_urls,
-            [
-                "https://api.openai.com/v1/chat/completions",
-                "https://openrouter.ai/api/v1/credits",
-                "https://openrouter.ai/api/v1/chat/completions",
-            ],
-        )
-
-        def low_credits_urlopen(req, timeout=20):
-            if "credits" in req.full_url:
-                resp = OkResp()
-                resp.read = lambda: b'{"data":{"total_credits":20,"total_usage":12}}'
-                return resp
-            return OkResp()
-
-        with mock.patch("urllib.request.urlopen", side_effect=low_credits_urlopen):
             with self.assertRaises(SystemExit):
-                suite.preflight_credits(15.0, env={"OPENAI_API_KEY": "oa_123", "OPENROUTER_API_KEY": "or_123"})
+                suite.preflight_local_model(
+                    env={
+                        "OPENAI_API_KEY": "oa_123",
+                        "OPENAI_TEST_API_KEY": "oa_test",
+                        "OPENROUTER_API_KEY": "or_123",
+                        "ANTHROPIC_API_KEY": "ant_123",
+                        "NORI_MODEL_PROVIDER": "gateway",
+                        "NORI_MODEL_GATEWAY_URL": "https://gw.example.com/v1",
+                        "NORI_MODEL_GATEWAY_API_KEY": "tok_123",
+                    }
+                )
+            m_open.assert_not_called()
 
-    def test_preflight_stale_nori_task_model_does_not_bypass_openrouter(self) -> None:
+        with mock.patch("urllib.request.urlopen") as m_open:
+            with self.assertRaises(SystemExit):
+                suite.preflight_local_model(
+                    env={"NORI_LOCAL_MODEL_URL": "https://api.openai.com/v1"}
+                )
+            m_open.assert_not_called()
+
         probed: list[tuple[str, dict | None]] = []
 
         class OkResp:
@@ -777,41 +735,21 @@ class SuiteTests(unittest.TestCase):
                 return False
 
             def read(self):
-                return b'{"data":{"total_credits":50,"total_usage":10}}'
+                return b'{"choices":[{"message":{"content":"ok"}}]}'
 
-        def capture_urlopen(req, timeout=20):
+        def fake_urlopen(req, timeout=30):
             body = json.loads(req.data.decode("utf-8")) if req.data else None
             probed.append((req.full_url, body))
             return OkResp()
 
-        with mock.patch("urllib.request.urlopen", side_effect=capture_urlopen):
-            with self.assertRaises(SystemExit) as ctx:
-                suite.preflight_credits(
-                    15.0,
-                    env={"OPENAI_API_KEY": "oa_123", "NORI_TASK_MODEL": "gpt-6.1-terra"},
-                )
-            self.assertIn("OPENROUTER_API_KEY", str(ctx.exception))
-            self.assertEqual([u for u, _ in probed], ["https://api.openai.com/v1/chat/completions"])
-
-        probed.clear()
-        with mock.patch("urllib.request.urlopen", side_effect=capture_urlopen):
-            suite.preflight_credits(
-                15.0,
-                env={
-                    "OPENAI_API_KEY": "oa_123",
-                    "OPENROUTER_API_KEY": "or_123",
-                    "NORI_TASK_MODEL": "gpt-6.1-terra",
-                },
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            suite.preflight_local_model(
+                env={"NORI_LOCAL_MODEL_URL": "http://127.0.0.1:11434"}
             )
-        self.assertEqual(
-            [u for u, _ in probed],
-            [
-                "https://api.openai.com/v1/chat/completions",
-                "https://openrouter.ai/api/v1/credits",
-                "https://openrouter.ai/api/v1/chat/completions",
-            ],
-        )
-        self.assertEqual(probed[2][1]["model"], "openai/gpt-6.1-terra")
+        self.assertEqual(len(probed), 1)
+        self.assertEqual(probed[0][0], "http://127.0.0.1:11434/v1/chat/completions")
+        assert probed[0][1] is not None
+        self.assertEqual(probed[0][1]["model"], "inkling-mini-2")
 
     def test_model_usage_aggregation_and_max_usd_collect_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -993,73 +931,119 @@ class SuiteTests(unittest.TestCase):
             self.assertIn("## Diff vs Baseline", md)
             self.assertIn("+25.0%", md)
 
-    def test_resolve_suite_env_refuses_dev_key_unless_overridden(self) -> None:
+    def test_resolve_suite_env_strips_cloud_keys_and_requires_local_model(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            (root / ".env").write_text("OPENAI_API_KEY=sk-dev-123\nOPENROUTER_API_KEY=sk-or-dev\n", encoding="utf-8")
+            (root / ".env").write_text(
+                "\n".join([
+                    "OPENAI_API_KEY=sk-dev-123",
+                    "OPENAI_TEST_API_KEY=sk-test-123",
+                    "OPENROUTER_API_KEY=sk-or-dev",
+                    "ANTHROPIC_API_KEY=sk-ant-dev",
+                    "NORI_MODEL_GATEWAY_URL=http://127.0.0.1:19999/v1",
+                    "NORI_MODEL_GATEWAY_API_KEY=gw-tok-123",
+                    "BRAVE_SEARCH_API_KEY=brave-123",
+                    "EXA_API_KEY=exa-keep",
+                ]) + "\n",
+                encoding="utf-8",
+            )
             with self.assertRaises(SystemExit) as cm:
                 suite.resolve_suite_env(root=root, environ={})
-            self.assertIn("refusing to run persona-sim against the default local dev key", str(cm.exception))
+            self.assertIn("NORI_LOCAL_MODEL_URL", str(cm.exception))
 
-            allowed = suite.resolve_suite_env(allow_dev_key=True, root=root, environ={})
-            self.assertEqual(allowed["OPENAI_API_KEY"], "sk-dev-123")
+            stub_env = suite.resolve_suite_env(root=root, extra=["--stub-models"], environ={"OPENAI_API_KEY": "sk-env"})
+            for forbidden in (
+                "OPENAI_API_KEY",
+                "OPENAI_TEST_API_KEY",
+                "OPENROUTER_API_KEY",
+                "ANTHROPIC_API_KEY",
+                "NORI_MODEL_GATEWAY_URL",
+                "NORI_MODEL_GATEWAY_API_KEY",
+                "BRAVE_SEARCH_API_KEY",
+            ):
+                self.assertNotIn(forbidden, stub_env)
+            self.assertEqual(stub_env["EXA_API_KEY"], "exa-keep")
 
-            isolated = suite.resolve_suite_env(
+            local_env = suite.resolve_suite_env(
                 root=root,
-                environ={"OPENAI_TEST_API_KEY": "sk-test-999"},
+                environ={
+                    "NORI_LOCAL_MODEL_URL": "http://127.0.0.1:11434",
+                    "OPENAI_TEST_API_KEY": "sk-should-be-stripped",
+                },
             )
-            self.assertEqual(isolated["OPENAI_API_KEY"], "sk-test-999")
-            self.assertNotIn("OPENROUTER_API_KEY", isolated)
+            self.assertEqual(local_env["NORI_LOCAL_MODEL_URL"], "http://127.0.0.1:11434")
+            self.assertEqual(local_env["NORI_LOCAL_MODEL_TAG"], "inkling-mini-2")
+            self.assertNotIn("OPENAI_API_KEY", local_env)
+            self.assertNotIn("OPENAI_TEST_API_KEY", local_env)
+            self.assertNotIn("NORI_MODEL_GATEWAY_API_KEY", local_env)
 
-            with self.assertRaises(SystemExit) as cm2:
+            with self.assertRaises(SystemExit):
                 suite.resolve_suite_env(
                     root=root,
-                    environ={"OPENAI_TEST_API_KEY": "sk-dev-123"},
+                    environ={"NORI_LOCAL_MODEL_URL": "https://api.openai.com/v1"},
                 )
-            self.assertIn("matches the default local dev key", str(cm2.exception))
 
-            (root / ".env.vst").write_text("OPENAI_API_KEY=sk-vst-555\n", encoding="utf-8")
-            vst = suite.resolve_suite_env(root=root, environ={})
-            self.assertEqual(vst["OPENAI_API_KEY"], "sk-vst-555")
+    def test_llm_client_and_runtime_env_ignore_cloud_keys_and_use_local_loopback(self) -> None:
+        import db_env
 
-    def test_gateway_child_env_strips_raw_keys_and_llm_client_routes_via_gateway(self) -> None:
-        gw = suite.LocalGateway(upstream_env={"OPENAI_TEST_API_KEY": "sk-raw-openai"})
-        gw.url = "http://127.0.0.1:19999/v1"
-        base_env = {
-            "PATH": "/usr/bin",
+        cloud_env = {
             "OPENAI_API_KEY": "sk-raw-openai",
             "OPENAI_TEST_API_KEY": "sk-raw-openai-test",
             "OPENROUTER_API_KEY": "sk-raw-or",
+            "OPENROUTER_TEST_API_KEY": "sk-raw-or-test",
             "ANTHROPIC_API_KEY": "sk-raw-ant",
-            "SIM_JUDGE_API_KEY": "sk-raw-judge",
+            "NORI_MODEL_PROVIDER": "gateway",
+            "NORI_MODEL_GATEWAY_URL": "http://127.0.0.1:19999/v1",
+            "NORI_MODEL_GATEWAY_API_KEY": "tok-gateway",
+            "SIM_GATEWAY_URL": "http://127.0.0.1:19999/v1",
+            "SIM_GATEWAY_TOKEN": "tok-gateway",
+            "BRAVE_SEARCH_API_KEY": "brave-secret",
         }
-        child = gw.child_env(base_env, "gpt-6.1-sol", "openai/gpt-6.1-terra")
-        for forbidden in (
-            "OPENAI_API_KEY",
-            "OPENAI_TEST_API_KEY",
-            "OPENROUTER_API_KEY",
-            "ANTHROPIC_API_KEY",
-            "SIM_JUDGE_API_KEY",
-        ):
-            self.assertNotIn(forbidden, child)
-        self.assertEqual(child["NORI_MODEL_PROVIDER"], "gateway")
-        self.assertEqual(child["NORI_MODEL_GATEWAY_URL"], gw.url)
-        self.assertEqual(child["NORI_MODEL_GATEWAY_API_KEY"], gw.token)
-        self.assertEqual(child["SIM_GATEWAY_URL"], gw.url)
-        self.assertEqual(child["SIM_GATEWAY_TOKEN"], gw.token)
+        with mock.patch.dict(os.environ, cloud_env, clear=True):
+            self.assertIsNone(suite.LLMClient.from_env("responder", dotenv=cloud_env))
+            self.assertIsNone(suite.LLMClient.from_env("judge", dotenv=cloud_env))
 
-        with mock.patch.dict(os.environ, child, clear=True):
+            rt_env = db_env.persona_runtime_env(
+                cloud_env,
+                "postgres://nori@127.0.0.1:15432/nori_sim_test?sslmode=disable",
+                Path("/tmp/artifacts"),
+                Path("/tmp/cred.key"),
+                "maya@example.test",
+                18080,
+                "http://127.0.0.1:18081",
+            )
+            for forbidden in (
+                "OPENAI_API_KEY",
+                "OPENAI_TEST_API_KEY",
+                "OPENROUTER_API_KEY",
+                "OPENROUTER_TEST_API_KEY",
+                "ANTHROPIC_API_KEY",
+                "NORI_MODEL_GATEWAY_URL",
+                "NORI_MODEL_GATEWAY_API_KEY",
+                "BRAVE_SEARCH_API_KEY",
+            ):
+                self.assertNotIn(forbidden, rt_env)
+            self.assertEqual(rt_env["NORI_MODEL_TEST_URL"], "http://127.0.0.1:18081")
+
+        with mock.patch.dict(
+            os.environ,
+            {"NORI_LOCAL_MODEL_URL": "http://127.0.0.1:11434", "OPENAI_API_KEY": "sk-ignored"},
+            clear=True,
+        ):
             resp_client = suite.LLMClient.from_env("responder", dotenv={"OPENAI_API_KEY": "sk-should-be-ignored"})
-            judge_client = suite.LLMClient.from_env("judge", dotenv={"OPENAI_API_KEY": "sk-should-be-ignored"})
+            judge_client = suite.LLMClient.from_env("judge", dotenv={"OPENROUTER_API_KEY": "sk-should-be-ignored"})
         self.assertIsNotNone(resp_client)
         self.assertIsNotNone(judge_client)
         assert resp_client is not None and judge_client is not None
-        self.assertEqual(resp_client.base_url, gw.url)
-        self.assertEqual(resp_client.api_key, gw.token)
-        self.assertEqual(resp_client.model, "gpt-6-luna")
-        self.assertEqual(judge_client.base_url, gw.url)
-        self.assertEqual(judge_client.api_key, gw.token)
-        self.assertEqual(judge_client.model, "gpt-6-luna")
+        self.assertEqual(resp_client.base_url, "http://127.0.0.1:11434/v1")
+        self.assertEqual(resp_client.model, "inkling-mini-2")
+        self.assertEqual(resp_client.api_key, "local-inkling")
+        self.assertEqual(judge_client.base_url, "http://127.0.0.1:11434/v1")
+        self.assertEqual(judge_client.model, "inkling-mini-2")
+
+        with mock.patch.dict(os.environ, {"SIM_JUDGE_BASE_URL": "https://api.openai.com/v1"}, clear=True):
+            with self.assertRaises(ValueError):
+                suite.LLMClient.from_env("judge")
 
     def test_horizon_resolution_core_preset_and_eom_skip(self) -> None:
         self.assertEqual(suite.resolve_max_days(None, 1), 7)

@@ -33,7 +33,6 @@ type Settings struct {
 	Metering       usage.Config
 	Store          Store
 	ExaSearchKey   string
-	SearchKey      string
 	TimeZone       string
 	TaskBudgetUSD  float64
 	Observability  Observability
@@ -143,7 +142,7 @@ func LoadSimulation() (Settings, error) {
 
 func load(defaultCloud string, simulation bool) (Settings, error) {
 	excluded := func(name string) bool {
-		return managementCredential(name) || (!simulation && installationModelCredential(name))
+		return managementCredential(name) || installationModelCredential(name)
 	}
 	for _, entry := range os.Environ() {
 		name, _, _ := strings.Cut(entry, "=")
@@ -197,9 +196,6 @@ func load(defaultCloud string, simulation bool) (Settings, error) {
 	if simulation {
 		if s.Cloud != "local" {
 			return Settings{}, fmt.Errorf("the simulation executable requires NORI_CLOUD=local")
-		}
-		if err := validateProfileKeyIsolation(s.EnvProfile); err != nil {
-			return Settings{}, err
 		}
 	}
 	if !ValidRole(s.Role) {
@@ -283,23 +279,8 @@ func fromEnvironment(defaultCloud string, simulation bool) Settings {
 	}
 	var credentials []string
 	for _, name := range []string{
-		"NORI_MODEL_GATEWAY_API_KEY",
-		"NORI_GATEWAY_TOKEN",
-		"OPENAI_API_KEY",
-		"OPENAI_PROD_API_KEY",
-		"OPENAI_DEV_API_KEY",
-		"OPENAI_TEST_API_KEY",
-		"ANTHROPIC_API_KEY",
-		"ANTHROPIC_PROD_API_KEY",
-		"ANTHROPIC_DEV_API_KEY",
-		"ANTHROPIC_TEST_API_KEY",
-		"OPENROUTER_API_KEY",
-		"OPENROUTER_PROD_API_KEY",
-		"OPENROUTER_DEV_API_KEY",
-		"OPENROUTER_TEST_API_KEY",
 		"JEV_API_KEY",
 		"EXA_API_KEY",
-		"BRAVE_SEARCH_API_KEY",
 		"SENTRY_AUTH_TOKEN",
 		"ARIZE_API_KEY",
 		"NORI_USAGE_TOKEN",
@@ -338,7 +319,6 @@ func fromEnvironment(defaultCloud string, simulation bool) Settings {
 		Store:         store,
 		Metering:      usage.Config{Mode: get("NORI_USAGE_METER", "store"), Endpoint: os.Getenv("NORI_USAGE_ENDPOINT"), Token: os.Getenv("NORI_USAGE_TOKEN"), MaxCallsPerHour: int(parseEnvInt32Default("NORI_USER_MAX_CALLS_PER_HOUR", 300)), MaxUSDPerDay: parseOptionalNonNegativeFloatDefault("NORI_USER_MAX_USD_PER_DAY", 15.0)},
 		ExaSearchKey:  strings.TrimSpace(os.Getenv("EXA_API_KEY")),
-		SearchKey:     strings.TrimSpace(os.Getenv("BRAVE_SEARCH_API_KEY")),
 		TaskBudgetUSD: taskBudget,
 		Observability: Observability{
 			SentryDSN: strings.TrimSpace(os.Getenv("SENTRY_DSN")), SentryEnvironment: os.Getenv("SENTRY_ENVIRONMENT"), SentryRelease: os.Getenv("SENTRY_RELEASE"),

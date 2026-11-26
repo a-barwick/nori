@@ -21,7 +21,7 @@ func jsonResponse(status int, body string) *http.Response {
 	}
 }
 
-func TestWebSearchPrefersExaOverBrave(t *testing.T) {
+func TestWebSearchUsesExa(t *testing.T) {
 	var gotURL, gotMethod, gotKey, gotQuery string
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		gotURL = r.URL.String()
@@ -49,7 +49,6 @@ func TestWebSearchPrefersExaOverBrave(t *testing.T) {
 		HTTP: client,
 		Capabilities: Capabilities{
 			ExaSearchKey: "exa-test-key",
-			SearchKey:    "brave-test-key",
 		},
 	}
 	res, err := svc.webSearch(context.Background(), "nori assistant")
@@ -77,31 +76,21 @@ func TestWebSearchPrefersExaOverBrave(t *testing.T) {
 	}
 }
 
-func TestWebSearchFallsBackToBrave(t *testing.T) {
-	var gotURL, gotToken string
+func TestWebSearchUsesFallbackCostWhenExaOmitsTotal(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		gotURL = r.URL.String()
-		gotToken = r.Header.Get("X-Subscription-Token")
-		return jsonResponse(http.StatusOK, `{"web":{"results":[{"title":"Brave Result","url":"https://example.com/brave","description":"Desc","age":"2 days ago"}]}}`), nil
+		return jsonResponse(http.StatusOK, `{"results":[{"title":"Result","url":"https://example.com/r","summary":"Summary"}]}`), nil
 	})}
 
 	svc := &Service{
 		HTTP:         client,
-		Capabilities: Capabilities{SearchKey: "brave-only-key"},
+		Capabilities: Capabilities{ExaSearchKey: "exa-test-key"},
 	}
 	res, err := svc.webSearch(context.Background(), "hello")
 	if err != nil {
 		t.Fatalf("webSearch failed: %v", err)
 	}
-	if !strings.HasPrefix(gotURL, braveSearchURL) {
-		t.Fatalf("expected brave URL, got %q", gotURL)
-	}
-	if gotToken != "brave-only-key" {
-		t.Fatalf("expected X-Subscription-Token brave-only-key, got %q", gotToken)
-	}
-	items, _ := res["results"].([]map[string]any)
-	if len(items) != 1 || items[0]["title"] != "Brave Result" {
-		t.Fatalf("unexpected result items: %#v", items)
+	if res["cost_usd"] != ExaSearchCostUSD {
+		t.Fatalf("expected fallback cost_usd=%v, got %#v", ExaSearchCostUSD, res["cost_usd"])
 	}
 }
 

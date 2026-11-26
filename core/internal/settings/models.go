@@ -53,67 +53,6 @@ func resolveEnvProfile(cloud string) string {
 	return "prod"
 }
 
-func profileKeyVarName(prefix, profile string) string {
-	switch profile {
-	case "test":
-		return prefix + "_TEST_API_KEY"
-	case "prod":
-		if strings.TrimSpace(os.Getenv(prefix+"_PROD_API_KEY")) != "" {
-			return prefix + "_PROD_API_KEY"
-		}
-		return prefix + "_API_KEY"
-	case "dev":
-		if strings.TrimSpace(os.Getenv(prefix+"_DEV_API_KEY")) != "" {
-			return prefix + "_DEV_API_KEY"
-		}
-		return prefix + "_API_KEY"
-	default:
-		return prefix + "_API_KEY"
-	}
-}
-
-func resolveProfileKey(prefix, profile string) string {
-	switch profile {
-	case "test":
-		return strings.TrimSpace(os.Getenv(prefix + "_TEST_API_KEY"))
-	case "prod":
-		return cmp.Or(
-			strings.TrimSpace(os.Getenv(prefix+"_PROD_API_KEY")),
-			strings.TrimSpace(os.Getenv(prefix+"_API_KEY")),
-		)
-	case "dev":
-		return cmp.Or(
-			strings.TrimSpace(os.Getenv(prefix+"_DEV_API_KEY")),
-			strings.TrimSpace(os.Getenv(prefix+"_API_KEY")),
-		)
-	default:
-		return strings.TrimSpace(os.Getenv(prefix + "_API_KEY"))
-	}
-}
-
-func validateProfileKeyIsolation(profile string) error {
-	for _, prefix := range []string{"OPENAI", "ANTHROPIC", "OPENROUTER"} {
-		prodKey := strings.TrimSpace(os.Getenv(prefix + "_PROD_API_KEY"))
-		devKey := strings.TrimSpace(os.Getenv(prefix + "_DEV_API_KEY"))
-		testKey := strings.TrimSpace(os.Getenv(prefix + "_TEST_API_KEY"))
-		baseKey := strings.TrimSpace(os.Getenv(prefix + "_API_KEY"))
-
-		if prodKey != "" && devKey != "" && prodKey == devKey {
-			return fmt.Errorf("%s_PROD_API_KEY and %s_DEV_API_KEY must be distinct keys", prefix, prefix)
-		}
-		if prodKey != "" && testKey != "" && prodKey == testKey {
-			return fmt.Errorf("%s_PROD_API_KEY and %s_TEST_API_KEY must be distinct keys", prefix, prefix)
-		}
-		if devKey != "" && testKey != "" && devKey == testKey {
-			return fmt.Errorf("%s_DEV_API_KEY and %s_TEST_API_KEY must be distinct keys", prefix, prefix)
-		}
-		if profile == "test" && testKey != "" && baseKey != "" && testKey == baseKey {
-			return fmt.Errorf("%s_TEST_API_KEY must not reuse %s_API_KEY", prefix, prefix)
-		}
-	}
-	return nil
-}
-
 func parseOptionalNonNegativeFloat(name string) float64 {
 	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
@@ -135,63 +74,35 @@ func parseOptionalNonNegativeFloatDefault(name string, fallback float64) float64
 
 func modelsFromEnvironment(profile, cloud string, simulation bool) Models {
 	testURL := strings.TrimSpace(os.Getenv("NORI_MODEL_TEST_URL"))
-	if !simulation && !(cloud == "local" && testURL != "") {
+	localTag := ""
+	if simulation && testURL == "" {
+		if localURL := strings.TrimSpace(os.Getenv("NORI_LOCAL_MODEL_URL")); localURL != "" {
+			testURL = localURL
+			localTag = cmp.Or(strings.TrimSpace(os.Getenv("NORI_LOCAL_MODEL_TAG")), "inkling-mini-2")
+		}
+	}
+	if !(cloud == "local" && testURL != "") {
 		return Models{
-			EnvProfile: profile, BYOKRequired: true, TestURL: testURL,
-			JevKey: strings.TrimSpace(os.Getenv("JEV_API_KEY")),
-			MaxUSD: parseOptionalNonNegativeFloat("NORI_LLM_MAX_USD"),
+			EnvProfile:   profile,
+			BYOKRequired: true,
+			TestURL:      testURL,
+			JevKey:       strings.TrimSpace(os.Getenv("JEV_API_KEY")),
+			MaxUSD:       parseOptionalNonNegativeFloat("NORI_LLM_MAX_USD"),
 		}
 	}
 	models := Models{
 		EnvProfile:     profile,
-		Provider:       strings.ToLower(strings.TrimSpace(os.Getenv("NORI_MODEL_PROVIDER"))),
-		OuterProvider:  strings.ToLower(strings.TrimSpace(os.Getenv("NORI_OUTER_PROVIDER"))),
-		InnerProvider:  strings.ToLower(strings.TrimSpace(os.Getenv("NORI_INNER_PROVIDER"))),
-		GatewayURL:     strings.TrimSpace(os.Getenv("NORI_MODEL_GATEWAY_URL")),
+		Provider:       "openai",
 		JevKey:         strings.TrimSpace(os.Getenv("JEV_API_KEY")),
-		Outer:          strings.TrimSpace(os.Getenv("NORI_AGENT_MODEL")),
-		Inner:          strings.TrimSpace(os.Getenv("MODEL_NAME")),
+		Outer:          cmp.Or(strings.TrimSpace(os.Getenv("NORI_AGENT_MODEL")), localTag, DefaultOuterModel),
+		Inner:          cmp.Or(strings.TrimSpace(os.Getenv("MODEL_NAME")), localTag, DefaultInnerModel),
 		TestURL:        testURL,
 		OuterReasoning: strings.ToLower(strings.TrimSpace(os.Getenv("NORI_OUTER_REASONING_EFFORT"))),
 		InnerReasoning: strings.ToLower(strings.TrimSpace(os.Getenv("NORI_INNER_REASONING_EFFORT"))),
 		MaxUSD:         parseOptionalNonNegativeFloat("NORI_LLM_MAX_USD"),
 	}
-	if simulation {
-		models.OpenAIKey = resolveProfileKey("OPENAI", profile)
-		models.AnthropicKey = resolveProfileKey("ANTHROPIC", profile)
-		models.OpenRouterKey = resolveProfileKey("OPENROUTER", profile)
-		models.GatewayKey = strings.TrimSpace(os.Getenv("NORI_MODEL_GATEWAY_API_KEY"))
-	} else {
-		// App fixtures can use only the explicit, validated loopback endpoint.
-		models.Provider, models.OuterProvider, models.InnerProvider = "openai", "", ""
-		models.GatewayURL = ""
-	}
 	if models.InnerReasoning == "" {
 		models.InnerReasoning = "low"
-	}
-	if models.Outer == "" {
-		switch models.EffectiveOuterProvider() {
-		case "openai":
-			models.Outer = DefaultOuterModel
-		case "anthropic":
-			models.Outer = DefaultAnthropicOuterModel
-		case "openrouter":
-			models.Outer = DefaultOpenRouterOuterModel
-		case "gateway":
-			models.Outer = DefaultGatewayOuterModel
-		}
-	}
-	if models.Inner == "" {
-		switch models.EffectiveInnerProvider() {
-		case "openai":
-			models.Inner = DefaultInnerModel
-		case "anthropic":
-			models.Inner = DefaultAnthropicInnerModel
-		case "openrouter":
-			models.Inner = DefaultOpenRouterInnerModel
-		case "gateway":
-			models.Inner = DefaultGatewayInnerModel
-		}
 	}
 	return models
 }
@@ -224,11 +135,11 @@ func (m Models) OuterCredential() (name, key string) {
 	case "gateway":
 		return "NORI_MODEL_GATEWAY_API_KEY", m.GatewayKey
 	case "anthropic":
-		return profileKeyVarName("ANTHROPIC", m.EnvProfile), m.AnthropicKey
+		return "ANTHROPIC_API_KEY", m.AnthropicKey
 	case "openrouter":
-		return profileKeyVarName("OPENROUTER", m.EnvProfile), m.OpenRouterKey
+		return "OPENROUTER_API_KEY", m.OpenRouterKey
 	default:
-		return profileKeyVarName("OPENAI", m.EnvProfile), m.OpenAIKey
+		return "OPENAI_API_KEY", m.OpenAIKey
 	}
 }
 
@@ -237,11 +148,11 @@ func (m Models) TaskCredential() (name, key string) {
 	case "gateway":
 		return "NORI_MODEL_GATEWAY_API_KEY", m.GatewayKey
 	case "anthropic":
-		return profileKeyVarName("ANTHROPIC", m.EnvProfile), m.AnthropicKey
+		return "ANTHROPIC_API_KEY", m.AnthropicKey
 	case "openai":
-		return profileKeyVarName("OPENAI", m.EnvProfile), m.OpenAIKey
+		return "OPENAI_API_KEY", m.OpenAIKey
 	default:
-		return profileKeyVarName("OPENROUTER", m.EnvProfile), m.OpenRouterKey
+		return "OPENROUTER_API_KEY", m.OpenRouterKey
 	}
 }
 
