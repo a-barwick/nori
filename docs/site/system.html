@@ -3,8 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Service overview · Nori</title>
+<title>Service overview · Dokyu</title>
 <link rel="stylesheet" href="site.css">
+<script src="site-config.js" defer></script>
 <script src="site.js" defer></script>
 </head>
 <body>
@@ -35,8 +36,8 @@
 <section><h2>User isolation</h2>
 <ul class="pts">
 <li>Every user-scoped route sits under <code>/users/{id}/...</code>, resolved on the server from a verified host app session or OIDC ID token.</li>
-<li>Conversations, tasks, interactions, approvals, MCP servers, credentials, results and uploads are isolated per user; requesting another user's resource ID returns 404.</li>
-<li>Hosted API entrypoints require short-lived HS256 service tokens (<code>core/internal/serviceauth</code>); only <code>/healthz</code> and <code>/readyz</code> are unauthenticated.</li>
+<li>Conversations, tasks, interactions, approvals, MCP servers, credentials, results and uploads are isolated per user. Requesting another user's resource ID returns 404.</li>
+<li>Hosted API entrypoints require short-lived HS256 service tokens (<code>core/internal/serviceauth</code>). Only <code>/healthz</code> and <code>/readyz</code> are unauthenticated.</li>
 </ul>
 </section>
 <section><h2>Where state lives</h2>

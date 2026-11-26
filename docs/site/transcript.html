@@ -3,8 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Task transcript · Nori</title>
+<title>Task transcript · Dokyu</title>
 <link rel="stylesheet" href="site.css">
+<script src="site-config.js" defer></script>
 <script src="site.js" defer></script>
 </head>
 <body>
@@ -21,19 +22,20 @@
   <div class="loopback">↺ activities append the turn and each tool result to the transcript in Postgres</div>
 </div></div>
 <section><h2>An example</h2>
-<p>For the request “Pull the Q3 revenue summary”, the transcript holds the saved turns below. The model invokes a tool, receives its output, and proposes an answer. Provider state is what the model provider returned for a turn, such as encrypted reasoning and call IDs, kept exactly so it can be replayed.</p>
+<p>For the request “Pull the Q3 revenue summary”, the transcript holds the saved turns below.</p>
 <div class="card"><table class="tall"><tr><th>Role</th><th>Parts</th></tr>
 <tr><td>user</td><td>Text: the request.</td></tr>
 <tr><td>model</td><td>Provider state, then an MCP or <code>web_search</code> call.</td></tr>
 <tr><td>user</td><td>The result of that call, with its output and operation evidence reference.</td></tr>
 <tr><td>model</td><td>Provider state, then a <code>complete</code> call with the answer and cited evidence.</td></tr>
-</table></div></section>
+</table></div>
+<p>Provider state is what the model provider returned for a turn, such as encrypted reasoning and call IDs. Nori keeps it exactly so the turn can be replayed.</p></section>
 <section><h2>Long tasks</h2>
-<ul class="pts"><li>Once a transcript passes 128 KiB, the activities replace the outputs of its oldest tool results with their operation ID and outcome. They stop when the newest 64 KiB of messages is left unchanged.</li>
-<li>The saved transcript keeps every result. The model reads a replaced output again with <code>operation_read</code> or inspects older blocks with <code>task_history_read</code>.</li>
-<li>Replacement starts again only when the request passes 128 KiB again. Until then each request starts with the same prefix as the last, so the provider's prompt cache still applies (cached input tokens on direct OpenAI tariffs cost 1/20th of uncached input).</li></ul></section>
+<ul class="pts"><li>Once a transcript passes 64 KiB, the activities replace the output of each older tool result of 512 bytes or more with a short stub. The stub holds the operation ID and outcome. The newest 32 KiB of messages stays unchanged.</li>
+<li>The saved transcript keeps every result. The model reads a replaced output again with <code>operation_read</code>.</li>
+<li>If the request is still over 128 KiB, the activities archive older rounds behind a history reference. The model reads them with <code>task_history_read</code>.</li>
+<li>Replacement moves forward only when the transcript passes 64 KiB again. Until then each request starts with the same prefix as the last, so the provider's prompt cache still applies.</li></ul></section>
 <details class="more"><summary>Saved form</summary>
-<p>The task activities import no provider SDK.</p>
 <table class="tall"><tr><th>Transcript type</th><th>Saved JSON</th></tr>
 <tr><td>Message</td><td><code>{"parts": [...], "role": "user" | "model"}</code></td></tr>
 <tr><td>Text</td><td><code>{"text": "..."}</code></td></tr>
@@ -41,9 +43,9 @@
 <tr><td>Tool result</td><td><code>{"tool_result": {"id": "...", "name": "...", "response": {...}}}</code></td></tr>
 <tr><td>Provider state</td><td><code>{"provider": {"format": "...", "data": "&lt;base64&gt;"}}</code>, where <code>format</code> is <code>nori.responses</code> (OpenRouter), <code>nori.openai.responses</code> (direct OpenAI) or <code>nori.gateway.responses</code> (gateway).</td></tr>
 </table>
-<p><code>task/history.go</code> marshals <code>transcript.Message</code> directly so saved transcript blocks stay provider-neutral and replay cleanly across worker builds.</p>
-<p>The Responses adapter (<code>core/internal/agent/responses/</code>) targets direct OpenAI (<code>gpt-6.1-terra</code>), OpenRouter (<code>openai/gpt-6.1-terra</code>) or a deployment-owned model gateway (<code>core/internal/modelgateway/</code>). It replays a turn verbatim when it carries provider state the adapter wrote, and rebuilds other turns from their text, tool calls and tool results.</p>
+<p><code>core/internal/task/history.go</code> marshals <code>transcript.Message</code> directly so saved transcript blocks stay provider-neutral and replay cleanly across worker builds.</p>
+<p>The Responses adapter (<code>core/internal/agent/responses/</code>) targets direct OpenAI, OpenRouter or a deployment-owned model gateway (<code>core/internal/modelgateway/</code>). It replays a turn verbatim when it carries provider state the adapter wrote, and rebuilds other turns from their text, tool calls and tool results.</p>
 </details>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/transcript/</code> · <code>core/internal/agent/model.go</code> · <code>core/internal/agent/responses/</code> · <code>core/internal/modelgateway/http.go</code> · <code>core/internal/usage/openai.go</code> · <code>core/internal/task/history.go</code> · <code>core/internal/task/context.go</code> · <code>core/internal/agent/steps.go</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/transcript/</code> · <code>core/internal/agent/model.go</code> · <code>core/internal/agent/responses/</code> · <code>core/internal/modelgateway/http.go</code> · <code>core/internal/usage/openai.go</code> · <code>core/internal/task/history.go</code> · <code>core/internal/task/context.go</code> · <code>core/internal/contextview/budget.go</code> · <code>core/internal/agent/steps.go</code></p></details>
 </body>
 </html>

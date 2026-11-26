@@ -3,8 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Permissions and approvals · Nori</title>
+<title>Permissions and approvals · Dokyu</title>
 <link rel="stylesheet" href="site.css">
+<script src="site-config.js" defer></script>
 <script src="site.js" defer></script>
 </head>
 <body>
@@ -15,23 +16,36 @@
 <div class="node inner"><b>Tool executor (<code>invoke</code>)</b><small>Prepares the exact action: tool, connection/server, arguments and recipients. Computes a SHA-256 <code>action_digest</code> over them.</small></div>
 <div class="arrow">↓ <span class="lbl">unknown-effect or sensitive send needs approval</span></div>
 <div class="node"><b>Typed approval card</b><small>Saved as a pending interaction with prompt, typed payload, revision and <code>action_digest</code>.</small></div>
-<div class="arrow">↓ <span class="lbl">POST /v1/interactions/{id}/responses naming revision &amp; digest</span></div>
+<div class="arrow">↓ <span class="lbl">POST /v1/interactions/{id}/responses naming revision and digest</span></div>
 <div class="node computer"><b>MCP server / adapter</b><small>Runs once with an idempotency key derived from task, revision and action.</small></div>
 </div></div>
 <section><h2>What decides a call</h2>
-<p>Connecting an MCP server or account grants no execution authority on its own. Every call is evaluated by <code>core/internal/permissions</code> against the connection's granted scopes, the user's permission rules, the task's origin (direct user request vs. automation) and deployment defaults. Rules specify exact selectors—<code>tool_ids</code>, <code>connection_ids</code>, <code>resource_ids</code>, <code>action_classes</code>, optional <code>recipients</code>, <code>automation_id</code>, <code>goal_id</code>, <code>expires_at</code> and <code>max_operations</code>. Empty selector lists match nothing, explicit <code>*</code> wildcards match any, and <strong>deny always wins</strong>.</p>
+<p>Connecting an MCP server or account grants no execution authority on its own. <code>core/internal/permissions</code> evaluates every call against four inputs:</p>
+<ul class="pts">
+<li>the connection's granted scopes</li>
+<li>the user's permission rules</li>
+<li>the task's origin, either a direct user request or an automation</li>
+<li>deployment defaults</li>
+</ul>
+<p>Rules use exact selectors: <code>tool_ids</code>, <code>connection_ids</code>, <code>resource_ids</code>, <code>action_classes</code>, and optionally <code>recipients</code>, <code>automation_id</code>, <code>goal_id</code>, <code>expires_at</code> and <code>max_operations</code>. An empty selector list matches nothing, an explicit <code>*</code> matches anything, and a deny rule always wins.</p>
 <div class="card"><table><tr><th>Action class</th><th>Examples</th><th>Default (no matching rule)</th></tr>
 <tr><td><code>read</code></td><td>Search, MCP protocol reads, read-only lookups</td><td>Allowed when available/connected</td></tr>
-<tr><td><code>reversible_write</code></td><td>Drafts or reversible state changes</td><td>Allowed for direct user requests; asks for unattended automations</td></tr>
+<tr><td><code>reversible_write</code></td><td>Drafts or reversible state changes</td><td>Allowed for direct user requests. Asks for unattended automations</td></tr>
 <tr><td><code>sensitive_send</code></td><td>Outbound messages, broadcasts or irreversible sends</td><td>Follows <code>UserSends</code> on direct requests (<code>UnattendedWrites</code> for automations)</td></tr>
 <tr><td><code>unknown</code></td><td>Discovered MCP server tools (annotations are advisory)</td><td>Always requires an approval card or an explicit matching allow rule</td></tr>
 </table>
 <p class="note">For unattended automation runs, <code>UnattendedWrites</code> defaults to <code>confirm_writes</code> (creates a pending approval interaction) or can be set to <code>require_rule</code> (denies writes unless an explicit allow rule matches).</p></div>
 </section>
 <section><h2>Approvals stay bound to what they approve</h2>
-<p>An approval interaction records the task ID, instruction revision, interaction revision and exact <code>action_digest</code>. A steer to the task supersedes any open approval in the same transaction that advances the task revision. Submitting a stale decision returns HTTP 409 (<code>revision_conflict</code> or <code>interaction_stale</code>) with the current state, and an old digest can never match a modified action. Declining executes nothing and runs optional cleanup hooks.</p>
-<p>After approval, the task re-invokes the call. The idempotency key comes from the task, its revision and the action digest—so an unchanged repeat consumes the approval once and reuses the same key: one approval, one write. Any changed parameter produces a new digest and requires a fresh approval.</p>
-<p>The user's response, the interaction resolution, the mutation receipt and the command that resumes the task are committed together in Postgres. The host app and the workbench both respond through <code>POST /v1/interactions/{id}/responses</code> with <code>{ request_id, expected_revision, value: { kind: "approve" | "decline", action_digest } }</code>.</p>
+<ul class="pts">
+<li>An approval interaction records the task ID, instruction revision, interaction revision and exact <code>action_digest</code>.</li>
+<li>A steer to the task supersedes any open approval in the same transaction that advances the task revision.</li>
+<li>A stale decision returns HTTP 409 (<code>revision_conflict</code> or <code>interaction_stale</code>) with the current state.</li>
+<li>A changed parameter produces a new digest and needs a fresh approval, because an old digest never matches a modified action.</li>
+<li>Declining executes nothing and runs optional cleanup hooks.</li>
+<li>After approval, the task re-invokes the call with an idempotency key built from the task, its revision and the action digest. An unchanged repeat reuses the key and consumes the approval once, so one approval allows one write.</li>
+</ul>
+<p>Postgres commits the user's response, the interaction resolution, the mutation receipt and the command that resumes the task together. The host app and the workbench both respond through <code>POST /v1/interactions/{id}/responses</code> with <code>{ request_id, expected_revision, value: { kind: "approve" | "decline", action_digest } }</code>.</p>
 </section>
 <section><h2>Questions and other interactions</h2>
 <p>Task questions, account choices and approvals share the same typed interaction record under <code>/v1/interactions</code>: each carries a <code>status</code>, <code>revision</code>, typed <code>payload</code> and optimistic concurrency checks. Work surfaces every pending interaction so the host app or the workbench can render approval cards consistently.</p>

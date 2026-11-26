@@ -10,3 +10,4 @@
 8. **Verify reports before editing.** Check current code or behavior before acting on bugs, audit notes, or earlier findings.
 9. **Handle routine work directly.** Run Git, build, and simulator commands yourself. Ask when a product decision, missing access, or irreversible action requires Austin.
 10. **Communicate plainly and stay on scope.** Lead with what changed, what you verified, and any blockers. Record unrelated findings as follow-ups.
+11. **Add docs only with Austin's approval.** Create a doc, docs-site page, plan, or notes file only after Austin explicitly approves that file. You may ask, but don't create it until he says yes. Update existing docs when the code they describe changes. Every doc follows `.agents/skills/plain-writing/SKILL.md`, and docs-site pages match the structure of the existing pages in `docs/site/`.

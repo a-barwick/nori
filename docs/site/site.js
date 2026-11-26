@@ -1,12 +1,6 @@
-const NAV = [
-  ['Start', [['index', 'Overview'], ['product', 'What Nori should do'], ['request', 'Following a request']]],
-  ['The loops', [['outer-loop', 'Outer loop'], ['classification', 'Classifying a message'], ['outer-model-failure', 'Outer model failure'], ['inner-loop', 'Inner loop'], ['transcript', 'Task transcript'], ['contract', 'How the loops talk'], ['tasks', 'Task lifecycle'], ['completion', 'Finishing a task']]],
-  ['Agent service', [['system', 'Service overview'], ['records', 'Records and delivery'], ['tools', 'Tools'], ['catalog', 'Tool catalog'], ['memory', 'Memory and context'], ['results', 'Results and files'], ['budgets', 'Budgets and controls'], ['observability', 'Observability'], ['deploy', 'Deployment'], ['authority', 'Tool authority']]],
-  ['Assistant', [['apps', 'Connections and MCP'], ['permissions', 'Permissions and approvals'], ['schedules', 'Automations']]],
-  ['Clients', [['clients', 'The host app and clients'], ['api', 'Service API'], ['web-client', 'Test workbench'], ['frontend', 'Workbench architecture'], ['theme', 'Theme']]],
-  ['Planned', [['roadmap', 'Roadmap']]],
-  ['Reference', [['decisions', 'Decisions'], ['open-questions', 'Open questions'], ['code', 'Code map'], ['words', 'Words we use'], ['reading', 'Reading list'], ['sources', 'Sources']]],
-];
+const { name: SITE_NAME, nav: NAV } = window.SITE;
+const pageErrors = [];
+addEventListener('error', e => pageErrors.push(e.message || `failed to load ${e.target?.src || e.target?.href}`), true);
 
 document.addEventListener('DOMContentLoaded', () => document.querySelectorAll('table').forEach(table => {
   const names = [...(table.rows[0]?.querySelectorAll('th') || [])].map(th => th.textContent.trim());
@@ -21,7 +15,7 @@ const at = flat.findIndex(([id]) => id === current);
 
 document.head.insertAdjacentHTML('beforeend', '<link rel="icon" type="image/svg+xml" href="favicon.svg">');
 
-document.title = current === 'index' ? 'Dokyu' : `Dokyu · ${document.title.split(' · ')[0]}`;
+document.title = current === 'index' ? SITE_NAME : `${SITE_NAME} · ${document.title.split(' · ')[0]}`;
 
 const main = document.createElement('main');
 main.append(...document.body.childNodes);
@@ -272,3 +266,60 @@ if (document.querySelector('.trace')) {
   };
   addEventListener('scroll', () => { if (!queued) { queued = true; requestAnimationFrame(follow); } }, { passive: true });
 }
+
+// Layout audit for check.py --render. It runs only when the URL has ?audit.
+if (location.search.includes('audit')) addEventListener('load', () => {
+  const width = document.documentElement.clientWidth;
+  const label = el => el.tagName.toLowerCase() + (el.getAttribute('class') ? '.' + el.getAttribute('class').split(' ')[0] : '');
+  const scrolls = el => { for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) if (getComputedStyle(p).overflowX !== 'visible') return true; return false; };
+  const wide = [...main.querySelectorAll('*')].filter(el => el.getClientRects().length && el.getBoundingClientRect().right > width + 1 && !scrolls(el) && !el.closest('svg'));
+  const inside = (b, x, y) => x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height;
+  const diagrams = [];
+  main.querySelectorAll('svg[viewBox]').forEach(svg => {
+    if (!svg.getClientRects().length || svg.closest('.copy-link')) return;
+    const view = svg.viewBox.baseVal;
+    const scale = svg.getBoundingClientRect().width / view.width;
+    const rects = [...svg.querySelectorAll('rect')].map(r => r.getBBox()).filter(b => b.width < view.width * .96 || b.height < view.height * .96);
+    const texts = [...svg.querySelectorAll('text')].filter(t => t.textContent.trim());
+    const boxes = texts.map(t => t.getBBox());
+    texts.forEach((t, i) => {
+      const b = boxes[i], words = t.textContent.trim().slice(0, 30);
+      if (b.x < view.x - 1 || b.y < view.y - 1 || b.x + b.width > view.x + view.width + 1 || b.y + b.height > view.y + view.height + 1) diagrams.push(`text leaves the diagram: "${words}"`);
+      const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+      const home = rects.filter(r => inside(r, cx, cy)).sort((p, q) => p.width * p.height - q.width * q.height)[0];
+      if (home && (b.x < home.x - 1 || b.x + b.width > home.x + home.width + 1)) diagrams.push(`text wider than its box: "${words}"`);
+      for (let j = i + 1; j < boxes.length; j++) {
+        const o = boxes[j], w = Math.min(b.x + b.width, o.x + o.width) - Math.max(b.x, o.x), h = Math.min(b.y + b.height, o.y + o.height) - Math.max(b.y, o.y);
+        if (w > 2 && h > 3) diagrams.push(`text overlaps text: "${words}" and "${texts[j].textContent.trim().slice(0, 30)}"`);
+      }
+      const size = parseFloat(getComputedStyle(t).fontSize) * scale;
+      if (size < 8.5) diagrams.push(`text renders at ${size.toFixed(1)}px: "${words}"`);
+    });
+    svg.querySelectorAll('path, line, polyline').forEach(path => {
+      if (path.closest('defs, marker') || path.closest('.tn')) return;
+      const length = path.getTotalLength();
+      if (!length) return;
+      const points = [];
+      for (let d = 0; d <= length; d += 4) points.push(path.getPointAtLength(d));
+      const start = points[0], end = path.getPointAtLength(length);
+      rects.forEach(r => {
+        if (inside(r, start.x, start.y) || inside(r, end.x, end.y)) return;
+        if (points.some(p => p.x > r.x + 2 && p.x < r.x + r.width - 2 && p.y > r.y + 2 && p.y < r.y + r.height - 2)) diagrams.push(`a line crosses a box at x=${Math.round(r.x)} y=${Math.round(r.y)}`);
+      });
+      boxes.forEach((b, i) => {
+        const hits = points.filter(p => inside(b, p.x, p.y));
+        if (hits.length && !(inside(b, start.x, start.y) || inside(b, end.x, end.y))) diagrams.push(`a line crosses text: "${texts[i].textContent.trim().slice(0, 30)}"`);
+      });
+    });
+  });
+  const brokenImages = [...document.images].filter(img => img.complete && !img.naturalWidth).map(img => img.getAttribute('src'));
+  const report = JSON.stringify({
+    width, scrollWidth: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight, wide: [...new Set(wide.map(label))].slice(0, 6),
+    errors: pageErrors, brokenImages, diagrams: [...new Set(diagrams)].slice(0, 12),
+  });
+  if (parent !== window) parent.postMessage(report, '*');
+  const meta = document.createElement('meta');
+  meta.name = 'docs-audit';
+  meta.content = report;
+  document.head.append(meta);
+});

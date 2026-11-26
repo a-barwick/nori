@@ -3,37 +3,37 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Clients · Nori</title>
+<title>The host app and clients · Dokyu</title>
 <link rel="stylesheet" href="site.css">
+<script src="site-config.js" defer></script>
 <script src="site.js" defer></script>
 </head>
 <body>
-<h1>Clients</h1>
-<p class="lede">Nori ships a Next.js web client and BFF proxy, a native SwiftUI iOS client, and Nori for Mac with built-in Home AI Server support.</p>
+<h1>The host app and clients</h1>
+<p class="lede">Nori ships a Next.js web client and BFF, a native SwiftUI iOS client, and an Electron macOS desktop client, all talking to the same user-scoped Go API.</p>
 <div class="card"><div class="flow">
 <div class="branch">
-<div class="node"><b>Nori Web (<code>web/</code>) &amp; Nori for Mac (<code>macos/</code>)</b><small>Next.js BFF verifying OIDC/IAP identity and proxying <code>/api/v1/*</code> to Go Core.</small></div>
-<div class="node"><b>Nori for iOS (<code>ios/</code>)</b><small>Native SwiftUI client exercising Chat, Work, approvals, memory, MCP, and Library.</small></div>
+<div class="node"><b>Web &amp; Mac clients (<code>web/</code>, <code>macos/</code>)</b><small>Next.js BFF verifies OIDC/IAP sessions and proxies <code>/api/v1/*</code> to Nori Core.</small></div>
+<div class="node"><b>iOS client (<code>ios/</code>)</b><small>Native SwiftUI app exercising chat, Work, approvals, memory, MCP and library directly.</small></div>
 </div>
-<div class="arrow">↓ <span class="lbl">server-verified user ID + HS256 service token</span></div>
+<div class="arrow">↓ <span class="lbl">server-verified user ID + HS256 service token or Google ID token</span></div>
 <div class="node outer"><b>Go agent service (<code>nori</code>)</b><small>Owns conversation turns, task dispatch, permissions, SSE streams and state.</small></div>
 <div class="arrow">↓ <span class="lbl">per-user records and events</span></div>
-<div class="node"><b>Postgres &amp; Cloud Storage / S3</b><small>Strict per-user isolation across threads, tasks, leases, approvals and artifacts.</small></div>
+<div class="node"><b>Postgres &amp; GCS / S3</b><small>Strict per-user isolation across threads, tasks, leases, approvals and artifacts.</small></div>
 </div></div>
 <section><h2>Clients</h2>
 <div class="card"><table class="tall"><tr><th>Client</th><th>Role</th><th>Where</th></tr>
-<tr><td>Web client &amp; BFF</td><td>Next.js application and authenticated proxy verifying user identity (IAP/OIDC/local), mapping identities to provisioned Nori user IDs, attaching HS256 service auth, and serving the persistent thread, Work, Memory, Apps, Routines, Goals, Library, and Settings.</td><td><code>web/</code>, <a href="web-client.html">Web client</a>, <a href="frontend.html">Frontend architecture</a></td></tr>
+<tr><td>Web client &amp; BFF</td><td>Next.js application and server proxy (<code>web/src/lib/runtime/forward.ts</code>) exercising the persistent thread, Work/Activity panel, approval cards, memory, MCP servers, automations, goals and library.</td><td><a href="web-client.html">Web client</a>, <a href="frontend.html">Frontend architecture</a></td></tr>
 <tr><td>iOS client</td><td>Native SwiftUI iOS app (<code>NoriApp</code> + <code>NoriKit</code> with <code>NoriCore</code>, <code>NoriDesign</code> and <code>NoriFeatures</code>) talking to the same user-scoped API and SSE streams.</td><td><code>ios/Nori.xcodeproj</code>, <code>ios/README.md</code></td></tr>
-<tr><td>Nori for Mac</td><td>Electron desktop wrapper authenticating via Google Desktop OAuth PKCE and bundling the Home AI connector helper and LaunchAgent.</td><td><code>macos/</code>, <code>macos/README.md</code></td></tr>
+<tr><td>macOS client</td><td>Electron desktop wrapper hosting the web app and bundling the local Home AI connector helper and LaunchAgent.</td><td><code>macos/README.md</code></td></tr>
 </table></div>
 </section>
-<section><h2>Authenticated BFF boundary</h2>
-<p><code>web/src/lib/runtime/</code> isolates browser sessions from Go Core:</p>
+<section><h2>Authentication and typed API contracts</h2>
 <ul class="pts">
-<li><b>Identity mapping:</b> <code>auth.ts</code> verifies the user's IAP/OIDC assertion (or loopback dev email) and resolves <code>{ issuer, subject }</code> to a distinct provisioned Nori user ID. Missing sessions return 401; unauthorized identities return 403.</li>
-<li><b>Service auth:</b> <code>forward.ts</code> attaches short-lived HS256 service tokens (<code>nori-service</code>) on hosted calls to Go Core.</li>
-<li><b>Strict isolation:</b> Every upstream call is prefixed with <code>/users/{mappedUser}</code>. Nori scopes Work, interactions, receipts and results to that user and returns 404 for any other user's resource ID.</li>
-<li><b>Typed contracts:</b> Clients share typed API definitions for Work items, approval interactions, and mutation receipts.</li>
+<li><b>Identity mapping:</b> The web BFF verifies OIDC/IAP sessions and resolves verified identities via <code>POST /api/users/resolve</code>. Missing sessions return 401; unprovisioned identities return 403.</li>
+<li><b>Service auth:</b> Trusted server proxies attach short-lived HS256 service tokens; iOS authenticates directly with verified Google ID tokens.</li>
+<li><b>Strict isolation:</b> Every user-scoped upstream call is prefixed with <code>/users/{id}</code>. Nori scopes Work, interactions, receipts and results to that user and returns 404 for any other user's resource ID.</li>
+<li><b>Typed contracts:</b> Clients share the OpenAPI 3.1 spec (<code>api/openapi.yaml</code>) with generated TypeScript types (<code>web/src/lib/contracts/openapi.d.ts</code>) and Go/Swift conformance tests.</li>
 </ul>
 </section>
 <section><h2>What the service owns</h2>
@@ -45,6 +45,6 @@
 </table></div>
 <p>For hosted standalone web deployments on AWS, <code>NORI_CLOUD=aws</code> verifies OIDC ID tokens via <code>jose</code> JWKS discovery (<code>NORI_OIDC_ISSUER</code>, <code>NORI_OIDC_AUDIENCE</code>, <code>NORI_OIDC_COOKIE</code>) and resolves the verified issuer and subject to a provisioned Nori user. See <code>core/infrastructure/aws/README.md</code>.</p>
 </section>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/app/app.go</code> · <code>core/internal/serviceauth/auth.go</code> · <code>core/infrastructure/aws/README.md</code> · <code>web/src/components/runtime/NoriApp.tsx</code> · <code>web/src/lib/runtime/auth.ts</code> · <code>web/src/lib/runtime/oidc.ts</code> · <code>web/src/lib/runtime/forward.ts</code> · <code>macos/README.md</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>api/openapi.yaml</code> · <code>core/internal/app/app.go</code> · <code>core/internal/serviceauth/auth.go</code> · <code>core/infrastructure/aws/README.md</code> · <code>web/src/components/runtime/NoriApp.tsx</code> · <code>web/src/lib/runtime/auth.ts</code> · <code>web/src/lib/runtime/oidc.ts</code> · <code>web/src/lib/runtime/forward.ts</code> · <code>web/src/lib/contracts/assistant.ts</code></p></details>
 </body>
 </html>

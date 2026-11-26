@@ -3,50 +3,66 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Connections and MCP · Nori</title>
+<title>Connections and MCP · Dokyu</title>
 <link rel="stylesheet" href="site.css">
+<script src="site-config.js" defer></script>
 <script src="site.js" defer></script>
 </head>
 <body>
 <h1>Connections and MCP</h1>
 <p class="lede">How Nori registers tools and connects apps through MCP servers and native integrations.</p>
 <div class="card"><div class="flow">
-<div class="node"><b>Extension registry</b><small>Versioned tool definitions: schema, binding, policy and a content digest.</small></div>
+<div class="node"><b>Extension registry</b><small>Versioned tool definitions with a schema, policy and content digest.</small></div>
 <div class="arrow">↓ <span class="lbl">definitions, filtered by user state and capability</span></div>
-<div class="node"><b>Available tools</b><small>What the task model is offered, with each capability's availability for this user.</small></div>
+<div class="node"><b>Available tools</b><small>The tools offered to the task model for this user.</small></div>
 <div class="arrow">↓ <span class="lbl">a call pinned to one definition and digest</span></div>
-<div class="node inner"><b>Tool executor (<code>invoke</code>)</b><small>Validates arguments, checks permissions, records the attempt, then dispatches.</small></div>
+<div class="node inner"><b>Tool executor (<code>invoke</code>)</b><small>Validates arguments, checks permissions, records the attempt and dispatches.</small></div>
 <div class="arrow">↓ <span class="lbl">scoped credentials from encrypted rowstore</span></div>
-<div class="node computer"><b>MCP client or provider adapter</b><small>Talks to the remote/local MCP server or provider port and returns evidence.</small></div>
+<div class="node computer"><b>MCP client or provider adapter</b><small>Calls the MCP server or provider port and returns evidence.</small></div>
 </div></div>
 <section><h2>Extension registry</h2>
-<p>Every tool—built-in or contributed by an MCP server or connection adapter—is registered as a versioned <code>extensions.Definition</code> with a stable ID, model-facing name, JSON Schema input, execution binding and policy (effect class, location, retry behavior and timeout). A content digest covers everything that affects what a call does. Model names must match <code>^[A-Za-z0-9_-]{1,64}$</code>, and built-in names are reserved.</p>
-<p>When a task proposes a tool call, the runner resolves the definition and pins it with its digest on the saved <code>OperationRecord</code>. Approvals, evidence checks and crash recovery always bind to that pinned digest even after an MCP server updates its schema.</p>
-</section>
-<section><h2>MCP tool bus</h2>
-<p>Nori connects to enterprise tools and the host app's MCP gateway via <code>core/internal/connectors/mcp</code>. Users or hosts manage servers through <code>/v1/mcp</code>:</p>
+<p>Every tool is registered as a versioned <code>extensions.Definition</code>.</p>
 <ul class="pts">
-<li><b>Remote Streamable HTTP servers:</b> Discovery runs on connect/refresh outside active tool execution; each discovered tool becomes a definition named <code>mcp/&lt;server&gt;/&lt;tool&gt;</code> whose version hashes its description and input schema. Outbound URLs pass through <code>core/internal/netguard</code> egress checks to block private/metadata SSRF targets in hosted environments.</li>
-<li><b>Local stdio servers (development only):</b> When <code>NORI_CLOUD=local</code>, servers can bind to an allowlisted <code>command_ref</code> declared in <code>NORI_MCP_COMMANDS</code>—API requests never pass raw command lines.</li>
-<li><b>Untrusted annotations by default:</b> A remote server's tool annotations are treated as advisory, so discovered MCP tools default to effect <code>unknown</code> and require an <a href="permissions.html">approval card or explicit allow rule</a>.</li>
-<li><b>Resources and prompts:</b> When an MCP server exposes resources or prompts, Nori adds read-only protocol tools (list/read resources, list/get prompts).</li>
-<li><b>Write-once credentials:</b> Bearer tokens or OAuth client credentials are stored in Postgres via envelope-encrypted <code>secret/rowstore</code> and are never returned by API reads.</li>
-<li><b>Interactive input:</b> If an MCP server requests user input mid-call, Nori cancels the blocking call and hands a durable question to the task so the user can answer without holding an open connection.</li>
+<li>A definition has a stable ID, a model-facing name, a JSON Schema input, an execution binding and a policy that sets effect class, location, retry behavior and timeout.</li>
+<li>A content digest covers everything that affects what a call does.</li>
+<li>When a task proposes a call, the runner saves the digest on the <code>OperationRecord</code>.</li>
+<li>Approvals, evidence checks and crash recovery use that saved digest, even after an MCP server updates its schema.</li>
 </ul>
 </section>
+<section><h2>MCP tool bus</h2>
+<p><code>core/internal/connectors/mcp</code> connects Nori to enterprise tools and the host app's MCP gateway. Users or hosts manage servers through <code>/v1/mcp</code>:</p>
+<ul class="pts">
+<li><b>Remote Streamable HTTP servers:</b> Discovery runs on connect and refresh. Each discovered tool becomes a definition named <code>mcp/&lt;server&gt;/&lt;tool&gt;</code>, and its version hashes its description and input schema. In hosted environments, <code>core/internal/netguard</code> blocks outbound URLs to private and metadata addresses.</li>
+<li><b>Advisory annotations:</b> Nori treats a remote server's tool annotations as advisory. Discovered MCP tools default to effect <code>unknown</code> and require an <a href="permissions.html">approval card or explicit allow rule</a>.</li>
+</ul>
+</section>
+<details class="more"><summary>Local servers, resources and prompts, and mid-call input</summary>
+<ul class="pts">
+<li><b>Local stdio servers (development only):</b> When <code>NORI_CLOUD=local</code>, a server can bind to an allowlisted <code>command_ref</code> declared in <code>NORI_MCP_COMMANDS</code>. API requests never pass raw command lines.</li>
+<li><b>Resources and prompts:</b> When an MCP server exposes resources or prompts, Nori adds read-only tools to list and read resources and to list and get prompts.</li>
+<li><b>Interactive input:</b> If an MCP server requests user input mid-call, Nori cancels the blocking call and gives the task a durable question. The user answers without an open connection.</li>
+</ul>
+</details>
 <section><h2>Provider-agnostic connections port</h2>
-<p><code>core/internal/connections</code> provides the clean port for account lifecycles (<code>connections.Integration</code> interface, OAuth PKCE/state flow, <code>Grant</code> tracking, resource selection, health projections, disconnect/revocation and user preferences) behind <code>/v1/integrations</code> and <code>/v1/connections</code>.</p>
+<p><code>core/internal/connections</code> manages account lifecycles behind <code>/v1/integrations</code> and <code>/v1/connections</code>. Its <code>connections.Integration</code> interface covers OAuth, grants, resource selection, health, disconnect and user preferences.</p>
 <div class="card"><table><tr><th>Step</th><th>What the port enforces</th></tr>
-<tr><td>Connect &amp; callback</td><td>OAuth start returns a one-time PKCE + state attempt bound to the signed-in user and integration; replayed or cancelled callbacks create nothing.</td></tr>
-<tr><td>Credential storage</td><td>Credentials live in Postgres via <code>core/internal/secret/rowstore</code> (envelope-encrypted with a 32-byte key or AWS Secrets Manager); raw secrets are never returned over the API.</td></tr>
-<tr><td>Scoped use</td><td>The executor requests credentials for exactly one connection ID. A failed write is never retried on another account.</td></tr>
-<tr><td>Health &amp; disconnect</td><td>Tracks <code>ready</code>, <code>needs_sign_in</code>, <code>needs_more_access</code>, <code>revoked</code>, <code>rate_limited</code>, <code>temporarily_failing</code>, <code>provider_unavailable</code> or <code>credential_store_unavailable</code>. Disconnect closes new calls before revoking.</td></tr>
+<tr><td>Connect and callback</td><td>OAuth start returns a one-time PKCE and state attempt bound to the signed-in user and integration. Replayed or cancelled callbacks create nothing.</td></tr>
+<tr><td>Credential storage</td><td><code>core/internal/secret/rowstore</code> saves bearer tokens and OAuth client credentials in Postgres, envelope-encrypted with a 32-byte key or AWS Secrets Manager. The API never returns raw secrets.</td></tr>
+<tr><td>Scoped use</td><td>The executor requests credentials for one connection ID. A failed write is never retried on another account.</td></tr>
+<tr><td>Health &amp; disconnect</td><td>Each connection reports one health state, such as <code>ready</code>, <code>needs_sign_in</code> or <code>revoked</code>. Disconnect closes new calls before revoking.</td></tr>
 </table></div>
-<p class="note">The private Google Workspace beta exposes Google Calendar, user-selected Drive files, and Gmail sending to designated testers. Enterprise deployments plug in internal tools through MCP servers or custom adapters implementing <code>connections.Integration</code> and <code>invoke.Adapter</code>. Nori routes its built-in self-management tools through the same permission checks.</p>
+<ul class="pts">
+<li>The private Google Workspace beta gives designated testers Google Calendar, user-selected Drive files and Gmail sending.</li>
+<li>Enterprise deployments add internal tools through MCP servers or adapters that implement <code>connections.Integration</code> and <code>invoke.Adapter</code>.</li>
+</ul>
 </section>
 <section><h2>Scripts of tool calls (<code>compose</code>)</h2>
-<p>When a step needs many calls whose results are combined, the task model can send one <code>compose</code> script instead of calling tools one at a time. A script is versioned JSON supporting ordered steps, list iteration with filters, references to earlier results and an output template (up to 64 calls total, at most 8 concurrent).</p>
-<p>Every call inside a script is an ordinary recorded operation with its own <a href="permissions.html">permission check</a>, approval and digest pin. The script sees tool results, never credentials. On worker restart, finished calls are reused and completed writes are never sent again; if a call requires user approval, the script pauses on that interaction and resumes once answered.</p>
+<p>When a step needs many calls whose results are combined, the task model can send one <code>compose</code> script instead of calling tools one at a time. A script is versioned JSON, and it makes up to 64 calls, at most 8 at once.</p>
+<ul class="pts">
+<li>Every call inside a script is a recorded operation with its own <a href="permissions.html">permission check</a>, approval and digest pin.</li>
+<li>After a worker restart, finished calls are reused and completed writes are not resent.</li>
+<li>If a call needs user approval, the script pauses on that interaction and resumes once the user answers.</li>
+</ul>
 </section>
 <details class="sources"><summary>Sources</summary><p><code>core/internal/extensions/</code> · <code>core/internal/invoke/invoke.go</code> · <code>core/internal/connectors/mcp/</code> · <code>core/internal/connectors/nori/nori.go</code> · <code>core/internal/connections/</code> · <code>core/internal/netguard/netguard.go</code> · <code>core/internal/secret/rowstore/</code> · <code>core/internal/task/compose.go</code> · <code>core/internal/api/mcp.go</code> · <code>core/internal/api/assistant.go</code></p></details>
 </body>

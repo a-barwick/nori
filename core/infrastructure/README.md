@@ -9,8 +9,26 @@ Nori targets **GCP + Postgres + GCS** (`NORI_CLOUD=gcp`) or **AWS + Postgres + S
 
 ## Cloud Run release
 
-`make deploy-gcp` builds and deploys the core and web images to Cloud Run. With `NORI_CLOUD=gcp`, Cloud Run uses native GCS JSON API storage via Application Default Credentials (Workload Identity) and Cloud KMS, with no AWS credentials required (`NORI_CLOUD=aws` remains supported for AWS S3 / Secrets Manager deployments). Configure a Cloud Run job with the core service's Postgres connectivity and set `NORI_GCP_MIGRATION_JOB` to run schema changes before the core rollout. The script checks core readiness before updating web and checks the web health route afterward. Set `NORI_DEPLOY_SMOKE_TOKEN_FILE` to a file containing a short-lived ID token for a provisioned account to also verify authenticated routing to core.
+After CI's checks pass on a `main` commit, the **Build images** job pushes `nori-core:<sha>` and `nori-web:<sha>` to Artifact Registry. The **Release** workflow runs every three hours. It also runs when someone presses **Run workflow** on the Release workflow's Actions page, or runs `gh workflow run release.yml`. The workflow runs [`scripts/release.sh --latest-green`](../../scripts/release.sh), which picks the newest `main` commit with passing checks and built images. GitHub authenticates to GCP through Workload Identity Federation (pool `github`), which accepts only `a-barwick/nori` on `main`.
 
-For the release that introduces issuer-and-subject account binding, promote Web first with `./scripts/deploy-gcp.sh --web-only`. If the separate Mac Web service is deployed, prepare its [pilot identity allowlist](home-ai.md#rollout) and promote it with `./scripts/deploy-gcp-mac-web.sh` before updating Core. Promote Core with `./scripts/deploy-gcp.sh --core-only` to activate account binding. Keep the gap short because the Web services bypass their account-resolution caches until Core confirms the binding. After the Core migration, bind existing users that require operator verification using [`nori-user bind-identity`](../README.md#users). Verify sign-in with a provisioned account on each deployed client.
+| Step | What happens |
+| --- | --- |
+| Choose services | Each revision carries a `nori-commit` label. A change under `core/` or `contracts/` releases the migration job, `nori-core` and `nori-worker`. A change under `web/` or `contracts/` releases `nori-web` and `nori-web-mac`, which share one image. |
+| Stage | Each service gets a new revision with no traffic. The revision must pass its HTTP startup probe (`/readyz` or `/api/health`). `nori-core` must also return 200 from `/readyz` on its tagged URL, and `nori-web-mac` must return 403 to anonymous requests. |
+| Promote | Each staged revision receives all traffic. |
+| Watch | For 10 minutes, a 5xx or container crash from a new revision moves its services back to the revisions named in their `nori-prev` labels. |
 
-To roll back a failed release, direct traffic to the last healthy revision of each affected service with `gcloud run services update-traffic SERVICE --to-revisions REVISION=100`. Check core readiness and authenticated web access again. Schema migrations are forward-only. Verify the previous application revision is compatible with the applied schema before shifting traffic.
+Migrations may only add schema, and `TestMigrationsOnlyAddSchema` fails on a drop or rename. A reverted revision therefore runs against a schema it supports. Removals and renames ship later, in a `*_cleanup.sql` migration.
+
+| Command | Effect |
+| --- | --- |
+| `scripts/release.sh --dry-run` | Prints which services would ship. It refuses a commit that isn't on `origin/main` or whose CI checks haven't passed. |
+| `scripts/release.sh --force-unverified` | Skips the CI check. |
+| `scripts/release.sh --core` or `--web` | Releases that group even if its code is unchanged. |
+| `scripts/release.sh rollback core\|web\|all` | Moves each service in the group back to its previous revision. |
+| `scripts/configure-core.sh` | Changes optional Core settings: the Google Workspace beta, Home AI and the LISTEN URL secret. Releases keep existing settings. |
+| Repository variable `NORI_AUTO_RELEASE=false` | Stops the scheduled releases. **Run workflow** still releases. |
+
+For the release that introduces issuer-and-subject account binding, Web must ship first. Merge and release the Web change with `scripts/release.sh --web`, then merge the Core change. Keep the gap short, because the Web services bypass their account-resolution caches until Core confirms the binding. After the Core migration, bind existing users that require operator verification using [`nori-user bind-identity`](../README.md#users). Verify sign-in with a provisioned account on each deployed client.
+
+[`scripts/deploy-gcp-mac-web.sh`](../../scripts/deploy-gcp-mac-web.sh) creates the `nori-web-mac` service, its service account and its IAP policy access. After the service exists, the Release workflow updates it with `nori-web`.

@@ -3,8 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tool catalog · Nori</title>
+<title>Tool catalog · Dokyu</title>
 <link rel="stylesheet" href="site.css">
+<script src="site-config.js" defer></script>
 <script src="site.js" defer></script>
 </head>
 <body>
@@ -28,13 +29,15 @@
 <tr><td>Attached files</td><td><code>upload_inspect</code></td><td>After loading</td></tr>
 <tr><td>MCP servers &amp; connected integrations</td><td><code>mcp/&lt;server&gt;/&lt;tool&gt;</code> and any registered provider tools</td><td>After loading (per capability)</td></tr>
 </table>
-<p class="note">Core controls outside the capability catalog—<code>complete</code>, <code>capability_load</code>, <code>compose</code>, <code>request_input</code> and <code>request_work</code>—are supplied according to the task's role (subtasks omit <code>request_work</code>).</p></div></section>
+<p class="note">Core controls outside the capability catalog are <code>complete</code>, <code>capability_load</code>, <code>compose</code>, <code>request_input</code> and <code>request_work</code>. The task's role decides which are supplied, and subtasks omit <code>request_work</code>.</p></div></section>
 <section><h2>What loading changes</h2>
 <ul class="pts"><li>Loading only adds tool definitions to later model calls. The runtime still checks every call against the task's scope and permission rules.</li>
 <li>The loaded set lasts until the task ends. The worker reads it back from the saved transcript, so it survives a worker restart.</li>
 <li>A capability with an unavailable key or disconnected server still appears in the catalog with its unavailable state so the model can explain why it cannot run rather than guessing.</li></ul></section>
 <details class="more"><summary>What each catalog entry holds</summary>
-<p>The worker adds the catalog to the inner loop's instructions with today's date in the user's configured time zone. Each entry gives the capability's tools, account or server label, availability, failure guidance and verification rule. All catalog text comes from metadata only, never from reading external content.</p>
+<p>The worker adds the catalog to the inner loop's instructions with today's date in the user's configured time zone. Each entry gives:</p>
+<ul class="pts"><li>The capability's tools and its account or server label.</li><li>Availability, failure guidance and a verification rule.</li></ul>
+<p>All catalog text comes from metadata only. The worker never reads external content to build it.</p>
 <p>The text changes at most once a day unless a connection or MCP server changes, so the provider's prompt cache still applies to the instructions.</p>
 </details>
 <details class="sources"><summary>Sources</summary><p><code>core/internal/agent/catalog.go</code> · <code>core/internal/agent/registry.go</code> · <code>core/internal/agent/tools.go</code> · <code>core/internal/agent/memory.go</code> · <code>core/internal/agent/steps.go</code> · <code>core/internal/extensions/registry.go</code> · <code>core/internal/task/tool_durable.go</code> · <a href="tools.html">Tools</a> · <a href="authority.html">Tool authority</a></p></details>

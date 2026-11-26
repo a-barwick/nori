@@ -98,7 +98,7 @@ args=(
   --service-account="$NORI_HOME_AI_RELAY_ACCOUNT"
   --timeout=3600 --concurrency="${NORI_HOME_AI_RELAY_CONCURRENCY:-40}"
   --max-instances="$max_instances"
-  --startup-probe=httpGet.path=/readyz,periodSeconds=3,timeoutSeconds=3,failureThreshold=40
+  "--startup-probe=httpGet.path=/readyz,periodSeconds=3,timeoutSeconds=3,failureThreshold=40"
   --update-secrets="$relay_secrets"
   --update-env-vars="NORI_HOME_AI_VERIFY_URL=$NORI_HOME_AI_VERIFY_URL,NORI_HOME_AI_MAX_CONNS=${NORI_HOME_AI_RELAY_PG_MAX_CONNS:-4}"
 )

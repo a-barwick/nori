@@ -3,14 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Roadmap · Nori</title>
+<title>Roadmap · Dokyu</title>
 <link rel="stylesheet" href="site.css">
+<script src="site-config.js" defer></script>
 <script src="site.js" defer></script>
 </head>
 <body>
 <h1>Roadmap</h1>
 <p class="lede">Implemented core capabilities of Nori and what remains for production rollout inside a host app.</p>
-<div class="card"><table>
+<div class="card"><table class="stack">
 <tr><th>Area</th><th>Capability</th><th>Status</th></tr>
 <tr><td>Outer loop &amp; memory</td><td>One persistent thread per user, message batching, three-tier <a href="memory.html">memory</a> (Core, Daily Log, Working Memory) with session-idle extraction and AutoDream consolidation, quote-verified compaction and two-call prompt-injection provenance guard.</td><td>Built.</td></tr>
 <tr><td>Inner loop</td><td>Concurrent Postgres-native tasks (<code>task.Runner</code> + <code>worker.Pool</code>), steering, Stop, spending ceilings, subtasks, durable questions and record-checked <a href="completion.html">completion</a>.</td><td>Built.</td></tr>
@@ -20,9 +21,10 @@
 <tr><td>Results &amp; library</td><td>Versioned <a href="results.html">saved results</a>, conflict preservation, attachments and private S3/local storage.</td><td>Built.</td></tr>
 <tr><td>Clients &amp; contracts</td><td>Next.js web client &amp; BFF (<code>web/</code>), native SwiftUI iOS client (<code>ios/</code>), Nori for Mac (<code>macos/</code>), and strict contract verification.</td><td>Built.</td></tr>
 <tr><td>Simulation &amp; testing</td><td>Deterministic simulation suite (<code>core/internal/sim/</code>) and 10-persona × 30-day virtual-clock evaluation harness (<code>core/cmd/nori-sim/</code>, <code>sim/personas/</code>, <code>scripts/persona-sim/</code>).</td><td>Built.</td></tr>
-<tr><td>AWS runtime adapters</td><td>Single binary (<code>cmd/nori --role=all|api|worker</code>), Postgres JSONB + leases/wakes, S3 artifacts, AWS Secrets Manager, OIDC verification and HS256 service auth.</td><td>Built.</td></tr>
+<tr><td>Cloud runtime adapters</td><td>Single binary (<code>cmd/nori --role=all|api|worker</code>), Postgres JSONB with leases and wakes, S3 or GCS artifacts, AWS Secrets Manager or Cloud KMS, OIDC verification and HS256 service auth.</td><td>Built.</td></tr>
 <tr><td>Host app production rollout</td><td><span class="designed">Provisioned AWS infrastructure, host app production identity binding, enterprise MCP gateway wiring and multi-identity soak testing.</span></td><td><span class="designed">Planned</span></td></tr>
 </table></div>
 <p>See <a href="open-questions.html">Open questions</a> for operational tuning areas that need production evidence.</p>
+<details class="sources"><summary>Sources</summary><p><code>core/README.md</code> · <code>core/infrastructure/README.md</code> · <code>core/internal/conversation/</code> · <code>core/internal/task/</code> · <code>core/internal/worker/pool.go</code> · <code>core/internal/extensions/</code> · <code>core/internal/connectors/mcp/</code> · <code>core/internal/netguard/</code> · <code>core/internal/connections/</code> · <code>core/internal/secret/rowstore/</code> · <code>core/internal/permissions/</code> · <code>core/internal/scheduler/</code> · <code>core/internal/state/results.go</code> · <code>core/internal/state/s3/</code> · <code>core/internal/state/gcs/</code> · <code>core/cmd/nori/main.go</code> · <code>core/internal/api/openapi_test.go</code> · <code>core/cmd/nori-sim/main.go</code> · <code>core/internal/sim/</code> · <code>sim/personas/README.md</code> · <code>scripts/persona-sim/</code> · <code>api/openapi.yaml</code> · <code>web/</code> · <code>ios/</code> · <code>macos/</code></p></details>
 </body>
 </html>

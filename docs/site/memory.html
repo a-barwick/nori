@@ -3,86 +3,60 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Memory and context · Nori</title>
+<title>Memory and context · Dokyu</title>
 <link rel="stylesheet" href="site.css">
+<script src="site-config.js" defer></script>
 <script src="site.js" defer></script>
 </head>
 <body>
 <h1>Memory and context</h1>
-<p class="lede">Nori couples a 3-tier memory architecture with pre-compaction flushing: no conversational context is compacted or retired until its durable facts commit to Memory, while live outer replies stay fast, KV-cache-stable, and prompt-injection-safe under 128 KiB.</p>
+<p class="lede">Each outer reply is built from saved memory and recent turns, and background jobs save durable facts to memory before older turns leave the prompt.</p>
 <div class="card"><div class="flow">
-<div class="node"><b>0. System instructions</b><small>Deterministic prompt prefix — identical on every reply for KV prompt caching.</small></div><div class="arrow">+</div>
-<div class="node"><b>1. Core Memory (≤ 24 KiB)</b><small>Pinned and curated durable facts, preferences, people, and projects (<code>Pinned DESC, CreatedAt ASC, ID ASC</code>).</small></div><div class="arrow">+</div>
-<div class="node"><b>2. Working Memory (≤ 16 KiB)</b><small>Quote-verified <code>ConversationSummary</code> items, gist, and lossless <code>Excerpts</code> for any turn in <code>(FlushedThrough, Through]</code>.</small></div><div class="arrow">+</div>
-<div class="node"><b>3. Verbatim recent window</b><small>Up to 20 turns / 48 KiB, replayed word for word.</small></div><div class="arrow">+</div>
-<div class="node wait"><b>4. Current inputs &amp; tail advisory</b><small>Active task records plus auto-recalled Daily Log snippets (≤ 4 KiB, TopK = 8) appended at the tail for zero prefix-cache churn.</small></div><div class="arrow">→</div>
-<div class="node outer"><b>Outer model call</b><small>Under 128 KiB total budget with strict provenance boundaries.</small></div>
+<div class="node"><b>System prompt</b><small>Fixed instructions at the start of every outer call.</small></div><div class="arrow">↓ <span class="lbl">then</span></div>
+<div class="node"><b>Recent turns</b><small>Up to 36 turns or 64 KiB, replayed word for word.</small></div><div class="arrow">↓ <span class="lbl">then</span></div>
+<div class="node"><b>Core Memory</b><small>Saved facts, up to 24 KiB.</small></div><div class="arrow">↓ <span class="lbl">then</span></div>
+<div class="node"><b>Working Memory</b><small>Summary of older turns, up to 16 KiB.</small></div><div class="arrow">↓ <span class="lbl">then</span></div>
+<div class="node wait"><b>Current inputs and advisory message</b><small>The new message, task records, user facts and recalled Daily Log snippets.</small></div><div class="arrow">↓ <span class="lbl">under 128 KiB</span></div>
+<div class="node outer"><b>Outer model call</b><small>Drops the oldest recent turns if the input is still over 128 KiB.</small></div>
 </div></div>
 
 <section><h2>Three-tier memory model</h2>
-<p>Canonical memory records live in 32-way owner-sharded <code>nori_records</code> JSONB documents, paired with an isolated full-text search index.</p>
-<div class="card"><div class="branch3">
-<div class="node"><b>Layer 1 · Core Memory</b><small><code>owners/&lt;o&gt;/memories/&lt;id&gt;</code> · ≤ 24 KiB total, ≤ 2000 B/item. Always injected at prompt index 1. Unpinned growth past 24 KiB auto-demotes the oldest unpinned items to today's Daily Log while protecting <code>Pinned</code> items — never failing with <code>memory-full</code>.</small></div>
-<div class="node inner"><b>Layer 2 · Daily Episodic Logs</b><small><code>owners/&lt;o&gt;/memory_logs/YYYY-MM-DD</code> · ≤ 64 KiB / 128 entries per shard (auto-sharding to <code>YYYY-MM-DD#2</code>). Stores session decisions, pre-compaction notes, demoted Core facts, evicted summary items, and bounded (≤ 600 B) <code>task_outcome</code> takeaways.</small></div>
-<div class="node outer"><b>Layer 3 · Working Memory</b><small><code>owners/&lt;o&gt;/conversation/summary</code> · ≤ 16 KiB, 80 items, 4000 B gist. Tracks <code>ExtractedThrough</code> (<code>EffectiveFlushedThrough ≤ EffectiveExtractedThrough</code>) and <code>FlushedThrough ≤ Through</code>, quote-verified <code>SummaryItem</code>s, dismissed IDs, and temporary <code>Excerpts</code> during rapid bursts.</small></div>
-</div></div>
+<div class="grid3">
+<div class="card tight"><p class="keyline">Core Memory</p><p class="note">Facts, preferences, people and projects. Unpinned items over 24 KiB move to today's Daily Log.</p></div>
+<div class="card tight"><p class="keyline">Daily Logs</p><p class="note">Session decisions, flushed notes, demoted Core items and task outcomes. Up to 64 KiB and 128 entries per date, then a new shard.</p></div>
+<div class="card tight"><p class="keyline">Working Memory</p><p class="note">A gist and up to 80 summary items, each with a quote from the user's message. Up to 16 KiB.</p></div>
+</div>
 <ul class="pts">
-<li>Every Core memory and Daily Log entry carries explicit <code>Provenance</code>: <code>user_explicit</code>, <code>pre_compact_flush</code>, <code>summary_evicted</code>, <code>task_outcome</code>, or <code>dream_curated</code>.</li>
-<li><strong>Provenance &amp; injection shield:</strong> A memory never grants tool permissions. Completed tasks append a bounded (≤ 600 B) <code>task_outcome</code> note to today's Daily Log in the same <code>Publish</code> transaction and never mutate Core Memory.</li>
-<li><strong>Two-call command guard:</strong> When a user turn mixes <code>dispatch</code>/<code>steer</code> with <code>remember</code>/<code>forget</code> — or coalesces with untrusted background task output — <code>planUserCommands</code> evaluates all four tools against user-only messages instead of dropping memory changes.</li>
-<li><strong>Atomic turn commits:</strong> Explicit <code>remember</code>/<code>forget</code> changes commit in the same transaction as the published reply, so retries apply them once and superseded replies apply none.</li>
+<li>A memory never grants tool permissions. Every Core item and Daily Log entry has a provenance: <code>user_explicit</code>, <code>pre_compact_flush</code>, <code>summary_evicted</code>, <code>task_outcome</code> or <code>dream_curated</code>.</li>
+<li>A finished task adds a <code>task_outcome</code> note of up to 600 bytes to today's Daily Log in the same <code>Publish</code> transaction. It never changes Core Memory.</li>
+<li>A <code>remember</code> or <code>forget</code> call commits in the same transaction as the reply, so a retry applies it once and a superseded reply applies nothing.</li>
+<li>If one user turn mixes <code>dispatch</code> or <code>steer</code> with <code>remember</code> or <code>forget</code>, <code>planUserCommands</code> plans all four tools from the user's messages only.</li>
 </ul></section>
 
 <section><h2>Coupled pre-compaction flush &amp; AutoDream</h2>
-<p>Background maintenance runs out-of-band on <code>worker.Pool</code>'s <code>LaneConversation</code> via delayed wakes in <code>nori_user_wakes</code> and yields immediately whenever the user sends a message.</p>
-<div class="card"><table class="tall"><tr><th>Pass</th><th>Trigger &amp; schedule</th><th>Guarantees</th></tr>
-<tr><td><code>flush_and_compact</code></td><td>Immediate when unflushed turns after <code>EffectiveFlushedThrough()</code> reach ≥ 12 turns or ≥ 32 KiB (keeping newest 5 verbatim), or <code>EffectiveFlushedThrough() &lt; Through</code>. Fast idle catch-up fires via <code>NextConversationWake</code> at <code>LatestAt + 2m</code> (<code>IdleFlushDelay</code>) when ≥ 6 turns (<code>&gt; CompactKeep = 5</code>) remain.</td><td>A 500 ms <code>UserRoutingPending</code> watcher cancels the LLM call if user input arrives without advancing <code>FlushedThrough</code>. Core upserts and Daily Log notes are quote/input-verified (skipping memory re-extraction for turns already <code>≤ EffectiveExtractedThrough()</code> to prevent double-extraction), budget-evicted summary items archive as <code>summary_evicted</code>, and all writes + FTS + <code>EventMemory</code> commit in one <code>SERIALIZABLE</code> transaction. After 3 consecutive failures (2m / 5m / 10m backoffs), a lossless raw-log extractive fallback advances safely.</td></tr>
-<tr><td>Session-idle extraction (<code>extract_idle_memory</code>)</td><td>Fires immediately once ≥ 5 unextracted turns accumulate (<code>ExtractTurnThreshold</code>), or via <code>NextConversationWake</code> at <code>LatestAt + 5m</code> (<code>IdleExtractDelay</code>) on shorter 1–4 turn chats whenever ≥ 1 completed turn has <code>StartedAt &gt; EffectiveExtractedThrough()</code>.</td><td>Runs under the same 500 ms <code>UserRoutingPending</code> preemption watcher, extracts quote/input-verified Core upserts and Daily Log entries, and commits atomically while leaving <code>Through</code>, <code>FlushedThrough</code>, <code>Items</code>, <code>Gist</code>, <code>Excerpts</code>, and all 1–5 verbatim recent turns completely untouched — advancing only <code>ExtractedThrough</code> (with 3-strike raw-log fallback on <code>ExtractFailures</code>) so subsequent compaction never double-extracts them.</td></tr>
-<tr><td>Rapid burst hot window</td><td>More than 20 recent turns or 48 KiB arriving faster than out-of-band flushing.</td><td><code>advanceHotWindow</code> moves <code>Through</code> forward to keep live replies fast and &lt; 128 KiB while keeping <code>FlushedThrough</code> unchanged and retaining lossless <code>Excerpts</code> for <code>(FlushedThrough, Through]</code> until the next idle flush catches up.</td></tr>
-<tr><td>Idle AutoDream (<code>dream_consolidate</code>)</td><td>Triple gate: idle with <code>FlushedThrough == Through</code>, ≥ 12h since <code>LastDreamAt</code>, ≥ 10 user-sourced Daily Log entries since <code>DreamThrough</code>, scheduled at <code>LatestAt + 15m</code> — or manual <code>POST /v1/memory/actions</code> (<code>consolidate</code>).</td><td>Merges duplicates, resolves superseded facts (preserving <code>Pinned</code> items unless contradicted by newer cited user input), normalizes relative dates, promotes recurring user-sourced facts (never <code>task_outcome</code>), and demotes stale unpinned Core items to Daily Logs atomically.</td></tr>
-</table></div></section>
-
-<section><h2>Postgres FTS index &amp; tail auto-recall</h2>
-<p>To keep <code>nori_records</code> HOT-update-friendly and avoid SIREAD lock escalation, search lives in a dedicated 32-way hash-partitioned table <code>nori_memory_chunks</code> updated inside the same transaction and queried in <code>READ COMMITTED READ ONLY</code> (&lt; 2 ms).</p>
-<ul class="pts">
-<li><strong>Dual-dictionary indexing:</strong> Stored GIN <code>tsvector</code> combines <code>english</code> stemming with <code>simple</code> tokenization so exact identifiers, UUIDs, emails, and code symbols match alongside natural language.</li>
-<li><strong>Decay &amp; diversity ranking:</strong> Cover-density <code>ts_rank_cd</code> (plus exact-token boost) is weighted by <code>1.15</code> for pinned Core, <code>1.0</code> evergreen for Core, and a 30-day half-life recency decay <code>2^(-age_days/30)</code> for Daily Logs, then reranked with deterministic token-Jaccard MMR (<code>λ = 0.75</code>) over top 32 candidates into ≤ 700-byte UTF-8 snippets tie-broken by <code>chunk_id ASC</code>.</li>
-<li><strong>Tail auto-recall:</strong> On user turns, the outer loop queries <code>SearchMemory(Layer="log", TopK=8, CreatedAfter=ContextFrom)</code> and appends matching snippets (≤ 4 KiB) to the tail <code>advisory</code> message so the static prompt prefix stays cached.</li>
-</ul></section>
-
-<section><h2>Inner-loop recall tools</h2>
-<p>Background tasks run with a 128 KiB transcript budget (<code>fitContext</code> omitting older tool outputs ≥ 512 B with <code>operation_id</code> stubs, then <code>projectContext</code> archiving older rounds behind <code>history_ref</code>). Default read tools give tasks direct, <code>ContextFrom</code>-isolated recall without granting permissions:</p>
-<div class="card"><table class="tall"><tr><th>Tool</th><th>Returns</th></tr>
-<tr><td><code>memory_read</code></td><td>Core Memory items and current Working Memory <code>ConversationSummary</code> (matching <code>ContextFrom</code>).</td></tr>
-<tr><td><code>memory_search</code></td><td>Ranked ≤ 700 B snippets across Core Memory and Daily Logs (<code>layer</code> filter, <code>limit</code> 1–20, strictly <code>≥ ContextFrom</code>).</td></tr>
-<tr><td><code>memory_get</code></td><td>Full Core Memory (<code>target: "core"</code>) or a specific <code>YYYY-MM-DD</code> Daily Log / <code>entry_id</code> (<code>target: "log"</code>, strictly <code>≥ ContextFrom</code>).</td></tr>
-<tr><td><code>conversation_find</code> / <code>conversation_read</code></td><td>Matches and full reads of earlier chat messages strictly <code>≥ ContextFrom</code>.</td></tr>
-<tr><td><code>operation_read</code> / <code>task_history_read</code></td><td>Saved full outputs for <code>fitContext</code>-omitted tool calls and paginated transcript fragments for <code>projectContext</code> archives.</td></tr>
+<p>Three background passes run after a reply is sent. Each one stops when the user sends a new message.</p>
+<div class="card"><table class="stack"><tr><th>Pass</th><th>Starts when</th><th>Saves</th></tr>
+<tr><td>Compaction (<code>flush_and_compact</code>)</td><td>Unflushed turns reach 16 user turns, 28 turns or 48 KiB. The newest 14 turns stay verbatim.</td><td>Core upserts, Daily Log notes and a new Working Memory summary, in one serializable transaction. Summary items over the limit move to the log as <code>summary_evicted</code>.</td></tr>
+<tr><td>Extraction (<code>flush_and_compact</code> with <code>extract_only</code>)</td><td>6 user turns have not been extracted, or 10 minutes pass after the latest turn.</td><td>Core upserts and Daily Log notes only. It writes no summary and leaves the recent turns as they are.</td></tr>
+<tr><td>AutoDream (<code>dream_consolidate</code>)</td><td>15 minutes idle, at least 12 hours since the last run, and at least 10 user Daily Log entries since then. The <code>consolidate</code> action on <code>POST /v1/memory/actions</code> starts it by hand.</td><td>Merges duplicates, replaces superseded facts and moves stale unpinned Core items to the log. It never promotes <code>task_outcome</code> entries.</td></tr>
 </table></div>
-<p>See <a href="transcript.html#long-tasks">Task transcript</a> for how long task histories are projected deterministically.</p></section>
+<ul class="pts">
+<li>Every saved Core item and note must be backed by a user's input ID or quote.</li>
+<li>A failed compaction retries after 2 minutes, then after 5. After the third failure, Nori saves the user's text to the Daily Log and moves on.</li>
+</ul>
+<p>To search memory and edit it from the screen, see <a href="memory-recall.html">Memory recall and screen</a>.</p></section>
 
-<section><h2>Unified <code>/memory</code> screen, receipts &amp; global search</h2>
-<p>Top-level <strong>Memory</strong> navigation (<code>/memory</code>; <code>/settings/memory</code> redirects) gives full visibility and control across all three tiers:</p>
-<div class="card"><table class="tall"><tr><th>Tab / Surface</th><th>Capabilities</th></tr>
-<tr><td>Core Memory</td><td>Live search/filter, <code>+ Add memory</code>, inline edit (≤ 2000 B), <strong>Pin / Unpin</strong>, <strong>Demote to Log</strong>, <strong>Forget</strong>, provenance pills, <code>X / 24 KB</code> meter, and source-message jump.</td></tr>
-<tr><td>Daily Logs</td><td><code>YYYY-MM-DD</code> timeline, instant FTS search bar, provenance badges, <strong>Promote to Core</strong> (blocking raw <code>task_outcome</code> unless explicitly re-authored by the user), and <strong>Forget</strong>.</td></tr>
-<tr><td>Working Memory</td><td>Live <code>ConversationSummary</code> gist, quote-verified items with <strong>Promote to Core</strong> / <strong>Dismiss</strong>, <code>ExtractedThrough</code>, <code>FlushedThrough</code>, <code>Through</code> &amp; <code>LastDreamAt</code> status, and <strong>Consolidate now</strong>.</td></tr>
-<tr><td>API &amp; live sync</td><td>Every <code>/v1/memory*</code> mutation persists a durable receipt in <code>GET /v1/mutations/{request_id}</code> (with idempotent retries, <code>409 idempotency_conflict</code>, and <code>409 revision_conflict</code> with <code>current</code>), emits SSE <code>event: memory</code> for instant UI invalidation, and surfaces <code>"memory"</code> hits in global <code>GET /v1/search</code>.</td></tr>
-</table></div></section>
-
-<details class="more"><summary>Budgets &amp; limits</summary><div class="card"><table class="tall"><tr><th>Parameter</th><th>Limit</th></tr>
-<tr><td>Outer input budget (<code>OuterInputBytes</code>)</td><td>128 KiB</td></tr>
-<tr><td>Core Memory (<code>CoreMemoryBytes</code> / <code>MaxMemoryText</code>)</td><td>24 KiB total, 2000 B per item (unpinned overflow auto-demotes to Daily Log)</td></tr>
-<tr><td>Working Memory (<code>SummaryBytes</code> / <code>MaxSummaryItems</code> / <code>MaxSummaryGist</code>)</td><td>16 KiB, 80 items, 4000 B gist (evicted items archive as <code>summary_evicted</code>)</td></tr>
-<tr><td>Verbatim recent turns (<code>RecentTurnLimit</code> / <code>RecentTurnBytes</code>)</td><td>20 turns / 48 KiB</td></tr>
-<tr><td>Soft compaction trigger (<code>SoftCompactTurns</code> / <code>SoftCompactBytes</code> / <code>CompactKeep</code>)</td><td>12 turns / 32 KiB (keeps newest 5 verbatim; fast idle flush activates at ≥ 6 turns)</td></tr>
-<tr><td>Daily Log shard (<code>MaxDailyLogBytes</code> / <code>MaxDailyLogEntries</code>)</td><td>64 KiB / 128 entries per shard (auto-sharded per date)</td></tr>
-<tr><td>Task completion log entry (<code>MaxTaskOutcomeBytes</code>)</td><td>600 B (Log-only, never mutates Core Memory)</td></tr>
-<tr><td>Tail auto-recall (<code>TailRecallBytes</code> / <code>TailRecallTopK</code>)</td><td>4 KiB / TopK = 8 (≤ 700 B per snippet)</td></tr>
-<tr><td>Idle wakes &amp; backoffs</td><td>Fast flush delay (<code>IdleFlushDelay</code>): 2m (≥ 6 turns) · Memory extraction trigger: 5 unextracted turns (<code>ExtractTurnThreshold</code>) or 5m idle (<code>IdleExtractDelay</code>, verbatim window preserved) · AutoDream quiet delay: 15m · AutoDream min interval: 12h (≥ 10 user log entries) · Retry backoff: 2m / 5m / 10m (3-strike fallback)</td></tr>
-<tr><td>Inner task context (<code>InnerInputBytes</code> / <code>TaskBytes</code>)</td><td>128 KiB (<code>fitContext</code> keep 64 KiB, then <code>projectContext</code>)</td></tr>
+<details class="more"><summary>Budgets &amp; limits</summary><div class="card"><table class="stack"><tr><th>Parameter</th><th>Limit</th></tr>
+<tr><td>Outer input (<code>OuterInputBytes</code>)</td><td>128 KiB</td></tr>
+<tr><td>Core Memory (<code>CoreMemoryBytes</code>, <code>MaxMemoryText</code>)</td><td>24 KiB, and 2000 bytes per item</td></tr>
+<tr><td>Working Memory (<code>SummaryBytes</code>, <code>MaxSummaryItems</code>, <code>MaxSummaryGist</code>)</td><td>16 KiB, 80 items and a 4000 byte gist</td></tr>
+<tr><td>Recent turns (<code>RecentTurnLimit</code>, <code>RecentTurnBytes</code>)</td><td>36 turns, 64 KiB</td></tr>
+<tr><td>Compaction (<code>SoftCompactUserTurns</code>, <code>SoftCompactTurns</code>, <code>SoftCompactBytes</code>, <code>CompactKeep</code>)</td><td>16 user turns, 28 turns, 48 KiB, newest 14 kept</td></tr>
+<tr><td>Daily Log shard (<code>MaxDailyLogBytes</code>, <code>MaxDailyLogEntries</code>)</td><td>64 KiB, 128 entries</td></tr>
+<tr><td>Extraction (<code>ExtractTurnThreshold</code>, <code>IdleExtractDelay</code>)</td><td>6 user turns, 10 minutes</td></tr>
+<tr><td>AutoDream (<code>IdleDreamDelay</code>, <code>DreamMinInterval</code>, <code>DreamMinLogEntries</code>)</td><td>15 minutes, 12 hours, 10 entries</td></tr>
 </table></div></details>
 
-<details class="sources"><summary>Sources</summary><p><code>core/internal/state/memory.go</code> · <code>core/internal/state/summary.go</code> · <code>core/internal/state/docstore/memory.go</code> · <code>core/internal/state/postgres/migrations/005_memory_search.sql</code> · <code>core/internal/state/postgres/memory_search.go</code> · <code>core/internal/state/records/memory.go</code> · <code>core/internal/state/records/tasks.go</code></p><p><code>core/internal/conversation/call.go</code> · <code>core/internal/conversation/memory.go</code> · <code>core/internal/conversation/compact.go</code> · <code>core/internal/conversation/dream.go</code> · <code>core/internal/conversation/command_plan.go</code> · <code>core/internal/conversation/runner.go</code> · <code>core/internal/worker/pool.go</code> · <code>core/internal/api/memory.go</code> · <code>core/internal/api/library.go</code> · <code>core/internal/api/events.go</code></p><p><code>core/internal/agent/memory.go</code> · <code>core/internal/agent/tools.go</code> · <code>core/internal/agent/catalog.go</code> · <code>core/internal/task/context.go</code> · <code>web/src/components/assistant/MemoryScreen.tsx</code> · <a href="outer-loop.html">Outer loop</a> · <a href="authority.html">Tool authority</a></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/state/memory.go</code> · <code>core/internal/state/summary.go</code> · <code>core/internal/state/records/memory_core.go</code> · <code>core/internal/state/records/memory_mutations.go</code> · <code>core/internal/state/records/tasks.go</code> · <code>core/internal/conversation/call.go</code> · <code>core/internal/conversation/compact.go</code> · <code>core/internal/conversation/extract.go</code> · <code>core/internal/conversation/dream.go</code> · <code>core/internal/conversation/command_plan.go</code> · <code>core/internal/prompts/runtime/dream.txt</code> · <a href="outer-loop.html">Outer loop</a> · <a href="authority.html">Tool authority</a></p></details>
 </body>
 </html>

@@ -3,8 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Classifying a message · Nori</title>
+<title>Classifying a message · Dokyu</title>
 <link rel="stylesheet" href="site.css">
+<script src="site-config.js" defer></script>
 <script src="site.js" defer></script>
 </head>
 <body>
@@ -57,8 +58,8 @@
 </section>
 <section><h2>What the outer model receives</h2>
 <p>The runtime saves the hint before the outer model call. A restart for a newer message classifies the new batch.</p>
-<p>The hint sits beside the task records as context. Confidence doesn't allow or block a command. “Could you check when my domain renews?” can be an ask alone, and the outer model can still dispatch a lookup.</p>
-<details class="more"><summary>How Jev calls are recorded</summary><p>Before calling Jev, the runtime records provider <code>jev</code> and model <code>jev-latest</code> with an unknown cost. Jev returns no verified price. If that record fails, the request is not sent.</p></details>
+<ul class="pts"><li>The hint sits beside the task records as context.</li><li>Confidence doesn't allow or block a command.</li><li>“Could you check when my domain renews?” can be an ask alone, and the outer model can still dispatch a lookup.</li></ul>
+<details class="more"><summary>How Jev calls are recorded</summary><ul class="pts"><li>Before calling Jev, the runtime records provider <code>jev</code> and model <code>jev-latest</code> with an unknown cost.</li><li>Jev returns no verified price.</li><li>If that record fails, the request is not sent.</li></ul></details>
 </section>
 <details class="sources"><summary>Sources</summary><p><code>core/internal/conversation/classifier.go</code> · <code>core/internal/conversation/jev.go</code> · <code>core/internal/conversation/call.go</code> · <code>core/internal/conversation/model.go</code> · <code>core/internal/state/conversation.go</code> · <code>core/internal/api/http.go</code></p></details>
 </body>

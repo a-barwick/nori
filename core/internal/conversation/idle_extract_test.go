@@ -661,8 +661,8 @@ func TestIdleExtract_PreemptionByUserMessageLeavesExtractedThroughUntouched(t *t
 	if sum.ExtractFailures != 0 || !sum.LastExtractFailureThrough.IsZero() {
 		t.Fatalf("expected ExtractFailures=0 after preemption, got failures=%d through=%v", sum.ExtractFailures, sum.LastExtractFailureThrough)
 	}
-	if !h.runner.compactAfter.IsZero() {
-		t.Fatalf("expected no failure backoff after user preemption, got compactAfter=%v", h.runner.compactAfter)
+	if !h.runner.getCompactAfter().IsZero() {
+		t.Fatalf("expected no failure backoff after user preemption, got compactAfter=%v", h.runner.getCompactAfter())
 	}
 	mems, err := h.store.Memories(ctx)
 	if err != nil || len(mems) != 0 {

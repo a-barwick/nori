@@ -3,8 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Automations · Nori</title>
+<title>Automations · Dokyu</title>
 <link rel="stylesheet" href="site.css">
+<script src="site-config.js" defer></script>
 <script src="site.js" defer></script>
 </head>
 <body>
@@ -18,26 +19,37 @@
 <div class="arrow">↓ <span class="lbl">task with origin automation and occurrence ID</span></div>
 <div class="node inner"><b>Task (<code>task.Runner</code>)</b><small>Runs on the Postgres-native worker pool like any other task, subject to unattended permission rules.</small></div>
 <div class="arrow">↓ <span class="lbl">result</span></div>
-<div class="node"><b>In-app inbox delivery</b><small>Creates one deduplicated inbox item linking directly to the task and saved results.</small></div>
+<div class="node"><b>In-app inbox delivery</b><small>Creates one deduplicated inbox item that links to the task and saved results.</small></div>
 </div></div>
 <section><h2>Triggers</h2>
 <div class="card"><table><tr><th>Trigger</th><th>Fires</th></tr>
 <tr><td>Once</td><td>At a specific instant. A later time zone change does not move it.</td></tr>
-<tr><td>Recurring</td><td>By a local start time, an IANA time zone and a recurrence rule. A repeated DST local hour runs once; a skipped hour advances to the next valid time.</td></tr>
+<tr><td>Recurring</td><td>By a local start time, an IANA time zone and a recurrence rule. A repeated DST local hour runs once. A skipped hour advances to the next valid time.</td></tr>
 <tr><td>Watch</td><td>When a typed condition on a source changes, bounded by its cadence policy.</td></tr>
 </table></div>
 <p><code>POST /v1/automations/preview</code> previews upcoming fire times, standing access and missed-run handling before an automation is saved.</p>
 </section>
 <section><h2>Exactly one occurrence per slot</h2>
-<p>An occurrence ID is derived deterministically from the automation ID, scheduled slot and schedule generation, so a duplicate wake or second scheduler pass finds the existing occurrence instead of starting a second task. Editing or cancelling an automation advances its generation; unstarted slots from the previous generation never run. Missed slots are explicitly recorded as skipped or expired with a reason rather than vanishing.</p>
-<p>After every pass and edit, the scheduler stores the exact next due <code>wake_at</code> timestamp in <code>nori_user_wakes</code> with no delay cap, emitting <code>NOTIFY nori_wake</code> when due immediately. The 60-second repair sweep and resume pass recover any missed wake.</p>
+<ul class="pts">
+<li>The scheduler derives the occurrence ID from the automation ID, scheduled slot and schedule generation.</li>
+<li>A duplicate wake or second scheduler pass finds the existing occurrence and does not start a second task.</li>
+<li>Editing or cancelling an automation advances its generation. Unstarted slots from the previous generation never run.</li>
+<li>The scheduler records a missed slot as skipped or expired, with a reason.</li>
+<li>After every pass and edit, the scheduler saves the next due <code>wake_at</code> timestamp in <code>nori_user_wakes</code> with no delay cap. It emits <code>NOTIFY nori_wake</code> when a wake is due immediately.</li>
+<li>The 60-second repair sweep and resume pass recover any missed wake.</li>
+</ul>
 </section>
 <section><h2>In-app inbox delivery</h2>
-<p>Running a task and delivering its result are recorded separately. Deliveries target the built-in <code>in_app</code> destination, which creates one deduplicated inbox item under <code>/v1/inbox</code> linking to the task and its results. Users acknowledge items via <code>POST /v1/inbox/{id}/actions</code>.</p>
-<p class="note">External Web Push and SMTP email delivery channels are not part of Nori; any non-inbox destination fails visibly with <code>destination_missing</code> so the host app or another host can own external notifications cleanly.</p>
+<ul class="pts">
+<li>Nori records running a task and delivering its result separately.</li>
+<li>Deliveries target the built-in <code>in_app</code> destination, which creates one deduplicated inbox item under <code>/v1/inbox</code> that links to the task and its results.</li>
+<li>Users acknowledge items with <code>POST /v1/inbox/{id}/actions</code>.</li>
+<li>Nori has no Web Push or SMTP email delivery. Any other destination fails with <code>destination_missing</code>, so the host app can send external notifications.</li>
+</ul>
 </section>
 <section><h2>Goals</h2>
-<p>A goal (<code>/v1/goals</code>) tracks a longer-running outcome with completion criteria, progress notes, blockers and next actions, linked to the tasks and automations working toward it. A failed run leaves the goal intact; completing a goal stops its attached automations unless the user chooses to keep them.</p>
+<p>A goal (<code>/v1/goals</code>) tracks a longer-running outcome with completion criteria, progress notes, blockers and next actions. It links to the tasks and automations working toward it.</p>
+<p>A failed run leaves the goal unchanged. Completing a goal stops its attached automations unless the user chooses to keep them.</p>
 </section>
 <details class="sources"><summary>Sources</summary><p><code>core/internal/scheduler/service.go</code> · <code>core/internal/scheduler/tick.go</code> · <code>core/internal/scheduler/recurrence.go</code> · <code>core/internal/scheduler/delivery.go</code> · <code>core/internal/scheduler/goals.go</code> · <code>core/internal/scheduler/types.go</code> · <code>core/internal/api/scheduling.go</code> · <code>api/openapi.yaml</code></p></details>
 </body>

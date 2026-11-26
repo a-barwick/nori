@@ -143,7 +143,7 @@ def public_html(page, nav):
 def publish(out):
     if out.exists() and any(out.iterdir()):
         raise ValueError("The public output directory must be empty")
-    shutil.copytree(SITE, out, dirs_exist_ok=True, ignore=shutil.ignore_patterns("*.html"))
+    shutil.copytree(SITE, out, dirs_exist_ok=True, ignore=shutil.ignore_patterns("*.html", "AGENTS.md"))
     pages = [read_page(path) for path in sorted(SITE.glob("*.html")) if path.stem not in REPO_ONLY]
     links = "".join(f'<li><a tabindex="-1" href="{p["path"].name}">{html.escape(p["title"])}</a>: {html.escape(p["summary"])} <a tabindex="-1" href="{p["path"].stem}.md">Plain text</a></li>' for p in pages)
     nav = f'<nav aria-hidden="true" style="position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)"><p>Pages on this site. <a tabindex="-1" href="llms.txt">Plain text index</a></p><ul>{links}</ul></nav>\n'
@@ -151,21 +151,21 @@ def publish(out):
         path = page["path"]
         rendered = public_html(page, nav)
         (out / path.name).write_text(rendered, encoding="utf-8")
-        if path.stem in ("privacy", "terms"):
-            clean_dir = out / path.stem
-            clean_dir.mkdir(exist_ok=True)
-            (clean_dir / "index.html").write_text(rendered, encoding="utf-8")
         body = "\n\n".join((f"## {s['title']}\n\n" if s["title"] != "Overview" else "") + s["text"] for s in page["sections"])
         (out / f"{path.stem}.md").write_text(body + "\n", encoding="utf-8")
     lines = ["# Nori Dokyu", "", "> How the Nori assistant engine works. Each page below has a plain text copy.", ""]
     lines += [f"- [{p['title']}]({p['path'].stem}.md): {p['summary']}" for p in pages]
     (out / "llms.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    for legal in sorted((ROOT / "docs" / "legal").glob("*.html")):
+        (out / legal.name).write_text(legal.read_text(encoding="utf-8"), encoding="utf-8")
+        (out / legal.stem).mkdir(exist_ok=True)
+        (out / legal.stem / "index.html").write_text(legal.read_text(encoding="utf-8"), encoding="utf-8")
     robots_txt = "User-agent: *\nAllow: /\n" if INDEXED else "User-agent: *\nDisallow: /\n"
     (out / "robots.txt").write_text(robots_txt, encoding="utf-8")
     for name in ("request-data.js", "task-data.js"):
         data = out / name
         data.write_text(re.sub(r"'(?:core|web|docs|integrations)/[^']*'", "''", re.sub(r"\bsource: '[^']*'", "source: ''", data.read_text(encoding="utf-8"))), encoding="utf-8")
-    script = out / "site.js"
+    script = out / "site-config.js"
     source = script.read_text(encoding="utf-8")
     for name in REPO_ONLY:
         source = re.sub(rf",?\s*\['{name}', '[^']*'\]", "", source, count=1)
