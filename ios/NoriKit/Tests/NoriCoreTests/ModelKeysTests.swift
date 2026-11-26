@@ -200,7 +200,7 @@ struct ModelKeysTests {
         await mock.waitForSuspendedModelReads()
 
         try await store.resetUserData(confirmation: "RESET")
-        #expect(store.authState == .signedIn(email: email))
+        #expect(store.authState == .signedOut)
         #expect(store.modelSettings == nil)
         #expect(store.modelKeyError == nil)
         #expect(!store.hasConfiguredModelKey)
@@ -232,7 +232,6 @@ struct ModelKeysTests {
             _ = try await store.saveModelKey(provider: "vercel_ai_gateway", apiKey: "vck_test_a1b2")
         }
         #expect(store.dataResetRecoveryRequired)
-        #expect(!store.dataResetCompletionRequired)
         #expect(!store.hasConfiguredModelKey)
         await store.signOut()
     }

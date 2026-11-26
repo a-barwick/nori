@@ -34,7 +34,7 @@ func (s *server) writeSession(w http.ResponseWriter, r *http.Request, before str
 		writeError(w, err)
 		return
 	}
-	if before == "" && session.Conversation.Revision == 0 && len(session.Messages) == 0 && !userDataResetPending(r.Context()) {
+	if before == "" && session.Conversation.Revision == 0 && len(session.Messages) == 0 && !userDataResetPending(r.Context()) && s.canIntroduce(r.Context()) {
 		if err := s.Runner.EnsureIntroduction(r.Context()); err != nil {
 			writeError(w, err)
 			return
@@ -49,6 +49,25 @@ func (s *server) writeSession(w http.ResponseWriter, r *http.Request, before str
 		s.repairWake(r.Context())
 	}
 	writeJSON(w, 200, session)
+}
+
+func (s *server) canIntroduce(ctx context.Context) bool {
+	if s.Assistant == nil || s.Assistant.ModelKeys == nil {
+		return true
+	}
+	keys, err := s.Assistant.ModelKeys.List(ctx)
+	if err != nil {
+		return false
+	}
+	if !keys.BYOKRequired {
+		return true
+	}
+	for _, provider := range keys.Providers {
+		if provider.Configured {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *server) repairWake(ctx context.Context) {

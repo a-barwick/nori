@@ -94,6 +94,17 @@ func TestBYOKAccountSettingsRouteChatAndWorkWithoutFallback(t *testing.T) {
 		t.Fatalf("Work without a key: %v", err)
 	}
 
+	// Fetching the empty conversation before any API key is configured must not enqueue
+	// a doomed introduction turn that leaves a stale model_key_required error card in Chat.
+	initialSnapshot := request(u, "GET", "conversations/assistant", nil, 200)
+	if err := uApp.Runner.Process(ctx); err != nil {
+		t.Fatal(err)
+	}
+	afterInitialProcess := request(u, "GET", "conversations/assistant", nil, 200)
+	if bytes.Contains(initialSnapshot, []byte("model_key_required")) || bytes.Contains(afterInitialProcess, []byte("model_key_required")) {
+		t.Fatalf("empty conversation snapshot enqueued a failing introduction before key setup: %s", afterInitialProcess)
+	}
+
 	request(u, "POST", "conversations/assistant/messages", map[string]string{
 		"id": "f64d9cb5-0727-4f99-98d0-8f653c67da6f", "text": "Hello",
 	}, 202)

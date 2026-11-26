@@ -4,11 +4,16 @@ import NoriDesign
 
 struct DataResetLoadingView: View {
     var body: some View {
-        ProgressView("Resetting data…")
-            .tint(NoriColors.accent)
-            .foregroundStyle(NoriColors.ink2)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(NoriColors.canvas.ignoresSafeArea())
+        VStack(spacing: 12) {
+            ProgressView()
+                .controlSize(.large)
+                .tint(NoriColors.accent)
+            Text("Resetting data…")
+                .font(NoriTypography.meta)
+                .foregroundStyle(NoriColors.ink2)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(NoriColors.canvas.ignoresSafeArea())
     }
 }
 
@@ -67,27 +72,6 @@ struct DataResetRecoveryView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
-    }
-}
-
-struct DataResetCompleteView: View {
-    @Bindable var store: NoriStore
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text("Data reset complete")
-                .font(.system(size: 26, weight: .bold))
-                .foregroundStyle(NoriColors.ink)
-            Text("Your saved API keys and model choices have been cleared.")
-                .font(NoriTypography.body)
-                .foregroundStyle(NoriColors.ink2)
-            Button("Continue") { store.acknowledgeDataReset() }
-                .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
-        }
-        .padding(24)
-        .frame(maxWidth: 480)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(NoriColors.canvas.ignoresSafeArea())
     }
 }
 

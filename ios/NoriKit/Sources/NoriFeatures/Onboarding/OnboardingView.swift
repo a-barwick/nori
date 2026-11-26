@@ -701,7 +701,9 @@ public struct OnboardingView: View {
             triggerMood(.hop, happy: true, sparkles: true, duration: 0.85)
             do {
                 try await store.refreshModelSettings()
-                if store.modelSettings?.recommendations[providerID] != nil {
+                if let settings = store.modelSettings,
+                   let recommended = settings.recommendations[providerID],
+                   settings.selection != recommended {
                     suggestedProvider = providerID
                     showingModelSuggestion = true
                 }

@@ -397,7 +397,7 @@ struct ResetDataSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("This permanently clears your chats, memories, work, files, schedules, preferences, model selections, and saved API keys from Nori and disconnects your apps. You’ll stay signed in with Google and start onboarding again.")
+                    Text("This permanently clears your chats, memories, work, files, schedules, preferences, model selections, and saved API keys from Nori and disconnects your apps. You’ll be signed out and start onboarding again when you sign back in.")
                         .font(NoriTypography.body)
                         .foregroundStyle(NoriColors.ink2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -414,6 +414,7 @@ struct ResetDataSheet: View {
                             #if os(iOS)
                             .textInputAutocapitalization(.characters)
                             #endif
+                            .disabled(isResetting)
                             .padding(.horizontal, 12)
                             .frame(height: 44)
                             .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
@@ -425,23 +426,19 @@ struct ResetDataSheet: View {
                             .foregroundStyle(NoriTone.danger.foreground)
                     }
 
-                    Button {
+                    Button("Reset data") {
+                        let confirmed = confirmation
                         isResetting = true
                         errorMessage = nil
+                        dismiss()
                         Task {
                             do {
-                                try await store.resetUserData(confirmation: confirmation)
-                                dismiss()
+                                try await store.resetUserData(confirmation: confirmed)
                             } catch {
-                                errorMessage = error.localizedDescription
-                                isResetting = false
+                                if !store.dataResetRecoveryRequired {
+                                    store.showToast(error.localizedDescription)
+                                }
                             }
-                        }
-                    } label: {
-                        if isResetting {
-                            ProgressView("Resetting data…")
-                        } else {
-                            Text("Reset data")
                         }
                     }
                     .buttonStyle(NoriButtonStyle(.danger, fullWidth: true))

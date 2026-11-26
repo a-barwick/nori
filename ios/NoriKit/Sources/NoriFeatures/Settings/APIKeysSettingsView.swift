@@ -199,37 +199,96 @@ public struct ModelsSettingsView: View {
         _ title: String, lane: String, profiles: [ModelProfile], selectedID: Binding<String>
     ) -> some View {
         let available = profiles.filter { $0.lanes.contains(lane) }
-        return HStack {
-            Text(title).font(NoriTypography.meta).foregroundStyle(NoriColors.ink2)
-            Spacer()
-            Picker(title, selection: selectedID) {
-                if selectedID.wrappedValue.isEmpty {
-                    Text("Select model").tag("")
-                } else if !available.contains(where: { $0.id == selectedID.wrappedValue }) {
-                    Text("Unavailable · choose a model").tag(selectedID.wrappedValue)
-                }
-                ForEach(available) { profile in Text(profile.label).tag(profile.id) }
+        let selectedLabel: String = {
+            if selectedID.wrappedValue.isEmpty {
+                return "Select model"
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
+            if let match = available.first(where: { $0.id == selectedID.wrappedValue }) {
+                return match.label
+            }
+            return "Unavailable · choose a model"
+        }()
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(NoriTypography.metaSemibold)
+                .foregroundStyle(NoriColors.ink2)
+            Menu {
+                ForEach(available) { profile in
+                    Button {
+                        selectedID.wrappedValue = profile.id
+                    } label: {
+                        if profile.id == selectedID.wrappedValue {
+                            Label(profile.label, systemImage: "checkmark")
+                        } else {
+                            Text(profile.label)
+                        }
+                    }
+                }
+            } label: {
+                pickerFieldLabel(selectedLabel, isPlaceholder: selectedID.wrappedValue.isEmpty)
+            }
+            .buttonStyle(.plain)
             .disabled(isSaving || available.isEmpty)
         }
     }
 
     private func reasoningPicker(_ title: String, profile: ModelProfile, effort: Binding<String>) -> some View {
-        HStack {
-            Text(title).font(NoriTypography.meta).foregroundStyle(NoriColors.ink2)
-            Spacer()
-            Picker(title, selection: effort) {
-                Text("Default").tag("")
-                ForEach(profile.supportedReasoning ?? [], id: \.self) { value in
-                    Text(value.capitalized).tag(value)
+        let selectedLabel = effort.wrappedValue.isEmpty ? "Default" : effort.wrappedValue.capitalized
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(NoriTypography.metaSemibold)
+                .foregroundStyle(NoriColors.ink2)
+            Menu {
+                Button {
+                    effort.wrappedValue = ""
+                } label: {
+                    if effort.wrappedValue.isEmpty {
+                        Label("Default", systemImage: "checkmark")
+                    } else {
+                        Text("Default")
+                    }
                 }
+                ForEach(profile.supportedReasoning ?? [], id: \.self) { value in
+                    Button {
+                        effort.wrappedValue = value
+                    } label: {
+                        if value == effort.wrappedValue {
+                            Label(value.capitalized, systemImage: "checkmark")
+                        } else {
+                            Text(value.capitalized)
+                        }
+                    }
+                }
+            } label: {
+                pickerFieldLabel(selectedLabel, isPlaceholder: false)
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
+            .buttonStyle(.plain)
             .disabled(isSaving)
         }
+    }
+
+    private func pickerFieldLabel(_ text: String, isPlaceholder: Bool) -> some View {
+        HStack(spacing: 8) {
+            Text(text)
+                .font(NoriTypography.meta)
+                .foregroundStyle(isPlaceholder ? NoriColors.ink3 : NoriColors.ink)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(NoriColors.accent)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 40)
+        .background(
+            NoriColors.elevated,
+            in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+                .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
+        )
     }
 
     private func load() async {
@@ -287,7 +346,9 @@ public struct ModelsSettingsView: View {
 
     private func didSaveKey(_ provider: String) async {
         await reloadModels()
-        guard store.modelSettings?.recommendations[provider] != nil else { return }
+        guard let settings = store.modelSettings,
+              let recommended = settings.recommendations[provider],
+              settings.selection != recommended else { return }
         suggestedProvider = provider
         showingSuggestion = true
     }

@@ -38,21 +38,13 @@ public struct NoriRootView: View {
 
     public var body: some View {
         Group {
-            if store.authState.isSignedIn {
+            if store.isResettingData {
+                DataResetLoadingView()
+            } else if store.authState.isSignedIn {
                 if store.dataResetRecoveryRequired {
                     DataResetRecoveryView(store: store)
-                } else if store.dataResetCompletionRequired {
-                    if store.isResettingData {
-                        DataResetLoadingView()
-                    } else {
-                        DataResetCompleteView(store: store)
-                    }
                 } else if store.dataResetStatusRequired {
-                    if store.isResettingData {
-                        DataResetLoadingView()
-                    } else {
-                        DataResetStatusView(store: store)
-                    }
+                    DataResetStatusView(store: store)
                 } else if store.shouldShowOnboarding {
                     OnboardingView(store: store)
                 } else {

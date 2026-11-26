@@ -825,12 +825,10 @@ struct MemoryReceiptsAndStoreTests {
 
         await mock.setResetFails(false)
         try await store.resetUserData(confirmation: "RESET")
-        #expect(store.authState == .signedIn(email: email))
-        #expect(await provider.loadSession() == session)
+        #expect(store.authState == .signedOut)
+        #expect(await provider.loadSession() == nil)
         #expect(store.messages.isEmpty)
-        #expect(store.shouldShowOnboarding)
         #expect(!UserDefaults.standard.bool(forKey: localKey))
-        await store.signOut()
     }
 
     @Test("Reset notification arriving before its request completes keeps the reset successful")
@@ -858,9 +856,7 @@ struct MemoryReceiptsAndStoreTests {
         #expect(store.messages.isEmpty)
         await mock.finishSuspendedReset()
         try await resetting.value
-        #expect(store.authState == .signedIn(email: email))
-        #expect(store.shouldShowOnboarding)
-        await store.signOut()
+        #expect(store.authState == .signedOut)
     }
 
     @Test("A reset event clears a second device's stale state and shows onboarding")
@@ -941,30 +937,19 @@ struct MemoryReceiptsAndStoreTests {
 
         await #expect(throws: NoriAPIError.self) { try await store.resetUserData(confirmation: "RESET") }
         #expect(store.dataResetRecoveryRequired)
-        #expect(!store.dataResetCompletionRequired)
         #expect(store.messages.isEmpty)
         #expect(store.authState == .signedIn(email: email))
 
         await mock.setFailResume(true)
         await #expect(throws: NoriAPIError.self) { try await store.finishPendingDataReset() }
         #expect(store.dataResetRecoveryRequired)
-        #expect(!store.dataResetCompletionRequired)
         await mock.setFailResume(false)
         try await store.finishPendingDataReset()
         #expect(!store.dataResetRecoveryRequired)
-        #expect(store.dataResetCompletionRequired)
+        #expect(store.authState == .signedOut)
         #expect(await mock.ordinaryResetCount == 1)
         #expect(await mock.resumeResetCount == 2)
-        #expect(await provider.loadSession() == session)
-
-        let reopened = NoriStore(transport: mock, authProvider: provider, resetMinimumDuration: .zero)
-        await reopened.bootstrapIfNeeded()
-        #expect(reopened.dataResetCompletionRequired)
-        reopened.acknowledgeDataReset()
-        #expect(!reopened.dataResetCompletionRequired)
-        #expect(!UserDefaults.standard.bool(forKey: completionKey))
-        await reopened.signOut()
-        await store.signOut()
+        #expect(await provider.loadSession() == nil)
     }
 
     @Test("A stale recovery never starts a new reset or claims completion")
@@ -984,7 +969,6 @@ struct MemoryReceiptsAndStoreTests {
         #expect(await mock.resumeResetCount == 1)
         #expect(await mock.ordinaryResetCount == 0)
         #expect(!store.dataResetRecoveryRequired)
-        #expect(!store.dataResetCompletionRequired)
         #expect(store.dataResetStatusRequired)
         await store.signOut()
     }
@@ -994,10 +978,8 @@ struct MemoryReceiptsAndStoreTests {
     func resetLoadingDuration() async throws {
         let mock = FullMockTransport()
         let email = "reset-spinner-\(UUID().uuidString)@example.com"
-        let completionKey = "nori.data-reset.completion." + email.lowercased()
         let markerKey = "nori.data-reset.observed." + email.lowercased()
         defer {
-            UserDefaults.standard.removeObject(forKey: completionKey)
             UserDefaults.standard.removeObject(forKey: markerKey)
         }
         let store = NoriStore(transport: mock, resetMinimumDuration: .milliseconds(80))
@@ -1009,40 +991,36 @@ struct MemoryReceiptsAndStoreTests {
         #expect(store.isResettingData)
         try await Task.sleep(for: .milliseconds(100))
         #expect(store.isResettingData)
-        #expect(!store.dataResetCompletionRequired)
         await mock.finishSuspendedReset()
         try await resetting.value
         #expect(ContinuousClock.now - started >= .milliseconds(80))
         #expect(!store.isResettingData)
-        #expect(store.dataResetCompletionRequired)
-        await store.signOut()
+        #expect(store.authState == .signedOut)
     }
 
-    @Test("A fast reset still shows loading before its confirmation")
+    @Test("A fast reset still shows loading before signing out")
     @MainActor
     func fastResetLoadingDuration() async throws {
         let mock = FullMockTransport()
         let email = "reset-fast-\(UUID().uuidString)@example.com"
-        let completionKey = "nori.data-reset.completion." + email.lowercased()
         let markerKey = "nori.data-reset.observed." + email.lowercased()
         defer {
-            UserDefaults.standard.removeObject(forKey: completionKey)
             UserDefaults.standard.removeObject(forKey: markerKey)
         }
         let store = NoriStore(transport: mock, resetMinimumDuration: .milliseconds(120))
         store.authState = .signedIn(email: email)
         let resetting = Task { try await store.resetUserData(confirmation: "RESET") }
         for _ in 0..<1_000 {
-            if store.dataResetCompletionRequired { break }
+            if store.authState == .signedOut { break }
             await Task.yield()
         }
-        #expect(store.dataResetCompletionRequired)
+        #expect(store.authState == .signedOut)
         #expect(store.isResettingData)
         try await Task.sleep(for: .milliseconds(25))
         #expect(store.isResettingData)
         try await resetting.value
         #expect(!store.isResettingData)
-        await store.signOut()
+        #expect(store.authState == .signedOut)
     }
 
     @Test("Chat restores its snapshot and opens the stream without waiting for other screens", .timeLimit(.minutes(1)))

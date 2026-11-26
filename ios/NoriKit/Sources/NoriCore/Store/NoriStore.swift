@@ -108,7 +108,6 @@ public final class NoriStore {
     public private(set) var modelSettings: ModelSettingsResponse?
     public var modelKeyError: String?
     public private(set) var dataResetRecoveryRequired = false
-    public private(set) var dataResetCompletionRequired = false
     public private(set) var dataResetStatusRequired = false
     public private(set) var isResettingData = false
 
@@ -155,7 +154,6 @@ public final class NoriStore {
 
     private static let onboardingDoneKeyPrefix = "nori.onboarding.done."
     private static let observedResetKeyPrefix = "nori.data-reset.observed."
-    private static let resetCompletionKeyPrefix = "nori.data-reset.completion."
 
     private var onboardingDoneKey: String? {
         guard case .signedIn(let email) = authState else { return nil }
@@ -165,27 +163,6 @@ public final class NoriStore {
     private var observedResetKey: String? {
         guard case .signedIn(let email) = authState else { return nil }
         return Self.observedResetKeyPrefix + email.lowercased()
-    }
-
-    private var resetCompletionKey: String? {
-        guard case .signedIn(let email) = authState else { return nil }
-        return Self.resetCompletionKeyPrefix + email.lowercased()
-    }
-
-    private func loadResetCompletion() {
-        guard let key = resetCompletionKey else { return }
-        dataResetCompletionRequired = UserDefaults.standard.bool(forKey: key)
-    }
-
-    private func requireResetCompletion() {
-        guard let key = resetCompletionKey else { return }
-        UserDefaults.standard.set(true, forKey: key)
-        dataResetCompletionRequired = true
-    }
-
-    public func acknowledgeDataReset() {
-        if let key = resetCompletionKey { UserDefaults.standard.removeObject(forKey: key) }
-        dataResetCompletionRequired = false
     }
 
     public func acknowledgeDataResetStatus() {
@@ -444,7 +421,6 @@ public final class NoriStore {
         }
 
         authState = .signedIn(email: savedSession.email)
-        loadResetCompletion()
         isLoading = true
         connectionState = .connecting
         defer { if generation == sessionGeneration { isLoading = false } }
@@ -484,7 +460,6 @@ public final class NoriStore {
             guard generation == sessionGeneration else { return }
             applySession(initialSession)
             authState = .signedIn(email: session.email)
-            loadResetCompletion()
             connectionState = .connected
             lastError = nil
             NoriLogger.auth.info("auth.signed_in", breadcrumb: true)
@@ -572,7 +547,8 @@ public final class NoriStore {
             if let latest, latest.dataResetPending != true,
                previousResetKnown, let resetAt = latest.dataResetAt, !resetAt.isEmpty,
                resetAt != previousResetAt {
-                requireResetCompletion()
+                clearLocalDataForReset()
+                await signOut()
                 return
             }
             if latest == nil {
@@ -583,7 +559,8 @@ public final class NoriStore {
         guard generation == sessionGeneration else {
             if signedInState == authState && resetGeneration != dataResetGeneration {
                 dataResetRecoveryRequired = false
-                requireResetCompletion()
+                clearLocalDataForReset()
+                await signOut()
                 return
             }
             throw CancellationError()
@@ -591,14 +568,7 @@ public final class NoriStore {
         guard authState.isSignedIn else { throw CancellationError() }
 
         clearLocalDataForReset()
-        isAwaitingResetMarker = true
-        preferences = Preferences(dataResetAt: "pending")
-        hasLoadedSnapshot = true
-        requireResetCompletion()
-        startChatSession()
-        Task { [weak self] in
-            await self?.refreshAll()
-        }
+        await signOut()
     }
 
     private func enterDataResetRecovery(baseline: String?, baselineKnown: Bool, confirmed: Bool) {
@@ -652,7 +622,6 @@ public final class NoriStore {
         sessionGeneration &+= 1
         clearUserState(preserveIdentity: true)
         authState = signedInState
-        loadResetCompletion()
         connectionState = currentConnectionState
     }
 
@@ -694,12 +663,14 @@ public final class NoriStore {
             resetRecoveryBaseline = nil
             resetRecoveryBaselineKnown = false
             resetRecoveryHasClearedData = false
-            detectedReset = true
             if recovered {
-                requireResetCompletion()
-            } else {
-                dataResetStatusRequired = true
+                Task { [weak self] in
+                    await self?.signOut()
+                }
+                return true
             }
+            detectedReset = true
+            dataResetStatusRequired = true
         }
         preferences = latest
         hasLoadedPreferences = true
@@ -769,7 +740,6 @@ public final class NoriStore {
         modelSettings = nil
         modelKeyError = nil
         dataResetRecoveryRequired = false
-        dataResetCompletionRequired = false
         dataResetStatusRequired = false
         resetRecoveryBaseline = nil
         resetRecoveryBaselineKnown = false

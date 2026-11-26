@@ -171,6 +171,87 @@ final class PreviewNoriTransport: NoriTransport, @unchecked Sendable {
             validatedAt: nil
         )
     }
+
+    private var previewModelSettings = ModelSettingsResponse(
+        modelProfiles: ModelProfileCatalog(profiles: [
+            ModelProfile(
+                id: "vercel_ai_gateway-neon",
+                version: "v1",
+                label: "Gemini 4 Neon via Vercel AI Gateway",
+                backend: "vercel_ai_gateway",
+                model: "google/gemini-4-neon",
+                lanes: ["chat", "task"],
+                supportedReasoning: ["low", "medium", "high", "xhigh"],
+                defaultReasoning: "low",
+                paid: true
+            ),
+            ModelProfile(
+                id: "vercel_ai_gateway-hydrogen",
+                version: "v1",
+                label: "Gemini 4 Hydrogen via Vercel AI Gateway",
+                backend: "vercel_ai_gateway",
+                model: "google/gemini-4-hydrogen",
+                lanes: ["chat", "task"],
+                supportedReasoning: ["low", "medium", "high", "xhigh"],
+                defaultReasoning: "low",
+                paid: true
+            ),
+            ModelProfile(
+                id: "vercel_ai_gateway-opus",
+                version: "v1",
+                label: "Claude Opus 5.5 via Vercel AI Gateway",
+                backend: "vercel_ai_gateway",
+                model: "anthropic/claude-opus-5.5",
+                lanes: ["chat", "task"],
+                supportedReasoning: ["low", "medium", "high", "xhigh", "max"],
+                defaultReasoning: "low",
+                paid: true
+            ),
+            ModelProfile(
+                id: "vercel_ai_gateway-haiku",
+                version: "v1",
+                label: "Claude Haiku 5.5 via Vercel AI Gateway",
+                backend: "vercel_ai_gateway",
+                model: "anthropic/claude-haiku-5.5",
+                lanes: ["chat", "task"],
+                supportedReasoning: ["low", "medium", "high", "xhigh", "max"],
+                defaultReasoning: "low",
+                paid: true
+            ),
+        ]),
+        selection: ModelSelection(
+            chatProfileID: "vercel_ai_gateway-neon",
+            chatReasoning: "low",
+            taskProfileID: "vercel_ai_gateway-hydrogen",
+            taskReasoning: "low"
+        ),
+        revision: 1,
+        recommendations: [
+            "vercel_ai_gateway": ModelSelection(
+                chatProfileID: "vercel_ai_gateway-opus",
+                chatReasoning: "low",
+                taskProfileID: "vercel_ai_gateway-haiku",
+                taskReasoning: "low"
+            )
+        ]
+    )
+
+    func fetchModelSettings() async throws -> ModelSettingsResponse {
+        previewModelSettings
+    }
+
+    func saveModelSettings(_ request: SaveModelSettingsRequest) async throws -> ModelSettingsResponse {
+        previewModelSettings.selection = request.selection
+        previewModelSettings.revision += 1
+        return previewModelSettings
+    }
+
+    func resetUserData(confirmation: String) async throws {
+        guard confirmation == "RESET" else {
+            throw NoriAPIError(message: "Type RESET to confirm.")
+        }
+        try await Task.sleep(for: .milliseconds(900))
+    }
 }
 
 public extension NoriStore {
