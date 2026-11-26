@@ -9,12 +9,12 @@
 </head>
 <body>
 <h1>Deployment</h1>
-<p class="lede">The hosted runtime supports Cloud Run with AWS-backed storage and Postgres, using one distroless static Go binary (<code>cmd/nori --role=all|api|worker</code>); local development runs Postgres via Docker Compose.</p>
-<div class="card"><table class="tall"><tr><th>Piece</th><th>Production (<code>NORI_CLOUD=aws</code>)</th><th>Local (<code>NORI_CLOUD=local</code>)</th></tr>
-<tr><td>Go binary (<code>nori</code> / <code>nori-local</code>)</td><td>Single distroless static Go image (<code>core/infrastructure/Dockerfile</code>) run with <code>--role=all</code>, <code>--role=api</code> or <code>--role=worker</code></td><td>Loopback <code>nori-local</code> on <code>127.0.0.1:8080</code> running both HTTP API and unified Postgres-native worker pool</td></tr>
-<tr><td>Task &amp; wake orchestration</td><td>Postgres-native <code>nori_task_leases</code>, <code>nori_user_wakes</code> and <code>LISTEN nori_wake</code> (2s poll + 60s repair sweep)</td><td>Identical Postgres-native worker pool in <code>nori-local</code></td></tr>
-<tr><td>Records &amp; encrypted secrets</td><td>Private Postgres with TLS (<code>NORI_POSTGRES_URL</code>) + <code>secret/rowstore</code></td><td>Local Postgres via <code>make deps</code></td></tr>
-<tr><td>File bytes</td><td>Private S3 bucket (<code>ARTIFACT_BUCKET</code>) with conditional writes</td><td>Local folder (<code>NORI_LOCAL_ARTIFACT_DIR</code>)</td></tr>
+<p class="lede">Production runs one distroless static Go binary (<code>cmd/nori --role=all|api|worker</code>) on Cloud Run, with Postgres and Google Cloud Storage. Local development runs Postgres in Docker Compose.</p>
+<div class="card"><table class="tall"><tr><th>Piece</th><th>Production (<code>NORI_CLOUD=gcp</code>)</th><th>Local (<code>NORI_CLOUD=local</code>)</th></tr>
+<tr><td>Go binary (<code>nori</code> / <code>nori-local</code>)</td><td>One image (<code>core/infrastructure/Dockerfile</code>) runs as the <code>nori-core</code> service with <code>--role=api</code> and the <code>nori-worker</code> service with <code>--role=worker</code></td><td>Loopback <code>nori-local</code> on <code>127.0.0.1:8080</code> running both HTTP API and unified Postgres-native worker pool</td></tr>
+<tr><td>Task &amp; wake orchestration</td><td>Postgres-native <code>nori_task_leases</code>, <code>nori_user_wakes</code> and <code>LISTEN nori_wake</code> with a 2-second poll and a 60-second repair sweep</td><td>Identical Postgres-native worker pool in <code>nori-local</code></td></tr>
+<tr><td>Records &amp; encrypted secrets</td><td>Private Postgres with TLS (<code>NORI_POSTGRES_URL</code>) and <code>secret/rowstore</code> keys wrapped by Cloud KMS</td><td>Local Postgres via <code>make deps</code></td></tr>
+<tr><td>File bytes</td><td>Private Cloud Storage bucket (<code>ARTIFACT_BUCKET</code>) through the JSON API, with conditional writes</td><td>Local folder (<code>NORI_LOCAL_ARTIFACT_DIR</code>)</td></tr>
 <tr><td>Host integration</td><td>The host app mounts <code>integrations/embed/adapter.mjs</code> and mints HS256 service tokens</td><td>Slim Next.js workbench on <code>:3210</code> or the host app demo stack</td></tr>
 </table></div>
 <div class="grid2">
@@ -23,15 +23,18 @@
 </div>
 <section><h2>Secrets and credentials</h2>
 <ul class="pts">
-<li>AWS SDK clients use workload IAM roles or the standard AWS credential chain.</li>
-<li>Per-user MCP and connection credentials live in Postgres using envelope encryption (<code>core/internal/secret/rowstore</code>) wrapped by a 32-byte key from <code>NORI_CREDENTIAL_KEY</code> or <code>NORI_CREDENTIAL_KEY_SECRET</code> (AWS Secrets Manager).</li>
-<li>S3 objects stay private under user-scoped <code>artifacts/</code> prefixes with conditional writes that refuse overwrites.</li>
+<li>On Cloud Run, the service account authenticates to Cloud Storage and Cloud KMS. With <code>NORI_CLOUD=aws</code>, the AWS SDK uses workload IAM roles and stores files in S3.</li>
+<li>Postgres stores per-user MCP and connection credentials with envelope encryption (<code>core/internal/secret/rowstore</code>). Cloud KMS (<code>NORI_CREDENTIAL_KMS_KEY</code>) or a 32-byte key from <code>NORI_CREDENTIAL_KEY</code> wraps each data key. With <code>NORI_CLOUD=aws</code>, <code>NORI_CREDENTIAL_KEY_SECRET</code> reads that key from AWS Secrets Manager.</li>
+<li>Stored files stay private under user-scoped <code>artifacts/</code> prefixes. Writes are conditional and refuse to overwrite an existing object.</li>
 </ul></section>
 <section><h2>Container images and rolling deploys</h2>
 <ul class="pts">
-<li>Every three hours, or on demand, the Release workflow ships changed services from the newest <code>main</code> commit with passing CI: it runs migrations, stages each Cloud Run revision with no traffic behind an HTTP health probe, promotes it, and reverts automatically on errors during a ten-minute bake. <code>scripts/release.sh rollback</code> returns a group to its previous revision.</li>
+<li>After CI passes on a <code>main</code> commit, it builds the <code>nori-core</code> and <code>nori-web</code> images and tags them with that commit.</li>
+<li>The Release workflow runs every three hours and on demand. It picks the newest <code>main</code> commit with passing CI and releases only the services whose code changed since the live revision.</li>
+<li>A release runs migrations, deploys each new revision with no traffic, and moves traffic to it after its health probe passes. A 5xx or crash from a new revision in the next ten minutes moves its services back to their previous revisions.</li>
+<li><code>scripts/release.sh rollback core|web|all</code> moves services back to their previous revisions by hand.</li>
 <li><code>core/infrastructure/Dockerfile</code> builds the static <code>CGO_ENABLED=0</code> <code>nori</code> binary onto <code>gcr.io/distroless/static-debian12:nonroot</code>.</li>
-<li>Because inner tasks checkpoint explicit state and receipts in Postgres rather than replaying workflow code, rolling deploys do not require pinned workflow build IDs; parked tasks resume cleanly on the new binary.</li>
+<li>Inner tasks checkpoint state and receipts in Postgres, so a new binary resumes parked tasks without pinned workflow build IDs.</li>
 <li><code>docs/Dockerfile</code> and <code>docs/deploy.sh</code> package the static Dokyu output into an unprivileged nginx container serving <code>X-Robots-Tag: noindex</code> and <code>Disallow: /</code>.</li>
 </ul></section>
 <section><h2>Pausing and operations</h2>
@@ -39,8 +42,8 @@
 <li>Execution pause blocks new task admission while the conversation thread, saved history and waiting tasks stay readable. Nothing is cancelled.</li>
 <li>Each worker pod runs a 60-second repair sweep reconciling <code>nori_task_leases</code> and <code>nori_user_wakes</code> against <code>nori_records</code>, replacing any separate reconciliation CLI.</li>
 <li><code>nori-user</code> provisions and manages user rows in Postgres.</li>
-<li>Nori's repository provides application adapters, not provisioned AWS Terraform.</li>
+<li>The repository contains no Terraform. Cloud resources are created with <code>gcloud</code>.</li>
 </ul></section>
-<details class="sources"><summary>Sources</summary><p><code>core/infrastructure/README.md</code> · <code>core/infrastructure/aws/README.md</code> · <code>core/infrastructure/local/README.md</code> · <code>core/infrastructure/local/compose.yaml</code> · <code>core/infrastructure/Dockerfile</code> · <code>core/cmd/nori/main.go</code> · <code>core/internal/worker/pool.go</code> · <code>core/internal/secret/awssecrets/awssecrets.go</code> · <code>core/internal/secret/rowstore/rowstore.go</code> · <code>core/internal/serviceauth/auth.go</code> · <code>docs/Dockerfile</code> · <code>docs/deploy.sh</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/infrastructure/README.md</code> · <code>scripts/release.sh</code> · <code>.github/workflows/release.yml</code> · <code>.github/workflows/ci.yml</code> · <code>core/internal/platform/platform.go</code> · <code>core/internal/state/gcs/gcs.go</code> · <code>core/internal/secret/rowstore/gcpkms.go</code> · <code>core/infrastructure/aws/README.md</code> · <code>core/infrastructure/local/README.md</code> · <code>core/infrastructure/local/compose.yaml</code> · <code>core/infrastructure/Dockerfile</code> · <code>core/cmd/nori/main.go</code> · <code>core/internal/worker/pool.go</code> · <code>core/internal/secret/awssecrets/awssecrets.go</code> · <code>core/internal/secret/rowstore/rowstore.go</code> · <code>core/internal/serviceauth/auth.go</code> · <code>docs/Dockerfile</code> · <code>docs/deploy.sh</code></p></details>
 </body>
 </html>

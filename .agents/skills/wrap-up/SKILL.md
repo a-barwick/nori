@@ -2,7 +2,7 @@
 name: wrap-up
 description: >-
   Run Nori's full end-of-thread closeout: verify with make check, commit and
-  merge to main, push origin/main, confirm CI released core/web if changed, clean up finished worktrees and branches, and confirm no
+  merge to main, push origin/main, confirm the Release workflow shipped any core/web changes, clean up finished worktrees and branches, and confirm no
   background processes remain. Use when the user says "wrap up", "send it",
   "merge and deploy", or "good to close thread?".
 ---
@@ -31,4 +31,4 @@ Execute Nori's complete closeout checklist in order.
    - Confirm no local dev servers, test DBs, or background worker processes remain running.
 
 5. **Report concisely**
-   - Summarize: `main` & `origin/main` commit SHA, the CI release result (if core/web changed), worktree/branch cleanup status, and confirmation that nothing is left running.
+   - Summarize: `main` & `origin/main` commit SHA, the Release workflow result (if core/web changed), worktree/branch cleanup status, and confirmation that nothing is left running.
