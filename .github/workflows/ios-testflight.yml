@@ -79,16 +79,53 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          APPLE_DISTRIBUTION_P12: ${{ secrets.APPLE_DISTRIBUTION_P12 }}
+          APPLE_DISTRIBUTION_P12_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_P12_PASSWORD }}
+          APPLE_NORI_PROFILE: ${{ secrets.APPLE_NORI_PROFILE }}
         run: |
           : "${ASC_KEY_ID:?Set ASC_KEY_ID in the ios-testflight environment}"
           : "${ASC_ISSUER_ID:?Set ASC_ISSUER_ID in the ios-testflight environment}"
           : "${ASC_PRIVATE_KEY:?Set ASC_PRIVATE_KEY in the ios-testflight environment}"
+          : "${APPLE_DISTRIBUTION_P12:?Set the Apple Distribution certificate and private key}"
+          : "${APPLE_DISTRIBUTION_P12_PASSWORD:?Set the PKCS#12 password}"
+          : "${APPLE_NORI_PROFILE:?Set the Nori App Store Connect provisioning profile}"
           umask 077
-          key_dir=$(mktemp -d "$RUNNER_TEMP/nori-signing.XXXXXX")
-          auth_key="$key_dir/AuthKey.p8"
-          trap 'rm -f -- "$auth_key"; rmdir -- "$key_dir"' EXIT
+          signing_dir=$(mktemp -d "$RUNNER_TEMP/nori-signing.XXXXXX")
+          auth_key="$signing_dir/AuthKey.p8"
+          keychain="$signing_dir/signing.keychain-db"
+          certificate="$signing_dir/distribution.p12"
+          profile="$signing_dir/nori.mobileprovision"
+          profile_plist="$signing_dir/profile.plist"
+          cleanup() {
+            if [[ -n ${installed_profile:-} ]]; then rm -f -- "$installed_profile"; fi
+            security delete-keychain "$keychain" 2>/dev/null || true
+            rm -f -- "$auth_key" "$certificate" "$profile" "$profile_plist"
+            rmdir -- "$signing_dir" 2>/dev/null || true
+          }
+          trap cleanup EXIT
           printf '%s\n' "$ASC_PRIVATE_KEY" > "$auth_key"
-          unset ASC_PRIVATE_KEY
+          printf '%s' "$APPLE_DISTRIBUTION_P12" | base64 -D > "$certificate"
+          printf '%s' "$APPLE_NORI_PROFILE" | base64 -D > "$profile"
+          unset ASC_PRIVATE_KEY APPLE_DISTRIBUTION_P12 APPLE_NORI_PROFILE
+
+          security cms -D -i "$profile" -o "$profile_plist"
+          profile_app_id=$(plutil -extract Entitlements.application-identifier raw "$profile_plist")
+          profile_uuid=$(plutil -extract UUID raw "$profile_plist")
+          [[ "$profile_app_id" == 'GAB2UG6AMY.com.nori.ios' ]]
+          [[ "$profile_uuid" =~ ^[0-9A-Fa-f-]{36}$ ]]
+          profiles_dir="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
+          mkdir -p "$profiles_dir"
+          installed_profile="$profiles_dir/$profile_uuid.mobileprovision"
+          cp "$profile" "$installed_profile"
+
+          keychain_password=$(openssl rand -hex 24)
+          security create-keychain -p "$keychain_password" "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -k "$keychain" -P "$APPLE_DISTRIBUTION_P12_PASSWORD" -T /usr/bin/codesign
+          unset APPLE_DISTRIBUTION_P12_PASSWORD
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain"
+
           xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Nori.xcarchive" \
             -exportPath "$RUNNER_TEMP/NoriTestFlight" \
             -exportOptionsPlist ios/Config/TestFlightExportOptions.plist \

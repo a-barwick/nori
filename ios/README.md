@@ -98,6 +98,8 @@ The **iOS Private TestFlight** workflow waits 10 minutes after an `ios/` change 
 
 The `ios-testflight` GitHub environment is restricted to `main` and holds `ASC_KEY_ID`, `ASC_ISSUER_ID`, and the `.p8` contents in `ASC_PRIVATE_KEY`. The repository variable `NORI_TESTFLIGHT_ENABLED` activates the workflow when set to `true`. Set `SENTRY_IOS_DSN` as an Actions variable if this build should send telemetry. In GitHub Actions, select **iOS Private TestFlight** → **Run workflow** on `main` to start an upload without the ten-minute wait. Build numbering starts after build 174 and uses the workflow run number so retrying the same run uses the same build number.
 
+The Developer-role API key authenticates the upload. Signing uses the base64-encoded Apple Distribution `.p12` in `APPLE_DISTRIBUTION_P12`, its password in `APPLE_DISTRIBUTION_P12_PASSWORD`, and the base64-encoded **Nori TestFlight CI** provisioning profile in `APPLE_NORI_PROFILE`. Rotate the certificate and provisioning profile together when either expires.
+
 ### Uploading dSYMs for TestFlight / App Store Releases
 The **iOS Archive** GitHub Actions workflow builds a Release archive and checks that its dSYM UUID matches the app. The shared Xcode scheme can upload symbols from the archive you actually distribute. To enable that upload for local archives, add these settings to `ios/Config/Local.xcconfig`:
 
