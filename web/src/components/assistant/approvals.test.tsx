@@ -371,6 +371,14 @@ describe("InteractionCard and inline chat stream rendering", () => {
     );
     assert.deepEqual(resolvedStatusPill(resolvedDenied), { tone: "neutral", label: "Denied" });
     assert.equal(resolvedSummaryText(resolvedDenied), "Denied");
+
+    const htmlDenied = renderToStaticMarkup(
+      <AssistantProvider localMode>
+        <InteractionCard interaction={resolvedDenied} inline />
+      </AssistantProvider>,
+    );
+    assert.match(htmlDenied, />Denied</);
+    assert.equal(htmlDenied.includes("text-ok"), false);
   });
 
   test("mergeInlineInteractions keeps session-resolved cards visible alongside pending cards in stable order", () => {

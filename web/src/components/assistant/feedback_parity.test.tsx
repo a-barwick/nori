@@ -188,13 +188,14 @@ describe("Fix 1 & 3 (Web): Inline Reminder Confirmation Card and Schedule Confir
   });
 });
 
-describe("Fix 2 (Web): Work Detail Actions grouping and read badge suppression", () => {
-  test("operationOutcomePill suppresses green Confirmed pill on routine reads but keeps it on writes/sends and shows failures", () => {
+describe("Fix 2 (Web): Work Detail Actions grouping and exception-only badge suppression", () => {
+  test("operationOutcomePill suppresses green Confirmed pill on normal rows and keeps pills for exceptions", () => {
     assert.equal(operationOutcomePill({ effect_class: "read", outcome: "confirmed" }), undefined);
+    assert.equal(operationOutcomePill({ effect_class: "reversible_write", outcome: "confirmed" }), undefined);
+    assert.equal(operationOutcomePill({ effect_class: "sensitive_send", outcome: "confirmed" }), undefined);
     assert.deepEqual(operationOutcomePill({ effect_class: "read", outcome: "failed" }), { tone: "danger", label: "Failed" });
     assert.deepEqual(operationOutcomePill({ effect_class: "read", outcome: "attempted" }), { tone: "neutral", label: "In progress" });
-    assert.deepEqual(operationOutcomePill({ effect_class: "reversible_write", outcome: "confirmed" }), { tone: "ok", label: "Confirmed" });
-    assert.deepEqual(operationOutcomePill({ effect_class: "sensitive_send", outcome: "confirmed" }), { tone: "ok", label: "Confirmed" });
+    assert.deepEqual(operationOutcomePill({ effect_class: "reversible_write", outcome: "uncertain" }), { tone: "warning", label: "Unconfirmed" });
     assert.deepEqual(operationOutcomePill({ effect_class: "read", outcome: "failed", cleared: "read_only" }), { tone: "neutral", label: "Only read" });
   });
 
@@ -230,7 +231,8 @@ describe("Fix 2 (Web): Work Detail Actions grouping and read badge suppression",
     assert.match(html, /Searched the web \(2 queries\)/);
     assert.match(html, /Read page: https:\/\/weather\.gov\/austin/);
     assert.match(html, /Created &#x27;Umbrella reminder&#x27;/);
-    assert.equal(html.match(/>Confirmed</g)?.length, 1);
+    assert.equal(html.includes(">Confirmed<"), false);
+    assert.equal(html.includes("because you asked"), false);
     assert.equal(html.includes("because Nori"), false);
   });
 });

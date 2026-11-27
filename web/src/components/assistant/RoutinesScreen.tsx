@@ -22,7 +22,6 @@ import {
   Notice,
   NotYet,
   Pill,
-  RefreshButton,
   Row,
   Rows,
   Screen,
@@ -58,7 +57,7 @@ const REASON: Record<NonNullable<Occurrence["reason"]>, string> = {
 const DELIVERY: Record<string, string> = {
   pending: "Waiting to send",
   attempting: "Sending",
-  accepted: "Handed to the provider",
+  accepted: "Sent",
   delivered: "Delivered",
   failed: "Not delivered",
   uncertain: "Delivery unknown",
@@ -170,7 +169,7 @@ export function RoutinesContent() {
                     type="button"
                     disabled={!!busy}
                     onClick={() => void quickAct(item, "run_now")}
-                    className="t-fast inline-flex h-7 items-center gap-1 rounded-full border border-lavender-border bg-accent-subtle px-2.5 text-caption font-semibold text-accent-text hover:bg-accent-muted disabled:opacity-50"
+                    className="t-fast inline-flex h-8 items-center gap-1.5 rounded-full bg-fill-2 px-3 text-caption font-semibold text-accent-text hover:bg-accent-muted disabled:cursor-not-allowed disabled:bg-disabled-bg disabled:text-disabled"
                   >
                     <Play size={10} fill="currentColor" aria-hidden />
                     Run
@@ -180,7 +179,7 @@ export function RoutinesContent() {
                       type="button"
                       disabled={!!busy}
                       onClick={() => void quickAct(item, isEnabled ? "pause" : "resume")}
-                      className="t-fast inline-flex h-7 items-center rounded-full bg-fill-1 px-2.5 text-caption font-medium text-ink-2 hover:bg-fill-2 hover:text-ink disabled:opacity-50"
+                      className="t-fast inline-flex h-8 items-center rounded-full bg-fill-1 px-3 text-caption font-medium text-ink-2 hover:bg-fill-2 hover:text-ink disabled:cursor-not-allowed disabled:bg-disabled-bg disabled:text-disabled"
                     >
                       {isEnabled ? "Pause" : "Resume"}
                     </button>
@@ -281,15 +280,7 @@ export function RoutineDetailScreen({ id }: { id: string }) {
               : "Cancelled."
       }
       actions={
-        <>
-          <Pill tone={state.tone}>{state.label}</Pill>
-          <RefreshButton
-            onClick={() => {
-              void routine.reload();
-              void occurrences.reload();
-            }}
-          />
-        </>
+        state.label !== "On" ? <Pill tone={state.tone}>{state.label}</Pill> : undefined
       }
     >
       {action.error && (
@@ -363,8 +354,44 @@ export function RoutineDetailScreen({ id }: { id: string }) {
         </div>
       )}
       <Section title="What it does">
-        <p className="rounded-card border border-hairline bg-surface p-4 text-body whitespace-pre-wrap">{item.instruction}</p>
-        <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-meta">
+        <p className="rounded-card border border-card-border bg-surface p-4 text-body whitespace-pre-wrap">{item.instruction}</p>
+      </Section>
+      <Section title="May do without asking">
+        <Authority ids={item.authority_rule_ids} />
+      </Section>
+      <Section title="History">
+        {occurrences.loading ? (
+          <Loading />
+        ) : occurrences.data?.items.length ? (
+          <Rows label="Runs">
+            {occurrences.data.items.map((occurrence) => {
+              const status = OCCURRENCE[occurrence.status];
+              const showStatusPill = occurrence.status !== "completed";
+              const deliveries = (occurrence.deliveries ?? []).map(
+                (delivery) => `${DELIVERY[delivery.state] ?? delivery.state}${delivery.acknowledged_at ? ", seen" : ""}`,
+              );
+              return (
+                <Row
+                  key={occurrence.id}
+                  href={occurrence.task_ids[0] ? `/work/${encodeURIComponent(occurrence.task_ids[0])}` : undefined}
+                  title={when(occurrence.scheduled_at)}
+                  detail={[
+                    occurrence.reason ? REASON[occurrence.reason] : occurrence.error?.message ?? occurrence.summary,
+                    ...deliveries,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                  trailing={showStatusPill ? <Pill tone={status.tone}>{status.label}</Pill> : undefined}
+                />
+              );
+            })}
+          </Rows>
+        ) : (
+          <Empty>No runs yet.</Empty>
+        )}
+      </Section>
+      <Section title="Details">
+        <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-meta">
           <dt className="text-ink-3">When</dt>
           <dd>
             {cadence(item.trigger)}
@@ -372,7 +399,7 @@ export function RoutineDetailScreen({ id }: { id: string }) {
           </dd>
           <dt className="text-ink-3">If missed</dt>
           <dd>
-            {{ latest: "Runs once when Nori is back", skip: "Skipped and shown below", all: "Every missed run happens" }[item.missed_run]}
+            {{ latest: "Runs once when Nori is back", skip: "Skipped and shown above", all: "Every missed run happens" }[item.missed_run]}
           </dd>
           <dt className="text-ink-3">Budget</dt>
           <dd>{money(item.budget_usd)} per run</dd>
@@ -394,46 +421,13 @@ export function RoutineDetailScreen({ id }: { id: string }) {
           )}
         </dl>
       </Section>
-      <Section title="May do without asking">
-        <Authority ids={item.authority_rule_ids} />
-      </Section>
-      <Section title="History">
-        {occurrences.loading ? (
-          <Loading />
-        ) : occurrences.data?.items.length ? (
-          <Rows label="Runs">
-            {occurrences.data.items.map((occurrence) => {
-              const status = OCCURRENCE[occurrence.status];
-              const deliveries = (occurrence.deliveries ?? []).map(
-                (delivery) => `${DELIVERY[delivery.state] ?? delivery.state}${delivery.acknowledged_at ? ", seen" : ""}`,
-              );
-              return (
-                <Row
-                  key={occurrence.id}
-                  href={occurrence.task_ids[0] ? `/work/${encodeURIComponent(occurrence.task_ids[0])}` : undefined}
-                  title={when(occurrence.scheduled_at)}
-                  detail={[
-                    occurrence.reason ? REASON[occurrence.reason] : occurrence.error?.message ?? occurrence.summary,
-                    ...deliveries,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                  trailing={<Pill tone={status.tone}>{status.label}</Pill>}
-                />
-              );
-            })}
-          </Rows>
-        ) : (
-          <Empty>No runs yet.</Empty>
-        )}
-      </Section>
     </Screen>
   );
 }
 
 function Authority({ ids }: { ids: string[] }) {
   const rules = useResource<List<PermissionRule>>(ids.length ? "/permissions" : null, { poll: 0 });
-  if (!ids.length) return <p className="text-body text-ink-2">Nothing. It asks before every action.</p>;
+  if (!ids.length) return <p className="text-body text-ink-2">Asks before every action.</p>;
   const mine = (rules.data?.items ?? []).filter((rule) => ids.includes(rule.id));
   return rules.loading ? (
     <Loading />

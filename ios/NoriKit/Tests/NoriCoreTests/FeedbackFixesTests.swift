@@ -176,7 +176,7 @@ struct FeedbackFixesTests {
     }
 
 
-    @Test("OperationProjection decodes native web_search wire payload, hides nil authority, and omits Confirmed on read-only ops")
+    @Test("OperationProjection decodes native web_search wire payload, humanizes names, and omits Confirmed on normal ops")
     func workOperationProjectionAndBadges() throws {
         let json = """
         {
@@ -203,14 +203,23 @@ struct FeedbackFixesTests {
 
         let writeOp = OperationProjection(
             id: "op-write",
-            name: "calendar.create_event",
+            name: "calendar_create_event",
             effectClass: .reversibleWrite,
             outcome: .confirmed,
             actionSummary: "Created calendar event",
             authoritySource: "user_request"
         )
         #expect(writeOp.displayAuthorityLabel == "you asked")
-        #expect(writeOp.statusBadge == OperationBadge(label: "Confirmed", tone: .ok))
+        #expect(writeOp.statusBadge == nil)
+
+        let unnamedOp = OperationProjection(
+            id: "op-unnamed",
+            name: "calendar_create_event",
+            effectClass: .reversibleWrite,
+            outcome: .uncertain
+        )
+        #expect(unnamedOp.displaySummary == "Calendar create event")
+        #expect(unnamedOp.statusBadge == OperationBadge(label: "Unconfirmed", tone: .warning))
 
         let failedRead = OperationProjection(
             id: "op-fail",
@@ -379,5 +388,24 @@ struct FeedbackFixesTests {
         #expect(part.text == "Wed, Nov 25 at 12:00 PM PST")
         #expect(part.scheduledAt == "2026-11-25T20:00:00Z")
         #expect(part.fallback == "Reminder set · Wed, Nov 25 at 12:00 PM PST · Check supernino updates")
+    }
+
+    @Test("AutomationTrigger formats RRULE schedules in plain English and LibraryItemKind classifies links under documents")
+    func rruleFormattingAndLibraryLinkGroup() {
+        let daily = AutomationTrigger(kind: "recurring", localStart: "2026-06-15T09:00:00", timezone: "UTC", rrule: "FREQ=DAILY")
+        #expect(daily.summaryLabel == "Every day at 09:00")
+
+        let weekdays = AutomationTrigger(kind: "recurring", localStart: "2026-06-15T08:00:00", timezone: "UTC", rrule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR")
+        #expect(weekdays.summaryLabel == "Weekdays at 08:00")
+
+        let specific = AutomationTrigger(kind: "recurring", localStart: "2026-06-15T10:15:00", timezone: "UTC", rrule: "FREQ=WEEKLY;BYDAY=MO,WE")
+        #expect(specific.summaryLabel == "Mon, Wed at 10:15")
+
+        let monthly = AutomationTrigger(kind: "recurring", localStart: "2026-06-15T07:30:00", timezone: "UTC", rrule: "FREQ=MONTHLY")
+        #expect(monthly.summaryLabel == "Monthly at 07:30")
+
+        #expect(LibraryItemKind.link.filterGroup == "documents")
+        #expect(LibraryItemKind.event.filterGroup == "events")
+        #expect(LibraryItemKind.message.filterGroup == "messages")
     }
 }

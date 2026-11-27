@@ -70,24 +70,99 @@ public struct AutomationTrigger: Sendable, Codable, Hashable {
         self.minIntervalSeconds = minIntervalSeconds
     }
 
+    private static let weekdayLabels: [String: String] = [
+        "MO": "Mon", "TU": "Tue", "WE": "Wed", "TH": "Thu", "FR": "Fri", "SA": "Sat", "SU": "Sun"
+    ]
+
     public var summaryLabel: String {
-        if let rrule, !rrule.isEmpty {
-            return rrule
-        }
-        if let at, !at.isEmpty {
-            return "Once at \(at)"
-        }
         if kind == "event_relative" {
             if let offset = offsetSeconds {
-                let mins = abs(offset) / 60
-                return offset < 0 ? "\(mins)m before event" : "\(mins)m after event"
+                let minutes = Int((Double(abs(offset)) / 60.0).rounded())
+                let span = (minutes >= 60 && minutes % 60 == 0) ? "\(minutes / 60) h" : "\(minutes) min"
+                return "\(span) \(offset <= 0 ? "before" : "after") an event"
             }
-            return "Relative to event"
+            return "Relative to an event"
         }
         if kind == "watch" {
+            if let interval = minIntervalSeconds {
+                let mins = max(1, Int((Double(interval) / 60.0).rounded()))
+                return "Checks for changes every \(mins) min or more"
+            }
             return "Watching for changes"
         }
-        return kind.capitalized
+        if let rrule, !rrule.isEmpty {
+            return Self.formatRecurrence(rrule: rrule, localStart: localStart)
+        }
+        if let at, !at.isEmpty {
+            return "Once, \(Self.formatOnceTimestamp(at))"
+        }
+        return kind.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    private static func formatOnceTimestamp(_ iso: String) -> String {
+        guard let date = parseISO8601Date(iso) else { return iso }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "EEE, MMM d 'at' h:mm a"
+        return formatter.string(from: date)
+    }
+
+    static func parseISO8601Date(_ iso: String) -> Date? {
+        let withFrac = ISO8601DateFormatter()
+        withFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = withFrac.date(from: iso) { return date }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: iso)
+    }
+
+    public static func formatRecurrence(rrule: String, localStart: String?) -> String {
+        let timePart: String = {
+            guard let localStart,
+                  let tIndex = localStart.firstIndex(of: "T") else { return "" }
+            let afterT = localStart[localStart.index(after: tIndex)...]
+            let hhmm = String(afterT.prefix(5))
+            return hhmm.contains(":") ? hhmm : ""
+        }()
+        let atSuffix = timePart.isEmpty ? "" : " at \(timePart)"
+
+        var parts: [String: String] = [:]
+        for token in rrule.uppercased().split(separator: ";") {
+            let kv = token.split(separator: "=", maxSplits: 1)
+            if kv.count == 2 {
+                parts[String(kv[0]).trimmingCharacters(in: .whitespaces)] =
+                    String(kv[1]).trimmingCharacters(in: .whitespaces)
+            }
+        }
+        let freq = parts["FREQ"] ?? ""
+        let days = parts["BYDAY"]?
+            .split(separator: ",")
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        let weekdaysSet: Set<String> = ["MO", "TU", "WE", "TH", "FR"]
+        let isWeekdays = days?.count == 5 && Set(days ?? []) == weekdaysSet
+
+        switch freq {
+        case "DAILY":
+            return "Every day\(atSuffix)"
+        case "WEEKLY":
+            if isWeekdays {
+                return "Weekdays\(atSuffix)"
+            }
+            if let days, !days.isEmpty {
+                let labels = days.map { weekdayLabels[$0] ?? $0.capitalized }
+                return "\(labels.joined(separator: ", "))\(atSuffix)"
+            }
+            return "Weekly\(atSuffix)"
+        case "MONTHLY":
+            return "Monthly\(atSuffix)"
+        case "YEARLY":
+            return "Yearly\(atSuffix)"
+        case "HOURLY":
+            return "Every hour\(atSuffix)"
+        default:
+            return timePart.isEmpty ? "Recurring" : "Recurring\(atSuffix)"
+        }
     }
 }
 
@@ -207,6 +282,21 @@ public struct Automation: Sendable, Codable, Hashable, Identifiable {
         self.authorityRuleIDs = authorityRuleIDs
         self.snoozedUntil = snoozedUntil
         self.lastOccurrence = lastOccurrence
+    }
+
+    public var isSpentOneTime: Bool {
+        status == .enabled && (nextAt?.isEmpty ?? true) && trigger.kind == "once"
+    }
+
+    public var isSnoozed: Bool {
+        guard status == .enabled,
+              let raw = snoozedUntil, !raw.isEmpty,
+              let date = AutomationTrigger.parseISO8601Date(raw) else { return false }
+        return date > Date()
+    }
+
+    public var lastRunFailed: Bool {
+        lastOccurrence?.status == "failed"
     }
 
     public var editable: AutomationEditable {

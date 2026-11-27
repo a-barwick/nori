@@ -10,6 +10,7 @@ public struct WorkDetailView: View {
     public let taskID: String
     private let onOpenDocument: (NoriCore.LibraryItem) -> Void
     private let onOpenModels: () -> Void
+    private let onStartInChat: ((String) -> Void)?
 
     @State private var steerDraft: String = ""
     @State private var isSteering: Bool = false
@@ -19,17 +20,21 @@ public struct WorkDetailView: View {
     @State private var didInitializeBudget: Bool = false
     @State private var isLoadingDetail: Bool = false
     @State private var expandedSearchGroupIDs: Set<String> = []
+    @State private var copiedResult: Bool = false
+    @State private var copiedTaskID: Bool = false
 
     public init(
         store: NoriStore,
         taskID: String,
         onOpenDocument: @escaping (NoriCore.LibraryItem) -> Void = { _ in },
-        onOpenModels: @escaping () -> Void = {}
+        onOpenModels: @escaping () -> Void = {},
+        onStartInChat: ((String) -> Void)? = nil
     ) {
         self.store = store
         self.taskID = taskID
         self.onOpenDocument = onOpenDocument
         self.onOpenModels = onOpenModels
+        self.onStartInChat = onStartInChat
     }
 
     private var detail: WorkDetail? {
@@ -38,6 +43,10 @@ public struct WorkDetailView: View {
 
     private var item: WorkItem? {
         detail?.item ?? store.workItems.first(where: { $0.taskID == taskID })
+    }
+
+    private var continuedByItems: [WorkItem] {
+        store.workItems.filter { $0.origin.continuesTaskID == taskID }
     }
 
     private var pendingInteractions: [Interaction] {
@@ -54,9 +63,20 @@ public struct WorkDetailView: View {
         WorkActionEntry.group(shownOperations)
     }
 
-    private var timelineEvents: [RunEvent] {
-        let toolNames = Set((detail?.operations ?? []).map(\.name))
-        return (detail?.events ?? []).filter { !toolNames.contains($0.text) && $0.text != "capability_load" }
+    private var extraMilestoneEvents: [RunEvent] {
+        let ops = detail?.operations ?? []
+        var covered = Set<String>()
+        for op in ops {
+            covered.insert(op.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+            covered.insert(op.displaySummary.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+            if let summary = op.actionSummary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
+                covered.insert(summary.lowercased())
+            }
+        }
+        return (detail?.events ?? []).filter { event in
+            let normalized = event.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return !normalized.isEmpty && normalized != "capability_load" && !covered.contains(normalized)
+        }
     }
 
     private var savedItems: [NoriCore.LibraryItem] {
@@ -125,9 +145,17 @@ public struct WorkDetailView: View {
         }
     }
 
-
     private func detailScrollView(item: WorkItem) -> some View {
         let isRunning = item.status == .running
+        let actionablePending = pendingInteractions.filter { $0.kind != .question }
+        let isWaitingInChat = isRunning
+            && !item.cancelRequested
+            && (item.bucket == .needsYou || pendingInteractions.contains(where: { $0.kind == .question }))
+            && actionablePending.isEmpty
+        let progressLine = noriProgressLine(for: item)
+        let needsModelKey = item.error?.code == "model_key_required"
+            || item.error?.code == "missing_api_key"
+            || item.error?.message.contains("More → Models") == true
 
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
@@ -135,15 +163,17 @@ public struct WorkDetailView: View {
                     .font(.system(size: 19, weight: .bold))
                     .foregroundStyle(NoriColors.ink)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.bottom, 8)
+                    .padding(.bottom, progressLine == nil ? 12 : 8)
 
-                NoriLine(
-                    noriProgressLine(for: item),
-                    state: isRunning ? .thinking : .idle
-                )
-                .padding(.bottom, 14)
+                if let progressLine {
+                    NoriLine(
+                        progressLine,
+                        state: isRunning ? .thinking : .idle
+                    )
+                    .padding(.bottom, 14)
+                }
 
-                if item.error?.code == "model_key_required" || item.error?.message.contains("More → Models") == true {
+                if needsModelKey {
                     Button("Open Models", action: onOpenModels)
                         .buttonStyle(NoriButtonStyle(.quiet, compact: true))
                         .padding(.bottom, 14)
@@ -164,6 +194,16 @@ public struct WorkDetailView: View {
                         .padding(.bottom, 10)
                     }
 
+                    if isWaitingInChat {
+                        Button {
+                            openInChat(draft: "")
+                        } label: {
+                            Label("Reply in Chat", systemImage: "bubble.left")
+                        }
+                        .buttonStyle(NoriButtonStyle(.primary, compact: true))
+                        .padding(.bottom, 12)
+                    }
+
                     if item.operations.uncertain > 0 {
                         uncertainNotice
                             .padding(.bottom, 14)
@@ -181,9 +221,7 @@ public struct WorkDetailView: View {
                         .padding(.bottom, 4)
                     }
 
-                    actionsAuditSection
-                    activityTimelineSection
-
+                    stepsSection
                     resultSection(item: item)
                     savedArtifactsSection
                 } else {
@@ -199,19 +237,12 @@ public struct WorkDetailView: View {
                     }
 
                     resultSection(item: item)
-
+                    finishedActionsRow(item: item)
                     savedArtifactsSection
-
-                    actionsAuditSection
-
-                    activityTimelineSection
+                    stepsSection
                 }
 
-                taskFooterStrip(item: item)
-                    .padding(.top, 18)
-
-                taskIdentifierStrip(item: item)
-                    .padding(.top, 8)
+                detailsSection(item: item)
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -230,35 +261,8 @@ public struct WorkDetailView: View {
         }
     }
 
-
-    private func taskIdentifierStrip(item: WorkItem) -> some View {
-        Button {
-            #if canImport(UIKit)
-            UIPasteboard.general.string = item.taskID
-            #endif
-            store.showToast("Copied Task ID")
-        } label: {
-            HStack(spacing: 6) {
-                Text("Task ID:")
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(NoriColors.ink3)
-                Text(item.taskID)
-                    .font(.system(size: 11.5, design: .monospaced))
-                    .foregroundStyle(NoriColors.ink2)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Image(systemName: "doc.on.doc")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(NoriColors.ink3)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Copy Task ID \(item.taskID)")
-    }
-
     private func shouldShowContinueCard(for item: WorkItem) -> Bool {
-        item.status == .failed || item.isBudgetExhausted
+        (item.status == .failed || item.isBudgetExhausted) && continuedByItems.isEmpty
     }
 
     private var uncertainNotice: some View {
@@ -275,13 +279,38 @@ public struct WorkDetailView: View {
         if let resultText = detail?.result, !resultText.isEmpty {
             NoriSectionHeader(item.status == .failed ? "Partial answer" : "Result")
             NoriCard(padding: 14) {
-                Text(resultText)
-                    .font(.system(size: 13.5))
-                    .lineSpacing(3)
-                    .foregroundStyle(NoriColors.ink)
-                    .fixedSize(horizontal: false, vertical: true)
+                MarkdownBlocksView(markdown: resultText)
+                    .textSelection(.enabled)
             }
         }
+    }
+
+    private func finishedActionsRow(item: WorkItem) -> some View {
+        HStack(spacing: 8) {
+            if let resultText = detail?.result, !resultText.isEmpty {
+                Button {
+                    copyString(resultText, toast: "Copied result")
+                    copiedResult = true
+                    Task {
+                        try? await Task.sleep(for: .seconds(1.8))
+                        copiedResult = false
+                    }
+                } label: {
+                    Label(copiedResult ? "Copied" : "Copy", systemImage: copiedResult ? "checkmark" : "doc.on.doc")
+                }
+                .buttonStyle(NoriButtonStyle(.neutral, compact: true))
+            }
+
+            Button {
+                openInChat(draft: "Follow up on \"\(item.title)\": ")
+            } label: {
+                Label("Follow up in Chat", systemImage: "bubble.left")
+            }
+            .buttonStyle(NoriButtonStyle(.tonal, compact: true))
+
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 12)
     }
 
     @ViewBuilder
@@ -295,16 +324,12 @@ public struct WorkDetailView: View {
                     } label: {
                         NoriRow(
                             title: doc.title,
-                            detail: doc.previewText ?? doc.provenance.content.displayLabel,
+                            detail: doc.previewText,
                             systemImage: "doc.text",
                             iconTone: .accent,
                             showChevron: true,
                             showDivider: idx < savedItems.count - 1
-                        ) {
-                            if doc.version > 1 {
-                                NoriPill("v\(doc.version)", tone: .neutral)
-                            }
-                        }
+                        )
                     }
                     .buttonStyle(.plain)
                 }
@@ -313,65 +338,74 @@ public struct WorkDetailView: View {
     }
 
     @ViewBuilder
-    private var actionsAuditSection: some View {
+    private var stepsSection: some View {
         let entries = groupedActions
-        if !entries.isEmpty {
-            NoriSectionHeader("Actions (\(entries.count))")
-            NoriRows {
-                ForEach(Array(entries.enumerated()), id: \.element.id) { idx, entry in
-                    let showDivider = idx < entries.count - 1
-                    switch entry {
-                    case .single(let op):
-                        operationRow(op: op, showDivider: showDivider)
-                    case .webSearchGroup(let groupID, let ops):
-                        webSearchGroupRow(
-                            groupID: groupID,
-                            title: entry.groupTitle ?? "Searched the web (\(ops.count) queries)",
-                            operations: ops,
-                            badge: entry.groupBadge,
-                            showDivider: showDivider
-                        )
+        let milestones = extraMilestoneEvents
+        if !entries.isEmpty || !milestones.isEmpty {
+            NoriSectionHeader("Steps")
+            VStack(alignment: .leading, spacing: 10) {
+                if !entries.isEmpty {
+                    NoriRows {
+                        ForEach(Array(entries.enumerated()), id: \.element.id) { idx, entry in
+                            let showDivider = idx < entries.count - 1
+                            switch entry {
+                            case .single(let op):
+                                operationRow(op: op, showDivider: showDivider)
+                            case .webSearchGroup(let groupID, let ops):
+                                webSearchGroupRow(
+                                    groupID: groupID,
+                                    title: entry.groupTitle ?? "Searched the web (\(ops.count) queries)",
+                                    operations: ops,
+                                    badge: entry.groupBadge,
+                                    showDivider: showDivider
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if !milestones.isEmpty {
+                    NoriRows {
+                        ForEach(Array(milestones.enumerated()), id: \.element.id) { idx, event in
+                            NoriRow(
+                                title: event.text,
+                                detail: event.createdAt.isEmpty ? nil : NoriDateFormatting.shortDateTime(event.createdAt),
+                                showChevron: false,
+                                showDivider: idx < milestones.count - 1,
+                                wrapTitle: true
+                            )
+                        }
                     }
                 }
             }
         }
     }
 
-    @ViewBuilder
-    private var activityTimelineSection: some View {
-        if !timelineEvents.isEmpty {
-            NoriSectionHeader("Activity")
-            ActivityTimelineView(events: timelineEvents)
-                .padding(.top, 4)
-        }
-    }
-
-    private func noriProgressLine(for item: WorkItem) -> String {
+    private func noriProgressLine(for item: WorkItem) -> String? {
         if item.status == .running && item.cancelRequested {
-            return "Stopping."
+            return nil
         }
-        if let err = item.error?.message, !err.isEmpty {
+        if item.status == .failed, let err = item.error?.message, !err.isEmpty {
             return err
         }
-        if let progress = item.progress, !progress.isEmpty {
+        if item.status == .running, pendingInteractions.isEmpty,
+           let progress = item.progress?.trimmingCharacters(in: .whitespacesAndNewlines), !progress.isEmpty {
             return progress
         }
-        switch item.status {
-        case .running: return "Working on it."
-        case .completed: return "Done."
-        case .failed: return "This task failed."
-        case .cancelled: return "Stopped."
+        if item.status == .completed && item.operations.uncertain > 0 {
+            return "Finished, but one action isn’t confirmed yet."
         }
+        return nil
     }
 
-    private func taskFooterStrip(item: WorkItem) -> some View {
+    private func detailsSection(item: WorkItem) -> some View {
         let spent = item.cost.amountUSD ?? 0
-        let budget = max(0.01, item.cost.budgetUSD ?? 1.00)
-        let ratio = min(1.0, max(0, spent / budget))
-        let isNearCap = item.cost.budgetUSD != nil && ratio >= 0.95
         let costLabel: String = {
             if item.cost.status == .unknown && item.cost.amountUSD == nil {
-                return "Cost pending"
+                return "Unknown"
+            }
+            if item.cost.status == .notApplicable {
+                return "None"
             }
             if let budgetUSD = item.cost.budgetUSD {
                 return String(format: "$%.2f / $%.2f", spent, budgetUSD)
@@ -379,43 +413,96 @@ public struct WorkDetailView: View {
             return String(format: "$%.2f", spent)
         }()
 
-        return HStack(spacing: 8) {
-            Text("From \(item.origin.displayLabel) · \(NoriDateFormatting.shortDateTime(item.startedAt))")
-                .font(.system(size: 11.5))
-                .foregroundStyle(NoriColors.ink3)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-                .truncationMode(.tail)
+        return VStack(alignment: .leading, spacing: 0) {
+            NoriSectionHeader("Details")
+                .padding(.top, 8)
 
-            Spacer(minLength: 8)
-
-            HStack(spacing: 6) {
-                if item.cost.budgetUSD != nil {
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(NoriColors.fill2)
-                        Capsule()
-                            .fill(isNearCap ? NoriColors.danger : NoriColors.brandPrimary)
-                            .frame(width: max(4, 28 * ratio))
-                    }
-                    .frame(width: 28, height: 4)
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 16, verticalSpacing: 8) {
+                detailRow(label: "Origin", value: item.origin.displayLabel)
+                detailRow(label: "Started", value: NoriDateFormatting.shortDateTime(item.startedAt))
+                if let finishedAt = item.finishedAt, !finishedAt.isEmpty {
+                    detailRow(label: "Finished", value: NoriDateFormatting.shortDateTime(finishedAt))
                 }
-
-                Text(costLabel)
-                    .font(.system(size: 11.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(isNearCap ? NoriColors.danger : NoriColors.ink2)
-                    .lineLimit(1)
-                    .fixedSize()
+                GridRow {
+                    Text("Cost")
+                        .font(.system(size: 13))
+                        .foregroundStyle(NoriColors.ink3)
+                    Text(costLabel)
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundStyle(NoriColors.ink)
+                }
+                if let continuesID = item.origin.continuesTaskID, !continuesID.isEmpty {
+                    GridRow {
+                        Text("Continues")
+                            .font(.system(size: 13))
+                            .foregroundStyle(NoriColors.ink3)
+                        Button("Earlier task") {
+                            store.pendingDeepLink = .workDetail(continuesID)
+                        }
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(NoriColors.accent)
+                        .buttonStyle(.plain)
+                    }
+                }
+                if !continuedByItems.isEmpty {
+                    GridRow {
+                        Text("Continued by")
+                            .font(.system(size: 13))
+                            .foregroundStyle(NoriColors.ink3)
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(continuedByItems) { other in
+                                Button(other.title.isEmpty ? "Later task" : other.title) {
+                                    store.pendingDeepLink = .workDetail(other.taskID)
+                                }
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(NoriColors.accent)
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+                GridRow {
+                    Text("Task ID")
+                        .font(.system(size: 13))
+                        .foregroundStyle(NoriColors.ink3)
+                    Button {
+                        copyString(item.taskID, toast: "Copied Task ID")
+                        copiedTaskID = true
+                        Task {
+                            try? await Task.sleep(for: .seconds(1.8))
+                            copiedTaskID = false
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(item.taskID)
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundStyle(NoriColors.ink2)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Image(systemName: copiedTaskID ? "checkmark" : "doc.on.doc")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(NoriColors.accent)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Copy Task ID \(item.taskID)")
+                }
             }
+            .padding(.top, 2)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                .strokeBorder(NoriColors.hairline, lineWidth: 1)
-        )
+    }
+
+    private func detailRow(label: String, value: String) -> some View {
+        GridRow {
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundStyle(NoriColors.ink3)
+            Text(value)
+                .font(.system(size: 13))
+                .foregroundStyle(NoriColors.ink)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private func steerSection(item: WorkItem) -> some View {
@@ -433,7 +520,7 @@ public struct WorkDetailView: View {
                         .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .overlay(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                                .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
                         )
 
                     HStack(spacing: 8) {
@@ -467,7 +554,7 @@ public struct WorkDetailView: View {
         return NoriCard(
             padding: 14,
             backgroundColor: NoriColors.accentSubtle,
-            borderColor: NoriColors.hairlineStrong
+            borderColor: NoriColors.cardBorder
         ) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(isBudgetCapped ? "Continue with a higher budget" : "Continue this task")
@@ -494,7 +581,7 @@ public struct WorkDetailView: View {
                                         .font(.system(size: 12, weight: .semibold, design: .monospaced))
                                         .foregroundStyle(selected ? NoriColors.chipSelectedFg : NoriColors.ink)
                                         .padding(.horizontal, 10)
-                                        .frame(height: 26)
+                                        .frame(height: 28)
                                         .background(
                                             selected ? NoriColors.chipSelectedBg : NoriColors.surface,
                                             in: Capsule()
@@ -502,7 +589,7 @@ public struct WorkDetailView: View {
                                         .overlay(
                                             Capsule()
                                                 .strokeBorder(
-                                                    selected ? NoriColors.chipSelectedBorder : NoriColors.hairline,
+                                                    selected ? NoriColors.chipSelectedBorder : NoriColors.cardBorder,
                                                     lineWidth: 1
                                                 )
                                         )
@@ -515,11 +602,15 @@ public struct WorkDetailView: View {
                 }
 
                 Button {
-                    continueCurrentTask()
+                    continueCurrentTask(isBudgetCapped: isBudgetCapped, existingBudget: item.cost.budgetUSD)
                 } label: {
-                    Text(isContinuing
-                         ? "Starting…"
-                         : String(format: "Continue task ($%.2f budget)", continueBudgetUSD))
+                    Text(
+                        isContinuing
+                            ? "Starting…"
+                            : (isBudgetCapped
+                                ? String(format: "Continue task ($%.2f budget)", continueBudgetUSD)
+                                : "Continue this task")
+                    )
                 }
                 .buttonStyle(NoriButtonStyle(.primary, fullWidth: true, compact: true))
                 .disabled(isContinuing)
@@ -529,16 +620,34 @@ public struct WorkDetailView: View {
     }
 
     private func operationRow(op: OperationProjection, showDivider: Bool) -> some View {
+        let isException = op.outcome != .confirmed || op.recovery != nil || op.cleared != nil
         var detailParts: [String] = []
-        if let account = op.accountSummary?.trimmingCharacters(in: .whitespacesAndNewlines), !account.isEmpty {
+        if isException, let account = op.accountSummary?.trimmingCharacters(in: .whitespacesAndNewlines), !account.isEmpty {
             detailParts.append(account)
         }
-        if let authority = op.displayAuthorityLabel {
-            detailParts.append("because \(authority)")
+        if let recovery = op.recovery?.trimmingCharacters(in: .whitespacesAndNewlines), !recovery.isEmpty {
+            let recoveryText: String = {
+                switch recovery {
+                case "reconciling": return "checking with the provider"
+                case "needs_review": return "pending review"
+                case "resolved": return "resolved"
+                default: return recovery
+                }
+            }()
+            detailParts.append(recoveryText)
         }
         if let createdAt = op.createdAt?.trimmingCharacters(in: .whitespacesAndNewlines), !createdAt.isEmpty {
             detailParts.append(NoriDateFormatting.shortDateTime(createdAt))
         }
+
+        let safeReceiptURL: URL? = {
+            guard let raw = op.receiptURL?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  let url = URL(string: raw),
+                  url.scheme?.lowercased() == "https" else {
+                return nil
+            }
+            return url
+        }()
 
         return NoriRow(
             title: op.displaySummary,
@@ -549,6 +658,11 @@ public struct WorkDetailView: View {
             showDivider: showDivider,
             wrapTitle: true
         ) {
+            if let safeReceiptURL {
+                Link("Open", destination: safeReceiptURL)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(NoriColors.accent)
+            }
             if let badge = op.statusBadge {
                 NoriPill(badge.label, tone: noriTone(for: badge.tone))
             }
@@ -666,6 +780,23 @@ public struct WorkDetailView: View {
         }
     }
 
+    private func openInChat(draft: String) {
+        if let onStartInChat {
+            onStartInChat(draft)
+        } else {
+            if !draft.isEmpty {
+                store.pendingComposerDraft = draft
+            }
+            store.pendingDeepLink = .tab(.chat)
+        }
+    }
+
+    private func copyString(_ value: String, toast: String) {
+        #if canImport(UIKit)
+        UIPasteboard.general.string = value
+        #endif
+        store.showToast(toast)
+    }
 
     private func loadDetail() async {
         isLoadingDetail = true
@@ -693,10 +824,11 @@ public struct WorkDetailView: View {
         }
     }
 
-    private func continueCurrentTask() {
+    private func continueCurrentTask(isBudgetCapped: Bool, existingBudget: Double?) {
         isContinuing = true
+        let budget = isBudgetCapped ? continueBudgetUSD : (existingBudget ?? 2.00)
         Task {
-            await store.continueTask(taskID: taskID, budgetUSD: continueBudgetUSD)
+            await store.continueTask(taskID: taskID, budgetUSD: budget)
             isContinuing = false
             triggerSuccessHaptic()
         }
@@ -707,52 +839,5 @@ public struct WorkDetailView: View {
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.success)
         #endif
-    }
-}
-
-
-private struct ActivityTimelineView: View {
-    let events: [RunEvent]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(events.enumerated()), id: \.element.id) { idx, event in
-                let isLast = idx == events.count - 1
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(spacing: 0) {
-                        Circle()
-                            .fill(NoriColors.accentSignal)
-                            .frame(width: 9, height: 9)
-                            .overlay(
-                                Circle()
-                                    .strokeBorder(NoriColors.canvas, lineWidth: 2)
-                            )
-                            .padding(.top, 4)
-
-                        if !isLast {
-                            Rectangle()
-                                .fill(NoriColors.hairlineStrong)
-                                .frame(width: 1.5)
-                                .frame(maxHeight: .infinity)
-                        }
-                    }
-                    .frame(width: 12)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        if !event.createdAt.isEmpty {
-                            Text(NoriDateFormatting.shortDateTime(event.createdAt))
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                .foregroundStyle(NoriColors.ink3)
-                        }
-                        Text(event.text)
-                            .font(.system(size: 13.5))
-                            .foregroundStyle(NoriColors.ink)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(.bottom, isLast ? 0 : 12)
-                }
-            }
-        }
-        .padding(.leading, 4)
     }
 }

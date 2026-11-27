@@ -22,7 +22,6 @@ import {
   Notice,
   NotYet,
   Pill,
-  RefreshButton,
   Row,
   Rows,
   Screen,
@@ -127,7 +126,7 @@ export function GoalsContent() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           {blocked.length ? (
             <NoriLine>
-              {blocked.length === 1 ? "One goal is waiting on input." : `${blocked.length} goals are waiting on input.`}
+              {blocked.length === 1 ? "One goal is waiting for input." : `${blocked.length} goals are waiting for input.`}
             </NoriLine>
           ) : (
             <div />
@@ -185,6 +184,16 @@ export function GoalsContent() {
                 const doneCount = goal.completion_criteria.filter((c) => c.met).length;
                 const total = goal.completion_criteria.length;
                 const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+                const remainingCount = Math.max(0, total - 4);
+                const statusBadge = goal.blockers.length
+                  ? { tone: "warning" as Tone, label: "Blocked" }
+                  : goal.status !== "active"
+                    ? STATUS[goal.status]
+                    : undefined;
+                const progressParts = [
+                  total > 0 ? `${doneCount} of ${total} done` : "",
+                  goal.deadline ? `Due ${day(goal.deadline)}` : "",
+                ].filter(Boolean);
                 return (
                   <article key={goal.id} className="rounded-card border border-card-border bg-surface p-4">
                     <div className="flex items-start justify-between gap-3">
@@ -194,23 +203,24 @@ export function GoalsContent() {
                       >
                         {goal.title}
                       </Link>
-                      <Pill tone={goal.blockers.length ? "warning" : STATUS[goal.status].tone}>
-                        {goal.blockers.length ? "Blocked" : STATUS[goal.status].label}
-                      </Pill>
+                      {statusBadge && <Pill tone={statusBadge.tone}>{statusBadge.label}</Pill>}
                     </div>
 
-                    {total > 0 && (
+                    {(total > 0 || progressParts.length > 0) && (
                       <div className="mt-3">
-                        <div className="h-[4.5px] w-full overflow-hidden rounded-full bg-fill-2">
-                          <div
-                            className={cn("h-full rounded-full transition-[width]", pct === 100 ? "bg-ok" : "bg-accent")}
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                        <p className="mt-1.5 text-caption text-ink-2">
-                          {doneCount} of {total} criteria met
-                          {goal.deadline ? ` · Due ${day(goal.deadline)}` : ""}
-                        </p>
+                        {total > 0 && (
+                          <div className="h-[4.5px] w-full overflow-hidden rounded-full bg-fill-2">
+                            <div
+                              className={cn("h-full rounded-full transition-[width]", pct === 100 ? "bg-ok" : "bg-accent")}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        )}
+                        {progressParts.length > 0 && (
+                          <p className={cn("text-caption text-ink-2", total > 0 && "mt-1.5")}>
+                            {progressParts.join(" · ")}
+                          </p>
+                        )}
                       </div>
                     )}
 
@@ -218,15 +228,15 @@ export function GoalsContent() {
                       <Link
                         key={idx}
                         href={blocker.interaction_id ? "/work?tab=tasks" : blocker.connection_id ? "/apps" : `/goals/${encodeURIComponent(goal.id)}`}
-                        className="mt-3 flex items-center justify-between gap-3 rounded-[14px] border border-lavender-border bg-accent-subtle px-3 py-2.5 text-[12.5px] transition-colors hover:bg-fill-2"
+                        className="mt-3 flex items-center justify-between gap-3 rounded-[14px] bg-accent-subtle px-3 py-2.5 text-[12.5px] transition-colors hover:bg-fill-2"
                       >
                         <span className="min-w-0">
                           <span className="font-semibold text-accent-text">Action needed: </span>
                           <span className="text-ink">{blocker.text}</span>
                         </span>
-                        <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-lavender-border bg-fill-1 px-2.5 py-1 text-[12px] font-semibold text-accent-text">
+                        <span className="inline-flex shrink-0 items-center gap-0.5 text-[12px] font-semibold text-accent-text">
                           Review
-                          <ChevronRight size={12} aria-hidden />
+                          <ChevronRight size={13} aria-hidden />
                         </span>
                       </Link>
                     ))}
@@ -249,6 +259,9 @@ export function GoalsContent() {
                             <span>{criterion.text}</span>
                           </li>
                         ))}
+                        {remainingCount > 0 && (
+                          <li className="pl-[23px] text-caption font-medium text-ink-3">+{remainingCount} more</li>
+                        )}
                       </ul>
                     )}
                   </article>
@@ -362,10 +375,11 @@ export function GoalDetailScreen({ id }: { id: string }) {
       backLabel="Work"
       line={item.progress || undefined}
       actions={
-        <>
+        item.blockers.length > 0 ? (
+          <Pill tone="warning">Blocked</Pill>
+        ) : item.status !== "active" ? (
           <Pill tone={STATUS[item.status].tone}>{STATUS[item.status].label}</Pill>
-          <RefreshButton onClick={() => void goal.reload()} />
-        </>
+        ) : undefined
       }
     >
       <p className="text-body text-ink">
@@ -436,18 +450,18 @@ export function GoalDetailScreen({ id }: { id: string }) {
         <Section title="Linked">
           <Rows>
             {tasks.map((task) => (
-              <Row key={task.task_id} href={`/work/${encodeURIComponent(task.task_id)}`} title={task.title} detail="Task" />
+              <Row key={task.task_id} href={`/work/${encodeURIComponent(task.task_id)}`} title={task.title} />
             ))}
             {routines.map((routine) => (
               <Row
                 key={routine.id}
                 href={`/routines/${encodeURIComponent(routine.id)}`}
                 title={routine.title}
-                detail={item.follow_up === "monitor" ? "Checks for changes" : "Routine"}
+                detail={item.follow_up === "monitor" ? "Checks for changes" : undefined}
               />
             ))}
             {results.map((result) => (
-              <Row key={result.id} href={`/library/${encodeURIComponent(result.id)}`} title={result.title} detail="Artifact" />
+              <Row key={result.id} href={`/library/${encodeURIComponent(result.id)}`} title={result.title} />
             ))}
           </Rows>
         </Section>

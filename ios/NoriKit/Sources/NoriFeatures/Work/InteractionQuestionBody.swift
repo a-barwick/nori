@@ -168,8 +168,12 @@ struct InteractionAccountSelectionBody: View {
 
             ForEach(payload.eligibleConnectionIDs, id: \.self) { connectionID in
                 let connection = store.connections.first(where: { $0.id == connectionID })
-                let primaryLabel = connection?.account?.label ?? connection?.title ?? "Connected account (\(connectionID))"
-                let secondaryLabel = connection?.title
+                let accountLabel = connection?.account?.label.trimmingCharacters(in: .whitespacesAndNewlines)
+                let titleLabel = connection?.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                let primaryLabel = (accountLabel?.isEmpty == false ? accountLabel : nil)
+                    ?? (titleLabel?.isEmpty == false ? titleLabel : nil)
+                    ?? "Connected account"
+                let secondaryLabel = titleLabel
 
                 Button {
                     onChooseAccount(connectionID)
@@ -184,7 +188,7 @@ struct InteractionAccountSelectionBody: View {
                                 .font(.system(size: 13.5, weight: .semibold))
                                 .foregroundStyle(NoriColors.ink)
                                 .lineLimit(1)
-                            if let secondaryLabel, secondaryLabel != primaryLabel {
+                            if let secondaryLabel, !secondaryLabel.isEmpty, secondaryLabel != primaryLabel {
                                 Text(secondaryLabel)
                                     .font(.system(size: 12))
                                     .foregroundStyle(NoriColors.ink2)
@@ -203,7 +207,7 @@ struct InteractionAccountSelectionBody: View {
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
-                    .background(NoriColors.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .strokeBorder(NoriColors.cardBorder, lineWidth: 1)

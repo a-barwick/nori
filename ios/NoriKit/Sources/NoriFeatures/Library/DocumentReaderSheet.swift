@@ -46,6 +46,10 @@ public struct DocumentReaderSheet: View {
         store.libraryItems.first(where: { $0.id == itemID }) ?? hydratedItem
     }
 
+    private var hasStructuredData: Bool {
+        DocumentStructuredDataCard.canRender(dataKind: item?.dataKind, data: item?.data)
+    }
+
     private var effectiveMediaType: String {
         let payloadType = DocumentFileUtilities.normalizedMediaType(loadedPayload?.mediaType)
         let itemType = DocumentFileUtilities.normalizedMediaType(item?.mediaType)
@@ -129,15 +133,19 @@ public struct DocumentReaderSheet: View {
         return url
     }
 
+    private var structuredCopyText: String? {
+        DocumentStructuredDataCard.copyableText(dataKind: item?.dataKind, data: item?.data)
+    }
+
     private var canCopyContent: Bool {
-        fullTextContent != nil || decodedImage != nil || externalLinkURL != nil
+        structuredCopyText != nil || fullTextContent != nil || decodedImage != nil || externalLinkURL != nil
     }
 
     public var body: some View {
         NavigationStack {
             contentBody
                 .background(NoriColors.sheetBackground)
-                .navigationTitle(item?.title ?? "Document")
+                .navigationTitle(item?.title ?? "Artifact")
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
                 #endif
@@ -181,19 +189,21 @@ public struct DocumentReaderSheet: View {
         ScrollView {
             if let item {
                 VStack(alignment: .leading, spacing: 14) {
-                    metadataPills(for: item)
                     documentBodySection(for: item)
-                    quickActionsRow(for: item)
+                    if canCopyContent || externalLinkURL != nil {
+                        quickActionsRow(for: item)
+                    }
                     if canRevise {
                         revisionSection(for: item)
                     }
+                    detailsSection(for: item)
                 }
                 .padding(16)
             } else if !hasAttemptedLoad || isLoadingItem {
                 VStack(spacing: 12) {
                     NoriMark(size: 40, state: .thinking)
                     ProgressView()
-                    Text("Loading document…")
+                    Text("Loading artifact…")
                         .font(NoriTypography.meta)
                         .foregroundStyle(NoriColors.ink2)
                 }
@@ -201,8 +211,8 @@ public struct DocumentReaderSheet: View {
                 .padding(.vertical, 56)
             } else {
                 NoriEmptyState(
-                    title: "Document unavailable",
-                    message: "This item could not be found in your Library."
+                    title: "Artifact unavailable",
+                    message: "This item could not be found in your Artifacts."
                 ) {
                     Button("Retry") {
                         reloadTrigger += 1
@@ -214,29 +224,10 @@ public struct DocumentReaderSheet: View {
     }
 
     @ViewBuilder
-    private func metadataPills(for item: NoriCore.LibraryItem) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                NoriPill(item.provenance.content.displayLabel, tone: .accent)
-                if item.version > 1 {
-                    NoriPill("Version \(item.version)", tone: .neutral)
-                }
-                if !item.createdAt.isEmpty {
-                    NoriPill(NoriDateFormatting.shortDateTime(item.createdAt), tone: .neutral)
-                }
-                if let collection = item.collection, !collection.isEmpty {
-                    NoriPill(collection, tone: .neutral)
-                }
-                if let sizeLabel = formattedSizeLabel(for: item) {
-                    NoriPill(sizeLabel, tone: .neutral)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
     private func documentBodySection(for item: NoriCore.LibraryItem) -> some View {
-        if let image = decodedImage {
+        if hasStructuredData, let dataKind = item.dataKind, let data = item.data {
+            DocumentStructuredDataCard(dataKind: dataKind, data: data)
+        } else if let image = decodedImage {
             DocumentImageCard(
                 image: image,
                 title: item.title,
@@ -267,16 +258,14 @@ public struct DocumentReaderSheet: View {
                 isMonospace: isMonospaceText
             )
         } else if isLoadingFile {
-            NoriCard(padding: 24) {
-                VStack(spacing: 10) {
-                    ProgressView()
-                    Text(isImageItem ? "Loading image…" : (isPDFItem ? "Loading PDF…" : "Loading full content…"))
-                        .font(NoriTypography.meta)
-                        .foregroundStyle(NoriColors.ink2)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 20)
+            VStack(spacing: 10) {
+                ProgressView()
+                Text(isImageItem ? "Loading image…" : (isPDFItem ? "Loading PDF…" : "Loading full content…"))
+                    .font(NoriTypography.meta)
+                    .foregroundStyle(NoriColors.ink2)
             }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 28)
         } else if let fileLoadError {
             NoriNotice(
                 title: "Couldn’t load file preview",
@@ -290,11 +279,10 @@ public struct DocumentReaderSheet: View {
                 .buttonStyle(NoriButtonStyle(.neutral, compact: true))
             }
         } else {
-            NoriCard(padding: 16) {
-                Text("No preview available for this item.")
-                    .font(NoriTypography.meta)
-                    .foregroundStyle(NoriColors.ink2)
-            }
+            Text("No preview available for this item.")
+                .font(NoriTypography.meta)
+                .foregroundStyle(NoriColors.ink2)
+                .padding(.vertical, 8)
         }
     }
 
@@ -311,19 +299,6 @@ public struct DocumentReaderSheet: View {
                     .buttonStyle(NoriButtonStyle(.neutral, compact: true))
                 }
 
-                actionShareButton(for: item)
-
-                #if canImport(QuickLook)
-                if tempFileURL != nil && !isPDFItem && (isImageItem || !isTextPayload) {
-                    Button {
-                        openQuickLookIfAvailable()
-                    } label: {
-                        Label("Quick Look", systemImage: "eye")
-                    }
-                    .buttonStyle(NoriButtonStyle(.neutral, compact: true))
-                }
-                #endif
-
                 if let url = externalLinkURL {
                     Link(destination: url) {
                         Label("Open link", systemImage: "arrow.up.right.square")
@@ -331,21 +306,6 @@ public struct DocumentReaderSheet: View {
                     .buttonStyle(NoriButtonStyle(.neutral, compact: true))
                 }
             }
-        }
-    }
-
-    @ViewBuilder
-    private func actionShareButton(for item: NoriCore.LibraryItem) -> some View {
-        if prefersFileShare, let fileURL = tempFileURL {
-            ShareLink(item: fileURL, subject: Text(item.title)) {
-                Label("Share", systemImage: "square.and.arrow.up")
-            }
-            .buttonStyle(NoriButtonStyle(.neutral, compact: true))
-        } else {
-            ShareLink(item: shareableText(for: item), subject: Text(item.title)) {
-                Label("Share", systemImage: "square.and.arrow.up")
-            }
-            .buttonStyle(NoriButtonStyle(.neutral, compact: true))
         }
     }
 
@@ -373,13 +333,13 @@ public struct DocumentReaderSheet: View {
     @ViewBuilder
     private func revisionSection(for item: NoriCore.LibraryItem) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            NoriSectionHeader("Ask Nori to revise")
+            NoriSectionHeader("Revise")
 
             if let queued = queuedRevision, queued.isQueued {
                 NoriCard(
                     padding: 12,
                     backgroundColor: NoriColors.accentSubtle,
-                    borderColor: NoriColors.accentBorder
+                    borderColor: NoriColors.cardBorder
                 ) {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(alignment: .top, spacing: 10) {
@@ -391,7 +351,7 @@ public struct DocumentReaderSheet: View {
                                 Text("Revision started")
                                     .font(.system(size: 13.5, weight: .semibold))
                                     .foregroundStyle(NoriColors.accent)
-                                Text("Nori is updating this document in the background.")
+                                Text("Nori is updating this artifact in the background.")
                                     .font(.system(size: 12.5))
                                     .foregroundStyle(NoriColors.ink2)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -429,7 +389,7 @@ public struct DocumentReaderSheet: View {
                     submitRevision(for: item)
                 } label: {
                     if isRevising {
-                        ProgressView().tint(.white)
+                        ProgressView().tint(NoriColors.onAccent)
                     } else {
                         Text("Revise")
                     }
@@ -437,6 +397,71 @@ public struct DocumentReaderSheet: View {
                 .buttonStyle(NoriButtonStyle(.primary, compact: true))
                 .disabled(revisionInstruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isRevising)
             }
+        }
+    }
+
+    private func detailsSection(for item: NoriCore.LibraryItem) -> some View {
+        let sourceURL: URL? = {
+            guard let raw = item.provenance.sourceURL,
+                  let url = URL(string: raw),
+                  url.scheme?.lowercased() == "https" else { return nil }
+            return url
+        }()
+
+        return VStack(alignment: .leading, spacing: 0) {
+            NoriSectionHeader("Details")
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 16, verticalSpacing: 8) {
+                detailRow(label: "Origin", value: item.provenance.content.displayLabel)
+                if item.version > 1 {
+                    detailRow(label: "Version", value: "Version \(item.version)")
+                }
+                if let collection = item.collection, !collection.isEmpty {
+                    detailRow(label: "Collection", value: collection)
+                }
+                if let sizeLabel = formattedSizeLabel(for: item) {
+                    detailRow(label: "Size", value: sizeLabel)
+                }
+                if !item.createdAt.isEmpty {
+                    detailRow(label: "Saved", value: NoriDateFormatting.shortDateTime(item.createdAt))
+                }
+                if let taskID = item.taskID, !taskID.isEmpty {
+                    GridRow {
+                        Text("Task")
+                            .font(.system(size: 13))
+                            .foregroundStyle(NoriColors.ink3)
+                        Button("Open task") {
+                            store.pendingDeepLink = .workDetail(taskID)
+                            dismiss()
+                        }
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(NoriColors.accent)
+                        .buttonStyle(.plain)
+                    }
+                }
+                if let sourceURL {
+                    GridRow {
+                        Text("Source")
+                            .font(.system(size: 13))
+                            .foregroundStyle(NoriColors.ink3)
+                        Link("Open original", destination: sourceURL)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(NoriColors.accent)
+                    }
+                }
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    private func detailRow(label: String, value: String) -> some View {
+        GridRow {
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundStyle(NoriColors.ink3)
+            Text(value)
+                .font(.system(size: 13))
+                .foregroundStyle(NoriColors.ink)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -469,6 +494,9 @@ public struct DocumentReaderSheet: View {
         isLoadingItem = false
 
         guard let resolvedItem = self.item else { return }
+        if DocumentStructuredDataCard.canRender(dataKind: resolvedItem.dataKind, data: resolvedItem.data) {
+            return
+        }
 
         isLoadingFile = true
         defer { isLoadingFile = false }
@@ -577,7 +605,10 @@ public struct DocumentReaderSheet: View {
     }
 
     private func copyCurrentContent() {
-        if let text = fullTextContent {
+        if let structured = structuredCopyText {
+            DocumentFileUtilities.copyTextToClipboard(structured)
+            store.showToast("Copied to clipboard")
+        } else if let text = fullTextContent {
             DocumentFileUtilities.copyTextToClipboard(text)
             store.showToast("Copied to clipboard")
         } else if let image = decodedImage {
@@ -590,6 +621,9 @@ public struct DocumentReaderSheet: View {
     }
 
     private func shareableText(for item: NoriCore.LibraryItem) -> String {
+        if let structured = structuredCopyText, !structured.isEmpty {
+            return "\(item.title)\n\n\(structured)"
+        }
         if let text = fullTextContent, !text.isEmpty {
             return "\(item.title)\n\n\(text)"
         }

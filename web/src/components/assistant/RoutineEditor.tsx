@@ -297,7 +297,7 @@ function Editor({ existing, held }: { existing?: Automation; held?: Set<Effect> 
                   key={connection.id}
                   className={cn(
                     "flex min-h-11 cursor-pointer items-center gap-2 rounded-full border px-3 text-meta",
-                    accounts.includes(connection.id) ? "border-accent bg-accent-subtle" : "border-hairline",
+                    accounts.includes(connection.id) ? "border-accent bg-accent-subtle text-ink" : "border-card-border bg-fill-1 text-ink-2",
                   )}
                 >
                   <input
@@ -392,7 +392,7 @@ function Editor({ existing, held }: { existing?: Automation; held?: Set<Effect> 
           </Field>
         </div>
         {(preview || previewError) && (
-          <section aria-label="Preview" aria-live="polite" className="rounded-card border border-hairline-strong bg-fill-1 p-4">
+          <section aria-label="Preview" aria-live="polite" className="rounded-card border border-card-border bg-fill-1 p-4">
             {previewError ? (
               <p className="text-meta text-danger">{previewError}</p>
             ) : (

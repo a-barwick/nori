@@ -129,10 +129,11 @@ extension NoriStore {
             case .approve(_, let rememberRule):
                 showToast(
                     rememberRule
-                        ? "Always allowed — rule saved & Nori is completing the action"
-                        : "Approved — Nori is completing the action"
+                        ? "Always allowed — rule saved"
+                        : "Allowed once"
                 )
-            case .decline: showToast("Declined — nothing was sent")
+            case .decline:
+                showToast(interaction.kind == .approval ? "Denied — nothing was sent" : "Declined")
             case .answer: showToast("Answer sent to Nori")
             case .chooseAccount: showToast("Account selected")
             }
