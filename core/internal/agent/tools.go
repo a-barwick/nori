@@ -58,9 +58,14 @@ var taskToolDefinitions = func() []taskToolDefinition {
 	text := &transcript.Schema{Type: transcript.TypeString}
 	list := &transcript.Schema{Type: transcript.TypeArray, Items: text}
 	completion := &transcript.Schema{
-		Type:       transcript.TypeObject,
-		Properties: map[string]*transcript.Schema{"answer": text, "evidence": list, "unmet": list},
-		Required:   []string{"answer", "evidence", "unmet"},
+		Type: transcript.TypeObject,
+		Properties: map[string]*transcript.Schema{
+			"title":    {Type: transcript.TypeString, Description: "Optional concise document title when returning a write-up, report, or artifact."},
+			"answer":   text,
+			"evidence": list,
+			"unmet":    list,
+		},
+		Required: []string{"answer", "evidence", "unmet"},
 	}
 	capabilities := &transcript.Schema{
 		Type:       transcript.TypeObject,

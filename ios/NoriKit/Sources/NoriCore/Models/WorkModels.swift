@@ -109,6 +109,7 @@ public struct WorkItem: Sendable, Codable, Hashable, Identifiable {
     public var startedAt: String
     public var finishedAt: String?
     public var cancelRequested: Bool
+    public var partial: Bool?
     public var error: ErrorDetail?
 
     enum CodingKeys: String, CodingKey {
@@ -127,6 +128,7 @@ public struct WorkItem: Sendable, Codable, Hashable, Identifiable {
         case startedAt = "started_at"
         case finishedAt = "finished_at"
         case cancelRequested = "cancel_requested"
+        case partial
         case error
     }
 
@@ -146,6 +148,7 @@ public struct WorkItem: Sendable, Codable, Hashable, Identifiable {
         startedAt: String,
         finishedAt: String? = nil,
         cancelRequested: Bool = false,
+        partial: Bool? = nil,
         error: ErrorDetail? = nil
     ) {
         self.taskID = taskID
@@ -163,6 +166,7 @@ public struct WorkItem: Sendable, Codable, Hashable, Identifiable {
         self.startedAt = startedAt
         self.finishedAt = finishedAt
         self.cancelRequested = cancelRequested
+        self.partial = partial
         self.error = error
     }
 

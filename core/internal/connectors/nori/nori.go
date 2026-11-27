@@ -165,8 +165,18 @@ func (a Adapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Prepared
 			RequireConfirmation: true,
 		}, nil
 	case "nori.automations/act":
+		if until := invoke.String(call.Args, "until"); until != "" {
+			if _, err := parseInstant(until); err != nil {
+				return invoke.Prepared{}, fmt.Errorf("%w: until must be RFC 3339", invoke.ErrInvalidArguments)
+			}
+		}
 		return invoke.Prepared{Summary: fmt.Sprintf("%s automation %s", invoke.String(call.Args, "action"), invoke.String(call.Args, "automation_id")), Effect: extensions.EffectReversibleWrite, Spec: spec}, nil
 	case "nori.goals/create":
+		if deadline := invoke.String(call.Args, "deadline"); deadline != "" {
+			if _, err := parseInstant(deadline); err != nil {
+				return invoke.Prepared{}, fmt.Errorf("%w: deadline must be RFC 3339", invoke.ErrInvalidArguments)
+			}
+		}
 		return invoke.Prepared{Summary: "Adopt the goal " + invoke.String(call.Args, "title"), Effect: extensions.EffectReversibleWrite, Spec: spec}, nil
 	case "nori.uploads/read":
 		return invoke.Prepared{Summary: "Read an attached file", Effect: extensions.EffectRead, Spec: spec}, nil

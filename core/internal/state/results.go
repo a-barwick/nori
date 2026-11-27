@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -53,6 +54,7 @@ type Result struct {
 func ResultKey(id string) string { return "results/" + id }
 
 type ResultDraft struct {
+	Title     string
 	Checked   bool
 	Evidence  []string
 	Unmet     []string
@@ -67,6 +69,110 @@ func ResultID(parts ...string) string {
 func ResultTitle(request string) string {
 	title := strings.TrimSpace(strings.SplitN(strings.TrimSpace(request), "\n", 2)[0])
 	return clipBytes(title, 80)
+}
+
+// DocumentTitle extracts a clean title from structured document text (Markdown
+// heading, "Title: ..." prefix, or standalone bold title line), falling back
+// to ResultTitle(fallbackRequest).
+func DocumentTitle(text, fallbackRequest string) string {
+	if extracted, _ := ExtractDocumentTitle(text); extracted != "" {
+		return extracted
+	}
+	if fallbackRequest == "" {
+		return ""
+	}
+	return ResultTitle(fallbackRequest)
+}
+
+// ExtractDocumentTitle returns an explicit title found in the opening lines of
+// text along with the remaining body text after that title line.
+func ExtractDocumentTitle(text string) (title string, rest string) {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	checked := 0
+	for i, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		checked++
+		if checked > 5 {
+			break
+		}
+		var candidate string
+		switch {
+		case strings.HasPrefix(line, "#"):
+			trimmed := strings.TrimLeft(line, "#")
+			if len(trimmed) < len(line) && (len(trimmed) == 0 || trimmed[0] == ' ' || trimmed[0] == '\t') {
+				candidate = strings.TrimSpace(trimmed)
+			}
+		case strings.HasPrefix(strings.ToLower(line), "title:"):
+			candidate = strings.TrimSpace(line[len("title:"):])
+		case strings.HasPrefix(strings.ToLower(line), "**title:**"):
+			candidate = strings.TrimSpace(line[len("**title:**"):])
+		case strings.HasPrefix(strings.ToLower(line), "**title**:"):
+			candidate = strings.TrimSpace(line[len("**title**:"):])
+		case checked == 1 && len(line) > 4 && len(line) <= 140 && strings.HasPrefix(line, "**") && strings.HasSuffix(line, "**") && !strings.Contains(line[2:len(line)-2], "**"):
+			candidate = strings.TrimSpace(line[2 : len(line)-2])
+		}
+		if candidate != "" {
+			candidate = cleanTitleLine(candidate)
+			if candidate != "" {
+				remaining := strings.TrimSpace(strings.Join(lines[i+1:], "\n"))
+				return clipBytes(candidate, 120), remaining
+			}
+		}
+		// Stop scanning if the first non-empty line is normal prose, not a title.
+		if checked == 1 {
+			break
+		}
+	}
+	return "", strings.TrimSpace(text)
+}
+
+func cleanTitleLine(raw string) string {
+	s := strings.TrimSpace(raw)
+	s = strings.Trim(s, "*_`")
+	s = strings.TrimSpace(s)
+	if len(s) >= 2 && ((s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'')) {
+		s = strings.TrimSpace(s[1 : len(s)-1])
+	}
+	s = strings.Trim(s, "“”")
+	return strings.TrimSpace(s)
+}
+
+var (
+	mdLinkRe    = regexp.MustCompile(`\[([^\]]+)\]\([^)]+\)`)
+	mdHeadingRe = regexp.MustCompile(`(?m)^\s*#{1,6}\s+`)
+	mdBulletRe  = regexp.MustCompile(`(?m)^\s*(?:[-*+]|\d+[.)])\s+`)
+	mdRuleRe    = regexp.MustCompile(`(?m)^\s*(?:[-*_]\s*){3,}$`)
+	mdQuoteRe   = regexp.MustCompile(`(?m)^\s*>\s?`)
+	mdSyntaxRe  = regexp.MustCompile(`[*_` + "`" + `~]+`)
+)
+
+// PlainExcerpt converts Markdown text into a concise, single-line plain-text
+// preview clipped to maxRunes runes.
+func PlainExcerpt(text string, maxRunes int) string {
+	if text == "" || maxRunes <= 0 {
+		return ""
+	}
+	s := strings.ReplaceAll(text, "\r\n", "\n")
+	s = replyHint.ReplaceAllString(s, "")
+	s = mdRuleRe.ReplaceAllString(s, " ")
+	s = mdLinkRe.ReplaceAllString(s, "$1")
+	s = mdHeadingRe.ReplaceAllString(s, "")
+	s = mdBulletRe.ReplaceAllString(s, "")
+	s = mdQuoteRe.ReplaceAllString(s, "")
+	s = mdSyntaxRe.ReplaceAllString(s, "")
+	s = strings.Join(strings.Fields(s), " ")
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
+		return s
+	}
+	cut := strings.TrimSpace(string(runes[:maxRunes]))
+	if idx := strings.LastIndex(cut, " "); idx > maxRunes/2 {
+		cut = cut[:idx]
+	}
+	return strings.TrimRight(cut, ".,;:-") + "…"
 }
 
 func clipBytes(text string, limit int) string {
@@ -97,8 +203,15 @@ func PublishResults(run Run, req PublishRequest, existing []Result, prior *Resul
 	sort.SliceStable(results, func(i, j int) bool { return results[i].CreatedAt.Before(results[j].CreatedAt) })
 	checked := req.Answer != nil && req.Answer.Checked && run.Status == RunCompleted
 	if req.Answer != nil && run.Result != "" {
+		title := strings.TrimSpace(req.Answer.Title)
+		if title != "" {
+			title = clipBytes(cleanTitleLine(title), 120)
+		}
+		if title == "" {
+			title = DocumentTitle(run.Result, run.Request)
+		}
 		answer := Result{
-			ID: ResultID(run.ID, "answer"), RunID: run.ID, Revision: req.Revision, Kind: ResultAnswer, Title: ResultTitle(run.Request),
+			ID: ResultID(run.ID, "answer"), RunID: run.ID, Revision: req.Revision, Kind: ResultAnswer, Title: title,
 			Text: run.Result, Evidence: req.Answer.Evidence, Unmet: req.Answer.Unmet, CreatedAt: now, Version: 1,
 		}
 		answer.RootID = answer.ID

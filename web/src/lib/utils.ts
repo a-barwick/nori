@@ -10,6 +10,37 @@ export function firstSentence(text: string) {
   return (m ? m[0] : plain).trim().slice(0, 180);
 }
 
+function cleanTitle(raw: string) {
+  let s = raw.trim().replace(/^[*_`]+|[*_`]+$/g, "").trim();
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")) || (s.startsWith("“") && s.endsWith("”"))) {
+    s = s.slice(1, -1).trim();
+  }
+  return s;
+}
+
+export function extractDocumentTitle(body: string): { title?: string; rest: string } {
+  const lines = body.replace(/\r\n/g, "\n").split("\n");
+  let checked = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    checked += 1;
+    if (checked > 4) break;
+    const heading = line.match(/^#{1,3}\s+(.+)$/);
+    const titled = line.match(/^(?:\*\*)?title(?:\*\*)?:\s*(.+)$/i);
+    const boldOnly = checked === 1 && line.length <= 140 ? line.match(/^\*\*([^*]+)\*\*$/) : null;
+    const raw = heading?.[1] ?? titled?.[1] ?? boldOnly?.[1];
+    if (raw) {
+      const title = cleanTitle(raw);
+      if (title) {
+        return { title, rest: lines.slice(i + 1).join("\n").trim() };
+      }
+    }
+    if (checked === 1) break;
+  }
+  return { rest: body.trim() };
+}
+
 export function documentTitle(body: string) {
-  return body.match(/^#{1,3}\s+(.+)$/m)?.[1] ?? firstSentence(body).slice(0, 48);
+  return extractDocumentTitle(body).title ?? firstSentence(body).slice(0, 64);
 }

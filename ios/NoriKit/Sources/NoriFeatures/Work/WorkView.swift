@@ -36,9 +36,12 @@ enum WorkStatusPresentation {
                 ? PillInfo(label: "Unconfirmed", tone: .warning)
                 : PillInfo(label: "Done", tone: .ok)
         case .failed:
-            let isIncomplete = item.isBudgetExhausted
-                || (item.error?.message.lowercased().hasPrefix("incomplete") == true)
-            return PillInfo(label: isIncomplete ? "Incomplete" : "Failed", tone: .danger)
+            let isPartial = item.partial == true
+                || item.error?.code == "task_incomplete"
+                || item.isBudgetExhausted
+            return isPartial
+                ? PillInfo(label: "Partial", tone: .warning)
+                : PillInfo(label: "Failed", tone: .danger)
         case .cancelled:
             return PillInfo(label: "Stopped", tone: .neutral)
         }

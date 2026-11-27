@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/primitives";
 import type { InlineInteractionEntry } from "@/lib/assistant/interactions";
 import { useCopyToClipboard } from "@/lib/browser";
 import { clock } from "@/lib/time";
+import { THINKING_WORDS } from "@/lib/thinkingWords";
 import { buildUnits, posOf, type Unit } from "@/lib/units";
 import type { ReadPosition, TextItem, Thread as Conversation } from "@/lib/types";
 import { cn, documentTitle, firstSentence } from "@/lib/utils";
@@ -19,7 +20,17 @@ import { BubbleUnit } from "./Message";
 const TOP_MASK = 24;
 type OpenDocument = (item: TextItem, body: string) => void;
 
-function PageBlock({ item, body, onOpenDocument }: { item: TextItem; body: string; onOpenDocument: OpenDocument }) {
+function PageBlock({
+  item,
+  title: explicitTitle,
+  body,
+  onOpenDocument,
+}: {
+  item: TextItem;
+  title?: string;
+  body: string;
+  onOpenDocument: OpenDocument;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [tall, setTall] = useState(false);
   const [expanded, setExpanded] = useState(() => Date.now() - item.at < 15000);
@@ -36,7 +47,7 @@ function PageBlock({ item, body, onOpenDocument }: { item: TextItem; body: strin
   }, []);
 
   const collapsed = tall && !expanded;
-  const title = documentTitle(body);
+  const title = explicitTitle?.trim() || documentTitle(body);
 
   return (
     <article
@@ -44,11 +55,14 @@ function PageBlock({ item, body, onOpenDocument }: { item: TextItem; body: strin
       data-item-id={item.id}
       aria-label={`Nori: ${title}`}
     >
-      <header className="flex min-h-8 flex-wrap items-center gap-2">
-        <NoriMark size={18} state="idle" />
-        <span className="text-meta font-semibold text-ink">Nori</span>
-        <span className="text-caption text-ink-3">· {clock(item.at)}</span>
-        <div className="ml-auto flex items-center gap-1.5">
+      <header className="flex min-h-8 items-center gap-2.5">
+        <span className="grid size-7 shrink-0 place-items-center rounded-[8px] bg-accent-subtle text-accent-text">
+          <FileText size={14} strokeWidth={1.9} aria-hidden />
+        </span>
+        <div className="min-w-0 flex-1">
+          <span className="block truncate text-meta font-semibold text-ink">{title}</span>
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
           <Button
             size="sm"
             variant="quiet"
@@ -99,31 +113,47 @@ function WorkLine({
   thinking?: boolean;
   onDetails?: () => void;
 }) {
-  return (
-    <div
-      className="anim-fade mt-4 flex w-full max-w-[680px] items-center gap-3"
-      role="status"
-    >
-      {thinking && (
+  const [wordIndex, setWordIndex] = useState(0);
+
+  useEffect(() => {
+    if (!thinking) return;
+    const timer = setInterval(() => {
+      setWordIndex((current) => {
+        if (THINKING_WORDS.length <= 1) return 0;
+        const step = 1 + Math.floor(Math.random() * (THINKING_WORDS.length - 1));
+        return (current + step) % THINKING_WORDS.length;
+      });
+    }, 2600);
+    return () => clearInterval(timer);
+  }, [thinking]);
+
+  if (thinking) {
+    const word = THINKING_WORDS[wordIndex % THINKING_WORDS.length];
+    return (
+      <div
+        className="anim-fade mt-4 inline-flex items-center gap-2.5 py-1"
+        role="status"
+        data-thinking-indicator
+      >
         <span className="w-7 shrink-0" data-active-avatar="true">
-          <NoriMark size={28} state="thinking" />
+          <NoriMark size={26} state="thinking" />
         </span>
-      )}
-      <div className="flex min-w-0 flex-1 items-center justify-between gap-3 rounded-row border border-card-border bg-fill-1 px-3.5 py-2.5 text-meta text-ink-2">
-        <div className="flex min-w-0 items-center gap-2">
-          {!thinking && <NoriMark size={18} state="thinking" />}
-          <span className="truncate">{label}</span>
-        </div>
-        {onDetails && (
-          <button
-            type="button"
-            className="shrink-0 font-semibold text-accent-text hover:underline"
-            onClick={onDetails}
-          >
-            Details
-          </button>
-        )}
+        <span className="nori-thinking-word text-[13.5px] font-medium">{word}</span>
       </div>
+    );
+  }
+
+  return (
+    <div className="anim-fade mt-4 flex items-center" role="status">
+      <button
+        type="button"
+        onClick={onDetails}
+        disabled={!onDetails}
+        className="inline-flex items-center gap-2 rounded-full border border-hairline bg-surface px-3 py-1.5 text-caption font-medium text-ink-2 transition-colors hover:bg-fill-1 hover:text-ink disabled:cursor-default disabled:hover:bg-surface"
+      >
+        <span className="pulse-dot size-[7px] shrink-0 rounded-full bg-accent" aria-hidden />
+        <span className="truncate">{label}</span>
+      </button>
     </div>
   );
 }
@@ -190,6 +220,7 @@ function UnitView({
   onOpenDocument,
   onRetryMessage,
   retryingMessageId,
+  onInteractionResolved,
 }: {
   unit: Unit;
   activeNoriMessageId?: string;
@@ -197,6 +228,7 @@ function UnitView({
   onOpenDocument: OpenDocument;
   onRetryMessage?: (item: TextItem) => void;
   retryingMessageId?: string;
+  onInteractionResolved?: OnInteractionResolved;
 }) {
   switch (unit.type) {
     case "sep":
@@ -204,7 +236,7 @@ function UnitView({
     case "page":
       return (
         <>
-          <PageBlock onOpenDocument={onOpenDocument} item={unit.item} body={unit.body} />
+          <PageBlock onOpenDocument={onOpenDocument} item={unit.item} title={unit.title} body={unit.body} />
           {unit.item.debug && <DebugBlock info={unit.item.debug} />}
         </>
       );
@@ -218,6 +250,21 @@ function UnitView({
           />
           {unit.item.debug && <DebugBlock info={unit.item.debug} />}
         </>
+      );
+    case "interaction":
+      return (
+        <div
+          aria-label="Action needed"
+          data-inline-interactions
+          className="mt-4 w-full max-w-[680px]"
+        >
+          <InteractionCard
+            interaction={unit.entry.interaction}
+            inline
+            rememberedRule={unit.entry.rememberedRule}
+            onResolved={onInteractionResolved}
+          />
+        </div>
       );
     case "group":
       return (
@@ -282,7 +329,7 @@ export function Thread({
 }) {
   const thread = conversation;
   const items = thread.items;
-  const units = useMemo(() => buildUnits(items), [items]);
+  const units = useMemo(() => buildUnits(items, interactions), [items, interactions]);
   const activeNoriMessageId = useMemo(() => (thinking ? undefined : latestNoriMessageId(units)), [thinking, units]);
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -502,27 +549,11 @@ export function Thread({
               onOpenDocument={onOpenDocument}
               onRetryMessage={onRetryMessage}
               retryingMessageId={retryingMessageId}
+              onInteractionResolved={onInteractionResolved}
               key={u.key}
               unit={u}
             />
           ))}
-          {!!interactions?.length && (
-            <section
-              aria-label="Action needed"
-              data-inline-interactions
-              className="mt-4 w-full max-w-[680px] space-y-3"
-            >
-              {interactions.map((entry) => (
-                <InteractionCard
-                  key={entry.interaction.id}
-                  interaction={entry.interaction}
-                  inline
-                  rememberedRule={entry.rememberedRule}
-                  onResolved={onInteractionResolved}
-                />
-              ))}
-            </section>
-          )}
           {streamingText && (
             <div className="mt-4 flex max-w-[680px] items-start gap-2.5" data-streaming-reply>
               <NoriMark size={28} state="thinking" />

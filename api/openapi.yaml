@@ -4070,6 +4070,8 @@ components:
           $ref: "#/components/schemas/Instant"
         cancel_requested:
           type: boolean
+        partial:
+          type: boolean
         error:
           $ref: "#/components/schemas/ErrorDetail"
 
@@ -4372,6 +4374,9 @@ components:
         status:
           type: string
           enum: [pending, resolved, expired, superseded]
+        surface:
+          type: string
+          enum: [chat, work]
         prompt:
           type: string
         action_digest:
@@ -5719,6 +5724,8 @@ components:
         collection:
           type: string
         preview_text:
+          type: string
+        excerpt:
           type: string
         delete_effect:
           type: string

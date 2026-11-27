@@ -4,7 +4,7 @@ export type { ModelSelection };
 
 export type Sender = "nori" | "me";
 
-export type Part = { type: string; text?: string; display?: "page" | "bubble"; fallback?: string; id?: string; name?: string; media_type?: string; size?: number; url?: string; scheduled_at?: string;
+export type Part = { type: string; title?: string; text?: string; display?: "page" | "bubble"; fallback?: string; id?: string; name?: string; media_type?: string; size?: number; url?: string; scheduled_at?: string;
   schema_version?: number; kind?: string; resource?: { kind: string; id: string; revision?: number }; actions?: string[] };
 export type SavedResult = {
   id: string; root_id: string; version: number; revises?: string; superseded_by?: string; run_id: string; kind: "answer" | "file" | "screenshot" | "link";

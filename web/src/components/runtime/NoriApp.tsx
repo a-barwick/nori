@@ -9,7 +9,7 @@ import { Notice } from "@/components/assistant/ui";
 import { Thread } from "@/components/chat/Thread";
 import type { ModelKeysResponse, ModelSettings } from "@/lib/assistant/api";
 import { useAssistant, useChatLive } from "@/lib/assistant/context";
-import { mergeInlineInteractions, type InlineInteractionEntry } from "@/lib/assistant/interactions";
+import { isChatInlineInteraction, mergeInlineInteractions, type InlineInteractionEntry } from "@/lib/assistant/interactions";
 import { usePendingInteractions } from "@/lib/assistant/sources";
 import { useResource } from "@/lib/assistant/useResource";
 import type { Interaction } from "@/lib/contracts/assistant";
@@ -25,12 +25,14 @@ function partURL(part: Part) {
 }
 
 function partsOf(message: Pick<Message, "text" | "parts">) {
-  const parts: Part[] = message.parts?.length ? message.parts : [{ type: "text", text: message.text }];
-  const text = parts.filter((part) => part.type === "text");
+  const raw: Part[] = message.parts?.length ? message.parts : [{ type: "text", text: message.text }];
+  const mapped = raw.map((part) => ({ ...part, url: partURL(part) }));
+  const textParts = mapped.filter((part) => part.type === "text");
+  const hasPage = mapped.some((part) => part.type === "page" || part.display === "page");
   return {
-    text: text.map((part) => part.text ?? "").join("\n\n"),
-    display: text.find((part) => part.display)?.display,
-    parts: parts.filter((part) => part.type !== "text").map((part) => ({ ...part, url: partURL(part) })),
+    text: textParts.map((part) => part.text ?? "").join("\n\n") || (hasPage ? "" : message.text),
+    display: mapped.find((part) => part.display)?.display,
+    parts: hasPage ? mapped : mapped.filter((part) => part.type !== "text"),
   };
 }
 
@@ -52,7 +54,7 @@ export function ChatScreen() {
     }));
   }, []);
   const inlineInteractions = useMemo(
-    () => mergeInlineInteractions(pendingInteractions.items ?? [], sessionResolved),
+    () => mergeInlineInteractions((pendingInteractions.items ?? []).filter(isChatInlineInteraction), sessionResolved),
     [pendingInteractions.items, sessionResolved],
   );
   const [document, setDocument] = useState<{ body: string; at: number } | null>(null);

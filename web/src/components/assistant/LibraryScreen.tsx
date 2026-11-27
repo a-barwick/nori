@@ -54,17 +54,19 @@ function KindIcon({ item }: { item: Pick<LibraryItem, "kind" | "media_type"> }) 
 }
 
 function ArtifactRow({ item }: { item: LibraryItem }) {
+  const excerpt = item.excerpt ?? (item.preview_text ? plainText(item.preview_text) : "");
+  const meta = `${provenanceLabel(item)} · ${relative(item.created_at)}`;
   return (
     <Row
       href={`/library/${encodeURIComponent(item.id)}`}
       leading={<KindIcon item={item} />}
       title={item.title}
-      detail={[
-        item.preview_text ? plainText(item.preview_text) : "",
-        `${provenanceLabel(item)} · ${relative(item.created_at)}`,
-      ]
-        .filter(Boolean)
-        .join(" · ")}
+      detail={
+        <>
+          {excerpt && <span className="line-clamp-2">{excerpt}</span>}
+          <span className={cn("block text-caption text-ink-3", excerpt && "mt-1")}>{meta}</span>
+        </>
+      }
       trailing={item.version > 1 ? <Pill>v{item.version}</Pill> : undefined}
     />
   );
