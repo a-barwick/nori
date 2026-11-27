@@ -33,7 +33,7 @@ export const BubbleUnit = memo(function BubbleUnit({
     !mine &&
     !unit.markdown &&
     !!unit.item.parts?.length &&
-    unit.item.parts.every((part) => part.type === "reminder" || part.type === "card");
+    unit.item.parts.every((part) => part.type === "reminder" || part.type === "card" || part.type === "brief");
 
   const copyText = (unit.item.text || unit.markdown || "").trim();
   const { copied, copy } = useCopyToClipboard();

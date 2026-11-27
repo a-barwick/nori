@@ -27,8 +27,9 @@ function partsOf(message: Pick<Message, "text" | "parts">) {
   const mapped = raw.map((part) => ({ ...part, url: partURL(part) }));
   const textParts = mapped.filter((part) => part.type === "text");
   const hasPage = mapped.some((part) => part.type === "page" || part.display === "page");
+  const hasBrief = mapped.some((part) => part.type === "brief");
   return {
-    text: textParts.map((part) => part.text ?? "").join("\n\n") || (hasPage ? "" : message.text),
+    text: textParts.map((part) => part.text ?? "").join("\n\n") || (hasPage || hasBrief ? "" : message.text),
     display: mapped.find((part) => part.display)?.display,
     parts: hasPage ? mapped : mapped.filter((part) => part.type !== "text"),
   };

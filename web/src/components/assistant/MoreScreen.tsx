@@ -10,6 +10,7 @@ import { hasSelectedHomeChat, needsByokSetup } from "@/lib/assistant/modelSetup"
 import { useSummary } from "@/lib/assistant/sources";
 import { useResource } from "@/lib/assistant/useResource";
 import type { ComputerStatus } from "@/lib/contracts/assistant";
+import { ProactivitySection } from "./ProactivitySettings";
 import { Notice, Pill, Row, Rows, Screen, Section } from "./ui";
 
 const APPEARANCE_ICON: Record<NoriAppearance, typeof Monitor> = {
@@ -57,6 +58,8 @@ export function MoreScreen({ userEmail: _userEmail }: { userEmail?: string } = {
           </Notice>
         </div>
       )}
+
+      <ProactivitySection />
 
       <Section title="Nori">
         <Rows label="Nori">

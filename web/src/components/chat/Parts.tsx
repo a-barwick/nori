@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { BriefCard } from "@/components/assistant/BriefCard";
 import { CardView } from "@/components/assistant/CardView";
 import { ReminderCard } from "@/components/assistant/ReminderCard";
 import type { CardPart } from "@/lib/contracts/assistant";
@@ -47,6 +48,7 @@ function PartView({ part }: { part: Part }) {
   if (["attachment", "artifact", "image"].includes(part.type) && part.url) return <FilePart part={part} url={part.url} />;
   if (part.type === "action") return null;
   if (part.type === "card" && part.resource && part.kind && part.fallback !== undefined) return <CardView part={part as CardPart} />;
+  if (part.type === "brief") return <BriefCard part={part} />;
   if (part.type === "reminder") return <ReminderCard part={part} />;
   if (part.type === "note") return <p className="text-caption text-ink-3">{part.text}</p>;
   return part.fallback ? <p className="text-body">{part.fallback}</p> : null;
