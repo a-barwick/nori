@@ -83,7 +83,7 @@ func interactionSurface(kind string, payload json.RawMessage) string {
 	}
 	if err := json.Unmarshal(payload, &q); err == nil {
 		switch q.Input {
-		case "choice", "multi_choice", "confirm", "date":
+		case "choice", "multi_choice", "confirm":
 			return "chat"
 		}
 	}

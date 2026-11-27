@@ -124,6 +124,10 @@ struct NoriMessageBubble: View {
                 NoriMark(size: 28, state: markState)
                     .matchedGeometryEffect(id: "active-nori-avatar", in: avatarNamespace)
                     .padding(.top, 2)
+            } else {
+                Color.clear
+                    .frame(width: 28, height: 1)
+                    .accessibilityHidden(true)
             }
 
             formattedMarkdownText(message.text)

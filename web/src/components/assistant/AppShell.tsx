@@ -27,7 +27,8 @@ import {
   syncBrowserReset,
   type ResetCheckOptions,
 } from "@/lib/assistant/resetState";
-import { useSummary } from "@/lib/assistant/sources";
+import { isActionableInteraction } from "@/lib/assistant/interactions";
+import { usePendingInteractions, useSummary } from "@/lib/assistant/sources";
 import { useResource } from "@/lib/assistant/useResource";
 import { SIGNED_OUT_EVENT_KEY } from "@/lib/runtime/session";
 import type { Preferences } from "@/lib/contracts/assistant";
@@ -224,6 +225,7 @@ function readLocalOnboardingDone(scope: string): string | null {
 function Frame({ scope, children }: { scope: string; children: ReactNode }) {
   const { runtime } = useAssistant();
   const summary = useSummary();
+  const pendingInteractions = usePendingInteractions();
   const preferences = useResource<Preferences>("/preferences", { poll: 30_000, versioned: false });
   const path = usePathname();
   const router = useRouter();
@@ -271,7 +273,9 @@ function Frame({ scope, children }: { scope: string; children: ReactNode }) {
     return () => cancelAnimationFrame(frame);
   }, [path]);
 
-  const pending = summary.needs_you ?? 0;
+  const pending = pendingInteractions.items
+    ? pendingInteractions.items.filter(isActionableInteraction).length
+    : (summary.needs_you ?? 0);
   const appsAttention = summary.apps_attention ?? 0;
   const { busy } = runtime;
 

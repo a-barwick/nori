@@ -1,14 +1,14 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
-import { AlertTriangle, Check, ChevronRight, Clock, KeyRound, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Check, KeyRound, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { APIError, mutate, newRequestID } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { EFFECT_LABEL, relative } from "@/lib/assistant/format";
 import {
   buildApprovalResponse,
+  formatCompactExpiry,
   formatInteractionExpiry,
   resolvedStatusPill,
   resolvedSummaryText,
@@ -84,14 +84,38 @@ function useRespond(interaction: Interaction, onResolved?: OnInteractionResolved
   return { respond, ...action, current, legacy };
 }
 
+function isRoutineApproval(payload: Partial<ApprovalPayload>) {
+  return payload.tool_id === "nori/assistant/automation-create" || !!payload.tool_id?.startsWith("nori/assistant/automation");
+}
+
 function isInternalScheduleApproval(payload: Partial<ApprovalPayload>) {
   return !!payload.tool_id?.startsWith("nori/") && !payload.account?.connection_id && !payload.account?.label?.trim();
 }
 
+function routineSummaryParts(summary: string | undefined) {
+  const lines = (summary ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return { title: "Create routine", detail: "" };
+  if (lines.length === 1) return { title: lines[0], detail: "" };
+  return { title: lines[0], detail: lines.slice(1).join(" · ") };
+}
+
 function heading(interaction: Interaction) {
+  if (interaction.kind === "sign_in") {
+    const payload = interaction.payload as Partial<SignInPayload>;
+    if (payload.integration_id && payload.integration_id !== "mcp") {
+      const name = payload.integration_id.charAt(0).toUpperCase() + payload.integration_id.slice(1);
+      return `Connect ${name}`;
+    }
+    return "Connect app";
+  }
   const payload = interaction.payload as Partial<ApprovalPayload>;
+  if (interaction.kind === "approval" && isRoutineApproval(payload)) {
+    return routineSummaryParts(payload.summary).title;
+  }
   if (interaction.kind !== "approval" || interaction.prompt !== payload.summary) return interaction.prompt;
-  if (payload.tool_id === "nori/assistant/automation-create") return "Create this routine?";
   return (
     ({
       sensitive_send: "Send this?",
@@ -103,7 +127,7 @@ function heading(interaction: Interaction) {
 
 export function InteractionCard({
   interaction,
-  compact,
+  compact: _compact,
   inline,
   rememberedRule,
   onResolved,
@@ -114,14 +138,17 @@ export function InteractionCard({
   rememberedRule?: boolean;
   onResolved?: OnInteractionResolved;
 }) {
+  void _compact;
   const [override, setOverride] = useState<{ interaction: Interaction; rememberedRule?: boolean }>();
   const useOverride =
     override && override.interaction.id === interaction.id && override.interaction.revision >= interaction.revision;
   const shown = useOverride ? override.interaction : interaction;
   const effectiveRememberedRule = rememberedRule ?? (useOverride ? override.rememberedRule : undefined);
   const resolved = shown.status !== "pending";
-  const expiryLabel = !resolved ? formatInteractionExpiry(shown.expires_at) : undefined;
+  const expiryFull = !resolved ? formatInteractionExpiry(shown.expires_at) : undefined;
+  const expiryCompact = !resolved ? formatCompactExpiry(shown.expires_at) : undefined;
   const statusPill = resolved ? resolvedStatusPill(shown) : undefined;
+  const isRoutine = shown.kind === "approval" && isRoutineApproval(shown.payload as Partial<ApprovalPayload>);
 
   const handleResolved: OnInteractionResolved = (next, meta) => {
     setOverride({ interaction: next, rememberedRule: meta?.rememberRule });
@@ -134,40 +161,26 @@ export function InteractionCard({
       data-interaction-id={shown.id}
       data-interaction-status={shown.status}
       className={cn(
-        "rounded-[20px] transition-[border-color,background-color]",
+        "rounded-[18px] transition-[border-color,background-color]",
         resolved
           ? "border border-card-border bg-sidebar px-4 py-3"
-          : "border border-card-border bg-surface p-4 shadow-card",
+          : "border border-card-border bg-surface px-4 py-3.5 shadow-card",
       )}
     >
-      <div className="flex items-start gap-2.5">
-        <div className="min-w-0 flex-1">
-          <h3 className={cn("font-bold text-ink", inline ? "text-[15px] leading-snug" : "text-[15.5px] leading-snug")}>
-            {heading(shown)}
-          </h3>
-          {!compact && shown.task_title && shown.task_id && (
-            <Link
-              href={`/work/${encodeURIComponent(shown.task_id)}`}
-              className="mt-1 inline-flex items-center gap-0.5 text-[12.5px] font-semibold text-accent-text hover:underline"
-            >
-              <span>{shown.task_title}</span>
-              <ChevronRight size={13} aria-hidden />
-            </Link>
-          )}
-        </div>
+      <div className="flex items-baseline justify-between gap-2.5">
+        <h3 className="min-w-0 flex-1 text-[15.5px] font-semibold leading-snug text-ink [overflow-wrap:anywhere]">
+          {heading(shown)}
+        </h3>
         {statusPill ? (
           <Pill tone={statusPill.tone}>{statusPill.label}</Pill>
-        ) : expiryLabel ? (
-          <Pill tone="warning">
-            <Clock size={12} className="mr-1 shrink-0" aria-hidden />
-            {expiryLabel}
-          </Pill>
-        ) : (
-          <Pill tone="accent">Waiting</Pill>
-        )}
+        ) : expiryCompact ? (
+          <span className="shrink-0 text-caption font-semibold text-warning" title={expiryFull}>
+            {isRoutine ? expiryCompact : expiryFull}
+          </span>
+        ) : null}
       </div>
 
-      <div className={cn(inline && resolved ? "mt-2" : "mt-3")}>
+      <div className={cn(resolved ? "mt-2" : "mt-1.5")}>
         {resolved ? (
           <Resolved interaction={shown} rememberedRule={effectiveRememberedRule} />
         ) : (
@@ -372,6 +385,39 @@ function Approval({
 }) {
   const busy = !!state.pending;
   const digest = interaction.action_digest!;
+  const buttonSize = inline ? "sm" : "md";
+
+  if (isRoutineApproval(payload)) {
+    const { detail } = routineSummaryParts(payload.summary);
+    const automatic = payload.effect === "sensitive_send";
+    const metaLine = [detail, automatic ? "Runs automatically" : ""].filter(Boolean).join(" · ");
+    return (
+      <div>
+        {metaLine && (
+          <p className="text-[13.5px] leading-relaxed text-ink-2 [overflow-wrap:anywhere]">{metaLine}</p>
+        )}
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button
+            variant="primary"
+            size={buttonSize}
+            disabled={busy}
+            onClick={() => void state.respond(buildApprovalResponse("allow_once", digest), "allow_once")}
+          >
+            {state.pending === "allow_once" ? "Creating…" : "Create"}
+          </Button>
+          <Button
+            variant="neutral"
+            size={buttonSize}
+            disabled={busy}
+            onClick={() => void state.respond(buildApprovalResponse("deny", digest), "deny")}
+          >
+            {state.pending === "deny" ? "Cancelling…" : "Cancel"}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   const send = payload.effect === "sensitive_send";
   const cut = send ? payload.summary.indexOf("\n") : -1;
   const summaryHeading = cut >= 0 ? payload.summary.slice(0, cut) : payload.summary;
@@ -384,18 +430,17 @@ function Approval({
   const accountLabel = payload.account?.label?.trim();
   const showMeta = !internalSchedule || !!accountLabel || !!payload.recipients?.length;
   const summaryHasRecipients = payload.tool_id === "google/mail/mail-send";
-  const buttonSize = inline ? "sm" : "md";
 
   return (
     <div>
-      <p className={cn("font-semibold whitespace-pre-line text-ink [overflow-wrap:anywhere]", inline ? "text-row-title" : "text-row")}>
+      <p className="text-[13.5px] leading-relaxed whitespace-pre-line text-ink-2 [overflow-wrap:anywhere]">
         {summaryHeading}
       </p>
       {cut >= 0 && (
         <>
           <blockquote
             aria-label="Message to be sent"
-            className="mt-2.5 rounded-tile border border-hairline bg-fill-1 px-3.5 py-2.5 text-[13.5px] leading-relaxed whitespace-pre-wrap text-ink [overflow-wrap:anywhere]"
+            className="mt-2 rounded-tile bg-fill-1 px-3 py-2 text-[13.5px] leading-relaxed whitespace-pre-wrap text-ink [overflow-wrap:anywhere]"
           >
             {message || "(No message text)"}
           </blockquote>
@@ -622,18 +667,21 @@ function SignIn({ interaction, payload, state }: { interaction: Interaction; pay
   };
   const blocked = !desktop && !browserContinuation && !!payload.authorize_url && !url;
   const title = mcp ? server.data?.name ?? "MCP server" : integration.data?.title ?? payload.integration_id;
-  const wanted = askedFor(payload.requested_scopes, integration.data);
+  const wanted = askedFor(payload.requested_scopes, integration.data).filter(Boolean);
+  const purposeLine = desktop
+    ? "Continue sign-in in your browser."
+    : wanted.length > 0
+      ? `To access ${wanted.join(", ").toLowerCase()}.`
+      : connection.data?.account?.label
+        ? `Reconnect ${connection.data.account.label}.`
+        : `To use ${title} for this request.`;
   return (
-    <div className="space-y-3">
-      <p className="text-meta text-ink-2">{[title, connection.data?.account?.label].filter(Boolean).join(" · ")}</p>
-      {desktop && <p className="text-meta text-ink-2">Sign in to Nori with the same account in your browser, then continue the connection there.</p>}
-      {wanted.length > 0 && (
-        <p className="text-meta text-ink-2">
-          {title} will ask you to allow: {wanted.join("; ")}.
-        </p>
-      )}
+    <div className="space-y-2.5">
+      <p className="text-[13.5px] leading-relaxed text-ink-2">{purposeLine}</p>
       {payload.integration_id === "google" && (
-        <p className="text-meta text-ink-2">Nori uses the Google data you allow to carry out your requests and may share it with your selected AI model provider.</p>
+        <p className="text-caption leading-snug text-ink-3">
+          Nori uses the Google data you allow for your requests and may share it with your selected AI model provider.
+        </p>
       )}
       {blocked && (
         <Notice tone="danger">This sign-in link isn’t one Nori issued, so it won’t open.</Notice>
@@ -642,13 +690,14 @@ function SignIn({ interaction, payload, state }: { interaction: Interaction; pay
       <div className="flex flex-wrap gap-2">
         <Button
           variant="primary"
+          size="sm"
           disabled={blocked || !!action.pending || state.pending === "decline"}
           onClick={signIn}
         >
-          <KeyRound size={15} aria-hidden />
+          <KeyRound size={14} aria-hidden />
           {action.pending ? "Opening sign-in…" : desktop ? "Continue in browser" : "Sign in"}
         </Button>
-        <Button disabled={!!state.pending} onClick={() => void state.respond({ kind: "decline" }, "decline")}>
+        <Button size="sm" disabled={!!state.pending} onClick={() => void state.respond({ kind: "decline" }, "decline")}>
           {state.pending === "decline" ? "Declining…" : "Not now"}
         </Button>
       </div>

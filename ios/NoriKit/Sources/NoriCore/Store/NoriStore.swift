@@ -272,6 +272,12 @@ public final class NoriStore {
         hasLoadedInteractions ? pendingInteractions.count : (assistantSummary?.needsYou ?? pendingInteractions.count)
     }
 
+    public var actionableNeedsYouCount: Int {
+        hasLoadedInteractions
+            ? pendingInteractions.filter { $0.kind != .question }.count
+            : (assistantSummary?.needsYou ?? 0)
+    }
+
     var computedAppsAttentionCount: Int {
         let mcpCount = mcpServers.filter { $0.observed.status.needsAttention }.count
         let connCount = connections.filter { $0.status == .needsAttention }.count

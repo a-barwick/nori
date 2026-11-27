@@ -144,12 +144,12 @@ function WorkLine({
   }
 
   return (
-    <div className="anim-fade mt-4 flex items-center" role="status">
+    <div className="anim-fade mt-3 flex items-center sm:ml-10" role="status">
       <button
         type="button"
         onClick={onDetails}
         disabled={!onDetails}
-        className="inline-flex items-center gap-2 rounded-full border border-hairline bg-surface px-3 py-1.5 text-caption font-medium text-ink-2 transition-colors hover:bg-fill-1 hover:text-ink disabled:cursor-default disabled:hover:bg-surface"
+        className="inline-flex items-center gap-2 py-1 text-[13px] font-medium text-ink-2 transition-colors hover:text-ink disabled:cursor-default disabled:hover:text-ink-2"
       >
         <span className="pulse-dot size-[7px] shrink-0 rounded-full bg-accent" aria-hidden />
         <span className="truncate">{label}</span>
@@ -256,7 +256,7 @@ function UnitView({
         <div
           aria-label="Action needed"
           data-inline-interactions
-          className="mt-4 w-full max-w-[680px]"
+          className="mt-4 w-full max-w-[min(560px,100%)] sm:ml-10"
         >
           <InteractionCard
             interaction={unit.entry.interaction}

@@ -62,16 +62,30 @@ public enum InteractionStatusPresentation {
 
 extension Interaction {
     var displayHeading: String {
-        if kind == .approval, case .approval(let payload) = payload,
-           prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || prompt == payload.summary {
-            if payload.isScheduleCreation {
-                return "Create this routine?"
+        if kind == .signIn, case .signIn(let payload) = payload {
+            if payload.integrationID != "mcp", !payload.integrationID.isEmpty {
+                return "Connect \(payload.integrationID.capitalized)"
             }
-            switch payload.effect {
-            case .sensitiveSend: return "Send this?"
-            case .reversibleWrite: return "Make this change?"
-            case .read: return "Allow this?"
-            case .unknown, .control: return "Approve this action?"
+            return "Connect app"
+        }
+        if kind == .approval, case .approval(let payload) = payload {
+            if payload.isScheduleCreation {
+                let firstLine = payload.summary
+                    .components(separatedBy: .newlines)
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .first { !$0.isEmpty }
+                if let firstLine, !firstLine.isEmpty {
+                    return firstLine
+                }
+                return "Create routine"
+            }
+            if prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || prompt == payload.summary {
+                switch payload.effect {
+                case .sensitiveSend: return "Send this?"
+                case .reversibleWrite: return "Make this change?"
+                case .read: return "Allow this?"
+                case .unknown, .control: return "Approve this action?"
+                }
             }
         }
         return prompt.isEmpty ? "Needs your input" : prompt
@@ -123,38 +137,22 @@ public struct InteractionCardView: View {
 
     public var body: some View {
         let pill = InteractionStatusPresentation.statusPill(for: interaction)
+        let hasExpiry = interaction.status == .pending
+            && !(interaction.expiresAt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(interaction.displayHeading)
-                    .font(.system(size: 15.5, weight: .bold))
+                    .font(.system(size: 15.5, weight: .semibold))
                     .foregroundStyle(NoriColors.ink)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                NoriPill(pill.label, tone: pill.tone, systemImage: pill.systemImage)
-            }
-
-            if !compact, let taskTitle = interaction.taskTitle, !taskTitle.isEmpty {
-                if let taskID = interaction.taskID, let onOpenTask {
-                    Button {
-                        onOpenTask(taskID)
-                    } label: {
-                        HStack(spacing: 3) {
-                            Text(taskTitle)
-                                .lineLimit(1)
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 10, weight: .semibold))
-                        }
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(NoriColors.accent)
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.top, 4)
-                } else {
-                    Text(taskTitle)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(NoriColors.ink2)
-                        .padding(.top, 4)
+                if isResolved {
+                    NoriPill(pill.label, tone: pill.tone, systemImage: pill.systemImage)
+                } else if hasExpiry {
+                    Text(pill.label)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(NoriColors.warning)
                 }
             }
 
@@ -165,7 +163,7 @@ public struct InteractionCardView: View {
                     pendingBody
                 }
             }
-            .padding(.top, 10)
+            .padding(.top, isResolved ? 8 : 6)
 
             if let conflictState {
                 NoriNotice(

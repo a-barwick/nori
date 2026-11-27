@@ -94,7 +94,7 @@ public struct WorkView: View {
             NoriSegmentOption(
                 value: .tasks,
                 label: "Tasks",
-                count: store.needsYouCount > 0 ? store.needsYouCount : nil
+                count: store.actionableNeedsYouCount > 0 ? store.actionableNeedsYouCount : nil
             ),
             NoriSegmentOption(value: .artifacts, label: "Artifacts"),
             NoriSegmentOption(value: .goals, label: "Goals"),
@@ -106,15 +106,43 @@ public struct WorkView: View {
         store.pendingInteractions
     }
 
+    private var actionableInteractions: [Interaction] {
+        pendingInteractions.filter { $0.kind != .question }
+    }
+
+    private var chatWaitingQuestions: [Interaction] {
+        pendingInteractions.filter { $0.kind == .question }
+    }
+
     private var resolvedInteractions: [Interaction] {
         store.interactions.filter { $0.status != .pending }
     }
 
-    private var orphanNeedsYouTasks: [WorkItem] {
-        let pendingTaskIDs = Set(pendingInteractions.compactMap(\.taskID))
-        return store.workItems.filter { item in
-            item.bucket == .needsYou && !pendingTaskIDs.contains(item.taskID)
+    private struct WaitingInChatRow: Identifiable {
+        let id: String
+        let taskID: String?
+        let title: String
+    }
+
+    private var waitingInChatRows: [WaitingInChatRow] {
+        let actionableTaskIDs = Set(actionableInteractions.compactMap(\.taskID))
+        var seen = Set<String>()
+        var rows: [WaitingInChatRow] = []
+        for q in chatWaitingQuestions {
+            let key = q.taskID ?? q.id
+            guard seen.insert(key).inserted else { continue }
+            let workItem = q.taskID.flatMap { tid in store.workItems.first { $0.taskID == tid } }
+            rows.append(WaitingInChatRow(
+                id: key,
+                taskID: q.taskID,
+                title: workItem?.title ?? q.taskTitle ?? "Waiting in Chat"
+            ))
         }
+        for item in store.workItems where item.bucket == .needsYou && !actionableTaskIDs.contains(item.taskID) {
+            guard seen.insert(item.taskID).inserted else { continue }
+            rows.append(WaitingInChatRow(id: item.taskID, taskID: item.taskID, title: item.title))
+        }
+        return rows
     }
 
     public var body: some View {
@@ -172,37 +200,32 @@ public struct WorkView: View {
 
 
     private var tasksContent: some View {
-        let pending = pendingInteractions
-        let orphans = orphanNeedsYouTasks
-        let needsYouTotal = pending.count + orphans.count
-        let pendingTaskIDs = Set(pending.compactMap(\.taskID))
+        let actionable = actionableInteractions
+        let waitingChat = waitingInChatRows
+        let actionableTaskIDs = Set(actionable.compactMap(\.taskID))
+        let waitingChatTaskIDs = Set(waitingChat.compactMap(\.taskID))
         let active = store.activeWorkItems.filter { item in
-            item.bucket != .needsYou && !pendingTaskIDs.contains(item.taskID)
+            item.bucket != .needsYou
+                && !actionableTaskIDs.contains(item.taskID)
+                && !waitingChatTaskIDs.contains(item.taskID)
         }
         let finished = store.finishedWorkItems
         let resolved = resolvedInteractions
         let visibleRecent = showAllRecentTasks ? finished : Array(finished.prefix(5))
-        let isAllClear = pending.isEmpty && orphans.isEmpty && active.isEmpty
+        let activeTotal = waitingChat.count + active.count
+        let isAllClear = actionable.isEmpty && activeTotal == 0
 
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                if needsYouTotal > 0 {
-                    NoriSectionHeader("Action needed · \(needsYouTotal)")
+                if !actionable.isEmpty {
+                    NoriSectionHeader(actionable.count > 1 ? "Action needed · \(actionable.count)" : "Action needed")
                     VStack(spacing: 12) {
-                        ForEach(pending) { interaction in
+                        ForEach(actionable) { interaction in
                             InteractionCardView(
                                 store: store,
                                 interaction: interaction,
                                 onOpenTask: navigateToTask
                             )
-                        }
-
-                        if !orphans.isEmpty {
-                            NoriRows {
-                                ForEach(Array(orphans.enumerated()), id: \.element.id) { idx, item in
-                                    workRow(item: item, showDivider: idx < orphans.count - 1)
-                                }
-                            }
                         }
                     }
                     .padding(.bottom, 6)
@@ -218,17 +241,23 @@ public struct WorkView: View {
                     }
                     .buttonStyle(NoriButtonStyle(.neutral, fullWidth: true))
                     .padding(.vertical, 8)
-                } else if isAllClear, store.needsYouCount == 0 {
+                } else if isAllClear {
                     allClearCard
                         .padding(.top, 4)
                         .padding(.bottom, 8)
                 }
 
-                if !active.isEmpty {
-                    NoriSectionHeader(active.count > 1 ? "Running · \(active.count)" : "Running")
-                    VStack(spacing: 10) {
-                        ForEach(active) { item in
-                            runningTaskCard(item: item)
+                if activeTotal > 0 {
+                    NoriSectionHeader("Active")
+                    NoriRows {
+                        ForEach(Array(waitingChat.enumerated()), id: \.element.id) { idx, row in
+                            waitingInChatRowView(
+                                row,
+                                showDivider: idx < waitingChat.count - 1 || !active.isEmpty
+                            )
+                        }
+                        ForEach(Array(active.enumerated()), id: \.element.id) { idx, item in
+                            activeWorkRow(item: item, showDivider: idx < active.count - 1)
                         }
                     }
                     .padding(.bottom, 6)
@@ -308,7 +337,53 @@ public struct WorkView: View {
         )
     }
 
-    private func runningTaskCard(item: WorkItem) -> some View {
+    private func waitingInChatRowView(_ row: WaitingInChatRow, showDivider: Bool) -> some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 12) {
+                Button {
+                    if let taskID = row.taskID {
+                        navigateToTask(taskID)
+                    } else {
+                        onStartInChat("")
+                    }
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(row.title)
+                            .font(NoriTypography.rowTitle)
+                            .foregroundStyle(NoriColors.ink)
+                            .lineLimit(1)
+                        Text("Waiting in Chat")
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(NoriColors.ink2)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                Button("Reply") {
+                    onStartInChat("")
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(NoriColors.accent)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(NoriColors.accentSubtle, in: Capsule())
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+
+            if showDivider {
+                Divider()
+                    .background(NoriColors.hairline)
+                    .padding(.leading, 14)
+            }
+        }
+    }
+
+    private func activeWorkRow(item: WorkItem, showDivider: Bool) -> some View {
         let progressText: String = {
             if item.cancelRequested {
                 return "Stopping…"
@@ -322,51 +397,47 @@ public struct WorkView: View {
         return Button {
             navigateToTask(item.taskID)
         } label: {
-            HStack(alignment: .center, spacing: 11) {
-                PulsingStatusDot(
-                    color: item.operations.uncertain > 0 ? NoriColors.warning : NoriColors.markActivity,
-                    size: 7.5,
-                    animated: !item.cancelRequested
-                )
+            VStack(spacing: 0) {
+                HStack(alignment: .center, spacing: 11) {
+                    PulsingStatusDot(
+                        color: item.operations.uncertain > 0 ? NoriColors.warning : NoriColors.markActivity,
+                        size: 7.5,
+                        animated: !item.cancelRequested
+                    )
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(item.title)
-                        .font(NoriTypography.rowTitle)
-                        .foregroundStyle(NoriColors.ink)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.title)
+                            .font(NoriTypography.rowTitle)
+                            .foregroundStyle(NoriColors.ink)
+                            .lineLimit(1)
+                        Text(progressText)
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(NoriColors.ink2)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Text(progressText)
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(NoriColors.ink2)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
+                    if item.operations.uncertain > 0 {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 13))
+                            .foregroundStyle(NoriColors.warning)
+                            .accessibilityLabel("Has an unconfirmed action")
+                    }
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(NoriColors.ink3)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .contentShape(Rectangle())
 
-                if item.operations.uncertain > 0 {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 13))
-                        .foregroundStyle(NoriColors.warning)
-                        .accessibilityLabel("Has an unconfirmed action")
+                if showDivider {
+                    Divider()
+                        .background(NoriColors.hairline)
+                        .padding(.leading, 14)
                 }
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(NoriColors.ink3)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 13)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                NoriColors.surfaceTinted,
-                in: RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
-                    .strokeBorder(NoriColors.accentBorder, lineWidth: 1)
-            )
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }

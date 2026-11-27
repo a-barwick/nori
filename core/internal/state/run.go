@@ -27,6 +27,7 @@ const (
 
 type Run struct {
 	ID      string      `json:"id" firestore:"id"`
+	Title   string      `json:"title,omitempty" firestore:"title,omitempty"`
 	Request string      `json:"request,omitempty" firestore:"request,omitempty"`
 	Origin  *TaskOrigin `json:"origin,omitempty" firestore:"origin,omitempty"`
 

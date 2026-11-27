@@ -43,7 +43,7 @@ extension Interaction {
         }
         guard kind == .question else { return true }
         if case .question(let payload) = payload {
-            return payload.input != .text
+            return payload.input != .text && payload.input != .date
         }
         return false
     }

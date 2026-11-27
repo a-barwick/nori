@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Dialog } from "radix-ui";
+import { useRouter } from "next/navigation";
+import { useCallback, useMemo, useState } from "react";
 import { needsByokSetup } from "@/components/assistant/ApiKeysSettings";
 import { hasSelectedHomeChat } from "@/components/assistant/ModelsSettings";
 import { Notice } from "@/components/assistant/ui";
@@ -16,7 +16,6 @@ import type { Interaction } from "@/lib/contracts/assistant";
 import type { Message, Part, Thread as Conversation, TextItem } from "@/lib/types";
 import { DocumentViewer } from "./DocumentViewer";
 import { RuntimeComposer } from "./RuntimeComposer";
-import { TaskPanel } from "./TaskPanel";
 
 function partURL(part: Part) {
   if (part.type === "attachment" && part.id) return `/api/v1/uploads/${part.id}`;
@@ -37,11 +36,12 @@ function partsOf(message: Pick<Message, "text" | "parts">) {
 }
 
 export function ChatScreen() {
+  const router = useRouter();
   const { runtime, debug, capabilities } = useAssistant();
   const { draft, draftFiles, streamingDelta } = useChatLive();
   const accepted = capabilities?.upload_accept;
   const uploadAccept = accepted ? [...accepted.media_types, ...(accepted.extensions ?? [])].join(",") : undefined;
-  const { session, pending, activeTasks, selected, loading, error, reconnecting } = runtime;
+  const { session, pending, activeTasks, loading, error, reconnecting } = runtime;
   const pendingInteractions = usePendingInteractions();
   const modelKeys = useResource<ModelKeysResponse>("/settings/model-keys", { poll: 60_000, versioned: false });
   const models = useResource<ModelSettings>("/settings/models", { poll: 60_000 });
@@ -58,9 +58,6 @@ export function ChatScreen() {
     [pendingInteractions.items, sessionResolved],
   );
   const [document, setDocument] = useState<{ body: string; at: number } | null>(null);
-  const [activityOpen, setActivityOpen] = useState(false);
-  const closePanel = useCallback(() => setActivityOpen(false), []);
-  const togglePanel = useCallback(() => setActivityOpen((open) => !open), []);
   const [unread, setUnread] = useState<{ count: number; jump: () => void }>({
     count: 0,
     jump: () => {},
@@ -133,38 +130,6 @@ export function ChatScreen() {
     debug,
   ]);
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === ".") {
-        event.preventDefault();
-        togglePanel();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [togglePanel]);
-
-  const panel = (
-    <TaskPanel
-      session={session}
-      selected={selected}
-      pending={pending.length > 0}
-      loading={loading}
-      error={error}
-      unavailable={runtime.tasksUnavailable}
-      onSelect={runtime.setSelectedId}
-      onRefresh={() => void runtime.refreshHistory()}
-      onClose={closePanel}
-      debug={debug}
-      commands={runtime.taskCommands}
-      drafts={runtime.taskDrafts}
-      onDraft={runtime.setTaskDraft}
-      onCommand={runtime.commandTask}
-      onRetryCommand={runtime.retryTaskCommand}
-      onDismissCommand={runtime.dismissTaskCommand}
-    />
-  );
-
   const hasVisibleFailedCard = conversation.items.some((item) => item.sender === "nori" && item.status === "failed");
   const notice = reconnecting
     ? "Can't reach Nori right now. Reconnecting on its own…"
@@ -172,13 +137,17 @@ export function ChatScreen() {
       (session?.conversation?.routing_blocked && !runtime.conversationBusy && !hasVisibleFailedCard
         ? "Some work is waiting for this message to be resolved. Send a follow-up to retry or clarify."
         : "");
-  const waitingCount = activeTasks.filter((run) => (run.question ? !run.question.resolved_by : run.waiting)).length;
+  const workingTasks = activeTasks.filter((run) => !(run.question ? !run.question.resolved_by : run.waiting));
+  const singleWorkingLabel =
+    workingTasks.length === 1
+      ? workingTasks[0].progress?.trim() || "Working in the background…"
+      : `${workingTasks.length} working`;
   const work = runtime.conversationBusy
     ? "Nori is thinking…"
-    : activeTasks.length
+    : workingTasks.length
       ? runtime.tasksUnavailable
         ? "Task execution is paused. You can still chat with Nori."
-        : `${activeTasks.length} ${activeTasks.length === 1 ? "task" : "tasks"} running${waitingCount ? ` · ${waitingCount} needing action` : ""}`
+        : singleWorkingLabel
       : undefined;
 
   return (
@@ -187,7 +156,7 @@ export function ChatScreen() {
       <div className="min-h-0 flex-1">
         <Thread
           conversation={conversation}
-          onStatusDetails={() => setActivityOpen(true)}
+          onStatusDetails={() => router.push("/work")}
           onOpenDocument={(item, body) => setDocument({ body, at: item.at })}
           status={work}
           thinking={runtime.conversationBusy}
@@ -297,19 +266,6 @@ export function ChatScreen() {
       />
 
       <DocumentViewer document={document} onClose={() => setDocument(null)} />
-
-      <Dialog.Root open={activityOpen} onOpenChange={setActivityOpen}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="scrim fixed inset-0 z-40 bg-overlay sm:top-[60px]" />
-          <Dialog.Content
-            aria-describedby={undefined}
-            className="sheet-right fixed inset-y-0 right-0 z-40 w-[min(460px,100vw)] border-l border-hairline bg-sheet shadow-sheet sm:top-[60px]"
-          >
-            <Dialog.Title className="sr-only">Task activity</Dialog.Title>
-            {panel}
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
     </main>
   );
 }

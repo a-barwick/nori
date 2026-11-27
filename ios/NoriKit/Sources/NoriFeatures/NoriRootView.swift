@@ -23,7 +23,6 @@ public struct NoriRootView: View {
     @State private var selectedWorkTabExplicitly = false
     @State private var morePath: [MoreRoute] = []
 
-    @State private var isActivitySheetPresented = false
     @State private var presentedDocument: DocumentPresentation?
     @State private var hasBackgrounded = false
     @State private var tabRefreshTask: Task<Void, Never>?
@@ -130,7 +129,6 @@ public struct NoriRootView: View {
         workTabFilter = .tasks
         didApplyInitialWorkTab = false
         selectedWorkTabExplicitly = false
-        isActivitySheetPresented = false
         presentedDocument = nil
     }
 
@@ -190,7 +188,7 @@ public struct NoriRootView: View {
                 ChatView(
                     store: store,
                     scrollToBottomTrigger: chatScrollToBottomTrigger,
-                    onOpenActivity: { isActivitySheetPresented = true },
+                    onOpenActivity: jumpToNeedsYou,
                     onOpenDocument: openDocument,
                     onNavigateToNeedsYou: jumpToNeedsYou,
                     onOpenTask: openWorkTask,
@@ -230,7 +228,7 @@ public struct NoriRootView: View {
                 .tabItem {
                     Label("Work", systemImage: "checklist")
                 }
-                .badge(store.needsYouCount)
+                .badge(store.actionableNeedsYouCount)
                 .tag(NoriTab.work)
 
                 NavigationStack(path: $morePath) {
@@ -281,23 +279,6 @@ public struct NoriRootView: View {
             }
         }
         .animation(.spring(response: 0.28, dampingFraction: 0.85), value: store.toastMessage)
-        .sheet(isPresented: $isActivitySheetPresented) {
-            ActivitySheetView(
-                store: store,
-                onSelectTask: { taskID in
-                    isActivitySheetPresented = false
-                    openWorkTask(taskID)
-                },
-                onOpenDocument: { item in
-                    isActivitySheetPresented = false
-                    openDocument(item)
-                }
-            )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
-            .presentationBackground(NoriColors.sheetBackground)
-            .presentationCornerRadius(NoriRadius.sheet)
-        }
         .sheet(item: $presentedDocument) { doc in
             DocumentReaderSheet(store: store, itemID: doc.id)
                 .presentationDetents([.large])
@@ -313,7 +294,6 @@ public struct NoriRootView: View {
     }
 
     private func jumpToNeedsYou() {
-        isActivitySheetPresented = false
         presentedDocument = nil
         workPath = []
         selectedWorkTabExplicitly = true
@@ -322,21 +302,18 @@ public struct NoriRootView: View {
     }
 
     private func openModels() {
-        isActivitySheetPresented = false
         presentedDocument = nil
         selectedTab = .more
         morePath = [.models]
     }
 
     private func openWorkTask(_ taskID: String) {
-        isActivitySheetPresented = false
         presentedDocument = nil
         selectedTab = .work
         workPath = [taskID]
     }
 
     private func startInChat(draft: String) {
-        isActivitySheetPresented = false
         presentedDocument = nil
         store.pendingComposerDraft = draft
         selectedTab = .chat
@@ -348,7 +325,6 @@ public struct NoriRootView: View {
         }
         switch link {
         case .tab(let tab):
-            isActivitySheetPresented = false
             presentedDocument = nil
             selectedTab = tab
             if tab == .work {
@@ -359,50 +335,41 @@ public struct NoriRootView: View {
                 morePath = []
             }
         case .apps:
-            isActivitySheetPresented = false
             presentedDocument = nil
             selectedTab = .more
             morePath = [.apps]
         case .memory:
-            isActivitySheetPresented = false
             presentedDocument = nil
             selectedTab = .more
             morePath = [.memory]
         case .library:
-            isActivitySheetPresented = false
             presentedDocument = nil
             selectedTab = .work
             workPath = []
             workTabFilter = .artifacts
         case .document(let itemID):
-            isActivitySheetPresented = false
             presentedDocument = DocumentPresentation(id: itemID)
         case .routines:
-            isActivitySheetPresented = false
             presentedDocument = nil
             selectedTab = .work
             workPath = []
             workTabFilter = .routines
         case .goals:
-            isActivitySheetPresented = false
             presentedDocument = nil
             selectedTab = .work
             workPath = []
             workTabFilter = .goals
         case .settings:
-            isActivitySheetPresented = false
             presentedDocument = nil
             selectedTab = .more
             morePath = []
         case .onboarding:
-            isActivitySheetPresented = false
             presentedDocument = nil
             store.isShowingOnboardingReplay = true
         case .workDetail(let taskID):
             openWorkTask(taskID)
         case .activitySheet:
-            presentedDocument = nil
-            isActivitySheetPresented = true
+            jumpToNeedsYou()
         case .oauthCallback:
             break
         }

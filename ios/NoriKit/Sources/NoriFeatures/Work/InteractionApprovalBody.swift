@@ -13,6 +13,55 @@ struct InteractionApprovalBody: View {
     let onDecline: () -> Void
 
     var body: some View {
+        if payload.isScheduleCreation {
+            routineApprovalBody
+        } else {
+            standardApprovalBody
+        }
+    }
+
+    private var routineApprovalBody: some View {
+        let lines = payload.summary
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let detail = lines.count > 1 ? lines.dropFirst().joined(separator: " · ") : ""
+        let automatic = payload.effect == .sensitiveSend
+        let metaLine = [detail, automatic ? "Runs automatically" : ""]
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+
+        return VStack(alignment: .leading, spacing: 12) {
+            if !metaLine.isEmpty {
+                Text(metaLine)
+                    .font(.system(size: 13.5))
+                    .foregroundStyle(NoriColors.ink2)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    onApprove(false)
+                } label: {
+                    Text(submittingAction == "approve_once" ? "Creating…" : "Create")
+                }
+                .buttonStyle(NoriButtonStyle(.primary, fullWidth: true, compact: compact))
+                .disabled(isSubmitting)
+
+                Button {
+                    onDecline()
+                } label: {
+                    Text(submittingAction == "decline" ? "Cancelling…" : "Cancel")
+                }
+                .buttonStyle(NoriButtonStyle(.neutral, fullWidth: true, compact: compact))
+                .disabled(isSubmitting)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var standardApprovalBody: some View {
         let isSensitiveSend = payload.effect == .sensitiveSend
         let parsed = parseApprovalSummary(payload)
         let warning = payload.displayWarning

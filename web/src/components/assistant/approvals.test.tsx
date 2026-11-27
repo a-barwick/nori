@@ -309,7 +309,7 @@ describe("InteractionCard and inline chat stream rendering", () => {
     assert.ok(html.includes("  Full message\nwith spacing.  "));
   });
 
-  test("renders 3-button approval card with warning callout, expiry indicator, and task link", () => {
+  test("renders 3-button approval card with warning callout and expiry indicator without raw task link", () => {
     const interaction = makeApprovalInteraction();
     const html = renderToStaticMarkup(
       <AssistantProvider localMode>
@@ -323,7 +323,7 @@ describe("InteractionCard and inline chat stream rendering", () => {
     assert.match(html, /data-approval-warning/);
     assert.match(html, /This email goes to an external recipient and cannot be unsent\./);
     assert.match(html, /Expires in 30 minutes/);
-    assert.match(html, /Send project update/);
+    assert.equal(html.includes("/work/task_send_1"), false);
   });
 
   test("omits warning callout when payload.warning is absent", () => {

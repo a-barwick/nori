@@ -120,7 +120,7 @@ func originOf(run state.Run) workOrigin {
 
 func (a *Assistant) item(ctx context.Context, run state.Run, ops []state.OperationRecord, pending []string, results []string) workItem {
 	item := workItem{
-		TaskID: run.ID, Title: clip(run.Request, 200), Status: string(run.Status), InstructionRevision: run.Revision,
+		TaskID: run.ID, Title: state.TaskTitle(run), Status: string(run.Status), InstructionRevision: run.Revision,
 		Origin: originOf(run), InteractionIDs: pending, Progress: run.Progress, ResultIDs: results,
 		ParentTaskID: run.ParentID, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt, CancelRequested: run.CancelRequested,
 	}
@@ -139,7 +139,7 @@ func (a *Assistant) item(ctx context.Context, run state.Run, ops []state.Operati
 			previous = earlier
 		}
 		if err == nil {
-			title := clip(previous.Request, 190)
+			title := state.TaskTitle(previous)
 			if previous.Origin != nil && previous.Origin.AutomationID != "" && a.Scheduler != nil {
 				if automation, err := a.Scheduler.Get(ctx, previous.Origin.AutomationID); err == nil {
 					title = automation.Title
@@ -324,7 +324,7 @@ func (a *Assistant) projectOperations(ctx context.Context, run state.Run, ops []
 	}
 	out := make([]operationProjection, 0, len(ops))
 	for _, op := range ops {
-		p := operationProjection{OperationRecord: op, Owner: operationOwner{Type: "task", ID: run.ID}, TaskTitle: clip(run.Request, 200)}
+		p := operationProjection{OperationRecord: op, Owner: operationOwner{Type: "task", ID: run.ID}, TaskTitle: state.TaskTitle(run)}
 		if op.Action != nil && op.Action.Text != "" {
 			p.ActionSummary = op.Action.Text
 		} else if op.Name == "web_search" {

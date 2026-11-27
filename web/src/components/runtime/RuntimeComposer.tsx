@@ -58,6 +58,7 @@ export function RuntimeComposer({
 }) {
   const [notice, setNotice] = useState("");
   const [dragging, setDragging] = useState(false);
+  const [replyLabel, setReplyLabel] = useState("");
   const take = (picked: File[]) => {
     const ok = picked.filter((file) => accepted(file, accept));
     const refused = picked.filter((file) => !accepted(file, accept));
@@ -75,9 +76,12 @@ export function RuntimeComposer({
   useEffect(() => {
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
-    if (url.searchParams.get("compose") !== "1") return;
-    stripSearchParams(["compose"]);
+    const compose = url.searchParams.get("compose") === "1";
+    const replyTitle = url.searchParams.get("reply_title")?.trim() ?? "";
+    if (!compose && !replyTitle) return;
+    stripSearchParams(["compose", "reply_title"]);
     requestAnimationFrame(() => {
+      if (replyTitle) setReplyLabel(replyTitle);
       const el = area.current;
       if (!el) return;
       el.focus();
@@ -115,10 +119,26 @@ export function RuntimeComposer({
             {unread} new <ArrowDown size={14} aria-hidden />
           </button>
         )}
+        {replyLabel && (
+          <div className="mb-1.5 flex items-center justify-between px-3 text-caption font-semibold text-accent-text">
+            <span className="truncate">{replyLabel}</span>
+            <button
+              type="button"
+              aria-label="Clear reply context"
+              onClick={() => setReplyLabel("")}
+              className="ml-2 text-ink-3 hover:text-ink"
+            >
+              <X size={13} aria-hidden />
+            </button>
+          </div>
+        )}
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (canSend) onSend();
+            if (canSend) {
+              setReplyLabel("");
+              onSend();
+            }
           }}
           onDragOver={(e) => {
             if (disabled || !e.dataTransfer.types.includes("Files")) return;
@@ -213,7 +233,10 @@ export function RuntimeComposer({
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();
-                  if (canSend) onSend();
+                  if (canSend) {
+                    setReplyLabel("");
+                    onSend();
+                  }
                 }
               }}
               placeholder="Ask Nori anything…"

@@ -6,6 +6,7 @@ import { useMemo, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
 import { NoriMark } from "@/components/mark/NoriMark";
 import { relative } from "@/lib/assistant/format";
+import { isActionableInteraction } from "@/lib/assistant/interactions";
 import { usePendingInteractions, useWork } from "@/lib/assistant/sources";
 import type { Interaction, WorkItem } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
@@ -65,15 +66,53 @@ export function WorkScreen() {
 
   const items = useMemo(() => work.items ?? [], [work.items]);
   const pendingInteractions = useMemo(() => pending.items ?? [], [pending.items]);
-  const pendingTaskIDs = useMemo(() => new Set(pendingInteractions.map((i) => i.task_id).filter(Boolean)), [pendingInteractions]);
-
-  const orphanPendingTasks = useMemo(
-    () => items.filter((item) => item.bucket === "needs_you" && !pendingTaskIDs.has(item.task_id)),
-    [items, pendingTaskIDs],
+  const actionableInteractions = useMemo(
+    () => pendingInteractions.filter(isActionableInteraction),
+    [pendingInteractions],
   );
+  const chatWaitingQuestions = useMemo(
+    () => pendingInteractions.filter((i) => !isActionableInteraction(i)),
+    [pendingInteractions],
+  );
+  const actionableTaskIDs = useMemo(
+    () => new Set(actionableInteractions.map((i) => i.task_id).filter(Boolean)),
+    [actionableInteractions],
+  );
+  const chatWaitingTaskIDs = useMemo(
+    () => new Set(chatWaitingQuestions.map((i) => i.task_id).filter(Boolean)),
+    [chatWaitingQuestions],
+  );
+
+  const waitingInChatTasks = useMemo(() => {
+    const byTaskID = new Map<string, { taskId?: string; title: string }>();
+    for (const q of chatWaitingQuestions) {
+      const workItem = q.task_id ? items.find((item) => item.task_id === q.task_id) : undefined;
+      const key = q.task_id || q.id;
+      if (!byTaskID.has(key)) {
+        byTaskID.set(key, {
+          taskId: q.task_id,
+          title: workItem?.title || q.task_title || "Waiting in Chat",
+        });
+      }
+    }
+    for (const item of items) {
+      if (item.bucket === "needs_you" && !actionableTaskIDs.has(item.task_id) && !byTaskID.has(item.task_id)) {
+        byTaskID.set(item.task_id, { taskId: item.task_id, title: item.title });
+      }
+    }
+    return [...byTaskID.values()];
+  }, [actionableTaskIDs, chatWaitingQuestions, items]);
+
   const runningTasks = useMemo(
-    () => items.filter((item) => item.status === "running" && item.bucket !== "needs_you" && !pendingTaskIDs.has(item.task_id)),
-    [items, pendingTaskIDs],
+    () =>
+      items.filter(
+        (item) =>
+          item.status === "running" &&
+          item.bucket !== "needs_you" &&
+          !actionableTaskIDs.has(item.task_id) &&
+          !chatWaitingTaskIDs.has(item.task_id),
+      ),
+    [actionableTaskIDs, chatWaitingTaskIDs, items],
   );
   const finishedTasks = useMemo(
     () =>
@@ -83,7 +122,7 @@ export function WorkScreen() {
     [items],
   );
 
-  const pendingTotal = pendingInteractions.length + orphanPendingTasks.length;
+  const actionableTotal = actionableInteractions.length;
 
   return (
     <Screen
@@ -95,7 +134,7 @@ export function WorkScreen() {
           value={tab}
           onChange={selectTab}
           items={[
-            { id: "tasks", label: "Tasks", count: pendingTotal || undefined },
+            { id: "tasks", label: "Tasks", count: actionableTotal || undefined },
             { id: "artifacts", label: "Artifacts" },
             { id: "goals", label: "Goals" },
             { id: "routines", label: "Routines" },
@@ -111,8 +150,8 @@ export function WorkScreen() {
           pendingError={pending.error}
           pendingRefreshing={pending.refreshing}
           onRetryPending={() => void pending.reload()}
-          pendingInteractions={pendingInteractions}
-          orphanPendingTasks={orphanPendingTasks}
+          actionableInteractions={actionableInteractions}
+          waitingInChatTasks={waitingInChatTasks}
           runningTasks={runningTasks}
           finishedTasks={finishedTasks}
         />
@@ -131,8 +170,8 @@ function TasksHub({
   pendingError,
   pendingRefreshing,
   onRetryPending,
-  pendingInteractions,
-  orphanPendingTasks,
+  actionableInteractions,
+  waitingInChatTasks,
   runningTasks,
   finishedTasks,
 }: {
@@ -142,16 +181,17 @@ function TasksHub({
   pendingError?: unknown;
   pendingRefreshing: boolean;
   onRetryPending: () => void;
-  pendingInteractions: Interaction[];
-  orphanPendingTasks: WorkItem[];
+  actionableInteractions: Interaction[];
+  waitingInChatTasks: { taskId?: string; title: string }[];
   runningTasks: WorkItem[];
   finishedTasks: WorkItem[];
 }) {
   const [showAllRecent, setShowAllRecent] = useState(false);
-  const pendingTotal = pendingInteractions.length + orphanPendingTasks.length;
+  const actionableTotal = actionableInteractions.length;
+  const activeTotal = waitingInChatTasks.length + runningTasks.length;
   const visibleRecent = showAllRecent ? finishedTasks : finishedTasks.slice(0, 5);
 
-  if (loading && !error && !pendingError && !pendingTotal && !runningTasks.length && !finishedTasks.length) {
+  if (loading && !error && !pendingError && !actionableTotal && !activeTotal && !finishedTasks.length) {
     return <Loading />;
   }
 
@@ -160,22 +200,15 @@ function TasksHub({
       {error ? <Failure error={error} onRetry={onRetry} /> : null}
       {pendingError ? <Failure error={pendingError} onRetry={onRetryPending} /> : null}
 
-      {pendingTotal > 0 ? (
-        <Section title={`Action needed · ${pendingTotal}`}>
+      {actionableTotal > 0 ? (
+        <Section title={actionableTotal > 1 ? `Action needed · ${actionableTotal}` : "Action needed"}>
           <div className="space-y-3">
-            {pendingInteractions.map((interaction) => (
+            {actionableInteractions.map((interaction) => (
               <InteractionCard key={interaction.id} interaction={interaction} />
             ))}
-            {orphanPendingTasks.length > 0 && (
-              <Rows label="Tasks needing action">
-                {orphanPendingTasks.map((item) => (
-                  <WorkRow key={item.task_id} item={item} />
-                ))}
-              </Rows>
-            )}
           </div>
         </Section>
-      ) : !error && !pendingError && !loading && !pendingRefreshing ? (
+      ) : activeTotal === 0 && !error && !pendingError && !loading && !pendingRefreshing ? (
         <div
           data-all-clear
           className="flex items-center gap-3 rounded-card border border-card-border bg-surface px-4 py-3"
@@ -187,14 +220,44 @@ function TasksHub({
         </div>
       ) : null}
 
-      {runningTasks.length > 0 && (
-        <Section title={runningTasks.length > 1 ? `Running · ${runningTasks.length}` : "Running"}>
-          <div className="space-y-2.5">
+      {activeTotal > 0 && (
+        <Section title="Active">
+          <Rows label="Active tasks">
+            {waitingInChatTasks.map((entry) => {
+              const replyHref =
+                waitingInChatTasks.length > 1
+                  ? `/?compose=1&reply_title=${encodeURIComponent(entry.title)}`
+                  : "/?compose=1";
+              return (
+                <div
+                  key={entry.taskId || entry.title}
+                  className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-fill-1"
+                >
+                  {entry.taskId ? (
+                    <Link href={`/work/${encodeURIComponent(entry.taskId)}`} className="min-w-0 flex-1">
+                      <span className="block truncate text-row font-semibold text-ink">{entry.title}</span>
+                      <span className="mt-0.5 block truncate text-meta text-ink-2">Waiting in Chat</span>
+                    </Link>
+                  ) : (
+                    <div className="min-w-0 flex-1">
+                      <span className="block truncate text-row font-semibold text-ink">{entry.title}</span>
+                      <span className="mt-0.5 block truncate text-meta text-ink-2">Waiting in Chat</span>
+                    </div>
+                  )}
+                  <Link
+                    href={replyHref}
+                    className="shrink-0 rounded-full bg-accent-subtle px-3 py-1 text-caption font-semibold text-accent-text transition-colors hover:bg-fill-2"
+                  >
+                    Reply
+                  </Link>
+                </div>
+              );
+            })}
             {runningTasks.map((item) => (
               <Link
                 key={item.task_id}
                 href={`/work/${encodeURIComponent(item.task_id)}`}
-                className="nori-running-card flex items-center gap-3 px-4 py-3.5 transition-colors hover:border-hairline-strong hover:bg-accent-subtle"
+                className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-fill-1"
               >
                 <span
                   className={cn(
@@ -205,7 +268,7 @@ function TasksHub({
                 />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-row font-semibold text-ink">{item.title}</span>
-                  <span className="mt-0.5 block line-clamp-2 text-meta text-ink-2">
+                  <span className="mt-0.5 block truncate text-meta text-ink-2">
                     {item.cancel_requested ? "Stopping…" : item.progress || `Started ${relative(item.started_at)}`}
                   </span>
                 </span>
@@ -215,7 +278,7 @@ function TasksHub({
                 <ChevronRight size={15} className="shrink-0 text-ink-3" aria-hidden />
               </Link>
             ))}
-          </div>
+          </Rows>
         </Section>
       )}
 

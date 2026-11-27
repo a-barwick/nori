@@ -53,6 +53,19 @@ export function formatInteractionExpiry(expiresAt?: string, now = Date.now()): s
   return `Expires ${relative(expiresAt, now)}`;
 }
 
+export function formatCompactExpiry(expiresAt?: string, now = Date.now()): string | undefined {
+  if (!expiresAt) return undefined;
+  const target = Date.parse(expiresAt);
+  if (Number.isNaN(target)) return undefined;
+  const diffMs = target - now;
+  if (diffMs <= 0) return "Expired";
+  const mins = Math.max(1, Math.round(diffMs / 60_000));
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
 function isInteractionResource(value: unknown): value is Interaction {
   return !!value && typeof value === "object" && typeof (value as { id?: unknown }).id === "string" && typeof (value as { status?: unknown }).status === "string";
 }
@@ -159,10 +172,14 @@ function interactionTimestamp(interaction: Interaction): number {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
+export function isActionableInteraction(interaction: Interaction): boolean {
+  return interaction.kind !== "question";
+}
+
 export function isChatInlineInteraction(interaction: Interaction): boolean {
   if (interaction.surface) return interaction.surface === "chat";
   if (interaction.kind !== "question") return true;
-  return interaction.payload.input !== "text";
+  return interaction.payload.input !== "text" && interaction.payload.input !== "date";
 }
 
 export function mergeInlineInteractions(

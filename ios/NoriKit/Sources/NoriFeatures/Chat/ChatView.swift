@@ -298,7 +298,13 @@ public struct ChatView: View {
             return "Nori is thinking…"
         }
         let active = activeBackgroundTasksCount
-        return "\(active) \(active == 1 ? "task" : "tasks") in progress"
+        if active == 1,
+           let single = store.workItems.first(where: { $0.status == .running && $0.bucket == .working }),
+           let progress = single.progress?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !progress.isEmpty {
+            return progress
+        }
+        return active == 1 ? "Working in the background…" : "\(active) working"
     }
 
     @ViewBuilder
@@ -706,17 +712,13 @@ private struct InlineWorkLine: View {
             HStack(spacing: 8) {
                 PulsingStatusDot(color: NoriColors.brandPrimary, size: 7, animated: true)
                 Text(label)
-                    .font(.system(size: 12.5, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(NoriColors.ink2)
                     .lineLimit(1)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(NoriColors.surface, in: Capsule())
-            .overlay(
-                Capsule()
-                    .strokeBorder(NoriColors.hairline, lineWidth: 1)
-            )
+            .padding(.leading, 36)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }

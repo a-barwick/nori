@@ -661,9 +661,10 @@ func (a *Assistant) searchHits(ctx context.Context, q string) ([]searchHit, erro
 	}
 	if runs, err := a.Store.RecentRuns(ctx, 200); err == nil {
 		for _, run := range runs {
-			if s, snippet := score(words, clip(run.Request, 200), run.Request, run.Result); s > 0 {
+			title := state.TaskTitle(run)
+			if s, snippet := score(words, title, run.Request, run.Result); s > 0 {
 				started := run.StartedAt
-				hits = append(hits, searchHit{Kind: "task", ID: run.ID, Title: clip(run.Request, 120), Snippet: snippet, Score: s,
+				hits = append(hits, searchHit{Kind: "task", ID: run.ID, Title: title, Snippet: snippet, Score: s,
 					Jump: &searchJump{Kind: "task", TaskID: run.ID}, Freshness: &started})
 			}
 		}

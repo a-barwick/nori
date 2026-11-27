@@ -91,9 +91,13 @@ export function BubbleUnit({
       onPointerUp={cancelLongPress}
       onPointerCancel={cancelLongPress}
     >
-      {!mine && showAvatar && (
-        <span className="mt-2.5 mr-3 w-7 shrink-0" data-active-avatar="true">
-          <NoriMark size={28} state={markState} />
+      {!mine && (
+        <span
+          className="mt-2.5 mr-3 w-7 shrink-0"
+          data-active-avatar={showAvatar ? "true" : undefined}
+          aria-hidden={!showAvatar || undefined}
+        >
+          {showAvatar ? <NoriMark size={26} state={markState} /> : null}
         </span>
       )}
       {standaloneCard ? (
@@ -101,33 +105,34 @@ export function BubbleUnit({
           <Parts parts={unit.item.parts!} />
         </div>
       ) : (
-        <div className="relative min-w-0">
+        <div className={cn("min-w-0", mine ? "flex flex-col items-end" : "flex-1")}>
           <div
             className={cn(
-              "min-w-0 px-4 py-2.5",
+              "min-w-0",
               mine
-                ? "bg-accent text-on-accent"
-                : "bg-bubble text-ink",
+                ? "bg-accent px-4 py-2.5 text-on-accent"
+                : "bg-bubble px-0 py-1.5 text-ink",
             )}
-            style={{ borderRadius: corners(sender, pos) }}
+            style={mine ? { borderRadius: corners(sender, pos) } : undefined}
           >
             {unit.markdown && <Markdown onAccent={mine}>{unit.markdown}</Markdown>}
             {unit.item.parts && <Parts parts={unit.item.parts} />}
           </div>
           {copyText && (
-            <button
-              type="button"
-              onClick={triggerCopy}
-              aria-label={copied ? "Copied message" : "Copy message"}
-              className={cn(
-                "t-fast absolute -top-2 inline-flex h-6 items-center gap-1 rounded-full border border-hairline bg-surface px-2 text-[11px] font-semibold text-ink-2 shadow-pill transition-opacity hover:text-ink focus-visible:opacity-100",
-                mine ? "-left-2" : "-right-2",
-                copied ? "opacity-100 text-accent-text" : "opacity-0 group-hover/msg:opacity-100",
-              )}
-            >
-              {copied ? <Check size={11} strokeWidth={2.2} aria-hidden /> : <Copy size={11} strokeWidth={1.8} aria-hidden />}
-              <span>{copied ? "Copied" : "Copy"}</span>
-            </button>
+            <div className={cn("mt-0.5 flex", mine ? "justify-end" : "justify-start")}>
+              <button
+                type="button"
+                onClick={triggerCopy}
+                aria-label={copied ? "Copied message" : "Copy message"}
+                title={copied ? "Copied" : "Copy"}
+                className={cn(
+                  "t-fast -ml-1.5 inline-flex size-6 items-center justify-center rounded-md text-ink-3 transition-opacity hover:bg-fill-1 hover:text-ink focus-visible:opacity-100",
+                  copied ? "opacity-100 text-accent-text" : "opacity-0 group-hover/msg:opacity-100",
+                )}
+              >
+                {copied ? <Check size={13} strokeWidth={2.2} aria-hidden /> : <Copy size={13} strokeWidth={1.8} aria-hidden />}
+              </button>
+            </div>
           )}
         </div>
       )}

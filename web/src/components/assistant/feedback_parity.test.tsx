@@ -176,8 +176,11 @@ describe("Fix 1 & 3 (Web): Inline Reminder Confirmation Card and Schedule Confir
       </AssistantProvider>,
     );
 
-    assert.match(html, /Create this routine\?/);
     assert.match(html, /Daily standup prep/);
+    assert.match(html, />Create</);
+    assert.match(html, />Cancel</);
+    assert.equal(html.includes("Allow once"), false);
+    assert.equal(html.includes("Always allow"), false);
     assert.equal(html.includes("This modifies external records"), false);
     assert.equal(html.includes("data-approval-warning"), false);
     assert.equal(html.includes("nori/assistant/automation-create"), false);

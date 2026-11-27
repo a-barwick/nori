@@ -26,39 +26,36 @@ struct InteractionSignInBody: View {
         let safeURL = payload.authorizeURL.flatMap { Self.safeAuthorizeURL($0) }
         let blockedUnsafeURL = payload.integrationID != "google" && payload.authorizeURL != nil && safeURL == nil
 
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "key.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(NoriColors.accent)
-                    .frame(width: 30, height: 30)
-                    .background(NoriColors.accentSubtle, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(displayTitle)
-                        .font(.system(size: 13.5, weight: .semibold))
-                        .foregroundStyle(NoriColors.ink)
-                    if let accountLabel = connection?.account?.label {
-                        Text(accountLabel)
-                            .font(.system(size: 12))
-                            .foregroundStyle(NoriColors.ink2)
-                    } else if isMCP {
-                        Text("OAuth sign-in via ASWebAuthenticationSession")
-                            .font(.system(size: 12))
-                            .foregroundStyle(NoriColors.ink2)
-                    }
+        let purposeText: String = {
+            if let accountLabel = connection?.account?.label, !accountLabel.isEmpty {
+                return "Reconnect \(accountLabel)."
+            }
+            if payload.integrationID == "google" {
+                let scopes = payload.requestedScopes ?? []
+                if scopes.contains(where: { $0.hasSuffix("/drive.file") }) {
+                    return "To access your selected Drive files."
+                }
+                if scopes.contains(where: { $0.contains("/calendar") }) {
+                    return "To read your calendar."
+                }
+                if scopes.contains(where: { $0.hasSuffix("/gmail.send") }) {
+                    return "To send email for you."
                 }
             }
+            return "To use \(displayTitle) for this request."
+        }()
+
+        VStack(alignment: .leading, spacing: 10) {
+            Text(purposeText)
+                .font(.system(size: 13.5))
+                .foregroundStyle(NoriColors.ink2)
+                .fixedSize(horizontal: false, vertical: true)
 
             if payload.integrationID == "google" {
                 Text(googleDisclosure(for: payload.requestedScopes ?? []))
-                    .font(.system(size: 12))
-                    .foregroundStyle(NoriColors.ink2)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(NoriColors.ink3)
                     .fixedSize(horizontal: false, vertical: true)
-            } else if let scopes = payload.requestedScopes, !scopes.isEmpty {
-                Text("Will request: \(scopes.joined(separator: ", "))")
-                    .font(.system(size: 12))
-                    .foregroundStyle(NoriColors.ink2)
             }
 
             if blockedUnsafeURL {

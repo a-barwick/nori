@@ -121,6 +121,36 @@ func TestFreeTextRequestInputWakesOuterLoopWithoutOpeningCard(t *testing.T) {
 	}
 }
 
+func TestDateRequestInputWakesOuterLoopInsteadOfOpeningDatePickerCard(t *testing.T) {
+	ctx := context.Background()
+	f := newRunnerFixture(t, func(_ context.Context, callNum int, _ agent.Request) (agent.Response, error) {
+		if callNum == 1 {
+			return toolCallResponse("c-ask-date", "request_input", map[string]any{
+				"question": "Does 7pm tonight work?",
+				"input":    "date",
+				"options":  []any{},
+			}, 0.02), nil
+		}
+		return toolCallResponse("c-done", "complete", map[string]any{
+			"answer": "Done.", "evidence": []any{}, "unmet": []any{},
+		}, 0.02), nil
+	})
+
+	run := f.startTask(ctx, "run-date-ask", "Remind me to check on Nova")
+	outcome, err := f.claimAndRun(ctx, run.ID, "worker-ask-date-1")
+	if err != nil || outcome != task.OutcomeParked {
+		t.Fatalf("claimAndRun = (%s, %v), want (parked, nil)", outcome, err)
+	}
+	pending, _, err := f.perms.Interactions(ctx, "pending", run.ID, "", 10)
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("expected 0 pending cards for date question, got (%+v, %v)", pending, err)
+	}
+	_, turn, err := f.store.AcquireConversation(ctx, "outer-worker", "turn-date-check")
+	if err != nil || turn == nil {
+		t.Fatalf("expected outer conversation wake for date question, got (%+v, %v)", turn, err)
+	}
+}
+
 func TestGoalCreateInvalidDeadlineDoesNotTriggerUncertainWriteLockout(t *testing.T) {
 	ctx := context.Background()
 	f := newRunnerFixture(t, func(_ context.Context, callNum int, _ agent.Request) (agent.Response, error) {

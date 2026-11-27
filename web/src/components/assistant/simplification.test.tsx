@@ -88,10 +88,11 @@ describe("Web UI simplification pass & design system parity", () => {
     const idleActiveMatches = idleHtml.match(/data-active-avatar="true"/g) ?? [];
     assert.equal(idleActiveMatches.length, 1);
     assert.ok(idleHtml.indexOf('data-item-id="m3"') < idleHtml.indexOf('data-active-avatar="true"'));
-    // Avatar-less Nori message (m1) sits flush left with no empty w-7 avatar gutter
+    // Older Nori message (m1) preserves the w-7 mr-3 alignment spacer so prose stays vertically aligned
     const m1End = idleHtml.indexOf('data-item-id="m2"');
     const m1Slice = idleHtml.slice(idleHtml.indexOf('data-item-id="m1"'), m1End);
-    assert.equal(m1Slice.includes("w-7 shrink-0"), false);
+    assert.equal(m1Slice.includes("w-7 shrink-0"), true);
+    assert.equal(m1Slice.includes('data-active-avatar="true"'), false);
     // Both user and Nori messages support copy
     assert.equal((idleHtml.match(/data-copy-message="true"/g) ?? []).length, 3);
 

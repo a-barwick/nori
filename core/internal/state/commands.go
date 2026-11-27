@@ -46,6 +46,7 @@ type Command struct {
 	RunID          string          `json:"run_id" firestore:"run_id"`
 	ParentID       string          `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
 	Kind           CommandKind     `json:"kind" firestore:"kind"`
+	Title          string          `json:"title,omitempty" firestore:"title,omitempty"`
 	Text           string          `json:"text" firestore:"text"`
 	Position       int64           `json:"position" firestore:"position"`
 	Revision       int64           `json:"revision" firestore:"revision"`
@@ -69,7 +70,7 @@ const (
 )
 
 func SameCommand(a, b Command) bool {
-	return a.RunID == b.RunID && a.Kind == b.Kind && a.Text == b.Text && a.QuestionID == b.QuestionID &&
+	return a.RunID == b.RunID && a.Kind == b.Kind && a.Title == b.Title && a.Text == b.Text && a.QuestionID == b.QuestionID &&
 		a.Interrupt == b.Interrupt && a.ParentID == b.ParentID && slices.Equal(a.SourceInputIDs, b.SourceInputIDs) &&
 		slices.Equal(a.Attachments, b.Attachments) && a.Revises == b.Revises && sameOrigin(a.Origin, b.Origin) &&
 		a.BudgetUSD == b.BudgetUSD && ModelSelectionEqual(a.ModelSelection, b.ModelSelection)
@@ -282,7 +283,7 @@ func (p *commandPrep) start(cmd Command) (Run, error) {
 		return Run{}, fmt.Errorf("%w: start needs a task request", ErrCommandInvalid)
 	}
 	run := Run{
-		ID: cmd.RunID, Request: cmd.Text, Status: RunRunning,
+		ID: cmd.RunID, Title: strings.TrimSpace(cmd.Title), Request: cmd.Text, Status: RunRunning,
 		StartedAt: p.now, Budget: p.taskBudgetUSD, Events: []Event{}, Artifacts: []Artifact{},
 		TraceContext: p.traceContext, OriginTraceContext: p.traceContext, Revises: cmd.Revises, Origin: cmd.Origin,
 		ModelSelection: cmd.ModelSelection.Clone(),
