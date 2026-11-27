@@ -41,6 +41,10 @@ export function resetComputer(): Promise<ComputerStatus> {
   return sendComputerJSON<ComputerStatus>("/computer/reset", "POST");
 }
 
+export function listComputerCheckpoints(): Promise<ComputerCheckpoint[]> {
+  return getJSON<ComputerCheckpoint[]>("/computer/checkpoints");
+}
+
 export function createComputerCheckpoint(label?: string): Promise<ComputerCheckpoint> {
   return sendComputerJSON<ComputerCheckpoint>("/computer/checkpoints", "POST", label ? { label } : {});
 }

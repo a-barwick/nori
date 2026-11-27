@@ -10,6 +10,7 @@ public struct ComputerView: View {
     @State private var showingDesktop = false
     @State private var desktopInitialMode: ComputerSessionMode = .control
     @State private var checkpointLabel = ""
+    @State private var loadedCheckpoints: [ComputerCheckpoint]?
     @State private var showingResetConfirm = false
     @State private var errorMessage: String?
 
@@ -19,6 +20,10 @@ public struct ComputerView: View {
 
     private var status: ComputerStatus? {
         store.computerStatus
+    }
+
+    private var checkpointsOnDemand: Bool {
+        status?.provider == "sprites"
     }
 
     private var stateTone: NoriTone {
@@ -89,7 +94,10 @@ public struct ComputerView: View {
             titleVisibility: .visible
         ) {
             Button("Reset Computer", role: .destructive) {
-                performAction { _ = try await store.resetComputer() }
+                performAction {
+                    _ = try await store.resetComputer()
+                    loadedCheckpoints = nil
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -123,25 +131,30 @@ public struct ComputerView: View {
                 }
 
                 if let status, status.diskMaxBytes > 0 {
+                    let diskUsageKnown = status.diskUsedBytes >= 0
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
-                            Text("Storage")
+                            Text(diskUsageKnown ? "Storage" : "Storage limit")
                                 .font(.system(size: 12.5))
                                 .foregroundStyle(NoriColors.ink2)
                             Spacer()
-                            Text("\(formatBytes(status.diskUsedBytes)) / \(formatBytes(status.diskMaxBytes))")
+                            Text(diskUsageKnown
+                                ? "\(formatBytes(status.diskUsedBytes)) / \(formatBytes(status.diskMaxBytes))"
+                                : formatBytes(status.diskMaxBytes))
                                 .font(.system(size: 12.5, design: .monospaced))
                                 .foregroundStyle(NoriColors.ink2)
                         }
-                        GeometryReader { geo in
-                            ZStack(alignment: .leading) {
-                                Capsule().fill(NoriColors.hairline)
-                                Capsule()
-                                    .fill(NoriColors.accent)
-                                    .frame(width: max(4, geo.size.width * status.diskUsageRatio))
+                        if diskUsageKnown {
+                            GeometryReader { geo in
+                                ZStack(alignment: .leading) {
+                                    Capsule().fill(NoriColors.hairline)
+                                    Capsule()
+                                        .fill(NoriColors.accent)
+                                        .frame(width: max(4, geo.size.width * status.diskUsageRatio))
+                                }
                             }
+                            .frame(height: 6)
                         }
-                        .frame(height: 6)
                     }
                 }
 
@@ -178,7 +191,7 @@ public struct ComputerView: View {
     }
 
     private var checkpointsCard: some View {
-        let checkpoints = status?.checkpoints ?? []
+        let checkpoints = checkpointsOnDemand ? loadedCheckpoints : status?.checkpoints ?? []
         return NoriCard(padding: 14) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
@@ -196,7 +209,8 @@ public struct ComputerView: View {
                     Button("Save") {
                         let label = checkpointLabel.trimmingCharacters(in: .whitespacesAndNewlines)
                         performAction {
-                            _ = try await store.createComputerCheckpoint(label: label.isEmpty ? nil : label)
+                            let saved = try await store.createComputerCheckpoint(label: label.isEmpty ? nil : label)
+                            if checkpointsOnDemand { loadedCheckpoints = (loadedCheckpoints ?? []) + [saved] }
                             checkpointLabel = ""
                         }
                     }
@@ -204,38 +218,54 @@ public struct ComputerView: View {
                     .disabled(isBusy)
                 }
 
-                if checkpoints.isEmpty {
-                    Text("No saved checkpoints yet. Save one before installing major tools or changing setup.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(NoriColors.ink2)
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach(Array(checkpoints.enumerated()), id: \.element.id) { idx, ckpt in
-                            HStack(spacing: 10) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(ckpt.label?.isEmpty == false ? ckpt.label! : ckpt.id)
-                                        .font(.system(size: 14, weight: .medium))
-                                        .foregroundStyle(NoriColors.ink)
-                                    if let createdAt = ckpt.createdAt, !createdAt.isEmpty {
-                                        Text(NoriDateFormatting.shortDateTime(createdAt))
-                                            .font(.system(size: 12))
-                                            .foregroundStyle(NoriColors.ink3)
-                                    }
-                                }
-                                Spacer()
-                                Button("Restore") {
-                                    performAction {
-                                        _ = try await store.restoreComputerCheckpoint(checkpointID: ckpt.id)
-                                    }
-                                }
-                                .buttonStyle(NoriButtonStyle(.neutral, compact: true))
-                                .disabled(isBusy)
-                            }
-                            .padding(.vertical, 8)
-                            if idx < checkpoints.count - 1 {
-                                Rectangle().fill(NoriColors.hairline).frame(height: 1)
+                if checkpointsOnDemand {
+                    Button(checkpoints == nil ? "Load checkpoints" : "Refresh checkpoints") {
+                        performAction { loadedCheckpoints = try await store.listComputerCheckpoints() }
+                    }
+                    .buttonStyle(NoriButtonStyle(.neutral, compact: true))
+                    .disabled(isBusy || status?.status == .notProvisioned)
+                }
+
+                if let checkpoints {
+                    checkpointRows(checkpoints)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func checkpointRows(_ checkpoints: [ComputerCheckpoint]) -> some View {
+        if checkpoints.isEmpty {
+            Text("No saved checkpoints yet. Save one before installing major tools or changing setup.")
+                .font(.system(size: 13))
+                .foregroundStyle(NoriColors.ink2)
+        } else {
+            VStack(spacing: 0) {
+                ForEach(Array(checkpoints.enumerated()), id: \.element.id) { idx, ckpt in
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(ckpt.label?.isEmpty == false ? ckpt.label! : ckpt.id)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(NoriColors.ink)
+                            if let createdAt = ckpt.createdAt, !createdAt.isEmpty {
+                                Text(NoriDateFormatting.shortDateTime(createdAt))
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(NoriColors.ink3)
                             }
                         }
+                        Spacer()
+                        Button("Restore") {
+                            performAction {
+                                _ = try await store.restoreComputerCheckpoint(checkpointID: ckpt.id)
+                                loadedCheckpoints = nil
+                            }
+                        }
+                        .buttonStyle(NoriButtonStyle(.neutral, compact: true))
+                        .disabled(isBusy)
+                    }
+                    .padding(.vertical, 8)
+                    if idx < checkpoints.count - 1 {
+                        Rectangle().fill(NoriColors.hairline).frame(height: 1)
                     }
                 }
             }

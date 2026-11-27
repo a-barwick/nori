@@ -316,6 +316,7 @@ public protocol NoriTransport: Sendable {
     func wakeComputer() async throws -> ComputerStatus
     func sleepComputer() async throws
     func resetComputer() async throws -> ComputerStatus
+    func listComputerCheckpoints() async throws -> [ComputerCheckpoint]
     func createComputerCheckpoint(label: String?) async throws -> ComputerCheckpoint
     func restoreComputerCheckpoint(checkpointID: String?) async throws -> ComputerStatus
     func createComputerSession(_ request: CreateComputerSessionRequest) async throws -> CreateComputerSessionResponse
@@ -573,6 +574,10 @@ public extension NoriTransport {
 
     func resetComputer() async throws -> ComputerStatus {
         throw NoriAPIError(message: "Nori Computer is not supported by this transport.")
+    }
+
+    func listComputerCheckpoints() async throws -> [ComputerCheckpoint] {
+        try await fetchComputerStatus().checkpoints
     }
 
     func createComputerCheckpoint(label: String?) async throws -> ComputerCheckpoint {

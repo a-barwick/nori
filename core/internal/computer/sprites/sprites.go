@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"path"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -66,7 +65,9 @@ func New(cfg Config) (*Provider, error) {
 	if cfg.StorageGB <= 0 {
 		cfg.StorageGB = computer.DefaultMaxDiskGB
 	}
-	var opts []sdk.Option
+	// The SDK eagerly opens a control WebSocket for each new Sprite handle.
+	// Direct requests avoid leaving those sockets open after guest activity ends.
+	opts := []sdk.Option{sdk.WithDisableControl()}
 	if cfg.BaseURL != "" {
 		opts = append(opts, sdk.WithBaseURL(cfg.BaseURL))
 	}
@@ -239,39 +240,36 @@ func (p *Provider) Status(ctx context.Context, providerID string) (computer.Inst
 		}
 		return computer.InstanceStatus{}, err
 	}
-	status := mapSpriteStatus(sp.Status)
+	// Status is polled by the clients. Keep it on the management API so
+	// polling does not extend the Sprite's active lifetime.
 	out := computer.InstanceStatus{
-		Status:        status,
-		DiskUsedBytes: -1, // -1 indicates unmeasured while sleeping
+		Status:        mapSpriteStatus(sp.Status),
+		DiskUsedBytes: -1, // Fly metadata omits used storage.
 		DiskMaxBytes:  int64(p.cfg.StorageGB) << 30,
 		LastActiveAt:  sp.LastRunningAt,
 	}
 	if sp.Config != nil && sp.Config.StorageGB > 0 {
 		out.DiskMaxBytes = int64(sp.Config.StorageGB) << 30
 	}
-	if status == computer.StatusReady {
-		if duRes, dErr := p.Exec(ctx, providerID, computer.ExecRequest{
-			Command: "du -sb /home/nori 2>/dev/null | awk '{print $1}'",
-			WorkDir: computer.HomeDir,
-			Timeout: 5 * time.Second,
-		}); dErr == nil && duRes.ExitCode == 0 {
-			if n, pErr := strconv.ParseInt(strings.TrimSpace(duRes.Stdout), 10, 64); pErr == nil && n >= 0 {
-				out.DiskUsedBytes = n
-			}
-		}
+	return out, nil
+}
+
+// ListCheckpoints may wake a Sprite, so only call it for an explicit checkpoint action.
+func (p *Provider) ListCheckpoints(ctx context.Context, providerID string) ([]computer.CheckpointInfo, error) {
+	ckpts, err := p.client.ListCheckpoints(ctx, providerID, "")
+	if err != nil {
+		return nil, err
 	}
-	if ckpts, cErr := p.client.ListCheckpoints(ctx, providerID, ""); cErr == nil {
-		out.Checkpoints = make([]computer.CheckpointInfo, 0, len(ckpts))
-		for _, c := range ckpts {
-			if !restorableCheckpoint(c.ID) {
-				continue
-			}
-			out.Checkpoints = append(out.Checkpoints, computer.CheckpointInfo{
-				ID:        c.ID,
-				Label:     c.Comment,
-				CreatedAt: c.CreateTime,
-			})
+	out := make([]computer.CheckpointInfo, 0, len(ckpts))
+	for _, c := range ckpts {
+		if !restorableCheckpoint(c.ID) {
+			continue
 		}
+		out = append(out, computer.CheckpointInfo{
+			ID:        c.ID,
+			Label:     c.Comment,
+			CreatedAt: c.CreateTime,
+		})
 	}
 	return out, nil
 }

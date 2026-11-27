@@ -1402,7 +1402,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get personal computer status, disk usage, checkpoints, and active desktop sessions */
+        /** Get personal computer status, storage metadata, and active desktop sessions */
         get: operations["getComputerStatus"];
         put?: never;
         post?: never;
@@ -1470,7 +1470,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List the user's saved computer checkpoints
+         * @description This operation may wake the computer. Use it for an explicit checkpoint request.
+         */
+        get: operations["listComputerCheckpoints"];
         put?: never;
         /** Create a point-in-time checkpoint of the user's personal computer */
         post: operations["createComputerCheckpoint"];
@@ -5849,6 +5853,28 @@ export interface operations {
                     "application/json": components["schemas"]["ComputerStatus"];
                 };
             };
+            503: components["responses"]["ErrorResponse"];
+        };
+    };
+    listComputerCheckpoints: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Saved checkpoints */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComputerCheckpoint"][];
+                };
+            };
+            502: components["responses"]["ErrorResponse"];
             503: components["responses"]["ErrorResponse"];
         };
     };

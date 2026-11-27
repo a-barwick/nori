@@ -34,6 +34,9 @@ func TestSpritesProviderEnsurePolicyDesktopAndDestroy(t *testing.T) {
 
 		path := r.URL.Path
 		switch {
+		case strings.HasSuffix(path, "/control"):
+			t.Error("provider opened a pooled Sprite control socket")
+			http.NotFound(w, r)
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/fs/read"):
 			_, _ = w.Write([]byte(strings.Repeat("A", 43)))
 		case r.Method == http.MethodGet && strings.HasPrefix(path, "/v1/sprites/nori-cmp-1") && !strings.Contains(path, "/checkpoints"):
@@ -129,6 +132,13 @@ func TestSpritesProviderEnsurePolicyDesktopAndDestroy(t *testing.T) {
 	if inst.BaselineCheckpointID != "v1" {
 		t.Fatalf("BaselineCheckpointID = %q", inst.BaselineCheckpointID)
 	}
+	checkpoints, err := p.ListCheckpoints(ctx, inst.ProviderID)
+	if err != nil {
+		t.Fatalf("ListCheckpoints: %v", err)
+	}
+	if len(checkpoints) != 1 || checkpoints[0].ID != "v1" || checkpoints[0].Label != "baseline" {
+		t.Fatalf("checkpoints = %+v, want the restorable baseline", checkpoints)
+	}
 	if urlAuth != "sprite" {
 		t.Fatalf("expected private URL auth=sprite, got %q", urlAuth)
 	}
@@ -175,5 +185,56 @@ func TestSpritesProviderEnsurePolicyDesktopAndDestroy(t *testing.T) {
 	}
 	if !destroyed {
 		t.Fatalf("expected DELETE request to be received")
+	}
+}
+
+func TestSpritesProviderStatusOnlyReadsManagementMetadata(t *testing.T) {
+	for _, tt := range []struct {
+		state string
+		want  computer.Status
+	}{
+		{state: "running", want: computer.StatusReady},
+		{state: "warm", want: computer.StatusSleeping},
+		{state: "cold", want: computer.StatusSleeping},
+	} {
+		t.Run(tt.state, func(t *testing.T) {
+			now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.Method + " " + r.URL.Path {
+				case "GET /v1/sprites/nori-test":
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"name":            "nori-test",
+						"status":          tt.state,
+						"last_running_at": now,
+						"config":          map[string]int{"storage_gb": 10},
+					})
+				default:
+					t.Errorf("status made an unexpected request: %s %s", r.Method, r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+
+			p, err := sprites.New(sprites.Config{Token: "test-token", BaseURL: srv.URL, HTTPClient: srv.Client()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer p.Close()
+
+			got, err := p.Status(t.Context(), "nori-test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Status != tt.want || got.DiskUsedBytes != -1 || got.DiskMaxBytes != 10<<30 {
+				t.Fatalf("unexpected status: %+v", got)
+			}
+			if got.LastActiveAt == nil || !got.LastActiveAt.Equal(now) {
+				t.Errorf("last activity = %v, want %v", got.LastActiveAt, now)
+			}
+			if len(got.Checkpoints) != 0 {
+				t.Errorf("status included checkpoints: %+v", got.Checkpoints)
+			}
+		})
 	}
 }

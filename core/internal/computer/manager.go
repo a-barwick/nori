@@ -644,6 +644,34 @@ func (m *Manager) Sleep(ctx context.Context, userID string) error {
 	return m.store.UpdateComputerStatus(ctx, userID, StatusSleeping, nil)
 }
 
+// ListCheckpoints reads saved checkpoints independently of the polled status.
+func (m *Manager) ListCheckpoints(ctx context.Context, userID string) ([]CheckpointInfo, error) {
+	if !m.Enabled() {
+		return nil, ErrDisabled
+	}
+	lister, ok := m.provider.(interface {
+		ListCheckpoints(context.Context, string) ([]CheckpointInfo, error)
+	})
+	if !ok {
+		view, err := m.Status(ctx, userID)
+		return view.Checkpoints, err
+	}
+	rec, err := m.store.GetComputer(ctx, userID)
+	if errors.Is(err, ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if rec.ProviderID == "" || rec.Status == StatusDeleted || rec.Status == StatusDeleting {
+		return nil, nil
+	}
+	if rec.Provider != m.provider.Name() {
+		return nil, ErrProviderMismatch
+	}
+	return lister.ListCheckpoints(ctx, rec.ProviderID)
+}
+
 // Checkpoint creates a point-in-time CoW snapshot of the user's computer.
 func (m *Manager) Checkpoint(ctx context.Context, userID, label string) (string, error) {
 	rec, err := m.Ensure(ctx, userID)

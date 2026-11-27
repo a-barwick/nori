@@ -1650,6 +1650,10 @@ public actor LiveNoriTransport: NoriTransport {
         try await sendJSON(OpenAPI.Path.computerReset, body: EmptyBody(), using: computerProvisioningSession)
     }
 
+    public func listComputerCheckpoints() async throws -> [ComputerCheckpoint] {
+        try await getJSON(OpenAPI.Path.computerCheckpoints)
+    }
+
     public func createComputerCheckpoint(label: String?) async throws -> ComputerCheckpoint {
         try await sendJSON(
             OpenAPI.Path.computerCheckpoints,

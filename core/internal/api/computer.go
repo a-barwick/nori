@@ -31,6 +31,7 @@ func (c *ComputerAPI) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/computer/wake", c.wake)
 	mux.HandleFunc("POST /v1/computer/sleep", c.sleep)
 	mux.HandleFunc("POST /v1/computer/reset", c.reset)
+	mux.HandleFunc("GET /v1/computer/checkpoints", c.listCheckpoints)
 	mux.HandleFunc("POST /v1/computer/checkpoints", optionalJSONBody(c.createCheckpoint))
 	mux.HandleFunc("POST /v1/computer/restore", optionalJSONBody(c.restore))
 	mux.HandleFunc("POST /v1/computer/sessions", optionalJSONBody(c.createSession))
@@ -193,6 +194,22 @@ func (c *ComputerAPI) reset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, formatComputerStatus(view, true))
+}
+
+func (c *ComputerAPI) listCheckpoints(w http.ResponseWriter, r *http.Request) {
+	if c == nil || c.Manager == nil || !c.Manager.Enabled() {
+		writeComputerError(w, computer.ErrDisabled)
+		return
+	}
+	checkpoints, err := c.Manager.ListCheckpoints(r.Context(), c.UserID)
+	if err != nil {
+		writeComputerError(w, err)
+		return
+	}
+	if checkpoints == nil {
+		checkpoints = []computer.CheckpointInfo{}
+	}
+	writeJSON(w, http.StatusOK, checkpoints)
 }
 
 func (c *ComputerAPI) createCheckpoint(w http.ResponseWriter, r *http.Request) {

@@ -65,6 +65,19 @@ extension NoriStore {
         }
     }
 
+    public func listComputerCheckpoints() async throws -> [ComputerCheckpoint] {
+        let generation = sessionGeneration
+        do {
+            let checkpoints = try await transport.listComputerCheckpoints()
+            guard generation == sessionGeneration, !Task.isCancelled else { throw CancellationError() }
+            return checkpoints
+        } catch {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            _ = await handleOperationError(error)
+            throw error
+        }
+    }
+
     @discardableResult
     public func createComputerCheckpoint(label: String? = nil) async throws -> ComputerCheckpoint {
         let generation = sessionGeneration

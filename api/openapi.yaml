@@ -2238,7 +2238,7 @@ paths:
     get:
       operationId: getComputerStatus
       tags: [Computer]
-      summary: Get personal computer status, disk usage, checkpoints, and active desktop sessions
+      summary: Get personal computer status, storage metadata, and active desktop sessions
       responses:
         "200":
           description: Personal computer status
@@ -2293,6 +2293,24 @@ paths:
           $ref: "#/components/responses/ErrorResponse"
 
   /v1/computer/checkpoints:
+    get:
+      operationId: listComputerCheckpoints
+      tags: [Computer]
+      summary: List the user's saved computer checkpoints
+      description: This operation may wake the computer. Use it for an explicit checkpoint request.
+      responses:
+        "200":
+          description: Saved checkpoints
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ComputerCheckpoint"
+        "502":
+          $ref: "#/components/responses/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/ErrorResponse"
     post:
       operationId: createComputerCheckpoint
       tags: [Computer]

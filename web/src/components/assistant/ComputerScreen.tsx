@@ -5,6 +5,7 @@ import { Bookmark, Monitor, Moon, Play, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import {
   createComputerCheckpoint,
+  listComputerCheckpoints,
   resetComputer,
   restoreComputerCheckpoint,
   sleepComputer,
@@ -12,7 +13,7 @@ import {
 } from "@/lib/assistant/computer";
 import { relative } from "@/lib/assistant/format";
 import { useAction, useResource, useResourceInvalidation } from "@/lib/assistant/useResource";
-import type { ComputerStatus } from "@/lib/contracts/assistant";
+import type { ComputerCheckpoint, ComputerStatus } from "@/lib/contracts/assistant";
 import { ComputerDesktopDrawer } from "./ComputerDesktopDrawer";
 import { Loading, Notice, Pill, Row, Rows, Screen, Section } from "./ui";
 
@@ -49,13 +50,24 @@ export function ComputerScreen() {
   const action = useAction();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [loadedCheckpoints, setLoadedCheckpoints] = useState<{ computerID?: string; items: ComputerCheckpoint[] }>();
+
 
   const data = status.data;
+  const checkpointsOnDemand = data?.provider === "sprites";
+  const spriteCheckpoints = loadedCheckpoints?.computerID === data?.computer_id ? loadedCheckpoints?.items : undefined;
+  const checkpoints = checkpointsOnDemand ? spriteCheckpoints : data?.checkpoints;
   const pill = data ? computerStatusPill(data.status) : { tone: "neutral" as const, label: "Loading" };
+  const diskUsageKnown = data != null && data.disk_used_bytes >= 0;
   const usedPct =
-    data && data.disk_max_bytes > 0
+    data && diskUsageKnown && data.disk_max_bytes > 0
       ? Math.min(100, Math.round((data.disk_used_bytes / data.disk_max_bytes) * 100))
       : 0;
+
+  async function loadCheckpoints() {
+    const items = await listComputerCheckpoints();
+    setLoadedCheckpoints({ computerID: data?.computer_id, items });
+  }
 
   async function runAndRefresh(label: string, fn: () => Promise<unknown>, announcement: string) {
     await action.run(
@@ -135,17 +147,20 @@ export function ComputerScreen() {
             {data.disk_max_bytes > 0 && (
               <div className="mt-5 border-t border-hairline pt-4">
                 <div className="flex items-center justify-between text-meta">
-                  <span className="text-ink-2">Storage</span>
+                  <span className="text-ink-2">{diskUsageKnown ? "Storage" : "Storage limit"}</span>
                   <span className="font-medium text-ink">
-                    {formatBytes(data.disk_used_bytes)} of {formatBytes(data.disk_max_bytes)}
+                    {diskUsageKnown && `${formatBytes(data.disk_used_bytes)} of `}
+                    {formatBytes(data.disk_max_bytes)}
                   </span>
                 </div>
-                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-fill-2">
-                  <div
-                    className="h-full rounded-full bg-accent transition-all"
-                    style={{ width: `${usedPct}%` }}
-                  />
-                </div>
+                {diskUsageKnown && (
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-fill-2">
+                    <div
+                      className="h-full rounded-full bg-accent transition-all"
+                      style={{ width: `${usedPct}%` }}
+                    />
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -153,29 +168,48 @@ export function ComputerScreen() {
           <Section
             title="Checkpoints"
             actions={
-              <Button
-                size="sm"
-                disabled={!!action.pending || data.status === "not_provisioned"}
-                onClick={() =>
-                  void runAndRefresh(
-                    "checkpoint",
-                    () => createComputerCheckpoint("Manual checkpoint"),
-                    "Checkpoint saved.",
-                  )
-                }
-              >
-                <Bookmark size={14} className="mr-1.5" aria-hidden />
-                Save checkpoint
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                {checkpointsOnDemand && (
+                  <Button
+                    size="sm"
+                    disabled={!!action.pending || data.status === "not_provisioned"}
+                    onClick={() => void action.run("list-checkpoints", loadCheckpoints)}
+                  >
+                    {checkpoints ? "Refresh checkpoints" : "Load checkpoints"}
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  disabled={!!action.pending || data.status === "not_provisioned"}
+                  onClick={() =>
+                    void runAndRefresh(
+                      "checkpoint",
+                      async () => {
+                        const saved = await createComputerCheckpoint("Manual checkpoint");
+                        if (checkpointsOnDemand) {
+                          setLoadedCheckpoints({
+                            computerID: data.computer_id,
+                            items: [...(checkpoints ?? []), saved],
+                          });
+                        }
+                      },
+                      "Checkpoint saved.",
+                    )
+                  }
+                >
+                  <Bookmark size={14} className="mr-1.5" aria-hidden />
+                  Save checkpoint
+                </Button>
+              </div>
             }
           >
-            {data.checkpoints.length === 0 ? (
+            {checkpoints?.length === 0 ? (
               <Notice tone="neutral">
                 No checkpoints saved yet. Start your computer to create an automatic baseline.
               </Notice>
-            ) : (
+            ) : checkpoints ? (
               <Rows label="Checkpoints">
-                {data.checkpoints.map((ckpt) => (
+                {checkpoints.map((ckpt) => (
                   <Row
                     key={ckpt.id}
                     title={ckpt.label || ckpt.id}
@@ -187,7 +221,10 @@ export function ComputerScreen() {
                         onClick={() =>
                           void runAndRefresh(
                             `restore-${ckpt.id}`,
-                            () => restoreComputerCheckpoint(ckpt.id),
+                            async () => {
+                              await restoreComputerCheckpoint(ckpt.id);
+                              setLoadedCheckpoints(undefined);
+                            },
                             "Checkpoint restored.",
                           )
                         }
@@ -198,7 +235,7 @@ export function ComputerScreen() {
                   />
                 ))}
               </Rows>
-            )}
+            ) : null}
           </Section>
 
           <Section title="Maintenance">
@@ -218,7 +255,10 @@ export function ComputerScreen() {
                       disabled={!!action.pending}
                       onClick={() => {
                         setConfirmReset(false);
-                        void runAndRefresh("reset", () => resetComputer(), "Computer reset to baseline.");
+                        void runAndRefresh("reset", async () => {
+                          await resetComputer();
+                          setLoadedCheckpoints(undefined);
+                        }, "Computer reset to baseline.");
                       }}
                     >
                       Confirm reset
