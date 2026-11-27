@@ -269,7 +269,7 @@ public struct ChatView: View {
                 if shouldShowNeedsYouBanner {
                     InlineNeedsYouBanner(
                         interaction: primaryPendingInThread,
-                        totalPendingCount: store.needsYouCount,
+                        totalPendingCount: max(store.actionableNeedsYouCount, inlinePendingInteractions.count),
                         scrollsToInlineCard: primaryPendingInThread != nil,
                         onTap: {
                             if let target = primaryPendingInThread {
