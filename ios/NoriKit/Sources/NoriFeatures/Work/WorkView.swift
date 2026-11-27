@@ -177,6 +177,7 @@ public struct WorkView: View {
                 store: store,
                 taskID: taskID,
                 onOpenDocument: onOpenDocument,
+                onStartInChat: onStartInChat,
                 onOpenModels: onOpenModels
             )
         }

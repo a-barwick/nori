@@ -380,4 +380,44 @@ struct FeedbackFixesTests {
         #expect(part.scheduledAt == "2026-11-25T20:00:00Z")
         #expect(part.fallback == "Reminder set · Wed, Nov 25 at 12:00 PM PST · Check supernino updates")
     }
+
+    @Test("WorkStepEntry unifies operations and events chronologically, filters external changes, and strips duplicate headings")
+    func workDetailRedesignHelpers() {
+        let ops: [OperationProjection] = [
+            OperationProjection(id: "c0", name: "capability_load", effectClass: .control, outcome: .confirmed, createdAt: "2026-11-26T09:15:00Z"),
+            OperationProjection(id: "ws-1", name: "web_search", effectClass: .read, outcome: .confirmed, actionSummary: "Query 1", createdAt: "2026-11-26T09:15:10Z"),
+            OperationProjection(id: "ws-2", name: "web_search", effectClass: .read, outcome: .confirmed, actionSummary: "Query 2", createdAt: "2026-11-26T09:15:20Z"),
+            OperationProjection(id: "w1", name: "notes_append", effectClass: .reversibleWrite, outcome: .confirmed, actionSummary: "Updated grocery note", createdAt: "2026-11-26T09:16:00Z"),
+            OperationProjection(id: "s1", name: "gmail_send", effectClass: .sensitiveSend, outcome: .uncertain, actionSummary: "Send email", createdAt: "2026-11-26T09:16:30Z")
+        ]
+        let events: [RunEvent] = [
+            RunEvent(text: "web_search", createdAt: "2026-11-26T09:15:10Z"),
+            RunEvent(text: "Updated grocery note", createdAt: "2026-11-26T09:16:00Z"),
+            RunEvent(text: "Saved recipe to Artifacts", createdAt: "2026-11-26T09:17:00Z")
+        ]
+
+        let changes = WorkStepEntry.externalChanges(from: ops)
+        #expect(changes.map(\.id) == ["w1", "s1"])
+
+        let steps = WorkStepEntry.build(operations: ops, events: events)
+        #expect(steps.count == 4)
+        #expect(steps[0].title == "Searched the web (2 queries)")
+        #expect(steps[1].title == "Updated grocery note")
+        #expect(steps[2].title == "Send email")
+        #expect(steps[2].status == .warning)
+        #expect(steps[3].title == "Saved recipe to Artifacts")
+
+        #expect(
+            WorkStepEntry.stripLeadingMatchingHeading("### Overnight Focaccia\n\nMix flour and water.", title: "Overnight Focaccia")
+                == "Mix flour and water."
+        )
+        #expect(
+            WorkStepEntry.stripLeadingMatchingHeading("## Ingredients\n\n- 500g flour", title: "Overnight Focaccia")
+                == "## Ingredients\n\n- 500g flour"
+        )
+        #expect(WorkStepEntry.budgetPresets(currentBudgetUSD: 1.0) == [2.0, 5.0, 10.0])
+        #expect(WorkStepEntry.budgetPresets(currentBudgetUSD: 10.0) == [15.0, 20.0, 30.0])
+        #expect(WorkStepEntry.isLongMarkdown("Short summary.") == false)
+        #expect(WorkStepEntry.isLongMarkdown(String(repeating: "Line\n", count: 10)) == true)
+    }
 }

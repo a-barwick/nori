@@ -49,7 +49,8 @@ const BUILTIN: Record<string, string> = {
   screenshot_inspect: "Looked at a screenshot",
 };
 
-const stepName = (name: string) => BUILTIN[name] ?? name.charAt(0).toUpperCase() + name.slice(1).replace(/_/g, " ");
+export const stepName = (name: string) =>
+  BUILTIN[name] ?? name.charAt(0).toUpperCase() + name.slice(1).replace(/_/g, " ");
 
 export const shownOperations = <T extends { name: string }>(operations: T[]) =>
   operations.filter((operation) => operation.name !== "capability_load");
