@@ -250,7 +250,7 @@ func (p *Provider) Exec(ctx context.Context, providerID string, req computer.Exe
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	const noriPathPrefix = `export PATH="/home/nori/.nori/bin:/home/nori/.local/bin:/home/nori/.local/venv/bin:$PATH"; `
+	const noriPathPrefix = `export NPM_CONFIG_PREFIX="/home/nori/.local/npm" PATH="/home/nori/.nori/bin:/home/nori/.local/npm/bin:/home/nori/.local/bin:/home/nori/.local/venv/bin:$PATH"; `
 	command := noriPathPrefix + req.Command
 	jobID := ""
 	if req.Background {

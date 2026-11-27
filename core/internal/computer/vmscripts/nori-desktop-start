@@ -9,6 +9,8 @@ set -euo pipefail
 # Idempotent: safe to call repeatedly on wake or session start. Fails non-zero if any required listener is down.
 
 export HOME="/home/nori"
+export NPM_CONFIG_PREFIX="/home/nori/.local/npm"
+export PATH="/home/nori/.nori/bin:/home/nori/.local/npm/bin:/home/nori/.local/bin:/home/nori/.local/venv/bin:${PATH}"
 export DISPLAY=":99"
 WIDTH="${NORI_DISPLAY_WIDTH:-1280}"
 HEIGHT="${NORI_DISPLAY_HEIGHT:-800}"

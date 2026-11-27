@@ -18,7 +18,14 @@ if [[ "$(id -u)" -ne 0 ]] && command -v sudo >/dev/null 2>&1; then
 fi
 
 # Ensure /home/nori layout exists.
-mkdir -p /home/nori/workspace /home/nori/workspace/uploads /home/nori/.config/chromium /home/nori/.local/bin /home/nori/.nori/bin /home/nori/.nori/logs
+mkdir -p /home/nori/workspace /home/nori/workspace/uploads /home/nori/.config/chromium /home/nori/.local/bin /home/nori/.local/npm/bin /home/nori/.nori/bin /home/nori/.nori/logs
+
+# Route global npm installs into /home/nori/.local/npm so they need no sudo,
+# stay inside /home/nori, and take precedence over base-image CLIs in .local/bin.
+touch /home/nori/.npmrc
+if ! grep -Eq '^[[:space:]]*prefix[[:space:]]*=' /home/nori/.npmrc; then
+  printf '\nprefix=/home/nori/.local/npm\n' >> /home/nori/.npmrc
+fi
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -102,11 +109,11 @@ if ! has_chromium; then
   )
 fi
 
-# Ensure PATH includes ~/.nori/bin, ~/.local/bin, and ~/.local/venv/bin for login shells.
-PROFILE_SNIPPET='export PATH="/home/nori/.nori/bin:/home/nori/.local/bin:/home/nori/.local/venv/bin:$PATH"'
+# Ensure PATH includes ~/.nori/bin, ~/.local/npm/bin, ~/.local/bin, and ~/.local/venv/bin for login shells.
+PROFILE_SNIPPET='export NPM_CONFIG_PREFIX="/home/nori/.local/npm" PATH="/home/nori/.nori/bin:/home/nori/.local/npm/bin:/home/nori/.local/bin:/home/nori/.local/venv/bin:$PATH"'
 for rc in /home/nori/.bashrc /home/nori/.profile; do
   touch "${rc}"
-  if ! grep -Fq "/home/nori/.nori/bin" "${rc}"; then
+  if ! grep -Fq "/home/nori/.local/npm/bin" "${rc}"; then
     printf '\n%s\n' "${PROFILE_SNIPPET}" >> "${rc}"
   fi
 done
@@ -116,7 +123,8 @@ if command -v fc-cache >/dev/null 2>&1; then
 fi
 
 # Verify required capabilities are installed before writing the completion marker.
-export PATH="/home/nori/.nori/bin:/home/nori/.local/bin:/home/nori/.local/venv/bin:${PATH}"
+export NPM_CONFIG_PREFIX="/home/nori/.local/npm"
+export PATH="/home/nori/.nori/bin:/home/nori/.local/npm/bin:/home/nori/.local/bin:/home/nori/.local/venv/bin:${PATH}"
 for bin in Xvfb x11vnc websockify node python3 typst; do
   if ! command -v "${bin}" >/dev/null 2>&1; then
     echo "bootstrap capability check failed: missing ${bin}" >&2

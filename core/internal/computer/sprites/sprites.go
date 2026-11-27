@@ -212,7 +212,42 @@ func (p *Provider) Ensure(ctx context.Context, spec computer.Spec) (computer.Ins
 	}, nil
 }
 
+func (p *Provider) ensureCanonicalHome(ctx context.Context, providerID string) error {
+	// Fly Sprites boot as OS user "sprite" with /home/sprite. Symlink /home/nori -> /home/sprite
+	// so HOME, /etc/passwd, computer_files, and interactive desktop terminals share one directory.
+	// If an older bootstrap created a real /home/nori directory, merge its contents into /home/sprite first.
+	const cmd = `set -euo pipefail
+if [ "$(id -un)" = "sprite" ] && [ -d /home/sprite ] && [ ! -L /home/nori ]; then
+  SUDO=""
+  if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then SUDO="sudo"; fi
+  if [ -d /home/nori ]; then
+    cp -an /home/nori/. /home/sprite/
+    bak="/home/.nori-migrate-$$"
+    ${SUDO} mv /home/nori "${bak}"
+    ${SUDO} ln -s /home/sprite /home/nori
+    ${SUDO} rm -rf "${bak}"
+  else
+    ${SUDO} ln -s /home/sprite /home/nori
+  fi
+fi`
+	res, err := p.exec(ctx, providerID, computer.ExecRequest{
+		Command: cmd,
+		WorkDir: "/",
+		Timeout: 30 * time.Second,
+	})
+	if err != nil {
+		return fmt.Errorf("link /home/nori on sprite %s: %w", providerID, err)
+	}
+	if res.ExitCode != 0 {
+		return fmt.Errorf("link /home/nori on sprite %s failed (exit %d): %s", providerID, res.ExitCode, strings.TrimSpace(res.Stderr))
+	}
+	return nil
+}
+
 func (p *Provider) installScriptsAndBootstrap(ctx context.Context, providerID string, spec computer.Spec) error {
+	if err := p.ensureCanonicalHome(ctx, providerID); err != nil {
+		return err
+	}
 	scripts := []struct {
 		path string
 		body string
@@ -332,7 +367,7 @@ func (p *Provider) exec(ctx context.Context, providerID string, req computer.Exe
 	execCtx, cancel := context.WithTimeout(ctx, req.Timeout)
 	defer cancel()
 
-	const noriEnvPrefix = `export HOME="/home/nori" PATH="/home/nori/.nori/bin:/home/nori/.local/bin:/home/nori/.local/venv/bin:${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"; `
+	const noriEnvPrefix = `export HOME="/home/nori" NPM_CONFIG_PREFIX="/home/nori/.local/npm" PATH="/home/nori/.nori/bin:/home/nori/.local/npm/bin:/home/nori/.local/bin:/home/nori/.local/venv/bin:${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"; `
 	sp := p.spriteHandle(providerID)
 	command := noriEnvPrefix + req.Command
 	jobID := ""
@@ -342,11 +377,11 @@ func (p *Provider) exec(ctx context.Context, providerID string, req computer.Exe
 		pidPath := fmt.Sprintf("/home/nori/.nori/logs/%s.pid", jobID)
 		exitPath := fmt.Sprintf("/home/nori/.nori/logs/%s.exit", jobID)
 		wrapped := fmt.Sprintf(`(%s); echo $? > %s`, noriEnvPrefix+req.Command, shellQuote(exitPath))
-		command = fmt.Sprintf(`%smkdir -p /home/nori/.nori/logs && nohup bash -c %s >%s 2>&1 </dev/null & pid=$!; echo "$pid" > %s; echo "$pid"`,
+		command = fmt.Sprintf(`%smkdir -p /home/nori/.nori/logs && nohup bash -lc %s >%s 2>&1 </dev/null & pid=$!; echo "$pid" > %s; echo "$pid"`,
 			noriEnvPrefix, shellQuote(wrapped), shellQuote(logPath), shellQuote(pidPath))
 	}
 
-	cmd := sp.CommandContext(execCtx, "bash", "-c", command)
+	cmd := sp.CommandContext(execCtx, "bash", "-lc", command)
 	if req.WorkDir != "" {
 		cmd.Dir = req.WorkDir
 	}

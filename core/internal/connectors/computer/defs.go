@@ -32,7 +32,7 @@ var toolSpecs = []toolSpec{
 		retry:              "reconcile_only",
 		timeoutMS:          95_000,
 		interruptedCostUSD: 0.005,
-		description:        "Run a bash command in the user's persistent Linux computer (/home/nori/workspace). Supports scripts, git, installing CLI packages (pip/npm/apt), and document/data processing (pandas, openpyxl, pdfplumber, pypdf, typst, pandoc, libreoffice, qpdf, ffmpeg). Caps each call at 90s; set background=true for long installs/builds and poll with action='job_status' or stop with action='job_cancel'. External pushes, sends, destructive deletes, and non-read-only commands after reading untrusted content require approval.",
+		description:        "Run a bash command in the user's persistent Linux computer (/home/nori/workspace). Supports scripts, git, installing CLI packages (pip/npm/apt), and document/data processing (pandas, openpyxl, pdfplumber, pypdf, typst, pandoc, libreoffice, qpdf, ffmpeg). Check command -v / --version before installing runtimes or CLIs, as common tools may already be pre-installed. Caps each call at 90s; set background=true for long installs/builds and poll with action='job_status' or stop with action='job_cancel'. External pushes, sends, destructive deletes, and non-read-only commands after reading untrusted content require approval.",
 		schema: `{
 			"type": "object",
 			"properties": {

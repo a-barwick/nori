@@ -122,3 +122,30 @@ func TestDockerProviderEnsureIsolationAndLifecycle(t *testing.T) {
 		t.Fatalf("Status after destroy = %v, want ErrNotFound", err)
 	}
 }
+
+func TestDockerProviderExecSetsNPMPrefixAndPathPrecedence(t *testing.T) {
+	var gotArgs []string
+	p := docker.New(docker.Config{
+		Runner: func(_ context.Context, _ []byte, args ...string) (string, string, int, error) {
+			gotArgs = slices.Clone(args)
+			return "ok\n", "", 0, nil
+		},
+	})
+
+	if _, err := p.Exec(context.Background(), "nori-computer-cmp-abc", computer.ExecRequest{
+		Command: "which claude",
+		WorkDir: computer.DefaultWorkDir,
+	}); err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	joined := strings.Join(gotArgs, " ")
+	for _, want := range []string{
+		"bash -lc",
+		`NPM_CONFIG_PREFIX="/home/nori/.local/npm"`,
+		`PATH="/home/nori/.nori/bin:/home/nori/.local/npm/bin:/home/nori/.local/bin:/home/nori/.local/venv/bin:$PATH"`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("docker exec missing %q in: %s", want, joined)
+		}
+	}
+}

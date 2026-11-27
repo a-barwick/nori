@@ -5,7 +5,8 @@ FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV HOME=/home/nori
-ENV PATH="/home/nori/.nori/bin:/home/nori/.local/bin:/home/nori/.local/venv/bin:${PATH}"
+ENV NPM_CONFIG_PREFIX=/home/nori/.local/npm
+ENV PATH="/home/nori/.nori/bin:/home/nori/.local/npm/bin:/home/nori/.local/bin:/home/nori/.local/venv/bin:${PATH}"
 
 RUN apt-get update -y && apt-get install -y --no-install-recommends \
     ca-certificates curl wget gnupg git jq ripgrep fd-find sqlite3 make gcc g++ procps xz-utils \
@@ -24,7 +25,8 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 
 # Create persistent non-root user & workspace layout
 RUN useradd -m -d /home/nori -s /bin/bash nori \
-    && mkdir -p /home/nori/workspace /home/nori/workspace/uploads /home/nori/.config/chromium /home/nori/.local/bin /home/nori/.nori/bin /home/nori/.nori/logs /home/nori/.nori/browser \
+    && mkdir -p /home/nori/workspace /home/nori/workspace/uploads /home/nori/.config/chromium /home/nori/.local/bin /home/nori/.local/npm/bin /home/nori/.nori/bin /home/nori/.nori/logs /home/nori/.nori/browser \
+    && printf 'prefix=/home/nori/.local/npm\n' > /home/nori/.npmrc \
     && chown -R nori:nori /home/nori
 
 # Typst CLI (for crisp PDF typesetting with Noto + Noto CJK glyphs)
