@@ -216,8 +216,100 @@ test("--latest-green releases the newest commit with passing CI, skipping a red 
   });
   assert.equal(result.status, 0, result.stderr + result.stdout);
   assert.notEqual(released, head);
+  assert.match(result.stderr, new RegExp(`WARNING: main HEAD ${head.slice(0, 12)} is not green/built; falling back to ${released.slice(0, 12)}`));
   assert.deepEqual(deployed, ["nori-web", "nori-web-mac"]);
   assert.match(calls, new RegExp(`deploy nori-web --image=\\S+/nori-web:${released} `));
+});
+
+test("default release fails loudly when HEAD has not passed CI instead of falling back", (t) => {
+  const { result, calls, head } = fixture(t, {
+    change: ["web/page.tsx", "core/main.go"],
+    green: [0],
+    args: ["--quick"],
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, new RegExp(`CI has not passed on ${head}`));
+  assert.doesNotMatch(calls, /run deploy/);
+});
+
+test("--latest-green finds a green commit on the second parent of a reverse merge", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "nori-release-merge-test-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const repo = join(dir, "repo");
+  const bin = join(dir, "bin");
+  mkdirSync(repo);
+  mkdirSync(bin);
+  git(repo, "init", "-q", "-b", "main");
+  git(repo, "config", "user.email", "fixture@example.com");
+  git(repo, "config", "user.name", "Fixture");
+  git(repo, "config", "commit.gpgsign", "false");
+  for (const path of ["core/main.go", "web/page.tsx", "contracts/api.json", "site/index.html"]) {
+    mkdirSync(join(repo, path, ".."), { recursive: true });
+    writeFileSync(join(repo, path), "v1\n");
+  }
+  git(repo, "add", ".");
+  git(repo, "commit", "-q", "-m", "base");
+  const base = git(repo, "rev-parse", "HEAD");
+
+  // Feature branch diverges from base.
+  git(repo, "checkout", "-q", "-b", "feature");
+  commitFile(repo, "core/main.go", "v2\n");
+
+  // Meanwhile, a green web commit lands on main.
+  git(repo, "checkout", "-q", "main");
+  const greenWeb = commitFile(repo, "web/page.tsx", "v2\n");
+
+  // Reverse merge: main is merged into feature (so greenWeb is the 2nd parent),
+  // then fast-forwarded onto main.
+  git(repo, "checkout", "-q", "feature");
+  git(repo, "merge", "-q", "--no-ff", "main", "-m", "merge main into feature");
+  const mergeHead = git(repo, "rev-parse", "HEAD");
+  git(repo, "checkout", "-q", "main");
+  git(repo, "merge", "-q", "--ff-only", "feature");
+
+  const log = join(dir, "log");
+  writeFileSync(log, "");
+  const command = (name, source) => writeFileSync(join(bin, name), "#!/bin/bash\n" + source, { mode: 0o755 });
+  command("gcloud", `
+printf 'gcloud %s\\n' "$*" >> "$FIXTURE_LOG"
+case "$1 $2 $3" in
+  "run services list") printf '%s\\n' "\${4#--filter=metadata.name=}" ;;
+  "run services describe") printf '{"status":{"traffic":[{"revisionName":"%s-live","percent":100},{"revisionName":"%s-new","tag":"%s","url":"https://%s-new.example"}]}}' "$4" "$4" "$FIXTURE_TAG" "$4" ;;
+  "run revisions describe")
+    case "$4" in
+      *-live) printf '{"metadata":{"labels":{"nori-commit":"%s","nori-prev":"%s-older"}},"status":{"conditions":[{"type":"Ready","status":"True"}]}}' "$FIXTURE_LIVE" "\${4%-live}" ;;
+      *) printf '{"metadata":{"labels":{}},"status":{"conditions":[{"type":"Ready","status":"True"}]}}' ;;
+    esac ;;
+esac
+exit 0`);
+  command("ci-status", `[ "$1" = "${greenWeb}" ] || [ "$1" = "${base}" ]`);
+  command("curl", `
+url="\${@: -1}"
+case "$url" in
+  */readyz|*/api/health|*nori-web-new.example/) printf 200 ;;
+  *) printf 403 ;;
+esac`);
+
+  const result = spawnSync("bash", [release, "--latest-green"], {
+    encoding: "utf8",
+    env: {
+      PATH: `${bin}:${process.env.PATH}`,
+      HOME: dir,
+      FIXTURE_LOG: log,
+      FIXTURE_TAG: `release-${greenWeb.slice(0, 12)}`,
+      FIXTURE_LIVE: base,
+      NORI_CI_STATUS_CMD: join(bin, "ci-status"),
+      GITHUB_ACTIONS: "true",
+      NORI_RELEASE_CI_GATED: "0",
+      NORI_RELEASE_REPO: repo,
+      NORI_RELEASE_BAKE_SECONDS: "0",
+    },
+  });
+  const calls = readFileSync(log, "utf8");
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.match(result.stderr, new RegExp(`WARNING: main HEAD ${mergeHead.slice(0, 12)} is not green/built; falling back to ${greenWeb.slice(0, 12)}`));
+  assert.match(calls, new RegExp(`deploy nori-web --image=\\S+/nori-web:${greenWeb} `));
+  assert.doesNotMatch(calls, /deploy nori-core /);
 });
 
 test("--latest-green with no green commit releases nothing", (t) => {

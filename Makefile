@@ -1,4 +1,4 @@
-.PHONY: infra-check infra-plan api-types api-check contracts contracts-check dev web web-build web-start core local-web local-core check sim-deep sim-pg sim-personas-validate sim-personas-smoke sim-personas-quick sim-personas-core sim-personas-memory sim-personas-full deps deps-stop release
+.PHONY: infra-check infra-plan api-types api-check contracts contracts-check dev web web-build web-start core local-web local-core check audit sim-deep sim-pg sim-personas-validate sim-personas-smoke sim-personas-quick sim-personas-core sim-personas-memory sim-personas-full deps deps-stop release
 
 NORI_ENV_FILE ?= $(abspath .env)
 NORI_TASK_ENV_FILE ?= $(NORI_ENV_FILE)
@@ -48,6 +48,10 @@ check: api-check infra-check
 	node --test scripts/*.test.mjs
 	python3 -m unittest discover -s scripts/persona-sim
 	$(MAKE) sim-personas-validate
+
+audit:
+	cd web && bun audit
+	cd core && GOTOOLCHAIN="go$$(awk '/^go / {print $$2; exit}' go.mod)" go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
 
 sim-deep:
 	$(MAKE) -C core sim-deep

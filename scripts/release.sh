@@ -14,8 +14,9 @@ BAKE_INTERVAL="${NORI_RELEASE_BAKE_INTERVAL:-30}"
 
 usage() {
   cat <<'USAGE'
-Release Nori Core, Web and the public site to Cloud Run. The Release workflow runs this
-every three hours and on demand with --latest-green (using --quick for manual runs).
+Release Nori Core, Web and the public site to Cloud Run. Scheduled Release runs use
+--latest-green every three hours; manual workflow_dispatch runs release main HEAD by
+default (with --quick) and fail if HEAD is not green and built.
 
 Usage:
   scripts/release.sh [--latest-green] [--quick] [--dry-run] [--core] [--web] [--site] [--force-unverified]
@@ -187,9 +188,11 @@ images_exist() {
   done
 }
 
+FALLBACK_FROM=""
 if [[ "$LATEST_GREEN" -eq 1 ]]; then
+  HEAD_SHA="$(git rev-parse "$MAIN_REF")"
   SHA=""
-  for candidate in $(git rev-list --first-parent -n "${NORI_RELEASE_SEARCH_DEPTH:-30}" "$MAIN_REF"); do
+  for candidate in $(git rev-list --topo-order -n "${NORI_RELEASE_SEARCH_DEPTH:-30}" "$MAIN_REF"); do
     if ci_green "$candidate" && images_exist "$candidate"; then
       SHA="$candidate"
       break
@@ -198,6 +201,10 @@ if [[ "$LATEST_GREEN" -eq 1 ]]; then
   if [[ -z "$SHA" ]]; then
     log "No recent commit on main has passing CI and built images. Nothing to release."
     exit 0
+  fi
+  if [[ "$SHA" != "$HEAD_SHA" ]]; then
+    FALLBACK_FROM="$HEAD_SHA"
+    printf 'WARNING: main HEAD %s is not green/built; falling back to %s.\n' "${HEAD_SHA:0:12}" "${SHA:0:12}" >&2
   fi
 else
   SHA="${NORI_RELEASE_SHA:-$(git rev-parse HEAD)}"
@@ -428,6 +435,10 @@ fi
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   {
     echo "### Release ${SHA:0:12} $([[ "$FAILED" -eq 0 ]] && echo succeeded || echo failed)"
+    if [[ -n "$FALLBACK_FROM" ]]; then
+      echo "> [!WARNING]"
+      echo "> main HEAD \`${FALLBACK_FROM:0:12}\` was not green/built; fell back to \`${SHA:0:12}\`."
+    fi
     printf -- '- %s\n' "${SUMMARY[@]}"
   } >> "$GITHUB_STEP_SUMMARY"
 fi

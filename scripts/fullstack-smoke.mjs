@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 /**
  * Full-stack smoke test: boots real cmd/nori-local (backed by an ephemeral Postgres DB and
- * a loopback OpenAI model stub) behind web/scripts/prod-check.mjs and the built Next.js
- * standalone server (.next/standalone/server.js), then verifies health, auth gating,
+ * a loopback OpenAI model stub) behind web/scripts/prod-check.mjs and an isolated copy of
+ * the production standalone bundle (ws-server.mjs -> server.js, matching web/Dockerfile
+ * without access to web/node_modules), then verifies health, WS upgrade gating, auth gating,
  * capabilities, snapshot, and a real chat turn delivered over SSE.
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
@@ -40,6 +42,21 @@ function freePort() {
       srv.close(() => resolvePort(port));
     });
   });
+}
+
+async function freePortPair() {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const port = await freePort();
+    const nextPort = port === 8081 ? 8082 : port + 1;
+    const ok = await new Promise((resolveOk) => {
+      const srv = net.createServer();
+      srv.unref();
+      srv.once("error", () => resolveOk(false));
+      srv.listen(nextPort, "127.0.0.1", () => srv.close(() => resolveOk(true)));
+    });
+    if (ok) return port;
+  }
+  throw new Error("Could not find an available adjacent port pair for ws-server.mjs");
 }
 
 function startModelStub() {
@@ -136,7 +153,7 @@ async function main() {
     modelStub = await startModelStub();
     const modelURL = `http://127.0.0.1:${modelStub.address().port}`;
     const corePort = await freePort();
-    const webPort = await freePort();
+    const webPort = await freePortPair();
 
     const coreEnv = {
       ...process.env,
@@ -190,9 +207,17 @@ async function main() {
       return key || null;
     });
 
-    await cp(join(WEB_DIR, ".next/static"), join(WEB_DIR, ".next/standalone/.next/static"), { recursive: true });
-    const web = startProc(process.execPath, [join(WEB_DIR, ".next/standalone/server.js")], {
-      cwd: WEB_DIR,
+    // Stage the standalone bundle in an isolated temp directory (matching web/Dockerfile)
+    // so Node cannot resolve packages from web/node_modules and ws-server.mjs is tested
+    // exactly as it runs in Cloud Run.
+    const webAppDir = join(work, "web-app");
+    await cp(join(WEB_DIR, ".next/standalone"), webAppDir, { recursive: true });
+    await cp(join(WEB_DIR, ".next/static"), join(webAppDir, ".next/static"), { recursive: true });
+    if (existsSync(join(WEB_DIR, "public"))) {
+      await cp(join(WEB_DIR, "public"), join(webAppDir, "public"), { recursive: true });
+    }
+    const web = startProc(process.execPath, ["ws-server.mjs"], {
+      cwd: webAppDir,
       env: {
         ...process.env,
         HOSTNAME: "127.0.0.1",
@@ -214,6 +239,31 @@ async function main() {
       const res = await fetch(`${webBase}/api/health`);
       return res.status === 200;
     });
+
+    // 0. Desktop WebSocket upgrade gateway in ws-server.mjs must enforce same-origin.
+    const wsStatusLine = await new Promise((resolveLine, reject) => {
+      const sock = net.connect({ host: "127.0.0.1", port: webPort }, () => {
+        sock.write(
+          `GET /api/v1/computer/sessions/smoke_sess/ws?token=smoke_tok HTTP/1.1\r\n` +
+            `Host: 127.0.0.1:${webPort}\r\n` +
+            `Connection: Upgrade\r\n` +
+            `Upgrade: websocket\r\n` +
+            `Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n` +
+            `Sec-WebSocket-Version: 13\r\n\r\n`,
+        );
+      });
+      let data = "";
+      sock.setTimeout(5000, () => { sock.destroy(); reject(new Error("WS upgrade check timed out")); });
+      sock.on("error", reject);
+      sock.on("data", (chunk) => {
+        data += chunk.toString("utf8");
+        if (data.includes("\r\n")) {
+          sock.destroy();
+          resolveLine(data.split("\r\n")[0]);
+        }
+      });
+    });
+    assert.match(wsStatusLine, /^HTTP\/1\.1 403 /, `Expected 403 for cross-origin WS upgrade, got: ${wsStatusLine}`);
 
     // 1. Unauthenticated API call must be rejected.
     const unauth = await fetch(`${webBase}/api/v1/capabilities`, { headers: { "Sec-Fetch-Site": "same-origin" } });

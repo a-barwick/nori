@@ -70,13 +70,8 @@ jobs:
           python3 -m unittest discover -s scripts/persona-sim
           make sim-personas-validate
 
-      - name: Audit web dependencies
-        working-directory: web
-        run: bun audit
-
-      - name: Audit Go dependencies
-        working-directory: core
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+      - name: Audit Go and Web dependencies
+        run: make audit
 
   web-browser:
     name: Web Build, Browser E2E & Full-Stack Smoke
@@ -325,7 +320,28 @@ jobs:
           docker buildx build --platform linux/amd64 -f web/Dockerfile \
             --cache-from "type=registry,ref=$REGISTRY/nori-web:buildcache" \
             --cache-to "type=registry,ref=$REGISTRY/nori-web:buildcache,mode=max" \
-            --build-arg "SENTRY_RELEASE=$GITHUB_SHA" -t "$REGISTRY/nori-web:$GITHUB_SHA" --push .
+            --build-arg "SENTRY_RELEASE=$GITHUB_SHA" -t "$REGISTRY/nori-web:$GITHUB_SHA" --load .
+          cid="$(docker run -d -p 127.0.0.1:18080:8080 "$REGISTRY/nori-web:$GITHUB_SHA")"
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          ready=0
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/api/health >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            if ! docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null | grep -qx true; then
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$ready" -ne 1 ]]; then
+            echo "nori-web container failed startup health check:" >&2
+            docker logs "$cid" >&2 || true
+            exit 1
+          fi
+          docker rm -f "$cid" >/dev/null
+          trap - EXIT
+          docker push "$REGISTRY/nori-web:$GITHUB_SHA"
 
       # A separate step so a broken site build never blocks the core and web images.
       - name: Build and push the site image

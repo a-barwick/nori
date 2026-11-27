@@ -9,6 +9,10 @@ on:
         description: "Skip Deep Deterministic Simulation and use a 60s bake"
         type: boolean
         default: true
+      allow_fallback:
+        description: "Fall back to an older green commit if main HEAD is not ready"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -40,13 +44,17 @@ jobs:
           workload_identity_provider: projects/8273801370/locations/global/workloadIdentityPools/github/providers/nori-main
           service_account: nori-ci-release@bot-111549.iam.gserviceaccount.com
 
-      - name: Release the newest green commit
+      - name: Release commit
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_QUICK: ${{ github.event_name == 'workflow_dispatch' && inputs.quick != false }}
+          RELEASE_LATEST_GREEN: ${{ github.event_name == 'schedule' || inputs.allow_fallback == true }}
         run: |
-          if [[ "$RELEASE_QUICK" == true ]]; then
-            scripts/release.sh --latest-green --quick
-          else
-            scripts/release.sh --latest-green
+          args=()
+          if [[ "$RELEASE_LATEST_GREEN" == true ]]; then
+            args+=(--latest-green)
           fi
+          if [[ "$RELEASE_QUICK" == true ]]; then
+            args+=(--quick)
+          fi
+          scripts/release.sh "${args[@]}"
