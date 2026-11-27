@@ -27,7 +27,7 @@ core and web images exist.
 --quick skips the Deep Deterministic Simulation CI gate and uses a 60s bake by default
 (instead of 600s).
 Only groups whose code changed since the live release ship; --core / --web / --site force a group.
-  core: nori-migrate job, then nori-core (API) and nori-worker
+  core: nori-migrate job, then nori-core (API + worker)
   web:  nori-web and nori-web-mac (same image)
   site: nori-site (public marketing site). Skipped when the commit has no nori-site image
         or the service doesn't exist yet.
@@ -48,7 +48,7 @@ cloud_run() { gcloud run "$@" --project="$PROJECT" --region="$REGION"; }
 
 group_services() {
   case "$1" in
-    core) echo "nori-core nori-worker" ;;
+    core) echo "nori-core" ;;
     web) echo "nori-web nori-web-mac" ;;
     site) echo "nori-site" ;;
   esac
@@ -69,14 +69,14 @@ group_image() {
 }
 probe_path() {
   case "$1" in
-    nori-core|nori-worker) echo /readyz ;;
+    nori-core) echo /readyz ;;
     nori-site) echo /healthz ;;
     *) echo /api/health ;;
   esac
 }
 group_of() {
   case "$1" in
-    nori-core|nori-worker) echo core ;;
+    nori-core) echo core ;;
     nori-site) echo site ;;
     *) echo web ;;
   esac

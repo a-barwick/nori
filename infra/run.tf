@@ -67,10 +67,6 @@ locals {
       }) : k => { value = v, secret = null } },
       { for k, v in merge(local.runtime_secrets, local.feature_secrets) : k => { value = null, secret = v } },
     )
-    worker = merge(
-      { for k, v in merge(local.runtime_env, local.feature_env, { NORI_ROLE = "worker", NORI_POSTGRES_MAX_CONNS = "10" }) : k => { value = v, secret = null } },
-      { for k, v in merge(local.runtime_secrets, local.feature_secrets) : k => { value = null, secret = v } },
-    )
     migrate = merge(
       { for k, v in merge(local.runtime_env, { NORI_ROLE = "all", NORI_POSTGRES_MAX_CONNS = "4" }) : k => { value = v, secret = null } },
       { for k, v in local.runtime_secrets : k => { value = null, secret = v } },
@@ -208,94 +204,9 @@ resource "google_cloud_run_v2_service_iam_member" "core_public" {
   member   = "allUsers"
 }
 
-# --- Worker --------------------------------------------------------------------
-
-resource "google_cloud_run_v2_service" "nori_worker" {
-  name     = "nori-worker"
-  location = local.region
-  ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
-
-  scaling {
-    max_instance_count = 20
-  }
-
-  template {
-    service_account                  = google_service_account.nori_runtime.email
-    max_instance_request_concurrency = 80
-    timeout                          = "300s"
-
-    scaling {
-      min_instance_count = 1
-      max_instance_count = 4
-    }
-
-    containers {
-      image = "${local.registry}/nori-core:bootstrap"
-      args  = ["--metrics-addr=0.0.0.0:8080"]
-
-      dynamic "env" {
-        for_each = local.env.worker
-        content {
-          name  = env.key
-          value = env.value.value
-          dynamic "value_source" {
-            for_each = env.value.secret == null ? [] : [split(":", env.value.secret)]
-            content {
-              secret_key_ref {
-                secret  = value_source.value[0]
-                version = value_source.value[1]
-              }
-            }
-          }
-        }
-      }
-
-      ports {
-        name           = "http1"
-        container_port = 8080
-      }
-
-      resources {
-        cpu_idle          = false
-        startup_cpu_boost = true
-        limits = {
-          cpu    = "1"
-          memory = "1Gi"
-        }
-      }
-
-      startup_probe {
-        failure_threshold = 40
-        period_seconds    = 3
-        timeout_seconds   = 3
-        http_get {
-          path = "/readyz"
-          port = 8080
-        }
-      }
-
-      volume_mounts {
-        name       = "cloudsql"
-        mount_path = "/cloudsql"
-      }
-    }
-
-    volumes {
-      name = "cloudsql"
-      cloud_sql_instance {
-        instances = [local.cloud_sql]
-      }
-    }
-  }
-
-  lifecycle {
-    ignore_changes = [client, client_version, traffic, template[0].labels, template[0].containers[0].image]
-  }
-}
-
 # --- Migration jobs ------------------------------------------------------------
 
-# Release runs this with each Core image before staging Core and Worker.
+# Release runs this with each Core image before staging Core.
 resource "google_cloud_run_v2_job" "nori_migrate" {
   name     = "nori-migrate"
   location = local.region

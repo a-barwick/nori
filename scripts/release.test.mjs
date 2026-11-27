@@ -151,18 +151,18 @@ test("a web change releases only nori-web and nori-web-mac with the CI image", (
   assert.match(calls, /update-traffic nori-web-mac .*--to-revisions=nori-web-mac-new=100/);
 });
 
-test("a core change migrates first, then releases the API and worker", (t) => {
+test("a core change migrates first, then releases nori-core", (t) => {
   const { result, calls, deployed } = fixture(t, { change: "core/main.go" });
   assert.equal(result.status, 0, result.stderr + result.stdout);
-  assert.deepEqual(deployed, ["nori-core", "nori-worker"]);
+  assert.deepEqual(deployed, ["nori-core"]);
   assert.ok(calls.indexOf("jobs execute nori-migrate") < calls.indexOf("run deploy nori-core"));
-  assert.match(calls, /deploy nori-worker .*httpGet\.path=\/readyz/);
+  assert.match(calls, /deploy nori-core .*httpGet\.path=\/readyz/);
 });
 
 test("a contracts change releases both groups, core first", (t) => {
   const { result, deployed } = fixture(t, { change: "contracts/api.json" });
   assert.equal(result.status, 0, result.stderr + result.stdout);
-  assert.deepEqual(deployed, ["nori-core", "nori-worker", "nori-web", "nori-web-mac"]);
+  assert.deepEqual(deployed, ["nori-core", "nori-web", "nori-web-mac"]);
 });
 
 test("an iOS-only change releases nothing", (t) => {
@@ -175,7 +175,7 @@ test("an iOS-only change releases nothing", (t) => {
 test("services without a release label get every group", (t) => {
   const { result, deployed } = fixture(t, { change: "ios/App.swift", live: "" });
   assert.equal(result.status, 0, result.stderr + result.stdout);
-  assert.deepEqual(deployed, ["nori-core", "nori-worker", "nori-web", "nori-web-mac", "nori-site"]);
+  assert.deepEqual(deployed, ["nori-core", "nori-web", "nori-web-mac", "nori-site"]);
 });
 
 test("an older commit never replaces a newer live release", (t) => {
@@ -185,11 +185,11 @@ test("an older commit never replaces a newer live release", (t) => {
 });
 
 test("a failed stage promotes nothing in its group and removes the tags", (t) => {
-  const { result, calls } = fixture(t, { change: "core/main.go", failDeploy: "nori-worker" });
+  const { result, calls } = fixture(t, { change: "web/page.tsx", failDeploy: "nori-web-mac" });
   assert.equal(result.status, 1);
-  assert.doesNotMatch(calls, /--to-revisions=nori-core-new=100/);
-  assert.match(calls, /update-traffic nori-core .*--remove-tags=release-/);
-  assert.match(calls, /update-traffic nori-worker .*--remove-tags=release-/);
+  assert.doesNotMatch(calls, /--to-revisions=nori-web-new=100/);
+  assert.match(calls, /update-traffic nori-web .*--remove-tags=release-/);
+  assert.match(calls, /update-traffic nori-web-mac .*--remove-tags=release-/);
 });
 
 test("errors during bake revert only the group that produced them", (t) => {
