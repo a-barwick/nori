@@ -79,7 +79,10 @@ type SessionEvent struct {
 	Revoked bool
 }
 
-const ensureCacheTTL = 2 * time.Minute
+const (
+	ensureCacheTTL      = 2 * time.Minute
+	eventualStatusGrace = 30 * time.Second
+)
 
 type ensuredComputer struct {
 	providerID   string
@@ -296,9 +299,15 @@ func (m *Manager) Status(ctx context.Context, userID string) (StatusView, error)
 	if rec.Status != StatusDeleting && rec.ProviderID != "" {
 		if live, lErr := m.provider.Status(ctx, rec.ProviderID); lErr == nil {
 			if live.Status != "" {
-				if live.Standby && rec.Status == StatusSleeping {
+				recentTransition := !rec.UpdatedAt.IsZero() && m.now().Sub(rec.UpdatedAt) < eventualStatusGrace
+				switch {
+				case live.Standby && rec.Status == StatusSleeping:
 					view.Status = StatusSleeping
-				} else {
+				case live.EventuallyConsistent && recentTransition && rec.Status == StatusReady && live.Status == StatusSleeping:
+					view.Status = StatusReady
+				case live.EventuallyConsistent && recentTransition && rec.Status == StatusSleeping && live.Status == StatusReady:
+					view.Status = StatusSleeping
+				default:
 					view.Status = live.Status
 				}
 			}

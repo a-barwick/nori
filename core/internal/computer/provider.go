@@ -91,12 +91,13 @@ type Instance struct {
 
 // InstanceStatus reports live provider state and storage metadata.
 type InstanceStatus struct {
-	Status        Status           `json:"status"`
-	Standby       bool             `json:"-"` // warm/standby state (e.g., Fly Sprites "warm")
-	DiskUsedBytes int64            `json:"disk_used_bytes,omitempty"`
-	DiskMaxBytes  int64            `json:"disk_max_bytes,omitempty"`
-	Checkpoints   []CheckpointInfo `json:"checkpoints,omitempty"`
-	LastActiveAt  *time.Time       `json:"last_active_at,omitempty"`
+	Status               Status           `json:"status"`
+	Standby              bool             `json:"-"` // warm/standby state (e.g., Fly Sprites "warm")
+	EventuallyConsistent bool             `json:"-"` // provider metadata may lag brief transitions (e.g., Fly Sprites)
+	DiskUsedBytes        int64            `json:"disk_used_bytes,omitempty"`
+	DiskMaxBytes         int64            `json:"disk_max_bytes,omitempty"`
+	Checkpoints          []CheckpointInfo `json:"checkpoints,omitempty"`
+	LastActiveAt         *time.Time       `json:"last_active_at,omitempty"`
 }
 
 // CheckpointInfo describes a point-in-time CoW filesystem checkpoint.

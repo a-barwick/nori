@@ -275,8 +275,10 @@ func TestManagerUserControlLeasePurgeTombstonesAndProviderMismatch(t *testing.T)
 
 type countingStandbyProvider struct {
 	*fake.Provider
-	ensureCalls int
-	standby     bool
+	ensureCalls          int
+	standby              bool
+	eventuallyConsistent bool
+	overrideStatus       computer.Status
 }
 
 func (p *countingStandbyProvider) Ensure(ctx context.Context, spec computer.Spec) (computer.Instance, error) {
@@ -289,7 +291,11 @@ func (p *countingStandbyProvider) Status(ctx context.Context, providerID string)
 	if err != nil {
 		return st, err
 	}
-	if p.standby {
+	st.EventuallyConsistent = p.eventuallyConsistent
+	if p.overrideStatus != "" {
+		st.Status = p.overrideStatus
+		st.Standby = p.standby
+	} else if p.standby {
 		st.Status = computer.StatusReady
 		st.Standby = true
 	}
@@ -351,5 +357,39 @@ func TestManagerEnsureCachingAndStandbySleepWakeSemantics(t *testing.T) {
 	}
 	if stAfterRewake.Status != computer.StatusReady {
 		t.Fatalf("status after second Wake = %q, want ready", stAfterRewake.Status)
+	}
+
+	// Eventually-consistent provider (Fly Sprites) returning stale "cold" right after Wake
+	// must stay Ready during the grace window, then reflect Sleeping once grace expires.
+	prov.eventuallyConsistent = true
+	prov.standby = false
+	prov.overrideStatus = computer.StatusSleeping
+	stStaleWake, err := mgr.Wake(ctx, "u1")
+	if err != nil {
+		t.Fatalf("Wake with stale provider status: %v", err)
+	}
+	if stStaleWake.Status != computer.StatusReady {
+		t.Fatalf("status after Wake with stale cold read = %q, want ready", stStaleWake.Status)
+	}
+	now = now.Add(35 * time.Second)
+	stCooled, err := mgr.Status(ctx, "u1")
+	if err != nil {
+		t.Fatalf("Status after grace window: %v", err)
+	}
+	if stCooled.Status != computer.StatusSleeping {
+		t.Fatalf("status after grace window = %q, want sleeping", stCooled.Status)
+	}
+
+	// Stale "running" right after Sleep must stay Sleeping during the grace window.
+	prov.overrideStatus = computer.StatusReady
+	if err := mgr.Sleep(ctx, "u1"); err != nil {
+		t.Fatalf("Sleep with stale running status: %v", err)
+	}
+	stStaleSleep, err := mgr.Status(ctx, "u1")
+	if err != nil {
+		t.Fatalf("Status right after Sleep: %v", err)
+	}
+	if stStaleSleep.Status != computer.StatusSleeping {
+		t.Fatalf("status right after Sleep with stale running read = %q, want sleeping", stStaleSleep.Status)
 	}
 }

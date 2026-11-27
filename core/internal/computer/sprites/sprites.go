@@ -264,11 +264,12 @@ func (p *Provider) Status(ctx context.Context, providerID string) (computer.Inst
 	// polling does not extend the Sprite's active lifetime.
 	status, standby := mapSpriteStatus(sp.Status)
 	out := computer.InstanceStatus{
-		Status:        status,
-		Standby:       standby,
-		DiskUsedBytes: -1, // Fly metadata omits used storage.
-		DiskMaxBytes:  int64(p.cfg.StorageGB) << 30,
-		LastActiveAt:  sp.LastRunningAt,
+		Status:               status,
+		Standby:              standby,
+		EventuallyConsistent: true,
+		DiskUsedBytes:        -1, // Fly metadata omits used storage.
+		DiskMaxBytes:         int64(p.cfg.StorageGB) << 30,
+		LastActiveAt:         sp.LastRunningAt,
 	}
 	if sp.Config != nil && sp.Config.StorageGB > 0 {
 		out.DiskMaxBytes = int64(sp.Config.StorageGB) << 30

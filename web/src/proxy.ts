@@ -6,9 +6,10 @@ import { applySecurityHeaders, buildAppCsp, CSP_NONCE_HEADER, generateCspNonce }
 
 export async function proxy(request: NextRequest) {
   const nonce = generateCspNonce();
+  const publicHost = request.headers.get("x-forwarded-host") || request.headers.get("host") || request.nextUrl.host;
   const csp = buildAppCsp(nonce, {
     isDev: process.env.NODE_ENV !== "production",
-    hosts: [request.headers.get("x-forwarded-host"), request.headers.get("host"), request.nextUrl.host],
+    host: publicHost,
   });
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set(CSP_NONCE_HEADER, nonce);
