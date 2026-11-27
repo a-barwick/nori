@@ -15,7 +15,8 @@ All iOS visual tokens and reusable primitives live in the `NoriDesign` target in
 | `ios/NoriKit/Sources/NoriDesign/NoriTheme.swift` | Adaptive Light/Dark `NoriColors`, structured namespaces, `NoriSpacing`, `NoriRadius`, `NoriTypography` |
 | `ios/NoriKit/Sources/NoriDesign/NoriAppearance.swift` | `NoriAppearance` (`system`, `light`, `dark`) + `@AppStorage("nori.appearance")` key |
 | `ios/NoriKit/Sources/NoriDesign/NoriMark.swift` | Appearance-aware animated SwiftUI `Canvas` mascot (`NoriMark`, `NoriMedallion`) |
-| `ios/NoriKit/Sources/NoriDesign/NoriPrimitives.swift` | Core reusable components (`NoriCard`, `NoriRows`, `NoriPill`, `NoriTone`, `NoriButtonStyle`, `NoriNotice`, etc.) |
+| `ios/NoriKit/Sources/NoriDesign/NoriPrimitives.swift` | Core reusable components (`NoriCard`, `NoriRows`, `NoriRow`, `NoriPill`, `NoriTone`, `NoriButtonStyle`, `NoriNotice`, etc.) |
+| `ios/NoriKit/Sources/NoriDesign/NoriBrandIcon.swift` | Brand icon tiles and rows (`NoriBrandIcon`, `NoriBrandKind`, `NoriBrandRow`) for Google services, custom apps, and model providers |
 | `ios/NoriApp/Assets.xcassets/AccentColor.colorset` | Global UIKit/SwiftUI accent (`#5000FF` light / `#A98AFF` dark) |
 | `ios/NoriApp/Assets.xcassets/LaunchBackground.colorset` | Launch screen backdrop (`#FFFFFF` light / `#000000` dark) referenced by `Info.plist` |
 | `ios/NoriKit/Tests/NoriDesignTests/NoriDesignTests.swift` | Automated Light & Dark RGBA token, status tone, appearance, and radius assertions |
@@ -69,7 +70,7 @@ Use `NoriTone` for pills (`NoriPill`), notices (`NoriNotice`), badges (`NoriBadg
 
 - `.ok` — Completed / Confirmed (`#85D4A4` on `#0F2019`)
 - `.working` — In progress / Working / Connecting (`#A98AFF` on `#1B162C`)
-- `.warning` — Needs approval / Needs you / Attention (`#F2C276` on `#21190F`)
+- `.warning` — Action needed / Needs approval / Attention (`#F2C276` on `#21190F`)
 - `.danger` — Failed / Error / Destructive (`#FF9BA7` on `#25131B`)
 - `.scheduled` — Scheduled automations & routines (`#99B9EF` on `#111A28`)
 - `.neutral` — Cancelled / Paused / Inactive (`#878196` on `#14141A`)
@@ -119,6 +120,11 @@ Use `NoriButtonStyle(.primary | .neutral | .tonal | .quiet | .danger, fullWidth:
 - Background: `.ultraThinMaterial` overlaid with `NoriColors.glass.opacity(0.82)`.
 - Border: `isInputFocused ? NoriColors.accentSignal : NoriColors.cardBorder` (`1.5 pt` when focused, invisible when unfocused in Dark Mode).
 - Keyboard appearance adapts automatically from the root `preferredColorScheme`—never hardcode `.keyboardAppearance`.
+
+### Settings & More Tab Conventions
+- **More Hub (`MoreHubView`):** Three groups totaling 8 rows—**Nori** (`Apps`, `Memory`, `Permissions`), **Settings** (`Models`, `Usage & Budgets`, `Preferences`, `Appearance`), and **Account** (`Account`, containing `Action History`, `Diagnostics`, `Legal`, `Reset data`, `Delete account`, and `Sign Out`). Navigation rows omit sublabels and display `NoriPill` only for exceptions.
+- **Brand Icons (`NoriBrandIcon`, `NoriBrandRow`):** Use `NoriBrandRow` for Google Calendar, Google Drive, Gmail, Linear, Notion, Anthropic, OpenAI, and Google rows. `NoriBrandIcon` reads `@Environment(\.colorScheme)` explicitly to switch between Light (`#FFFFFF`) and Dark (`#181820`) brand tile surfaces.
+- **More Subpages:** Match Web parity across `AppsView` / `MCPDetailView` (direct switches, plain `Actions` toggles), `MemoryView` (topic folders + unified search + inline `Forget` / `Keep`), `StandingPermissionsView` (`Allowed` / `Ask first` / `Blocked` + inline `Remove` / `Keep`), `ModelsSettingsView` (`Chat` / `Work` auto-save rows pushing a searchable `ModelPickerView` with `Reasoning` at the top), `APICostsView` (`Usage & Budgets` with monthly progress bar and inline-editable limits), and `PreferencesBudgetsView` (`Region`, `Working hours` drill-in, `Default accounts`).
 
 ### Typography, Haptics & Accessibility
 - Keep SF Pro (`Font.system(...)`) and Dynamic Type scaling identical across Light and Dark modes.

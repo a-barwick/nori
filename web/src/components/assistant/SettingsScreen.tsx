@@ -1,280 +1,514 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
-import { Activity, ArrowUpRight, BarChart3, Brain, History, Monitor, Moon, RotateCcw, ShieldCheck, SlidersHorizontal, Sparkles, Sun, UserCircle } from "lucide-react";
+import {
+  Activity,
+  ArrowLeft,
+  ArrowUpRight,
+  BarChart3,
+  Brain,
+  History,
+  Monitor,
+  Moon,
+  RotateCcw,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sparkles,
+  Sun,
+  UserCircle,
+  X,
+} from "lucide-react";
 import { NoriMark } from "@/components/mark/NoriMark";
 import { Button } from "@/components/ui/primitives";
 import { APPEARANCE_OPTIONS, useAppearance, type NoriAppearance } from "@/lib/appearance";
-import { ACCOUNT_DELETED_REDIRECT, APIError, deleteAccount, errorText, mutate, newRequestID, resetUserData } from "@/lib/assistant/api";
+import {
+  ACCOUNT_DELETED_REDIRECT,
+  APIError,
+  deleteAccount,
+  errorText,
+  mutate,
+  newRequestID,
+  resetUserData,
+} from "@/lib/assistant/api";
 import { useAssistant, useAssistantConfig } from "@/lib/assistant/context";
 import { markBrowserReset } from "@/lib/assistant/resetState";
-import { EFFECT_LABEL, when } from "@/lib/assistant/format";
-import {
-  buildPermissionRuleEditable,
-  countRulesByEffect,
-  describePermissionRulePreview,
-  groupPermissionRules,
-  revokeRuleConfirmationBody,
-  RULE_EFFECT_META,
-  RULE_EFFECT_ORDER,
-  RULE_PRECEDENCE_NOTE,
-  type RuleEffect,
-  type RuleFilter,
-} from "@/lib/assistant/permissions";
+import { when } from "@/lib/assistant/format";
 import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant/useResource";
-import type { Connection, MCPServer, OperationProjection as Operation, PermissionRule, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
+import type {
+  Connection,
+  OperationProjection as Operation,
+  PermissionRule,
+  Preferences,
+  PreferencesEditable,
+} from "@/lib/contracts/assistant";
 import { PRIVACY_URL, TERMS_URL } from "@/lib/legal";
 import { cn } from "@/lib/utils";
 import { ApiCosts } from "./ApiCosts";
+import { AppBrandIcon } from "./BrandIcons";
 import { ModelsSettings } from "./ModelsSettings";
 import { SignOutForm } from "./SignOutForm";
 import { OperationRows, shownOperations } from "./WorkScreen";
-import { Confirm, Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, Row, Rows, Screen, Section, Tabs } from "./ui";
+import {
+  Empty,
+  Failure,
+  Field,
+  inputBase,
+  inputClass,
+  Loading,
+  Notice,
+  NotYet,
+  Pill,
+  Row,
+  Rows,
+  Screen,
+  Section,
+  Switch,
+} from "./ui";
 
 type List<T> = { items: T[] };
-export type SettingsSection = "permissions" | "preferences" | "api-costs" | "appearance" | "models" | "reset" | "account" | "history" | "diagnostics";
+export type SettingsSection =
+  | "permissions"
+  | "preferences"
+  | "api-costs"
+  | "appearance"
+  | "models"
+  | "reset"
+  | "account"
+  | "history"
+  | "diagnostics";
 
-const SECTIONS: { id: SettingsSection | "memory"; title: string; icon: typeof ShieldCheck; href?: string; feature?: Parameters<ReturnType<typeof useAssistant>["has"]>[0] }[] = [
-  { id: "permissions", title: "Standing Permissions", icon: ShieldCheck, feature: "permissions" },
-  { id: "preferences", title: "Preferences & Budgets", icon: SlidersHorizontal, feature: "preferences" },
-  { id: "api-costs", title: "API Costs", icon: BarChart3 },
+const SECTIONS: {
+  id: SettingsSection | "memory";
+  title: string;
+  icon: typeof ShieldCheck;
+  href?: string;
+  back?: string;
+  backLabel?: string;
+  feature?: Parameters<ReturnType<typeof useAssistant>["has"]>[0];
+}[] = [
+  { id: "permissions", title: "Permissions", icon: ShieldCheck, feature: "permissions" },
+  { id: "preferences", title: "Preferences", icon: SlidersHorizontal, feature: "preferences" },
+  { id: "api-costs", title: "Usage & Budgets", icon: BarChart3 },
   { id: "appearance", title: "Appearance", icon: Monitor },
   { id: "models", title: "Models", icon: Sparkles },
-  { id: "reset", title: "Reset Data", icon: RotateCcw },
+  { id: "reset", title: "Reset data", icon: RotateCcw, back: "/settings/account", backLabel: "Account" },
   { id: "memory", title: "Memory", icon: Brain, href: "/memory", feature: "memory" },
   { id: "account", title: "Account", icon: UserCircle },
-  { id: "history", title: "Action History", icon: History, feature: "operations" },
-  { id: "diagnostics", title: "Diagnostics", icon: Activity },
+  { id: "history", title: "Action History", icon: History, feature: "operations", back: "/settings/account", backLabel: "Account" },
+  { id: "diagnostics", title: "Diagnostics", icon: Activity, back: "/settings/account", backLabel: "Account" },
 ];
 
 export function SettingsIndex() {
   const { has } = useAssistantConfig();
-  return <Screen title="Settings" back="/more" backLabel="More">
-    <Rows>{SECTIONS.map((section) => <Row key={section.id} href={section.href ?? `/settings/${section.id}`} leading={<section.icon size={18} className="text-ink-2" aria-hidden />} title={section.title}
-      trailing={section.feature && !has(section.feature) ? <Pill>Not yet</Pill> : undefined} />)}</Rows>
-  </Screen>;
+  return (
+    <Screen title="Settings" back="/more" backLabel="More">
+      <Rows>
+        {SECTIONS.map((section) => (
+          <Row
+            key={section.id}
+            href={section.href ?? `/settings/${section.id}`}
+            leading={<section.icon size={18} className="text-ink-2" aria-hidden />}
+            title={section.title}
+            trailing={section.feature && !has(section.feature) ? <Pill>Not yet</Pill> : undefined}
+          />
+        ))}
+      </Rows>
+    </Screen>
+  );
 }
 
 export function SettingsScreen({ section, userEmail }: { section: SettingsSection; userEmail?: string }) {
   const { has } = useAssistantConfig();
   const meta = SECTIONS.find((item) => item.id === section)!;
-  if (meta.feature && !has(meta.feature)) return <Screen title={meta.title} back="/more" backLabel="More"><NotYet what={meta.title} /></Screen>;
-  return <Screen title={meta.title} back="/more" backLabel="More">
-    {section === "permissions"
-      ? <Permissions />
-      : section === "preferences"
-        ? <PreferencesForm />
-        : section === "api-costs"
-          ? <ApiCosts />
-        : section === "appearance"
-          ? <AppearanceSettings />
-          : section === "models"
-            ? <ModelsSettings />
-            : section === "reset"
-              ? <ResetData />
-              : section === "account"
-                ? <AccountSettings userEmail={userEmail} />
-                : section === "history"
-                  ? <ActionHistory />
-                  : <Diagnostics />}
-  </Screen>;
+  const back = meta.back ?? "/more";
+  const backLabel = meta.backLabel ?? "More";
+  if (meta.feature && !has(meta.feature)) {
+    return (
+      <Screen title={meta.title} back={back} backLabel={backLabel}>
+        <NotYet what={meta.title} />
+      </Screen>
+    );
+  }
+  return (
+    <Screen title={meta.title} back={back} backLabel={backLabel}>
+      {section === "permissions" ? (
+        <Permissions />
+      ) : section === "preferences" ? (
+        <PreferencesForm />
+      ) : section === "api-costs" ? (
+        <ApiCosts />
+      ) : section === "appearance" ? (
+        <AppearanceSettings />
+      ) : section === "models" ? (
+        <ModelsSettings />
+      ) : section === "reset" ? (
+        <ResetData />
+      ) : section === "account" ? (
+        <AccountSettings userEmail={userEmail} />
+      ) : section === "history" ? (
+        <ActionHistory />
+      ) : (
+        <Diagnostics />
+      )}
+    </Screen>
+  );
 }
 
 function Permissions() {
   const invalidate = useResourceInvalidation();
-  const { has } = useAssistantConfig();
   const rules = useResource<List<PermissionRule>>("/permissions", { poll: 30_000 });
-  const connections = useResource<List<Connection>>(has("connections") ? "/connections" : null, { poll: 0 });
-  const servers = useResource<List<MCPServer>>(has("mcp") ? "/mcp" : null, { poll: 0 });
   const action = useAction();
-  const [adding, setAdding] = useState(false);
-  const [filter, setFilter] = useState<RuleFilter>("all");
-  if (rules.loading) return <Loading />;
-  const items = rules.data?.items ?? [];
-  const counts = countRulesByEffect(items);
-  const revoke = (rule: PermissionRule) => action.run(rule.id, async () => {
-    await mutate(`/permissions/${encodeURIComponent(rule.id)}/actions`, { request_id: newRequestID(), expected_revision: rule.revision, value: { action: "revoke" } });
-    invalidate("/permissions", "/automations");
-  });
-  const account = (id: string) => connections.data?.items.find((connection) => connection.id === id);
-  const server = (id: string) => servers.data?.items.find((item) => item.id === id);
-  const groups = groupPermissionRules(items, filter);
-  const shownCount = groups.reduce((total, group) => total + group.rules.length, 0);
-  return <>
-    <Notice tone="neutral">{RULE_PRECEDENCE_NOTE}</Notice>
-    {rules.error && <div className="mt-4"><Failure error={rules.error} onRetry={() => void rules.reload()} /></div>}
-    {action.error && <div className="mt-4"><Notice tone="danger">{action.error}</Notice></div>}
-    {items.length > 0 && (
-      <div className="mt-6">
-        <Tabs<RuleFilter>
-          label="Filter permission rules"
-          value={filter}
-          onChange={setFilter}
-          items={[
-            { id: "all", label: "All", count: items.length },
-            ...RULE_EFFECT_ORDER.map((effect) => ({
-              id: effect,
-              label: RULE_EFFECT_META[effect].label,
-              count: counts[effect],
-            })),
-          ]}
-        />
-      </div>
-    )}
-    {groups.map((group) => group.rules.length > 0 && <Section key={group.id} title={group.title}><Rows>{group.rules.map((rule) => (
-      <li key={rule.id} id={rule.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-        <span className="min-w-0 flex-1">
-          <span className="block text-row font-medium">{rule.summary ?? rule.title ?? "Permission"}</span>
-          <span className="mt-0.5 block text-meta text-ink-2">{[rule.action_classes.map((effect) => EFFECT_LABEL[effect]).join(", "), rule.connection_ids.map((id) => id === "*" ? "all tools & MCP servers" : account(id)?.title ?? server(id)?.name ?? id).join(", "), rule.recipients?.length ? `to ${rule.recipients.join(", ")}` : "", rule.expires_at ? `until ${when(rule.expires_at)}` : "", rule.max_operations ? `up to ${rule.max_operations} times` : ""].filter(Boolean).join(" · ")}</span>
-          {rule.automation_id && <Link href={`/routines/${encodeURIComponent(rule.automation_id)}`} className="text-meta text-accent-text hover:underline">Automation</Link>}
-        </span>
-        <Confirm danger title="Remove this permission?" body={revokeRuleConfirmationBody(rule)} confirm="Remove" onConfirm={() => void revoke(rule)}
-          trigger={<Button size="sm" variant="quiet" disabled={action.pending === rule.id}>{action.pending === rule.id ? "Removing…" : "Remove"}</Button>} />
-      </li>
-    ))}</Rows></Section>)}
-    {!items.length && <div className="mt-6"><Empty>No standing permissions. Nori asks before each change or send.</Empty></div>}
-    {items.length > 0 && shownCount === 0 && <div className="mt-4"><Empty>No {RULE_EFFECT_META[filter as RuleEffect].label.toLowerCase()} rules yet.</Empty></div>}
-    <Section>{adding ? <NewRule connections={connections.data?.items ?? []} servers={servers.data?.items ?? []} onDone={() => setAdding(false)} /> : <Button onClick={() => setAdding(true)}>Add a permission</Button>}</Section>
-  </>;
-}
+  const [confirmId, setConfirmId] = useState<string | null>(null);
 
-export function NewRule({ connections, servers, onDone }: { connections: Connection[]; servers: MCPServer[]; onDone: () => void }) {
-  const invalidate = useResourceInvalidation();
-  const action = useAction();
-  const [effect, setEffect] = useState<RuleEffect>("allow");
-  const [account, setAccount] = useState(connections[0]?.id ?? "*");
-  const [toolIds, setToolIds] = useState("");
-  const [classes, setClasses] = useState<PermissionRule["action_classes"]>(["reversible_write"]);
-  const [recipients, setRecipients] = useState("");
-  const [expires, setExpires] = useState("");
-  const onTargetChange = (next: string) => {
-    setAccount(next);
-    if (servers.some((item) => item.id === next) && !classes.includes("unknown")) {
-      setClasses((prev) => [...prev, "unknown"]);
-    }
-  };
-  const save = () => action.run("save", async () => {
-    await mutate("/permissions", {
-      request_id: newRequestID(),
-      expected_revision: 0,
-      value: buildPermissionRuleEditable({ effect, account, classes, toolIds, recipients, expires }),
+  if (rules.loading && !rules.data) return <Loading />;
+
+  const items = rules.data?.items ?? [];
+  const allowed = items.filter((rule) => rule.effect === "allow");
+  const ask = items.filter((rule) => rule.effect === "ask");
+  const blocked = items.filter((rule) => rule.effect === "deny");
+
+  const revoke = (rule: PermissionRule) =>
+    action.run(rule.id, async () => {
+      await mutate(`/permissions/${encodeURIComponent(rule.id)}/actions`, {
+        request_id: newRequestID(),
+        expected_revision: rule.revision,
+        value: { action: "revoke" },
+      });
+      setConfirmId(null);
+      invalidate("/permissions", "/automations");
     });
-    invalidate("/permissions"); onDone();
-  });
-  const selected = connections.find((connection) => connection.id === account);
-  const selectedServer = servers.find((item) => item.id === account);
-  const targetLabel = account === "*" ? "all tools & MCP servers" : selected?.account?.label ?? selected?.title ?? selectedServer?.name ?? "this account";
-  const example = describePermissionRulePreview({ effect, classes, targetLabel, recipients });
-  return <form className="space-y-4 rounded-card border border-card-border bg-surface p-4" onSubmit={(event) => { event.preventDefault(); void save(); }}>
-    <div className="flex flex-wrap gap-3">
-      <Field label="Rule"><select value={effect} onChange={(event) => setEffect(event.target.value as RuleEffect)} className={cn(inputBase, "w-auto")}>
-        <option value="allow">{RULE_EFFECT_META.allow.label}</option>
-        <option value="ask">{RULE_EFFECT_META.ask.label}</option>
-        <option value="deny">{RULE_EFFECT_META.deny.label}</option>
-      </select></Field>
-      <Field label="Target"><select value={account} onChange={(event) => onTargetChange(event.target.value)} className={cn(inputBase, "w-auto")}><option value="*">All tools &amp; MCP servers</option>{connections.map((connection) => <option key={connection.id} value={connection.id}>{[connection.title, connection.account?.label].filter(Boolean).join(" · ")}</option>)}{servers.map((item) => <option key={item.id} value={item.id}>{item.name} (MCP)</option>)}</select></Field>
+
+  const renderRuleRow = (rule: PermissionRule) => {
+    const confirming = confirmId === rule.id;
+    const dotClass = rule.effect === "deny" ? "bg-danger" : rule.effect === "ask" ? "bg-warning" : "bg-ok";
+    return (
+      <li key={rule.id} id={rule.id} className="group flex items-center gap-3 px-4 py-3.5">
+        <span aria-hidden className={cn("size-2 shrink-0 rounded-full", dotClass)} />
+        <span className="min-w-0 flex-1">
+          <span className="block text-body text-ink [overflow-wrap:anywhere]">
+            {rule.summary ?? rule.title ?? "Permission"}
+          </span>
+          {rule.expires_at && (
+            <span className="mt-0.5 block text-caption text-ink-3">Until {when(rule.expires_at)}</span>
+          )}
+        </span>
+        {confirming ? (
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Button size="sm" variant="danger" disabled={action.pending === rule.id} onClick={() => void revoke(rule)}>
+              {action.pending === rule.id ? "Removing…" : "Remove"}
+            </Button>
+            <Button size="sm" variant="quiet" disabled={action.pending === rule.id} onClick={() => setConfirmId(null)}>
+              Keep
+            </Button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            aria-label="Remove permission"
+            onClick={() => setConfirmId(rule.id)}
+            className="grid size-7 shrink-0 place-items-center rounded-full text-ink-3 opacity-60 transition-colors hover:bg-danger-bg hover:text-danger hover:opacity-100 focus-visible:opacity-100 sm:opacity-35 sm:group-hover:opacity-100"
+          >
+            <X size={14} aria-hidden />
+          </button>
+        )}
+      </li>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      {rules.error && <Failure error={rules.error} onRetry={() => void rules.reload()} />}
+      {action.error && <Notice tone="danger">{action.error}</Notice>}
+      {!items.length ? (
+        <Empty>Nori asks before making changes or sending messages.</Empty>
+      ) : (
+        <>
+          {allowed.length > 0 && (
+            <Section title="Allowed">
+              <Rows label="Allowed">{allowed.map(renderRuleRow)}</Rows>
+            </Section>
+          )}
+          {ask.length > 0 && (
+            <Section title="Ask first">
+              <Rows label="Ask first">{ask.map(renderRuleRow)}</Rows>
+            </Section>
+          )}
+          {blocked.length > 0 && (
+            <Section title="Blocked">
+              <Rows label="Blocked">{blocked.map(renderRuleRow)}</Rows>
+            </Section>
+          )}
+        </>
+      )}
     </div>
-    <fieldset><legend className="mb-1.5 text-meta font-medium">Actions</legend><div className="flex flex-wrap gap-2">{(["read", "reversible_write", "sensitive_send", "unknown"] as const).map((effectClass) => <label key={effectClass} className={cn("flex min-h-11 items-center gap-2 rounded-full border px-3 text-meta", classes.includes(effectClass) ? "border-chip-selected-border bg-chip-selected-bg text-chip-selected-fg" : "border-card-border bg-fill-1 text-ink-2")}>
-      <input type="checkbox" className="accent-[var(--accent)]" checked={classes.includes(effectClass)} onChange={() => setClasses(classes.includes(effectClass) ? classes.filter((other) => other !== effectClass) : [...classes, effectClass])} />{EFFECT_LABEL[effectClass]}</label>)}</div></fieldset>
-    <Field label="Specific tool (optional)"><input value={toolIds} onChange={(event) => setToolIds(event.target.value)} placeholder="Any tool, or mcp/server_id/tool_name" className={inputClass} /></Field>
-    {classes.includes("sensitive_send") && <Field label={effect === "allow" ? "Only to" : "Only to (optional)"}><input value={recipients} onChange={(event) => setRecipients(event.target.value)} placeholder={effect === "allow" ? "sam@example.com, family@example.com" : "Any recipient, or sam@example.com"} className={inputClass} /></Field>}
-    <Field label="Until (optional)"><input type="date" value={expires} onChange={(event) => setExpires(event.target.value)} className={cn(inputBase, "w-auto")} /></Field>
-    <p className="rounded-tile bg-fill-1 px-3 py-2 text-meta text-ink">{example}</p>
-    {action.error && <Notice tone="danger">{action.error}</Notice>}
-    <div className="flex gap-2"><Button type="submit" variant="primary" disabled={!account || !classes.length || (classes.includes("sensitive_send") && effect === "allow" && !recipients.trim()) || !!action.pending}>Save</Button><Button variant="quiet" onClick={onDone}>Cancel</Button></div>
-  </form>;
+  );
 }
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
+
+function summarizeWorkingHours(hours: Preferences["working_hours"]): string {
+  if (!hours.length) return "Not set";
+  const ordered = DAY_ORDER.map((day) => hours.find((entry) => entry.day === day)).filter(
+    (entry): entry is NonNullable<typeof entry> => Boolean(entry),
+  );
+  if (!ordered.length) return "Not set";
+  const sameTimes = ordered.every((entry) => entry.start === ordered[0].start && entry.end === ordered[0].end);
+  const days = ordered.map((entry) => entry.day);
+  const isWeekdays = days.length === 5 && days.join(",") === "1,2,3,4,5";
+  const dayLabel = isWeekdays ? "Mon – Fri" : `${ordered.length} days`;
+  return sameTimes ? `${dayLabel} · ${ordered[0].start}–${ordered[0].end}` : dayLabel;
+}
 
 function PreferencesForm() {
   const preferences = useResource<Preferences>("/preferences", { poll: 0 });
-  if (preferences.loading) return <Loading />;
-  if (!preferences.data) return <Failure error={preferences.error ?? "Preferences unavailable."} onRetry={() => void preferences.reload()} />;
-  return <PreferencesEditor key={preferences.data.revision} current={preferences.data} onSaved={preferences.apply} />;
+  if (preferences.loading && !preferences.data) return <Loading />;
+  if (!preferences.data) {
+    return <Failure error={preferences.error ?? "Preferences unavailable."} onRetry={() => void preferences.reload()} />;
+  }
+  return <PreferencesEditor current={preferences.data} onSaved={preferences.apply} />;
 }
 
 function editable(preferences: Preferences): PreferencesEditable {
   const { revision: _revision, updated_at: _updated, ...value } = preferences;
-  void _revision; void _updated;
+  void _revision;
+  void _updated;
   return value;
 }
 
 function PreferencesEditor({ current, onSaved }: { current: Preferences; onSaved: (next: Preferences) => void }) {
   const invalidate = useResourceInvalidation();
   const action = useAction();
-  const [value, setValue] = useState<PreferencesEditable>(editable(current));
-  const [taskBudgetText, setTaskBudgetText] = useState(() => String(current.budgets.task_usd));
-  const [monthlyBudgetText, setMonthlyBudgetText] = useState(() => current.budgets.monthly_usd !== undefined ? String(current.budgets.monthly_usd) : "");
+  const [editingField, setEditingField] = useState<"timezone" | "locale" | null>(null);
+  const [draftText, setDraftText] = useState("");
+  const [editingHours, setEditingHours] = useState(false);
   const [conflict, setConflict] = useState<Preferences>();
 
-  const parsedTaskBudget = taskBudgetText.trim() === "" ? Number.NaN : Number(taskBudgetText);
-  const taskBudgetValid = Number.isFinite(parsedTaskBudget) && parsedTaskBudget >= 0;
-  const trimmedMonthly = monthlyBudgetText.trim();
-  const parsedMonthlyBudget = trimmedMonthly === "" ? undefined : Number(trimmedMonthly);
-  const monthlyBudgetValid = parsedMonthlyBudget === undefined || (Number.isFinite(parsedMonthlyBudget) && parsedMonthlyBudget >= 0);
-  const budgetsValid = taskBudgetValid && monthlyBudgetValid;
-
-  const candidate: PreferencesEditable = {
-    ...value,
-    budgets: {
-      task_usd: taskBudgetValid ? parsedTaskBudget : value.budgets.task_usd,
-      ...(monthlyBudgetValid && parsedMonthlyBudget !== undefined ? { monthly_usd: parsedMonthlyBudget } : {}),
-    },
-  };
-  const dirty = JSON.stringify(candidate) !== JSON.stringify(editable(current)) || !budgetsValid;
-
-  const save = () => {
-    if (!budgetsValid) return;
-    return action.run("save", async () => {
+  const commit = (next: PreferencesEditable) =>
+    action.run("save", async () => {
       try {
-        const receipt = await mutate<Preferences>("/preferences", { request_id: newRequestID(), expected_revision: current.revision, value: candidate }, "PUT");
-        onSaved(receipt.resource as Preferences); invalidate("/connections");
+        const receipt = await mutate<Preferences>(
+          "/preferences",
+          {
+            request_id: newRequestID(),
+            expected_revision: current.revision,
+            value: next,
+          },
+          "PUT",
+        );
+        onSaved(receipt.resource as Preferences);
+        setEditingField(null);
+        invalidate("/connections");
       } catch (error) {
-        if (error instanceof APIError && error.stale && error.body?.current) setConflict(error.body.current as Preferences);
+        if (error instanceof APIError && error.stale && error.body?.current) {
+          setConflict(error.body.current as Preferences);
+        }
         throw error;
       }
     });
+
+  const base = editable(current);
+
+  if (editingHours) {
+    return (
+      <WorkingHoursEditor
+        hours={base.working_hours}
+        saving={!!action.pending}
+        error={action.error}
+        onBack={() => setEditingHours(false)}
+        onChange={(working_hours) => void commit({ ...base, working_hours })}
+      />
+    );
+  }
+
+  const startEdit = (field: "timezone" | "locale") => {
+    setEditingField(field);
+    setDraftText(field === "timezone" ? base.timezone : base.locale ?? "");
   };
-  const hours = (day: number) => value.working_hours.find((entry) => entry.day === day);
-  const setHours = (day: number, next?: { start: string; end: string }) => setValue({ ...value, working_hours: [...value.working_hours.filter((entry) => entry.day !== day), ...(next ? [{ day, ...next }] : [])].sort((a, b) => a.day - b.day) });
-  return <form className="space-y-6" onSubmit={(event) => { event.preventDefault(); void save(); }}>
-    {conflict && <Notice tone="warning" action={<Button size="sm" onClick={() => onSaved(conflict)}>Load latest</Button>}>These changed on another device. Load the latest to edit them.</Notice>}
-    <div className="flex flex-wrap gap-4">
-      <Field label="Time zone"><input value={value.timezone} onChange={(event) => setValue({ ...value, timezone: event.target.value })} className={cn(inputBase, "w-64")} list="zones" /></Field>
-      <datalist id="zones">{(Intl as unknown as { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf?.("timeZone").map((zone) => <option key={zone} value={zone} />)}</datalist>
-      <Field label="Language and region"><input value={value.locale ?? ""} onChange={(event) => setValue({ ...value, locale: event.target.value })} className={cn(inputBase, "w-32")} placeholder="en-GB" /></Field>
+
+  const saveField = (field: "timezone" | "locale") => {
+    const trimmed = draftText.trim();
+    if (field === "timezone" && !trimmed) return;
+    if (field === "timezone") {
+      void commit({ ...base, timezone: trimmed });
+    } else {
+      void commit({ ...base, locale: trimmed || undefined });
+    }
+  };
+
+  const renderTextRow = (field: "timezone" | "locale", label: string, value: string, placeholder?: string) => {
+    if (editingField === field) {
+      return (
+        <li key={field} className="px-4 py-3">
+          <form
+            className="flex flex-wrap items-center gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              saveField(field);
+            }}
+          >
+            <span className="min-w-0 flex-1 text-row font-semibold text-ink">{label}</span>
+            <input
+              aria-label={label}
+              value={draftText}
+              onChange={(event) => setDraftText(event.target.value)}
+              list={field === "timezone" ? "nori-zones" : undefined}
+              placeholder={placeholder}
+              className={cn(inputBase, "h-9 w-48 py-0")}
+              autoFocus
+            />
+            <Button type="submit" size="sm" variant="primary" disabled={!!action.pending || (field === "timezone" && !draftText.trim())}>
+              {action.pending ? "Saving…" : "Save"}
+            </Button>
+            <Button type="button" size="sm" variant="quiet" disabled={!!action.pending} onClick={() => setEditingField(null)}>
+              Cancel
+            </Button>
+          </form>
+        </li>
+      );
+    }
+    return (
+      <Row
+        key={field}
+        title={label}
+        onClick={() => startEdit(field)}
+        trailing={<span className="text-meta font-medium text-ink-2">{value || "Not set"}</span>}
+        chevron
+      />
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      <datalist id="nori-zones">
+        {(Intl as unknown as { supportedValuesOf?: (key: string) => string[] })
+          .supportedValuesOf?.("timeZone")
+          .map((zone) => (
+            <option key={zone} value={zone} />
+          ))}
+      </datalist>
+
+      {conflict && (
+        <Notice tone="warning" action={<Button size="sm" onClick={() => onSaved(conflict)}>Load latest</Button>}>
+          These changed on another device. Load the latest to edit them.
+        </Notice>
+      )}
+      {action.error && !conflict && <Notice tone="danger">{action.error}</Notice>}
+
+      <Section title="Region">
+        <Rows label="Region">
+          {renderTextRow("timezone", "Time zone", base.timezone, "America/Los_Angeles")}
+          {renderTextRow("locale", "Language & region", base.locale ?? "", "en-US")}
+        </Rows>
+      </Section>
+
+      <Section title="Schedule">
+        <Rows label="Schedule">
+          <Row
+            title="Working hours"
+            onClick={() => setEditingHours(true)}
+            trailing={<span className="text-meta font-medium tabular-nums text-ink-2">{summarizeWorkingHours(base.working_hours)}</span>}
+            chevron
+          />
+        </Rows>
+      </Section>
+
+      <AccountDefaults
+        defaults={base.account_defaults}
+        onChange={(account_defaults) => void commit({ ...base, account_defaults })}
+      />
     </div>
-    <fieldset><legend className="mb-1.5 text-meta font-medium">Working hours</legend>
-      <ul className="space-y-1">{[1, 2, 3, 4, 5, 6, 0].map((day) => { const entry = hours(day); return <li key={day} className="flex min-h-11 items-center gap-3">
-        <label className="flex w-16 shrink-0 items-center gap-2 text-body"><input type="checkbox" className="accent-[var(--accent)]" checked={!!entry} onChange={(event) => setHours(day, event.target.checked ? { start: "09:00", end: "17:30" } : undefined)} />{DAYS[day]}</label>
-        {entry && <span className="flex min-w-0 flex-1 items-center gap-2"><input aria-label={`${DAYS[day]} start`} type="time" value={entry.start} onChange={(event) => setHours(day, { start: event.target.value, end: entry.end })} className={cn(inputBase, "w-full max-w-[8.75rem] min-w-0 flex-1 px-2 py-1.5")} /><span className="text-ink-3" aria-hidden>–</span><input aria-label={`${DAYS[day]} end`} type="time" value={entry.end} onChange={(event) => setHours(day, { start: entry.start, end: event.target.value })} className={cn(inputBase, "w-full max-w-[8.75rem] min-w-0 flex-1 px-2 py-1.5")} /></span>}
-      </li>; })}</ul>
-    </fieldset>
-    <div className="flex flex-wrap gap-4">
-      <Field label="Budget per task (USD)"><input type="number" min={0} step="any" value={taskBudgetText} onChange={(event) => setTaskBudgetText(event.target.value)} className={cn(inputBase, "w-32")} required /></Field>
-      <Field label="Monthly limit (USD)"><input type="number" min={0} step="any" value={monthlyBudgetText} onChange={(event) => setMonthlyBudgetText(event.target.value)} placeholder="No limit" className={cn(inputBase, "w-32")} /></Field>
+  );
+}
+
+function WorkingHoursEditor({
+  hours,
+  saving,
+  error,
+  onBack,
+  onChange,
+}: {
+  hours: Preferences["working_hours"];
+  saving: boolean;
+  error?: string;
+  onBack: () => void;
+  onChange: (next: Preferences["working_hours"]) => void;
+}) {
+  const entryFor = (day: number) => hours.find((entry) => entry.day === day);
+  const updateDay = (day: number, next?: { start: string; end: string }) => {
+    const updated = [...hours.filter((entry) => entry.day !== day), ...(next ? [{ day, ...next }] : [])].sort(
+      (a, b) => a.day - b.day,
+    );
+    onChange(updated);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={onBack}
+          className="inline-flex h-8 items-center gap-1.5 rounded-full bg-fill-1 px-3 text-meta font-semibold text-ink transition-colors hover:bg-fill-2"
+        >
+          <ArrowLeft size={14} aria-hidden />
+          Preferences
+        </button>
+        <span className="text-meta font-semibold text-ink-2">Working hours</span>
+      </div>
+      {error && <Notice tone="danger">{error}</Notice>}
+      <Rows label="Working hours">
+        {DAY_ORDER.map((day) => {
+          const entry = entryFor(day);
+          return (
+            <li key={day} className="flex min-h-14 flex-wrap items-center gap-3 px-4 py-3">
+              <Switch
+                checked={!!entry}
+                label={DAYS[day]}
+                disabled={saving}
+                onCheckedChange={(on) => updateDay(day, on ? { start: "09:00", end: "17:30" } : undefined)}
+              />
+              <span className="min-w-12 flex-1 text-row font-semibold text-ink">{DAYS[day]}</span>
+              {entry ? (
+                <span className="flex items-center gap-2">
+                  <input
+                    aria-label={`${DAYS[day]} start`}
+                    type="time"
+                    value={entry.start}
+                    disabled={saving}
+                    onChange={(event) => updateDay(day, { start: event.target.value, end: entry.end })}
+                    className={cn(inputBase, "h-9 w-[6.5rem] px-2 py-0 tabular-nums")}
+                  />
+                  <span className="text-ink-3" aria-hidden>
+                    –
+                  </span>
+                  <input
+                    aria-label={`${DAYS[day]} end`}
+                    type="time"
+                    value={entry.end}
+                    disabled={saving}
+                    onChange={(event) => updateDay(day, { start: entry.start, end: event.target.value })}
+                    className={cn(inputBase, "h-9 w-[6.5rem] px-2 py-0 tabular-nums")}
+                  />
+                </span>
+              ) : (
+                <span className="text-meta text-ink-3">Off</span>
+              )}
+            </li>
+          );
+        })}
+      </Rows>
     </div>
-    {!taskBudgetValid && <p role="alert" className="text-meta text-danger">Enter a valid per-task budget (0 or more).</p>}
-    {!monthlyBudgetValid && <p role="alert" className="text-meta text-danger">Enter a valid monthly limit (0 or more), or leave blank for no limit.</p>}
-    <AccountDefaults defaults={value.account_defaults} onChange={(account_defaults) => setValue({ ...value, account_defaults })} />
-    {action.error && !conflict && <Notice tone="danger">{action.error}</Notice>}
-    <div className="flex gap-2">
-      <Button type="submit" variant="primary" disabled={!dirty || !budgetsValid || !!action.pending}>{action.pending ? "Saving…" : "Save"}</Button>
-      {dirty && <Button variant="quiet" onClick={() => { setValue(editable(current)); setTaskBudgetText(String(current.budgets.task_usd)); setMonthlyBudgetText(current.budgets.monthly_usd !== undefined ? String(current.budgets.monthly_usd) : ""); }}>Undo changes</Button>}
-    </div>
-  </form>;
+  );
 }
 
 const PURPOSE_LABELS: Record<string, string> = {
-  "calendar.create": "New events go to",
-  "calendar.read": "Read events from",
-  "calendar.write": "Update events in",
-  "mail.send": "Send mail as",
-  "mail.read": "Read mail from",
-  "files.read": "Read files from",
-  "files.write": "Save files to",
+  "calendar.create": "New events",
+  "calendar.read": "Read events",
+  "calendar.write": "Update events",
+  "mail.send": "Send mail",
+  "mail.read": "Read mail",
+  "files.read": "Read files",
+  "files.write": "Save files",
 };
 
 function humanizePurpose(purpose: string): string {
@@ -283,35 +517,88 @@ function humanizePurpose(purpose: string): string {
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : purpose;
 }
 
-function AccountDefaults({ defaults, onChange }: { defaults: Record<string, string>; onChange: (next: Record<string, string>) => void }) {
+function purposeService(purpose: string): "calendar" | "drive" | "gmail" | undefined {
+  if (purpose.startsWith("calendar")) return "calendar";
+  if (purpose.startsWith("mail")) return "gmail";
+  if (purpose.startsWith("files")) return "drive";
+  return undefined;
+}
+
+function AccountDefaults({
+  defaults,
+  onChange,
+}: {
+  defaults: Record<string, string>;
+  onChange: (next: Record<string, string>) => void;
+}) {
   const connections = useResource<List<Connection>>("/connections", { poll: 0 });
   const purposes = Object.keys(defaults);
   if (!purposes.length) return null;
-  return <fieldset><legend className="mb-1.5 text-meta font-medium">Default accounts</legend>
-    <ul className="space-y-2">{purposes.map((purpose) => {
-      const displayLabel = humanizePurpose(purpose);
-      return <li key={purpose} className="flex flex-wrap items-center gap-3"><span className="w-40 text-body">{displayLabel}</span>
-        <select aria-label={displayLabel} value={defaults[purpose]} onChange={(event) => onChange({ ...defaults, [purpose]: event.target.value })} className={cn(inputBase, "w-auto")}>
-          {(connections.data?.items ?? []).filter((connection) => connection.status !== "disconnected").map((connection) => <option key={connection.id} value={connection.id}>{[connection.title, connection.account?.label].filter(Boolean).join(" · ")}</option>)}
-        </select></li>;
-    })}</ul>
-  </fieldset>;
+  const active = (connections.data?.items ?? []).filter((connection) => connection.status !== "disconnected");
+  return (
+    <Section title="Default accounts">
+      <Rows label="Default accounts">
+        {purposes.map((purpose) => {
+          const displayLabel = humanizePurpose(purpose);
+          const svc = purposeService(purpose);
+          return (
+            <li key={purpose} className="flex min-h-14 flex-wrap items-center gap-3 px-4 py-3">
+              <AppBrandIcon service={svc} name={displayLabel} />
+              <span className="min-w-0 flex-1 text-row font-semibold text-ink">{displayLabel}</span>
+              <select
+                aria-label={displayLabel}
+                value={defaults[purpose]}
+                onChange={(event) => onChange({ ...defaults, [purpose]: event.target.value })}
+                className={cn(inputBase, "h-9 w-auto py-0")}
+              >
+                {active.map((connection) => (
+                  <option key={connection.id} value={connection.id}>
+                    {[connection.title, connection.account?.label].filter(Boolean).join(" · ")}
+                  </option>
+                ))}
+              </select>
+            </li>
+          );
+        })}
+      </Rows>
+    </Section>
+  );
 }
 
 function ActionHistory() {
   const connections = useResource<List<Connection>>("/connections", { poll: 0 });
   const [account, setAccount] = useState("");
-  const operations = useResource<List<Operation>>(`/operations${account ? `?connection_id=${encodeURIComponent(account)}` : ""}`, { poll: 30_000 });
+  const operations = useResource<List<Operation>>(
+    `/operations${account ? `?connection_id=${encodeURIComponent(account)}` : ""}`,
+    { poll: 30_000 },
+  );
   const connectionItems = connections.data?.items ?? [];
-  return <>
-    {connectionItems.length > 0 && (
-      <label className="mb-4 flex items-center gap-2 text-meta"><span className="text-ink-2">Account</span>
-        <select value={account} onChange={(event) => setAccount(event.target.value)} className={cn(inputBase, "w-auto")}><option value="">All accounts</option>{connectionItems.map((connection) => <option key={connection.id} value={connection.id}>{[connection.title, connection.account?.label].filter(Boolean).join(" · ")}</option>)}</select></label>
-    )}
-    {operations.loading ? <Loading /> : operations.error ? <Failure error={operations.error} onRetry={() => void operations.reload()} /> : operations.data && shownOperations(operations.data.items).length ? <>
-      <OperationRows operations={shownOperations(operations.data.items)} />
-    </> : <Empty>No actions yet.</Empty>}
-  </>;
+  return (
+    <>
+      {connectionItems.length > 1 && (
+        <label className="mb-4 flex items-center gap-2 text-meta">
+          <span className="text-ink-2">Account</span>
+          <select value={account} onChange={(event) => setAccount(event.target.value)} className={cn(inputBase, "w-auto")}>
+            <option value="">All accounts</option>
+            {connectionItems.map((connection) => (
+              <option key={connection.id} value={connection.id}>
+                {[connection.title, connection.account?.label].filter(Boolean).join(" · ")}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {operations.loading ? (
+        <Loading />
+      ) : operations.error ? (
+        <Failure error={operations.error} onRetry={() => void operations.reload()} />
+      ) : operations.data && shownOperations(operations.data.items).length ? (
+        <OperationRows operations={shownOperations(operations.data.items)} />
+      ) : (
+        <Empty>No actions yet.</Empty>
+      )}
+    </>
+  );
 }
 
 const APPEARANCE_ICON: Record<NoriAppearance, typeof Monitor> = {
@@ -356,7 +643,7 @@ function AppearanceSettings() {
               className={cn(
                 "t-fast flex h-9 items-center justify-center gap-1.5 rounded-full text-[13px] font-semibold transition-[background-color,color,box-shadow]",
                 selected
-                  ? "bg-chip-selected-bg text-chip-selected-fg border border-chip-selected-border"
+                  ? "border border-chip-selected-border bg-chip-selected-bg text-chip-selected-fg"
                   : "border border-transparent text-ink-2 hover:text-ink",
               )}
             >
@@ -371,7 +658,8 @@ function AppearanceSettings() {
 }
 
 function AccountSettings({ userEmail }: { userEmail?: string }) {
-  const { localMode, runtime } = useAssistant();
+  const { localMode, runtime, has } = useAssistant();
+  const [showDelete, setShowDelete] = useState(false);
   const reconnecting = runtime.reconnecting;
   const offline = !!runtime.error && !reconnecting;
   const statusPill = reconnecting
@@ -380,33 +668,115 @@ function AccountSettings({ userEmail }: { userEmail?: string }) {
       ? { tone: "danger" as const, label: "Offline" }
       : undefined;
 
+  if (showDelete) {
+    return (
+      <div className="space-y-4">
+        <button
+          type="button"
+          onClick={() => setShowDelete(false)}
+          className="inline-flex h-8 items-center gap-1.5 rounded-full bg-fill-1 px-3 text-meta font-semibold text-ink transition-colors hover:bg-fill-2"
+        >
+          <ArrowLeft size={14} aria-hidden />
+          Account
+        </button>
+        <DeleteAccountForm />
+      </div>
+    );
+  }
+
   return (
     <>
-    <Rows label="Account">
-      <Row
-        leading={
-          <span className="grid size-9 place-items-center rounded-[10px] bg-accent-subtle text-accent-text">
-            <UserCircle size={18} strokeWidth={1.85} aria-hidden />
-          </span>
-        }
-        title={userEmail || (localMode ? "Local account" : "Signed in")}
-        trailing={statusPill ? <Pill tone={statusPill.tone}>{statusPill.label}</Pill> : undefined}
-      />
-    </Rows>
-    <Section title="Legal">
-      <Rows label="Legal">
-        <Row href={PRIVACY_URL} title="Privacy Policy" chevron={false} trailing={<ArrowUpRight size={15} className="text-ink-3" aria-hidden />} />
-        <Row href={TERMS_URL} title="Terms of Service" chevron={false} trailing={<ArrowUpRight size={15} className="text-ink-3" aria-hidden />} />
+      <Rows label="Account">
+        <Row
+          leading={
+            <span className="grid size-9 place-items-center rounded-[10px] bg-accent-subtle text-accent-text">
+              <UserCircle size={18} strokeWidth={1.85} aria-hidden />
+            </span>
+          }
+          title={userEmail || (localMode ? "Local account" : "Signed in")}
+          trailing={statusPill ? <Pill tone={statusPill.tone}>{statusPill.label}</Pill> : undefined}
+        />
       </Rows>
-    </Section>
-    {!localMode && <Section><SignOutForm /></Section>}
-    {!localMode && <DeleteAccountSection />}
+
+      <Section title="System">
+        <Rows label="System">
+          {has("operations") && (
+            <Row
+              href="/settings/history"
+              leading={
+                <span className="grid size-9 place-items-center rounded-[10px] bg-fill-1 text-ink-2">
+                  <History size={18} strokeWidth={1.85} aria-hidden />
+                </span>
+              }
+              title="Action History"
+            />
+          )}
+          <Row
+            href="/settings/diagnostics"
+            leading={
+              <span className="grid size-9 place-items-center rounded-[10px] bg-fill-1 text-ink-2">
+                <Activity size={18} strokeWidth={1.85} aria-hidden />
+              </span>
+            }
+            title="Diagnostics"
+            trailing={statusPill ? <Pill tone={statusPill.tone}>{statusPill.label}</Pill> : undefined}
+          />
+        </Rows>
+      </Section>
+
+      <Section title="Legal">
+        <Rows label="Legal">
+          <Row
+            href={PRIVACY_URL}
+            title="Privacy Policy"
+            chevron={false}
+            trailing={<ArrowUpRight size={15} className="text-ink-3" aria-hidden />}
+          />
+          <Row
+            href={TERMS_URL}
+            title="Terms of Service"
+            chevron={false}
+            trailing={<ArrowUpRight size={15} className="text-ink-3" aria-hidden />}
+          />
+        </Rows>
+      </Section>
+
+      <Section title="Data">
+        <Rows label="Data">
+          <Row
+            href="/settings/reset"
+            leading={
+              <span className="grid size-9 place-items-center rounded-[10px] bg-danger-bg text-danger">
+                <RotateCcw size={18} strokeWidth={1.85} aria-hidden />
+              </span>
+            }
+            title="Reset data"
+          />
+          {!localMode && (
+            <Row
+              onClick={() => setShowDelete(true)}
+              leading={
+                <span className="grid size-9 place-items-center rounded-[10px] bg-danger-bg text-danger">
+                  <UserCircle size={18} strokeWidth={1.85} aria-hidden />
+                </span>
+              }
+              title="Delete account"
+              chevron
+            />
+          )}
+        </Rows>
+      </Section>
+
+      {!localMode && (
+        <Section>
+          <SignOutForm />
+        </Section>
+      )}
     </>
   );
 }
 
-function DeleteAccountSection() {
-  const [expanded, setExpanded] = useState(false);
+function DeleteAccountForm() {
   const [confirmation, setConfirmation] = useState("");
   const [pending, setPending] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
@@ -424,66 +794,47 @@ function DeleteAccountSection() {
       if (reason instanceof APIError && reason.code === "account_delete_pending") {
         setDeletePending(true);
       }
-      setError(reason instanceof APIError ? errorText(reason) : "Could not reach Nori to confirm account deletion. Try again.");
+      setError(
+        reason instanceof APIError
+          ? errorText(reason)
+          : "Could not reach Nori to confirm account deletion. Try again.",
+      );
       setPending(false);
     }
   };
 
   return (
-    <Section title="Delete account">
-      <div className="space-y-4 rounded-card border border-card-border bg-surface p-4 sm:p-5">
-        <p className="text-body text-ink-2">
-          Permanently deletes your account and all Nori data, including chats, memories, work, files, schedules, preferences, and saved API keys.
-        </p>
-        {!expanded && !deletePending ? (
-          <Button variant="danger" onClick={() => setExpanded(true)}>Delete account</Button>
-        ) : (
-          <form
-            className="space-y-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void submit(deletePending);
-            }}
-          >
-            {deletePending && (
-              <Notice tone="warning">
-                Your account deletion was interrupted. Retry below to finish removing your account.
-              </Notice>
-            )}
-            <Field label="Type your account email to confirm">
-              <input
-                type="email"
-                autoComplete="off"
-                placeholder="you@example.com"
-                className={inputClass}
-                value={confirmation}
-                onChange={(event) => setConfirmation(event.target.value)}
-                disabled={pending}
-              />
-            </Field>
-            {error && <Notice tone="danger">{error}</Notice>}
-            <div className="flex flex-wrap gap-2">
-              <Button type="submit" variant="danger" disabled={!confirmation.trim() || pending}>
-                {pending ? "Deleting…" : deletePending ? "Finish deleting account" : "Delete account"}
-              </Button>
-              {!deletePending && (
-                <Button
-                  variant="quiet"
-                  disabled={pending}
-                  onClick={() => {
-                    setExpanded(false);
-                    setConfirmation("");
-                    setError("");
-                  }}
-                >
-                  Cancel
-                </Button>
-              )}
-            </div>
-          </form>
-        )}
-      </div>
-    </Section>
+    <form
+      className="space-y-4 rounded-card border border-card-border bg-surface p-4 sm:p-5"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit(deletePending);
+      }}
+    >
+      <p className="text-body text-ink-2">
+        Permanently deletes your account and all Nori data, including chats, memories, work, files, schedules, preferences, and saved API keys.
+      </p>
+      {deletePending && (
+        <Notice tone="warning">
+          Your account deletion was interrupted. Retry below to finish removing your account.
+        </Notice>
+      )}
+      <Field label="Type your account email to confirm">
+        <input
+          type="email"
+          autoComplete="off"
+          placeholder="you@example.com"
+          className={inputClass}
+          value={confirmation}
+          onChange={(event) => setConfirmation(event.target.value)}
+          disabled={pending}
+        />
+      </Field>
+      {error && <Notice tone="danger">{error}</Notice>}
+      <Button type="submit" variant="danger" disabled={!confirmation.trim() || pending}>
+        {pending ? "Deleting…" : deletePending ? "Finish deleting account" : "Delete account"}
+      </Button>
+    </form>
   );
 }
 
@@ -508,21 +859,38 @@ function ResetData() {
     }
   };
 
-  return <form onSubmit={(event) => void reset(event)} className="space-y-5 rounded-card border border-card-border bg-surface p-4 sm:p-5">
-    <p className="text-body text-ink-2">This permanently clears your chats, memories, work, files, schedules, preferences, saved API keys, and model choices from Nori and disconnects your apps. You’ll stay signed in with Google and start onboarding again.</p>
-    <Field label="Type RESET to confirm">
-      <input autoComplete="off" className={inputClass} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={pending} />
-    </Field>
-    {error && <Notice tone="danger">{error}</Notice>}
-    <Button type="submit" variant="danger" disabled={confirmation !== "RESET" || pending}>{pending ? "Resetting…" : "Reset data"}</Button>
-  </form>;
+  return (
+    <form onSubmit={(event) => void reset(event)} className="space-y-5 rounded-card border border-card-border bg-surface p-4 sm:p-5">
+      <p className="text-body text-ink-2">
+        This permanently clears your chats, memories, work, files, schedules, preferences, saved API keys, and model choices from Nori and disconnects your apps. You’ll stay signed in with Google and start onboarding again.
+      </p>
+      <Field label="Type RESET to confirm">
+        <input
+          autoComplete="off"
+          className={inputClass}
+          value={confirmation}
+          onChange={(event) => setConfirmation(event.target.value)}
+          disabled={pending}
+        />
+      </Field>
+      {error && <Notice tone="danger">{error}</Notice>}
+      <Button type="submit" variant="danger" disabled={confirmation !== "RESET" || pending}>
+        {pending ? "Resetting…" : "Reset data"}
+      </Button>
+    </form>
+  );
 }
 
 function Diagnostics() {
   const { capabilities, debug, setDebug, localMode, refreshCapabilities } = useAssistantConfig();
   const features = capabilities?.assistant_features ?? {};
   const [checking, setChecking] = useState(false);
-  const [healthResult, setHealthResult] = useState<{ ok: boolean; latencyMs: number; checkedAt: string; error?: string }>();
+  const [healthResult, setHealthResult] = useState<{
+    ok: boolean;
+    latencyMs: number;
+    checkedAt: string;
+    error?: string;
+  }>();
 
   const checkHealth = async () => {
     if (checking) return;
@@ -536,44 +904,85 @@ function Diagnostics() {
       setHealthResult({ ok: true, latencyMs, checkedAt: new Date().toISOString() });
     } catch (reason) {
       const latencyMs = Math.max(1, Math.round(performance.now() - start));
-      setHealthResult({ ok: false, latencyMs, checkedAt: new Date().toISOString(), error: reason instanceof Error ? reason.message : "Server unreachable" });
+      setHealthResult({
+        ok: false,
+        latencyMs,
+        checkedAt: new Date().toISOString(),
+        error: reason instanceof Error ? reason.message : "Server unreachable",
+      });
     } finally {
       setChecking(false);
     }
   };
 
-  return <>
-    <div className="rounded-card border border-card-border bg-surface px-4 py-3">
-      <label className="flex min-h-9 cursor-pointer items-center gap-3 text-body text-ink">
-        <input type="checkbox" className="accent-[var(--accent)]" checked={debug} onChange={(event) => setDebug(event.target.checked)} />
-        <span>Show model and tool details in Chat</span>
-      </label>
-    </div>
-    <Section
-      title="This Nori"
-      actions={
-        <Button size="sm" variant="neutral" disabled={checking} onClick={() => void checkHealth()}>
-          {checking ? "Checking…" : "Check health"}
-        </Button>
-      }
-    >
-      <div className="rounded-card border border-card-border bg-surface p-4">
-        <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-meta">
-          <dt className="text-ink-3">Runtime</dt><dd>{localMode ? "Local" : "Hosted"}</dd>
+  return (
+    <>
+      <Rows label="Chat debug">
+        <Row
+          title="Show model and tool details in Chat"
+          trailing={
+            <Switch
+              checked={debug}
+              label="Show model and tool details in Chat"
+              onCheckedChange={setDebug}
+            />
+          }
+        />
+      </Rows>
+      <Section
+        title="This Nori"
+        actions={
+          <button
+            type="button"
+            disabled={checking}
+            onClick={() => void checkHealth()}
+            className="text-meta font-semibold text-accent-text hover:underline disabled:opacity-50"
+          >
+            {checking ? "Checking…" : "Check health"}
+          </button>
+        }
+      >
+        <Rows label="This Nori">
+          <Row title="Runtime" trailing={<span className="text-meta text-ink-2">{localMode ? "Local" : "Hosted"}</span>} />
           {healthResult && (
-            <>
-              <dt className="text-ink-3">Health</dt>
-              <dd className={healthResult.ok ? "text-ink" : "text-danger"}>
-                {healthResult.ok ? `Healthy · ${healthResult.latencyMs} ms` : `${healthResult.error ?? "Unreachable"} · ${healthResult.latencyMs} ms`}
-              </dd>
-            </>
+            <Row
+              title="Health"
+              trailing={
+                <span className={cn("text-meta font-medium", healthResult.ok ? "text-ok" : "text-danger")}>
+                  {healthResult.ok ? `Healthy · ${healthResult.latencyMs} ms` : `${healthResult.error ?? "Unreachable"} · ${healthResult.latencyMs} ms`}
+                </span>
+              }
+            />
           )}
-          <dt className="text-ink-3">Provider</dt><dd className="font-mono text-mono-data">{[capabilities?.provider, capabilities?.model].filter(Boolean).join(" · ") || "unknown"}</dd>
-          <dt className="text-ink-3">Contracts</dt><dd className="font-mono text-mono-data">{[capabilities?.contract, capabilities?.conversationContract, capabilities?.assistant_contract].filter(Boolean).join(" · ") || "unknown"}</dd>
-          <dt className="text-ink-3">Available</dt><dd>{Object.entries(features).filter(([, on]) => on).map(([name]) => name).join(", ") || "Chat and tasks only"}</dd>
-          {capabilities?.upload_accept && <><dt className="text-ink-3">Uploads</dt><dd>{capabilities.upload_accept.media_types.join(", ")}</dd></>}
-        </dl>
-      </div>
-    </Section>
-  </>;
+          <Row
+            title="Provider"
+            trailing={
+              <span className="font-mono text-mono-data text-ink-2">
+                {[capabilities?.provider, capabilities?.model].filter(Boolean).join(" · ") || "unknown"}
+              </span>
+            }
+          />
+          <Row
+            title="Contracts"
+            trailing={
+              <span className="font-mono text-mono-data text-ink-2">
+                {[capabilities?.contract, capabilities?.conversationContract, capabilities?.assistant_contract]
+                  .filter(Boolean)
+                  .join(" · ") || "unknown"}
+              </span>
+            }
+          />
+          <Row
+            title="Available"
+            detail={
+              Object.entries(features)
+                .filter(([, on]) => on)
+                .map(([name]) => name)
+                .join(", ") || "Chat and tasks only"
+            }
+          />
+        </Rows>
+      </Section>
+    </>
+  );
 }

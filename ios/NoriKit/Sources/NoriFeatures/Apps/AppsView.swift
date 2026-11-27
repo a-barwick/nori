@@ -17,11 +17,11 @@ private enum GoogleService: String, CaseIterable, Identifiable {
         case .gmail: return "Gmail"
         }
     }
-    var icon: String {
+    var brand: NoriBrandKind {
         switch self {
-        case .calendar: return "calendar"
-        case .drive: return "folder"
-        case .gmail: return "envelope"
+        case .calendar: return .googleCalendar
+        case .drive: return .googleDrive
+        case .gmail: return .gmail
         }
     }
     var capabilities: [String] {
@@ -64,38 +64,34 @@ public struct AppsView: View {
                     googleSection(google)
                 }
 
-                NoriSectionHeader("MCP servers") {
-                    Text("\(store.mcpServers.count)")
-                        .font(NoriTypography.caption)
-                        .foregroundStyle(NoriColors.ink3)
+                NoriSectionHeader("Custom apps") {
+                    Button("+ Add") {
+                        showingAddMCP = true
+                    }
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(NoriColors.accent)
+                    .buttonStyle(.plain)
                 }
 
                 if store.mcpServers.isEmpty {
                     NoriEmptyState(
-                        title: "No MCP servers yet",
-                        message: "Add a remote MCP server to give Nori access to external tools."
-                    ) {
-                        Button {
-                            showingAddMCP = true
-                        } label: {
-                            Label("Add MCP server", systemImage: "plus")
-                        }
-                        .buttonStyle(NoriButtonStyle(.primary, compact: true))
-                    }
+                        title: "No custom apps yet",
+                        message: "Add a custom app to give Nori access to more tools."
+                    )
                 } else {
                     NoriRows {
                         ForEach(Array(store.mcpServers.enumerated()), id: \.element.id) { index, server in
                             let isLast = index == store.mcpServers.count - 1
                             NavigationLink(value: MoreRoute.mcpDetail(server.id)) {
-                                NoriRow(
+                                NoriBrandRow(
                                     title: server.name,
-                                    detail: mcpDetailLine(for: server),
-                                    systemImage: "server.rack",
-                                    iconTone: mcpIconTone(for: server),
+                                    brand: NoriBrandKind.forApp(name: server.name, endpoint: server.endpoint),
                                     showChevron: true,
                                     showDivider: !isLast
                                 ) {
-                                    if server.observed.status != .connected {
+                                    if !server.enabled {
+                                        NoriPill("Off", tone: .neutral)
+                                    } else if server.observed.status != .connected {
                                         NoriPill(
                                             server.observed.status.displayLabel,
                                             tone: mcpPillTone(for: server)
@@ -108,23 +104,17 @@ public struct AppsView: View {
                     }
                 }
 
-                let otherConnections = store.connections.filter { $0.integrationID != "google" }
+                let otherConnections = store.connections.filter { $0.integrationID != "google" && $0.status != .disconnected }
                 if !otherConnections.isEmpty {
-                    NoriSectionHeader("Connections") {
-                        Text("\(otherConnections.count)")
-                            .font(NoriTypography.caption)
-                            .foregroundStyle(NoriColors.ink3)
-                    }
+                    NoriSectionHeader("Connected accounts")
 
                     NoriRows {
                         ForEach(Array(otherConnections.enumerated()), id: \.element.id) { index, connection in
                             let isLast = index == otherConnections.count - 1
                             let state = connectionHealthDisplay(for: connection)
-                            NoriRow(
+                            NoriBrandRow(
                                 title: connection.title,
-                                detail: connectionDetailLine(for: connection),
-                                systemImage: "key.fill",
-                                iconTone: state.tone,
+                                brand: NoriBrandKind.forApp(name: connection.title),
                                 showChevron: false,
                                 showDivider: !isLast
                             ) {
@@ -155,26 +145,11 @@ public struct AppsView: View {
         .task(id: googleConnection?.revision) {
             await refreshGoogleDriveFiles()
         }
-        .navigationTitle("Apps & MCP")
+        .navigationTitle("Apps")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         #endif
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showingAddMCP = true
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(NoriColors.onAccent)
-                        .frame(width: 32, height: 32)
-                        .background(NoriColors.brandPrimary, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Add MCP server")
-            }
-        }
         .sheet(isPresented: $showingAddMCP) {
             AddMCPServerSheet(store: store)
                 .presentationDetents([.medium, .large])
@@ -215,30 +190,28 @@ public struct AppsView: View {
                 HStack(spacing: 12) {
                     if needsReconnect {
                         Button("Reconnect") { reconnectGoogle(connection) }
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: 12.5, weight: .semibold))
                             .foregroundStyle(NoriColors.accent)
+                            .buttonStyle(.plain)
                             .disabled(isGoogleBusy)
                     }
                     Button("Disconnect") { showingDisconnectGoogle = true }
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(NoriColors.accent)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(NoriColors.ink3)
+                        .buttonStyle(.plain)
                         .disabled(isGoogleBusy)
                 }
             }
         }
-        if let label = connection?.account?.label, !label.isEmpty {
-            HStack(spacing: 8) {
-                Text(label)
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(NoriColors.ink2)
-                if let connection {
-                    let state = connectionHealthDisplay(for: connection)
-                    if state.tone != .ok {
-                        NoriPill(state.label, tone: state.tone)
-                    }
+        if let connection {
+            let state = connectionHealthDisplay(for: connection)
+            if state.tone != .ok {
+                HStack {
+                    NoriPill(state.label, tone: state.tone)
+                    Spacer()
                 }
+                .padding(.bottom, 8)
             }
-            .padding(.bottom, 8)
         }
         if integration.availability != "available" {
             NoriNotice(
@@ -250,49 +223,71 @@ public struct AppsView: View {
             NoriRows {
                 ForEach(GoogleService.allCases) { service in
                     let granted = googleServiceIsGranted(service)
-                    NoriRow(
+                    let showDriveRow = service == .drive && granted
+                    NoriBrandRow(
                         title: service.title,
-                        detail: nil,
-                        systemImage: service.icon,
-                        iconTone: granted ? .accent : .neutral,
-                        showDivider: service != .gmail
+                        brand: service.brand,
+                        showDivider: service != .gmail || showDriveRow
                     ) {
-                        if !granted {
-                            Button("Connect") { pendingGoogleService = service }
-                                .buttonStyle(NoriButtonStyle(.primary, compact: true))
-                                .disabled(isGoogleBusy)
+                        Toggle(
+                            service.title,
+                            isOn: Binding(
+                                get: { granted },
+                                set: { next in
+                                    if next && !granted {
+                                        pendingGoogleService = service
+                                    }
+                                }
+                            )
+                        )
+                        .labelsHidden()
+                        .tint(NoriColors.brandPrimary)
+                        .disabled(granted || isGoogleBusy)
+                    }
+
+                    if showDriveRow {
+                        Button {
+                            startGoogleDrivePicker()
+                        } label: {
+                            VStack(spacing: 0) {
+                                HStack(spacing: 11) {
+                                    Text("Choose Drive files")
+                                        .font(NoriTypography.rowTitle)
+                                        .foregroundStyle(NoriColors.accent)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.leading, 47)
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(NoriColors.ink3)
+                                }
+                                .padding(.horizontal, 13)
+                                .padding(.vertical, 12)
+                                .contentShape(Rectangle())
+
+                                Rectangle()
+                                    .fill(NoriColors.hairline)
+                                    .frame(height: 1)
+                                    .padding(.leading, 60)
+                            }
                         }
+                        .buttonStyle(.plain)
+                        .disabled(isGoogleBusy)
                     }
                 }
             }
 
-            if googleServiceIsGranted(.drive) {
-                NoriSectionHeader("Drive files") {
-                    Button("Choose files") { startGoogleDrivePicker() }
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(NoriColors.accent)
-                        .disabled(isGoogleBusy)
-                }
-
-                if googleDriveFiles.isEmpty {
-                    NoriCard {
-                        Text("Choose files to use them in chat.")
-                            .font(NoriTypography.meta)
-                            .foregroundStyle(NoriColors.ink2)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                } else {
-                    NoriRows {
-                        ForEach(Array(googleDriveFiles.enumerated()), id: \.element.id) { index, file in
-                            NoriRow(
-                                title: file.title,
-                                systemImage: "doc",
-                                showDivider: index < googleDriveFiles.count - 1,
-                                wrapTitle: true
-                            )
-                        }
+            if googleServiceIsGranted(.drive), !googleDriveFiles.isEmpty {
+                NoriRows {
+                    ForEach(Array(googleDriveFiles.enumerated()), id: \.element.id) { index, file in
+                        NoriRow(
+                            title: file.title,
+                            systemImage: "doc",
+                            showDivider: index < googleDriveFiles.count - 1,
+                            wrapTitle: true
+                        )
                     }
                 }
+                .padding(.top, 10)
             }
         }
     }
@@ -385,28 +380,6 @@ public struct AppsView: View {
         }
     }
 
-    private func mcpDetailLine(for server: MCPServer) -> String {
-        let transportLabel = server.transport == .http ? "Remote server" : "Local server"
-        let loadedTools = store.mcpTools[server.id]
-        let toolCount = (loadedTools?.isEmpty == false ? loadedTools?.count : nil) ?? server.observed.toolCount ?? 0
-        let toolsPart = "\(toolCount) \(toolCount == 1 ? "tool" : "tools")"
-        var parts = [transportLabel, toolsPart]
-        if let err = server.observed.error?.message, !err.isEmpty {
-            parts.append(err)
-        } else if let last = server.observed.lastSuccessAt, !last.isEmpty {
-            parts.append("Last call \(NoriDateFormatting.relative(last))")
-        }
-        return parts.joined(separator: " · ")
-    }
-
-    private func mcpIconTone(for server: MCPServer) -> NoriTone {
-        switch server.observed.status {
-        case .connected: return .accent
-        case .needsSignIn, .failed: return .warning
-        default: return .neutral
-        }
-    }
-
     private func mcpPillTone(for server: MCPServer) -> NoriTone {
         switch server.observed.status {
         case .connected: return .ok
@@ -414,19 +387,6 @@ public struct AppsView: View {
         case .connecting: return .working
         default: return .neutral
         }
-    }
-
-    private func connectionDetailLine(for connection: Connection) -> String {
-        var parts: [String] = []
-        if let label = connection.account?.label, !label.isEmpty {
-            parts.append(label)
-        }
-        if let msg = connection.health.message, !msg.isEmpty {
-            parts.append(msg)
-        } else if let last = connection.health.lastSuccessAt, !last.isEmpty {
-            parts.append("Last used \(NoriDateFormatting.relative(last))")
-        }
-        return parts.joined(separator: " · ")
     }
 
     private func connectionActionLabel(for connection: Connection) -> String? {
@@ -543,7 +503,6 @@ public struct AppsView: View {
     }
 }
 
-
 struct AddMCPServerSheet: View {
     @Bindable var store: NoriStore
     @Environment(\.dismiss) private var dismiss
@@ -551,7 +510,7 @@ struct AddMCPServerSheet: View {
     @State private var name = ""
     @State private var endpoint = ""
     @State private var auth: MCPAuthKind = .oauth
-    @State private var defaultExposure: MCPToolExposure = .discoverable
+    @State private var showSignInOptions = false
     @State private var isSubmitting = false
 
     private var isEndpointValid: Bool {
@@ -575,20 +534,16 @@ struct AddMCPServerSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Server name")
+                        Text("Name")
                             .font(NoriTypography.metaSemibold)
                             .foregroundStyle(NoriColors.ink)
-                        TextField("e.g. Home Assistant", text: $name)
+                        TextField("Home Notes", text: $name)
                             .textFieldStyle(.plain)
                             .foregroundStyle(NoriColors.ink)
                             .tint(NoriColors.accent)
                             .padding(.horizontal, 12)
                             .frame(height: 42)
                             .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                                    .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
-                            )
                     }
 
                     VStack(alignment: .leading, spacing: 6) {
@@ -608,13 +563,6 @@ struct AddMCPServerSheet: View {
                             .padding(.horizontal, 12)
                             .frame(height: 42)
                             .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                                    .strokeBorder(
-                                        !endpoint.isEmpty && !isEndpointValid ? NoriColors.danger : NoriColors.cardBorder,
-                                        lineWidth: 1
-                                    )
-                            )
 
                         if !endpoint.isEmpty && !isEndpointValid {
                             Text("Use an https:// URL, or http://localhost / 127.0.0.1 / .local for a local server.")
@@ -623,8 +571,17 @@ struct AddMCPServerSheet: View {
                         }
                     }
 
-                    NoriCard(padding: 12, backgroundColor: NoriColors.elevated) {
-                        VStack(spacing: 12) {
+                    Button {
+                        showSignInOptions.toggle()
+                    } label: {
+                        Text(showSignInOptions ? "Hide sign-in options" : "Sign-in options")
+                            .font(NoriTypography.metaSemibold)
+                            .foregroundStyle(NoriColors.accent)
+                    }
+                    .buttonStyle(.plain)
+
+                    if showSignInOptions {
+                        NoriCard(padding: 12, backgroundColor: NoriColors.elevated) {
                             HStack {
                                 Text("Authentication")
                                     .font(NoriTypography.metaSemibold)
@@ -632,24 +589,8 @@ struct AddMCPServerSheet: View {
                                 Spacer()
                                 Picker("Authentication", selection: $auth) {
                                     Text("OAuth").tag(MCPAuthKind.oauth)
-                                    Text("None").tag(MCPAuthKind.none)
                                     Text("Access token").tag(MCPAuthKind.configured)
-                                }
-                                .pickerStyle(.menu)
-                                .tint(NoriColors.accent)
-                            }
-
-                            Divider().overlay(NoriColors.hairline)
-
-                            HStack {
-                                Text("Default tool visibility")
-                                    .font(NoriTypography.metaSemibold)
-                                    .foregroundStyle(NoriColors.ink)
-                                Spacer()
-                                Picker("Default tool visibility", selection: $defaultExposure) {
-                                    Text("When relevant").tag(MCPToolExposure.discoverable)
-                                    Text("Always").tag(MCPToolExposure.direct)
-                                    Text("Off").tag(MCPToolExposure.disabled)
+                                    Text("None").tag(MCPAuthKind.none)
                                 }
                                 .pickerStyle(.menu)
                                 .tint(NoriColors.accent)
@@ -661,10 +602,9 @@ struct AddMCPServerSheet: View {
                         submit()
                     } label: {
                         if isSubmitting {
-                            ProgressView()
-                                .tint(NoriColors.disabled)
+                            ProgressView().tint(NoriColors.disabled)
                         } else {
-                            Text("Add server")
+                            Text("Add app")
                         }
                     }
                     .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
@@ -674,7 +614,7 @@ struct AddMCPServerSheet: View {
                 .padding(16)
             }
             .background(NoriColors.sheetBackground)
-            .navigationTitle("Add MCP Server")
+            .navigationTitle("Add app")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -695,7 +635,7 @@ struct AddMCPServerSheet: View {
                 name: name,
                 endpoint: endpoint,
                 auth: auth,
-                defaultExposure: defaultExposure
+                defaultExposure: .discoverable
             )
             isSubmitting = false
             dismiss()

@@ -4,6 +4,7 @@ import NoriDesign
 
 public struct AccountSettingsView: View {
     @Bindable private var store: NoriStore
+    @State private var showingResetData = false
     @State private var showingDeleteAccount = false
 
     public init(store: NoriStore) {
@@ -16,7 +17,7 @@ public struct AccountSettingsView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 18) {
                 NoriRows {
                     NoriRow(
                         title: store.authState.email ?? "Signed in",
@@ -29,6 +30,40 @@ public struct AccountSettingsView: View {
                         } else if store.connectionState == .offline {
                             NoriPill("Offline", tone: .danger)
                         }
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 0) {
+                    NoriSectionHeader("System")
+
+                    NoriRows {
+                        NavigationLink(value: MoreRoute.history) {
+                            NoriRow(
+                                title: "Action History",
+                                systemImage: "clock.arrow.circlepath",
+                                iconTone: .neutral,
+                                showChevron: true,
+                                showDivider: true
+                            )
+                        }
+                        .buttonStyle(.plain)
+
+                        NavigationLink(value: MoreRoute.diagnostics) {
+                            NoriRow(
+                                title: "Diagnostics",
+                                systemImage: "waveform.path.ecg",
+                                iconTone: .neutral,
+                                showChevron: true,
+                                showDivider: false
+                            ) {
+                                if store.connectionState == .reconnecting {
+                                    NoriPill("Reconnecting", tone: .warning)
+                                } else if store.connectionState == .offline {
+                                    NoriPill("Offline", tone: .danger)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
 
@@ -62,6 +97,38 @@ public struct AccountSettingsView: View {
                     }
                 }
 
+                VStack(alignment: .leading, spacing: 0) {
+                    NoriSectionHeader("Data")
+
+                    NoriRows {
+                        Button {
+                            showingResetData = true
+                        } label: {
+                            NoriRow(
+                                title: "Reset data",
+                                systemImage: "arrow.counterclockwise",
+                                iconTone: .danger,
+                                showChevron: true,
+                                showDivider: true
+                            )
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            showingDeleteAccount = true
+                        } label: {
+                            NoriRow(
+                                title: store.accountDeletePending ? "Finish deleting account" : "Delete account",
+                                systemImage: "person.crop.circle.badge.xmark",
+                                iconTone: .danger,
+                                showChevron: true,
+                                showDivider: false
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
                 Button {
                     Task { await store.signOut() }
                 } label: {
@@ -69,26 +136,6 @@ public struct AccountSettingsView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(NoriButtonStyle(.quiet, fullWidth: true, compact: true))
-
-                VStack(alignment: .leading, spacing: 0) {
-                    NoriSectionHeader("Delete account")
-
-                    NoriCard {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Permanently deletes your account and all Nori data.")
-                                .font(NoriTypography.meta)
-                                .foregroundStyle(NoriColors.ink2)
-
-                            Button {
-                                showingDeleteAccount = true
-                            } label: {
-                                Text(store.accountDeletePending ? "Finish deleting account" : "Delete account")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(NoriButtonStyle(.danger, fullWidth: true, compact: true))
-                        }
-                    }
-                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -103,6 +150,13 @@ public struct AccountSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         #endif
+        .sheet(isPresented: $showingResetData) {
+            ResetDataSheet(store: store)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(NoriColors.sheetBackground)
+                .presentationCornerRadius(NoriRadius.sheet)
+        }
         .sheet(isPresented: $showingDeleteAccount) {
             DeleteAccountSheet(store: store)
                 .presentationDetents([.medium, .large])

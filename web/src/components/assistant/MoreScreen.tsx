@@ -1,21 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { Activity, BarChart3, Brain, History, LayoutGrid, Monitor, Moon, RotateCcw, ShieldCheck, SlidersHorizontal, Sparkles, Sun, UserCircle } from "lucide-react";
-import { appearanceLabel, useAppearance, type NoriAppearance } from "@/lib/appearance";
+import { BarChart3, Brain, LayoutGrid, Monitor, Moon, ShieldCheck, SlidersHorizontal, Sparkles, Sun, UserCircle } from "lucide-react";
+import { useAppearance, type NoriAppearance } from "@/lib/appearance";
 import type { ModelKeysResponse, ModelSettings } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
-import { money, plural } from "@/lib/assistant/format";
 import { useSummary } from "@/lib/assistant/sources";
 import { useResource } from "@/lib/assistant/useResource";
-import type { ComputerStatus, Connection, MCPServer, MemoryFact, PermissionRule, Preferences, WorkingMemory } from "@/lib/contracts/assistant";
+import type { ComputerStatus } from "@/lib/contracts/assistant";
 import { needsByokSetup } from "./ApiKeysSettings";
 import { computerStatusPill } from "./ComputerScreen";
 import { hasSelectedHomeChat } from "./ModelsSettings";
-import { coreBudgetStats, formatByteBudget } from "./MemoryScreen";
 import { Notice, Pill, Row, Rows, Screen, Section } from "./ui";
-
-type List<T> = { items: T[] };
 
 const APPEARANCE_ICON: Record<NoriAppearance, typeof Monitor> = {
   system: Monitor,
@@ -23,33 +19,17 @@ const APPEARANCE_ICON: Record<NoriAppearance, typeof Monitor> = {
   dark: Moon,
 };
 
-export function MoreScreen({ userEmail }: { userEmail?: string } = {}) {
-  const { has, runtime, localMode } = useAssistant();
+export function MoreScreen({ userEmail: _userEmail }: { userEmail?: string } = {}) {
+  void _userEmail;
+  const { has, runtime } = useAssistant();
   const summary = useSummary();
   const [appearance] = useAppearance();
 
-  const mcp = useResource<List<MCPServer>>(has("mcp") ? "/mcp" : null, { poll: 30_000 });
-  const connections = useResource<List<Connection>>(has("connections") ? "/connections" : null, { poll: 30_000 });
-  const memory = useResource<List<MemoryFact>>(has("memory") ? "/memory" : null, { poll: 30_000 });
-  const working = useResource<WorkingMemory>(has("memory") ? "/memory/working" : null, { poll: 30_000 });
-  const permissions = useResource<List<PermissionRule>>(has("permissions") ? "/permissions" : null, { poll: 30_000 });
-  const preferences = useResource<Preferences>(has("preferences") ? "/preferences" : null, { poll: 60_000 });
   const modelKeys = useResource<ModelKeysResponse>("/settings/model-keys", { poll: 60_000, versioned: false });
   const models = useResource<ModelSettings>("/settings/models", { poll: 60_000 });
   const computer = useResource<ComputerStatus>(has("computer") ? "/computer" : null, { poll: 30_000, versioned: false });
 
-  const mcpItems = mcp.data?.items ?? [];
-  const connItems = (connections.data?.items ?? []).filter((c) => c.status !== "disconnected");
-  const connectedCount =
-    mcpItems.filter((s) => s.observed.status === "connected").length +
-    connItems.filter((c) => c.status === "connected").length;
   const appsAttention = summary.apps_attention ?? 0;
-
-  const coreFacts = memory.data?.items ?? [];
-  const budget = coreBudgetStats(coreFacts, working.data);
-
-  const rulesCount = permissions.data?.items.length ?? 0;
-  const prefs = preferences.data;
 
   const reconnecting = runtime.reconnecting;
   const offline = !!runtime.error && !reconnecting;
@@ -60,7 +40,6 @@ export function MoreScreen({ userEmail }: { userEmail?: string } = {}) {
       : undefined;
 
   const AppearanceIcon = APPEARANCE_ICON[appearance];
-  const configuredKeysCount = modelKeys.data?.providers.filter((p) => p.configured).length ?? 0;
   const requiresByok = needsByokSetup(modelKeys.data, hasSelectedHomeChat(models.data));
 
   return (
@@ -79,8 +58,9 @@ export function MoreScreen({ userEmail }: { userEmail?: string } = {}) {
           </Notice>
         </div>
       )}
-      <Section title="Workspace">
-        <Rows label="Workspace">
+
+      <Section title="Nori">
+        <Rows label="Nori">
           <Row
             href="/apps"
             leading={
@@ -88,19 +68,8 @@ export function MoreScreen({ userEmail }: { userEmail?: string } = {}) {
                 <LayoutGrid size={18} strokeWidth={1.85} aria-hidden />
               </span>
             }
-            title="Apps & MCP"
-            detail={connectedCount > 0 ? `${connectedCount} connected` : undefined}
+            title="Apps"
             trailing={appsAttention > 0 ? <Pill tone="warning">{appsAttention} attention</Pill> : undefined}
-          />
-          <Row
-            href="/memory"
-            leading={
-              <span className="grid size-9 place-items-center rounded-[10px] bg-accent-subtle text-accent-text">
-                <Brain size={18} strokeWidth={1.85} aria-hidden />
-              </span>
-            }
-            title="Memory"
-            detail={has("memory") ? formatByteBudget(budget.used, budget.budget) : undefined}
           />
           {has("computer") && (
             <Row
@@ -111,33 +80,47 @@ export function MoreScreen({ userEmail }: { userEmail?: string } = {}) {
                 </span>
               }
               title="Computer"
-              detail={computer.data ? computerStatusPill(computer.data.status).label : undefined}
+              trailing={
+                computer.data && computer.data.status !== "not_provisioned" ? (
+                  <Pill tone={computerStatusPill(computer.data.status).tone}>
+                    {computerStatusPill(computer.data.status).label}
+                  </Pill>
+                ) : undefined
+              }
             />
           )}
+          <Row
+            href="/memory"
+            leading={
+              <span className="grid size-9 place-items-center rounded-[10px] bg-accent-subtle text-accent-text">
+                <Brain size={18} strokeWidth={1.85} aria-hidden />
+              </span>
+            }
+            title="Memory"
+          />
+          <Row
+            href="/settings/permissions"
+            leading={
+              <span className="grid size-9 place-items-center rounded-[10px] bg-accent-subtle text-accent-text">
+                <ShieldCheck size={18} strokeWidth={1.85} aria-hidden />
+              </span>
+            }
+            title="Permissions"
+          />
         </Rows>
       </Section>
 
       <Section title="Settings">
         <Rows label="Settings">
           <Row
-            href="/settings/permissions"
+            href="/settings/models"
             leading={
               <span className="grid size-9 place-items-center rounded-[10px] bg-fill-1 text-ink-2">
-                <ShieldCheck size={18} strokeWidth={1.85} aria-hidden />
+                <Sparkles size={18} strokeWidth={1.85} aria-hidden />
               </span>
             }
-            title="Standing Permissions"
-            detail={rulesCount > 0 ? plural(rulesCount, "rule") : undefined}
-          />
-          <Row
-            href="/settings/preferences"
-            leading={
-              <span className="grid size-9 place-items-center rounded-[10px] bg-fill-1 text-ink-2">
-                <SlidersHorizontal size={18} strokeWidth={1.85} aria-hidden />
-              </span>
-            }
-            title="Preferences & Budgets"
-            detail={prefs ? `${prefs.timezone} · ${money(prefs.budgets.task_usd)} / task` : undefined}
+            title="Models"
+            trailing={requiresByok ? <Pill tone="warning">Required</Pill> : undefined}
           />
           <Row
             href="/settings/api-costs"
@@ -146,7 +129,16 @@ export function MoreScreen({ userEmail }: { userEmail?: string } = {}) {
                 <BarChart3 size={18} strokeWidth={1.85} aria-hidden />
               </span>
             }
-            title="API Costs"
+            title="Usage & Budgets"
+          />
+          <Row
+            href="/settings/preferences"
+            leading={
+              <span className="grid size-9 place-items-center rounded-[10px] bg-fill-1 text-ink-2">
+                <SlidersHorizontal size={18} strokeWidth={1.85} aria-hidden />
+              </span>
+            }
+            title="Preferences"
           />
           <Row
             href="/settings/appearance"
@@ -156,23 +148,6 @@ export function MoreScreen({ userEmail }: { userEmail?: string } = {}) {
               </span>
             }
             title="Appearance"
-            detail={appearanceLabel(appearance)}
-          />
-          <Row
-            href="/settings/models"
-            leading={
-              <span className="grid size-9 place-items-center rounded-[10px] bg-fill-1 text-ink-2">
-                <Sparkles size={18} strokeWidth={1.85} aria-hidden />
-              </span>
-            }
-            title="Models"
-            detail={configuredKeysCount > 0 ? `${configuredKeysCount} configured` : undefined}
-            trailing={requiresByok ? <Pill tone="warning">Required</Pill> : undefined}
-          />
-          <Row
-            href="/settings/reset"
-            leading={<span className="grid size-9 place-items-center rounded-[10px] bg-danger-bg text-danger"><RotateCcw size={18} strokeWidth={1.85} aria-hidden /></span>}
-            title="Reset Data"
           />
         </Rows>
       </Section>
@@ -187,25 +162,6 @@ export function MoreScreen({ userEmail }: { userEmail?: string } = {}) {
               </span>
             }
             title="Account"
-            detail={userEmail || (localMode ? "Local" : undefined)}
-          />
-          <Row
-            href="/settings/history"
-            leading={
-              <span className="grid size-9 place-items-center rounded-[10px] bg-fill-1 text-ink-2">
-                <History size={18} strokeWidth={1.85} aria-hidden />
-              </span>
-            }
-            title="Action History"
-          />
-          <Row
-            href="/settings/diagnostics"
-            leading={
-              <span className="grid size-9 place-items-center rounded-[10px] bg-fill-1 text-ink-2">
-                <Activity size={18} strokeWidth={1.85} aria-hidden />
-              </span>
-            }
-            title="Diagnostics"
             trailing={degradedPill ? <Pill tone={degradedPill.tone}>{degradedPill.label}</Pill> : undefined}
           />
         </Rows>

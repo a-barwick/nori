@@ -2,140 +2,149 @@ import SwiftUI
 import NoriCore
 import NoriDesign
 
-public enum MemoryLayerTab: String, CaseIterable, Hashable, Sendable {
-    case core
-    case logs
-    case working
-}
+public enum MemoryTopicGrouping {
+    private static let canonicalOrder = [
+        "About you",
+        "Preferences",
+        "Projects",
+        "People",
+        "Home & Routine",
+        "Travel & Food",
+    ]
 
-private enum MemorySearchLayerFilter: String, CaseIterable, Hashable, Sendable {
-    case all
-    case logs
-    case core
-
-    var label: String {
-        switch self {
-        case .all: return "All"
-        case .logs: return "Logs"
-        case .core: return "Core"
+    public static func normalize(_ section: String?) -> String {
+        let trimmed = (section ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "About you" }
+        switch trimmed.lowercased() {
+        case "about", "about you", "profile", "identity", "bio", "background", "user":
+            return "About you"
+        case "preference", "preferences", "style", "communication", "likes", "dislikes":
+            return "Preferences"
+        case "project", "projects", "work", "goals", "decisions":
+            return "Projects"
+        case "people", "person", "contacts", "family", "friends", "relationships", "team":
+            return "People"
+        case "home", "routine", "routines", "home & routine", "schedule", "health", "habits":
+            return "Home & Routine"
+        case "travel", "food", "travel & food", "dining", "places", "trips":
+            return "Travel & Food"
+        default:
+            return trimmed.prefix(1).uppercased() + trimmed.dropFirst()
         }
     }
 
-    var apiLayer: String? {
-        switch self {
-        case .all: return nil
-        case .logs: return "log"
-        case .core: return "core"
+    public static func group(_ facts: [MemoryFact]) -> [(topic: String, items: [MemoryFact])] {
+        var buckets: [String: [MemoryFact]] = [:]
+        for fact in facts {
+            let topic = normalize(fact.section)
+            buckets[topic, default: []].append(fact)
         }
+        return buckets
+            .map { (topic: $0.key, items: $0.value) }
+            .sorted { lhs, rhs in
+                let il = canonicalOrder.firstIndex(of: lhs.topic)
+                let ir = canonicalOrder.firstIndex(of: rhs.topic)
+                switch (il, ir) {
+                case let (a?, b?): return a < b
+                case (_?, nil): return true
+                case (nil, _?): return false
+                case (nil, nil): return lhs.topic.localizedCaseInsensitiveCompare(rhs.topic) == .orderedAscending
+                }
+            }
     }
-}
-
-private struct MemorySearchKey: Equatable, Sendable {
-    let query: String
-    let layer: MemorySearchLayerFilter
 }
 
 public struct MemoryView: View {
     @Bindable private var store: NoriStore
 
-    @State private var selectedTab: MemoryLayerTab = .core
     @State private var searchQuery = ""
-    @State private var searchLayer: MemorySearchLayerFilter = .all
     @State private var isSearching = false
     @State private var searchError: String?
     @State private var searchHits: [MemorySearchHit] = []
-    @State private var showingAddSheet = false
-    @State private var editingFact: MemoryFact?
-    @State private var isConsolidating = false
-    @State private var pendingForgetFact: MemoryFact?
-    @State private var pendingForgetLogEntry: PromoteCandidate?
-    @State private var pendingPromoteEntry: PromoteCandidate?
+    @State private var confirmRowID: String?
 
     public init(store: NoriStore) {
         self.store = store
     }
 
-    private var trimmedSearchQuery: String {
+    private var trimmedQuery: String {
         searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var isSearchActive: Bool {
-        !trimmedSearchQuery.isEmpty
+        !trimmedQuery.isEmpty
     }
 
-    private var searchKey: MemorySearchKey {
-        MemorySearchKey(query: trimmedSearchQuery, layer: searchLayer)
+    private var topicGroups: [(topic: String, items: [MemoryFact])] {
+        MemoryTopicGrouping.group(store.coreMemories)
     }
 
-    private var budgetBarColor: Color {
-        if store.coreMemoryRatio >= 0.98 { return NoriColors.danger }
-        if store.coreMemoryRatio >= 0.85 { return NoriColors.warning }
-        return NoriColors.brandPrimary
+    private var matchingFacts: [MemoryFact] {
+        guard isSearchActive else { return [] }
+        let needle = trimmedQuery.lowercased()
+        return store.coreMemories.filter { fact in
+            fact.text.lowercased().contains(needle)
+                || MemoryTopicGrouping.normalize(fact.section).lowercased().contains(needle)
+        }
     }
 
-    private var budgetMetricColor: Color {
-        if store.coreMemoryRatio >= 0.98 { return NoriColors.danger }
-        if store.coreMemoryRatio >= 0.85 { return NoriColors.warning }
-        return NoriColors.ink2
-    }
-
-    private var budgetSummaryText: String {
-        let used = Double(store.coreMemoryUsedBytes) / 1024.0
-        let total = Double(store.coreMemoryBudgetBytes) / 1024.0
-        return String(format: "%.1f / %.0f KB", used, total)
+    private var logHits: [MemorySearchHit] {
+        guard isSearchActive else { return [] }
+        return searchHits.filter { $0.layer == "log" }
     }
 
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                memorySearchControls
-                    .padding(.horizontal, 16)
-                    .padding(.top, 12)
-                    .padding(.bottom, isSearchActive ? 8 : 4)
+            VStack(alignment: .leading, spacing: 14) {
+                searchField
+
+                if let error = store.memoryRefreshError {
+                    NoriNotice(
+                        title: "Couldn’t refresh memory",
+                        detail: error,
+                        tone: .warning,
+                        systemImage: "exclamationmark.triangle.fill"
+                    ) {
+                        Button("Retry") {
+                            Task { await store.refreshMemory() }
+                        }
+                        .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                    }
+                }
 
                 if isSearchActive {
-                    memorySearchResultsSection
-                        .padding(.horizontal, 16)
-                        .padding(.top, 6)
-                        .padding(.bottom, 96)
-                } else {
-                    NoriUnderlineTabs(
-                        options: [
-                            NoriSegmentOption(value: MemoryLayerTab.core, label: "Core", count: store.coreMemories.count),
-                            NoriSegmentOption(value: MemoryLayerTab.logs, label: "Daily Logs", count: totalLogEntries),
-                            NoriSegmentOption(value: MemoryLayerTab.working, label: "Working", count: store.workingMemory.items.count)
-                        ],
-                        selection: $selectedTab
+                    searchResultsSection
+                } else if topicGroups.isEmpty {
+                    NoriEmptyState(
+                        title: "Nothing remembered yet",
+                        message: "Nori will remember helpful details as you chat."
                     )
-
-                    VStack(alignment: .leading, spacing: 14) {
-                        if let error = store.memoryRefreshError {
-                            NoriNotice(
-                                title: "Couldn’t refresh all memory",
-                                detail: error,
-                                tone: .warning,
-                                systemImage: "exclamationmark.triangle.fill"
-                            ) {
-                                Button("Retry") {
-                                    Task { await store.refreshMemory() }
+                } else {
+                    NoriRows {
+                        ForEach(Array(topicGroups.enumerated()), id: \.element.topic) { index, group in
+                            let isLast = index == topicGroups.count - 1
+                            NavigationLink {
+                                MemoryTopicDetailView(store: store, topic: group.topic)
+                            } label: {
+                                NoriRow(
+                                    title: group.topic,
+                                    showChevron: true,
+                                    showDivider: !isLast
+                                ) {
+                                    Text("\(group.items.count)")
+                                        .font(NoriTypography.meta)
+                                        .monospacedDigit()
+                                        .foregroundStyle(NoriColors.ink3)
                                 }
-                                .buttonStyle(NoriButtonStyle(.quiet, compact: true))
                             }
-                        }
-                        switch selectedTab {
-                        case .core:
-                            coreMemorySection
-                        case .logs:
-                            dailyLogsSection
-                        case .working:
-                            workingMemorySection
+                            .buttonStyle(.plain)
                         }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 14)
-                    .padding(.bottom, 96)
                 }
             }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 96)
         }
         .background(NoriColors.canvas)
         .navigationTitle("Memory")
@@ -143,278 +152,159 @@ public struct MemoryView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         #endif
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showingAddSheet = true
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(NoriColors.onAccent)
-                        .frame(width: 30, height: 30)
-                        .background(NoriColors.brandPrimary, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Add memory")
-            }
-        }
         .task {
             await store.refreshMemory()
         }
-        .task(id: searchKey) {
-            await runMemorySearch(for: searchKey)
+        .task(id: trimmedQuery) {
+            await runMemorySearch(query: trimmedQuery)
         }
         .refreshable {
             await store.refreshMemory()
             if isSearchActive {
-                await runMemorySearch(for: searchKey, debounce: false)
+                await runMemorySearch(query: trimmedQuery, debounce: false)
             }
-        }
-        .sheet(isPresented: $showingAddSheet) {
-            MemoryFactEditorSheet(store: store, existing: nil)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-                .presentationBackground(NoriColors.sheetBackground)
-                .presentationCornerRadius(NoriRadius.sheet)
-        }
-        .sheet(item: $editingFact) { fact in
-            MemoryFactEditorSheet(store: store, existing: fact)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-                .presentationBackground(NoriColors.sheetBackground)
-                .presentationCornerRadius(NoriRadius.sheet)
-        }
-        .sheet(item: $pendingPromoteEntry) { candidate in
-            PromoteTaskOutcomeSheet(store: store, candidate: candidate)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-                .presentationBackground(NoriColors.sheetBackground)
-                .presentationCornerRadius(NoriRadius.sheet)
-        }
-        .alert(
-            "Forget this memory?",
-            isPresented: Binding(
-                get: { pendingForgetFact != nil },
-                set: { if !$0 { pendingForgetFact = nil } }
-            ),
-            presenting: pendingForgetFact
-        ) { fact in
-            Button("Forget", role: .destructive) {
-                Task { await store.forgetMemory(memoryID: fact.id) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: { _ in
-            Text("Nori stops using this fact in future conversations. Existing chats stay untouched.")
-        }
-        .alert(
-            "Forget this log entry?",
-            isPresented: Binding(
-                get: { pendingForgetLogEntry != nil },
-                set: { if !$0 { pendingForgetLogEntry = nil } }
-            ),
-            presenting: pendingForgetLogEntry
-        ) { candidate in
-            Button("Forget", role: .destructive) {
-                Task { await store.forgetLogEntry(date: candidate.date, entryID: candidate.entry.id) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: { _ in
-            Text("Removes this entry from the daily log and search index.")
         }
     }
 
-    private var totalLogEntries: Int {
-        store.memoryLogs.reduce(0) { $0 + $1.entries.count }
-    }
-
-    private var memorySearchControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(NoriColors.ink3)
-                TextField("Search all memory…", text: $searchQuery)
-                    .textFieldStyle(.plain)
-                    .font(NoriTypography.body)
-                    .foregroundStyle(NoriColors.ink)
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(NoriColors.ink3)
+            TextField("Search everything Nori remembers…", text: $searchQuery)
+                .textFieldStyle(.plain)
+                .font(NoriTypography.body)
+                .foregroundStyle(NoriColors.ink)
+                .tint(NoriColors.accent)
+            if isSearching {
+                ProgressView()
+                    .controlSize(.small)
                     .tint(NoriColors.accent)
-                if isSearching {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(NoriColors.accent)
-                } else if !searchQuery.isEmpty {
-                    Button {
-                        searchQuery = ""
-                        searchHits = []
-                        searchError = nil
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(NoriColors.ink3)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Clear search")
+            } else if !searchQuery.isEmpty {
+                Button {
+                    searchQuery = ""
+                    searchHits = []
+                    searchError = nil
+                    confirmRowID = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(NoriColors.ink3)
                 }
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 40)
-            .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                    .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
-            )
-
-            if isSearchActive {
-                HStack(spacing: 8) {
-                    ForEach(MemorySearchLayerFilter.allCases, id: \.self) { option in
-                        let isSelected = searchLayer == option
-                        Button {
-                            searchLayer = option
-                        } label: {
-                            Text(option.label)
-                                .font(NoriTypography.caption)
-                                .foregroundStyle(isSelected ? NoriColors.chipSelectedFg : NoriColors.ink2)
-                                .padding(.horizontal, 12)
-                                .frame(height: 28)
-                                .background(
-                                    isSelected ? NoriColors.chipSelectedBg : NoriColors.fill1,
-                                    in: Capsule()
-                                )
-                                .overlay(
-                                    Capsule()
-                                        .strokeBorder(
-                                            isSelected ? NoriColors.chipSelectedBorder : NoriColors.cardBorder,
-                                            lineWidth: 1
-                                        )
-                                )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    Spacer(minLength: 0)
-                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
             }
         }
+        .padding(.horizontal, 12)
+        .frame(height: 42)
+        .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+                .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
+        )
     }
 
     @ViewBuilder
-    private var memorySearchResultsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private var searchResultsSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
             if let searchError {
                 NoriNotice(title: "Could not search memory", detail: searchError, tone: .danger) {
                     Button("Retry") {
-                        Task { await runMemorySearch(for: searchKey, debounce: false) }
+                        Task { await runMemorySearch(query: trimmedQuery, debounce: false) }
                     }
                     .buttonStyle(NoriButtonStyle(.quiet, compact: true))
                 }
-            } else if isSearching && searchHits.isEmpty {
-                NoriCard {
-                    HStack(spacing: 10) {
-                        ProgressView().tint(NoriColors.accent)
-                        Text("Searching memory…")
-                            .font(NoriTypography.meta)
-                            .foregroundStyle(NoriColors.ink2)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            } else if searchHits.isEmpty {
-                NoriEmptyState(
-                    title: "No matching memories",
-                    message: "Try a different keyword or switch the layer filter."
-                ) {
-                    Button("Clear search") {
-                        searchQuery = ""
-                        searchHits = []
-                        searchError = nil
-                    }
-                    .buttonStyle(NoriButtonStyle(.neutral, compact: true))
-                }
-            } else {
-                NoriRows {
-                    ForEach(Array(searchHits.enumerated()), id: \.element.id) { index, hit in
-                        let isLast = index == searchHits.count - 1
-                        Button {
-                            selectedTab = hit.layer == "core" ? .core : .logs
-                            searchQuery = ""
-                            searchHits = []
-                            searchError = nil
-                            if hit.layer == "core",
-                               let memID = hit.memoryID,
-                               let found = store.coreMemories.first(where: { $0.id == memID }) {
-                                editingFact = found
-                            }
-                        } label: {
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack(alignment: .top, spacing: 8) {
-                                    Text(hit.snippet)
-                                        .font(NoriTypography.body)
-                                        .foregroundStyle(NoriColors.ink)
-                                        .lineSpacing(2)
-                                        .multilineTextAlignment(.leading)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
-                                    NoriPill(hit.layer == "core" ? "Core" : "Daily Log", tone: hit.layer == "core" ? .working : .neutral)
+            if !matchingFacts.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    NoriSectionHeader("Saved")
+                    NoriRows {
+                        ForEach(Array(matchingFacts.enumerated()), id: \.element.id) { index, fact in
+                            ForgettableMemoryRow(
+                                text: fact.text,
+                                detail: MemoryTopicGrouping.normalize(fact.section),
+                                confirming: confirmRowID == fact.id,
+                                showDivider: index < matchingFacts.count - 1,
+                                onStartConfirm: { confirmRowID = fact.id },
+                                onCancel: { confirmRowID = nil },
+                                onConfirm: {
+                                    confirmRowID = nil
+                                    Task { await store.forgetMemory(memoryID: fact.id) }
                                 }
-
-                                let meta = searchHitMetadata(for: hit)
-                                if !meta.isEmpty {
-                                    Text(meta)
-                                        .font(NoriTypography.caption)
-                                        .foregroundStyle(NoriColors.ink2)
-                                }
-                            }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 12)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-
-                        if !isLast {
-                            Rectangle()
-                                .fill(NoriColors.hairline)
-                                .frame(height: 1)
+                            )
                         }
                     }
+                }
+            }
+
+            if !logHits.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    NoriSectionHeader("Past chats")
+                    NoriRows {
+                        ForEach(Array(logHits.enumerated()), id: \.element.id) { index, hit in
+                            let rowID = "log:\(hit.id)"
+                            let canForget = hit.logDate != nil && hit.entryID != nil
+                            ForgettableMemoryRow(
+                                text: hit.snippet,
+                                detail: hit.logDate,
+                                confirming: confirmRowID == rowID,
+                                canForget: canForget,
+                                showDivider: index < logHits.count - 1,
+                                onStartConfirm: { confirmRowID = rowID },
+                                onCancel: { confirmRowID = nil },
+                                onConfirm: {
+                                    confirmRowID = nil
+                                    if let date = hit.logDate, let entryID = hit.entryID {
+                                        Task {
+                                            await store.forgetLogEntry(date: date, entryID: entryID)
+                                            await runMemorySearch(query: trimmedQuery, debounce: false)
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            if matchingFacts.isEmpty && logHits.isEmpty {
+                if isSearching {
+                    NoriCard {
+                        HStack(spacing: 10) {
+                            ProgressView().tint(NoriColors.accent)
+                            Text("Searching memory…")
+                                .font(NoriTypography.meta)
+                                .foregroundStyle(NoriColors.ink2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } else {
+                    NoriEmptyState(
+                        title: "Nothing matches “\(trimmedQuery)”",
+                        message: "Try a different keyword."
+                    )
                 }
             }
         }
     }
 
-    private func searchHitMetadata(for hit: MemorySearchHit) -> String {
-        var parts: [String] = []
-        if let section = hit.section, !section.isEmpty {
-            parts.append(section)
-        }
-        parts.append(hit.provenance.displayLabel)
-        if let date = hit.logDate, !date.isEmpty {
-            parts.append(NoriDateFormatting.shortDate(date))
-        } else if !hit.createdAt.isEmpty {
-            parts.append(NoriDateFormatting.relative(hit.createdAt))
-        }
-        return parts.joined(separator: " · ")
-    }
-
-    private func runMemorySearch(for key: MemorySearchKey, debounce: Bool = true) async {
-        guard !key.query.isEmpty else {
+    private func runMemorySearch(query: String, debounce: Bool = true) async {
+        guard !query.isEmpty else {
             isSearching = false
             searchError = nil
             searchHits = []
             return
         }
+        if debounce {
+            try? await Task.sleep(for: .milliseconds(200))
+            if Task.isCancelled { return }
+        }
         isSearching = true
         searchError = nil
-        if debounce {
-            do {
-                try await Task.sleep(for: .milliseconds(250))
-            } catch {
-                return
-            }
-        }
-        guard !Task.isCancelled else { return }
         do {
-            let response = try await store.searchMemory(query: key.query, layer: key.layer.apiLayer)
+            let results = try await store.searchMemory(query: query, layer: nil, limit: 20)
             guard !Task.isCancelled else { return }
-            searchHits = response.items
-            searchError = nil
+            searchHits = results.items
         } catch is CancellationError {
             return
         } catch {
@@ -423,731 +313,111 @@ public struct MemoryView: View {
         }
         isSearching = false
     }
+}
 
+private struct MemoryTopicDetailView: View {
+    @Bindable var store: NoriStore
+    let topic: String
+    @State private var confirmID: String?
 
-    @ViewBuilder
-    private var coreMemorySection: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
-                Text("Core memory budget")
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(NoriColors.ink2)
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                Text(budgetSummaryText)
-                    .font(.system(size: 12, weight: .semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(budgetMetricColor)
-                    .lineLimit(1)
-            }
-
-            GeometryReader { proxy in
-                let ratio = min(max(store.coreMemoryRatio, 0), 1)
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(NoriColors.fill2)
-                    if ratio > 0 {
-                        Capsule()
-                            .fill(budgetBarColor)
-                            .frame(width: max(4, proxy.size.width * ratio))
-                    }
-                }
-            }
-            .frame(height: 4)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(NoriColors.surfaceTinted, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
-        )
-
-        if store.coreMemories.isEmpty {
-            NoriEmptyState(
-                title: "Nothing in Core Memory yet",
-                message: "Save durable preferences, decisions, and context you want Nori to always keep in mind."
-            ) {
-                Button {
-                    showingAddSheet = true
-                } label: {
-                    Label("Add memory", systemImage: "plus")
-                }
-                .buttonStyle(NoriButtonStyle(.primary, compact: true))
-            }
-        } else {
-            NoriRows {
-                ForEach(Array(store.coreMemories.enumerated()), id: \.element.id) { index, fact in
-                    let isLast = index == store.coreMemories.count - 1
-                    HStack(alignment: .top, spacing: 10) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(fact.text)
-                                .font(.system(size: 14))
-                                .foregroundStyle(NoriColors.ink)
-                                .lineSpacing(2)
-                                .fixedSize(horizontal: false, vertical: true)
-
-                            if let source = fact.sourceText, !source.isEmpty {
-                                Text("“\(source)”")
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(NoriColors.ink2)
-                                    .padding(.leading, 8)
-                                    .overlay(alignment: .leading) {
-                                        Rectangle()
-                                            .fill(NoriColors.hairlineStrong)
-                                            .frame(width: 2)
-                                    }
-                            }
-
-                            let metadata = coreMetadata(for: fact)
-                            if !metadata.characters.isEmpty {
-                                Text(metadata)
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(NoriColors.ink2)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                        coreFactMenu(for: fact)
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-
-                    if !isLast {
-                        Rectangle()
-                            .fill(NoriColors.hairline)
-                            .frame(height: 1)
-                    }
-                }
-            }
-        }
+    private var facts: [MemoryFact] {
+        store.coreMemories.filter { MemoryTopicGrouping.normalize($0.section) == topic }
     }
 
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                if facts.isEmpty {
+                    NoriEmptyState(
+                        title: "Nothing left in \(topic)",
+                        message: "Facts Nori learns in this topic will appear here."
+                    )
+                } else {
+                    NoriRows {
+                        ForEach(Array(facts.enumerated()), id: \.element.id) { index, fact in
+                            ForgettableMemoryRow(
+                                text: fact.text,
+                                detail: nil,
+                                confirming: confirmID == fact.id,
+                                showDivider: index < facts.count - 1,
+                                onStartConfirm: { confirmID = fact.id },
+                                onCancel: { confirmID = nil },
+                                onConfirm: {
+                                    confirmID = nil
+                                    Task { await store.forgetMemory(memoryID: fact.id) }
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 96)
+        }
+        .background(NoriColors.canvas)
+        .navigationTitle(topic)
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+    }
+}
 
-    @ViewBuilder
-    private var dailyLogsSection: some View {
-        if store.memoryLogs.isEmpty {
-            NoriEmptyState(
-                title: "No daily logs yet",
-                message: "Session notes, auto-saved context, and task outcomes are logged here by day."
-            )
-        } else {
-            ForEach(store.memoryLogs) { dayLog in
-                VStack(alignment: .leading, spacing: 0) {
-                    NoriSectionHeader(NoriDateFormatting.shortDate(dayLog.date)) {
-                        Text("\(dayLog.entries.count) \(dayLog.entries.count == 1 ? "entry" : "entries")")
+private struct ForgettableMemoryRow: View {
+    let text: String
+    let detail: String?
+    let confirming: Bool
+    var canForget: Bool = true
+    let showDivider: Bool
+    let onStartConfirm: () -> Void
+    let onCancel: () -> Void
+    let onConfirm: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(text)
+                        .font(NoriTypography.body)
+                        .foregroundStyle(NoriColors.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let detail, !detail.isEmpty {
+                        Text(detail)
                             .font(NoriTypography.caption)
                             .foregroundStyle(NoriColors.ink3)
                     }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                    NoriRows {
-                        ForEach(Array(dayLog.entries.enumerated()), id: \.element.id) { index, entry in
-                            let isLast = index == dayLog.entries.count - 1
-                            HStack(alignment: .top, spacing: 10) {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text(entry.text)
-                                        .font(.system(size: 14))
-                                        .foregroundStyle(NoriColors.ink)
-                                        .lineSpacing(2)
-                                        .fixedSize(horizontal: false, vertical: true)
-
-                                    let metadata = logMetadata(for: entry)
-                                    if !metadata.characters.isEmpty {
-                                        Text(metadata)
-                                            .font(.system(size: 12))
-                                            .foregroundStyle(NoriColors.ink2)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                    }
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-
-                                logEntryMenu(date: dayLog.date, entry: entry)
-                            }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 12)
-
-                            if !isLast {
-                                Rectangle()
-                                    .fill(NoriColors.hairline)
-                                    .frame(height: 1)
-                            }
+                if canForget {
+                    if confirming {
+                        HStack(spacing: 6) {
+                            Button("Forget", action: onConfirm)
+                                .buttonStyle(NoriButtonStyle(.danger, compact: true))
+                            Button("Keep", action: onCancel)
+                                .buttonStyle(NoriButtonStyle(.quiet, compact: true))
                         }
-                    }
-                }
-            }
-        }
-    }
-
-
-    @ViewBuilder
-    private var workingMemorySection: some View {
-        HStack(alignment: .center, spacing: 8) {
-            Text("Session summary")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(NoriColors.ink2)
-            Spacer(minLength: 8)
-            Button {
-                isConsolidating = true
-                Task {
-                    await store.consolidateMemory()
-                    isConsolidating = false
-                }
-            } label: {
-                Label(isConsolidating ? "Consolidating…" : "Consolidate now", systemImage: "sparkles")
-            }
-            .buttonStyle(NoriButtonStyle(.neutral, compact: true))
-            .disabled(isConsolidating)
-        }
-
-        if !store.workingMemory.gist.isEmpty {
-            NoriCard(backgroundColor: NoriColors.surfaceTinted, borderColor: NoriColors.cardBorder) {
-                Text(store.workingMemory.gist)
-                    .font(.system(size: 13.5))
-                    .foregroundStyle(NoriColors.ink)
-                    .lineSpacing(2)
-            }
-        }
-
-        if store.workingMemory.items.isEmpty {
-            NoriEmptyState(
-                title: "Working memory is clear",
-                message: "Active constraints, open questions, and commitments from your current thread appear here."
-            )
-        } else {
-            NoriRows {
-                ForEach(Array(store.workingMemory.items.enumerated()), id: \.element.id) { index, item in
-                    let isLast = index == store.workingMemory.items.count - 1
-                    HStack(alignment: .top, spacing: 10) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(item.quote)
-                                .font(.system(size: 14))
-                                .foregroundStyle(NoriColors.ink)
-                                .lineSpacing(2)
-                                .fixedSize(horizontal: false, vertical: true)
-
-                            if let note = item.note, !note.isEmpty {
-                                Text(note)
-                                    .font(.system(size: 12.5))
-                                    .foregroundStyle(NoriColors.ink2)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-
-                            Text(item.kind.displayLabel)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(workingKindColor(item.kind))
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                        workingItemMenu(for: item)
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-
-                    if !isLast {
-                        Rectangle()
-                            .fill(NoriColors.hairline)
-                            .frame(height: 1)
-                    }
-                }
-            }
-        }
-    }
-
-
-    private func coreMetadata(for fact: MemoryFact) -> AttributedString {
-        var result = AttributedString()
-        var hasSegment = false
-
-        func append(_ text: String, color: Color = NoriColors.ink2, weight: Font.Weight = .regular) {
-            if hasSegment {
-                var separator = AttributedString(" · ")
-                separator.foregroundColor = NoriColors.ink3
-                result.append(separator)
-            }
-            var segment = AttributedString(text)
-            segment.foregroundColor = color
-            if weight != .regular {
-                segment.font = .system(size: 12, weight: weight)
-            }
-            result.append(segment)
-            hasSegment = true
-        }
-
-        if fact.pinned {
-            append("Pinned", color: NoriColors.accent, weight: .semibold)
-        }
-        if let section = fact.section, !section.isEmpty {
-            append(section)
-        }
-        if let provenance = fact.provenance {
-            append(provenance.displayLabel)
-        }
-        if !fact.createdAt.isEmpty {
-            append(NoriDateFormatting.relative(fact.createdAt))
-        }
-        return result
-    }
-
-    private func logMetadata(for entry: MemoryLogEntry) -> AttributedString {
-        var result = AttributedString()
-        var hasSegment = false
-
-        func append(_ text: String, color: Color = NoriColors.ink2, weight: Font.Weight = .regular) {
-            if hasSegment {
-                var separator = AttributedString(" · ")
-                separator.foregroundColor = NoriColors.ink3
-                result.append(separator)
-            }
-            var segment = AttributedString(text)
-            segment.foregroundColor = color
-            if weight != .regular {
-                segment.font = .system(size: 12, weight: weight)
-            }
-            result.append(segment)
-            hasSegment = true
-        }
-
-        if entry.promoted {
-            append("In Core", color: NoriColors.ok, weight: .semibold)
-        }
-        if let section = entry.section, !section.isEmpty {
-            append(section)
-        }
-        append(entry.provenance.displayLabel)
-        if !entry.createdAt.isEmpty, NoriDateFormatting.parse(entry.createdAt) != nil {
-            append(NoriDateFormatting.shortTime(entry.createdAt))
-        }
-        return result
-    }
-
-    private var rowMenuLabel: some View {
-        Image(systemName: "ellipsis")
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(NoriColors.ink2)
-            .frame(width: 28, height: 28)
-            .contentShape(Circle())
-    }
-
-    @ViewBuilder
-    private func coreFactMenu(for fact: MemoryFact) -> some View {
-        Menu {
-            Button {
-                editingFact = fact
-            } label: {
-                Label("Edit", systemImage: "pencil")
-            }
-
-            Button {
-                Task { await store.togglePinMemory(memoryID: fact.id) }
-            } label: {
-                Label(fact.pinned ? "Unpin" : "Pin", systemImage: fact.pinned ? "pin.slash" : "pin")
-            }
-
-            Button {
-                Task { await store.demoteMemory(memoryID: fact.id) }
-            } label: {
-                Label("Move to Daily Logs", systemImage: "arrow.down.to.line")
-            }
-
-            Divider()
-
-            Button(role: .destructive) {
-                pendingForgetFact = fact
-            } label: {
-                Label("Forget", systemImage: "trash")
-            }
-        } label: {
-            rowMenuLabel
-        }
-        .menuIndicator(.hidden)
-        .buttonStyle(.plain)
-        .accessibilityLabel("Memory actions")
-    }
-
-    @ViewBuilder
-    private func logEntryMenu(date: String, entry: MemoryLogEntry) -> some View {
-        Menu {
-            if !entry.promoted {
-                Button {
-                    if entry.provenance == .taskOutcome {
-                        pendingPromoteEntry = PromoteCandidate(date: date, entry: entry)
                     } else {
-                        Task {
-                            await store.promoteLogEntry(date: date, entryID: entry.id, pinned: false)
+                        Button(action: onStartConfirm) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(NoriColors.ink3)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Forget")
                     }
-                } label: {
-                    Label("Promote to Core", systemImage: "arrow.up.to.line")
-                }
-
-                Divider()
-            }
-
-            Button(role: .destructive) {
-                pendingForgetLogEntry = PromoteCandidate(date: date, entry: entry)
-            } label: {
-                Label("Forget", systemImage: "trash")
-            }
-        } label: {
-            rowMenuLabel
-        }
-        .menuIndicator(.hidden)
-        .buttonStyle(.plain)
-        .accessibilityLabel("Log entry actions")
-    }
-
-    @ViewBuilder
-    private func workingItemMenu(for item: WorkingMemoryItem) -> some View {
-        Menu {
-            Button {
-                Task { await store.promoteWorkingMemoryItem(itemID: item.id) }
-            } label: {
-                Label("Save to Core", systemImage: "arrow.up.to.line")
-            }
-
-            Divider()
-
-            Button(role: .destructive) {
-                Task { await store.dismissWorkingMemoryItem(itemID: item.id) }
-            } label: {
-                Label("Dismiss", systemImage: "xmark")
-            }
-        } label: {
-            rowMenuLabel
-        }
-        .menuIndicator(.hidden)
-        .buttonStyle(.plain)
-        .accessibilityLabel("Working note actions")
-    }
-
-    private func workingKindColor(_ kind: WorkingMemoryItemKind) -> Color {
-        switch kind {
-        case .constraint: return NoriColors.warning
-        case .correction: return NoriColors.danger
-        case .preference, .commitment: return NoriColors.accent
-        case .approval, .decision: return NoriColors.ok
-        case .openQuestion, .fact: return NoriColors.ink2
-        }
-    }
-}
-
-
-private struct PromoteCandidate: Identifiable, Hashable {
-    var id: String { "\(date):\(entry.id)" }
-    let date: String
-    let entry: MemoryLogEntry
-}
-
-private struct PromoteTaskOutcomeSheet: View {
-    @Bindable var store: NoriStore
-    let candidate: PromoteCandidate
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var factText: String
-    @State private var section: String
-    @State private var about: String
-    @State private var pinned: Bool = false
-    @State private var reviewed = false
-    @State private var isSaving = false
-
-    private let maxBytes = 2000
-
-    init(store: NoriStore, candidate: PromoteCandidate) {
-        self.store = store
-        self.candidate = candidate
-        _factText = State(initialValue: candidate.entry.text)
-        _section = State(initialValue: candidate.entry.section ?? "")
-        _about = State(initialValue: candidate.entry.about ?? "")
-    }
-
-    private var byteCount: Int {
-        factText.trimmingCharacters(in: .whitespacesAndNewlines).utf8.count
-    }
-
-    private var canPromote: Bool {
-        reviewed && byteCount > 0 && byteCount <= maxBytes && !isSaving
-    }
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    NoriNotice(
-                        title: "Review task outcome before promoting",
-                        detail: "Task outcomes come from automated runs. Edit or verify accuracy before loading this into future chats.",
-                        tone: .warning,
-                        systemImage: "exclamationmark.shield.fill"
-                    )
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("Fact")
-                                .font(NoriTypography.metaSemibold)
-                                .foregroundStyle(NoriColors.ink)
-                            Spacer()
-                            Text("\(byteCount) / \(maxBytes)")
-                                .font(NoriTypography.monoSmall)
-                                .foregroundStyle(byteCount > maxBytes ? NoriColors.danger : NoriColors.ink3)
-                        }
-
-                        TextField("Fact to remember…", text: $factText, axis: .vertical)
-                            .lineLimit(3...6)
-                            .textFieldStyle(.plain)
-                            .foregroundStyle(NoriColors.ink)
-                            .tint(NoriColors.accent)
-                            .padding(12)
-                            .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
-                    }
-
-                    HStack(spacing: 10) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Section (optional)")
-                                .font(NoriTypography.metaSemibold)
-                                .foregroundStyle(NoriColors.ink)
-                            TextField("Work, Travel…", text: $section)
-                                .textFieldStyle(.plain)
-                                .foregroundStyle(NoriColors.ink)
-                                .tint(NoriColors.accent)
-                                .padding(.horizontal, 12)
-                                .frame(height: 40)
-                                .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
-                        }
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("About (optional)")
-                                .font(NoriTypography.metaSemibold)
-                                .foregroundStyle(NoriColors.ink)
-                            TextField("Flights, Q3…", text: $about)
-                                .textFieldStyle(.plain)
-                                .foregroundStyle(NoriColors.ink)
-                                .tint(NoriColors.accent)
-                                .padding(.horizontal, 12)
-                                .frame(height: 40)
-                                .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
-                        }
-                    }
-
-                    Toggle(isOn: $pinned) {
-                        Text("Pin in Core Memory")
-                            .font(.system(size: 13.5, weight: .medium))
-                            .foregroundStyle(NoriColors.ink)
-                    }
-                    .tint(NoriColors.brandPrimary)
-
-                    Toggle(isOn: $reviewed) {
-                        Text("I reviewed this fact and want Nori to remember it in Core Memory")
-                            .font(.system(size: 13.5, weight: .medium))
-                            .foregroundStyle(NoriColors.ink)
-                    }
-                    .tint(NoriColors.brandPrimary)
-
-                    Button {
-                        isSaving = true
-                        Task {
-                            await store.promoteLogEntry(
-                                date: candidate.date,
-                                entryID: candidate.entry.id,
-                                text: factText,
-                                section: section,
-                                about: about,
-                                pinned: pinned
-                            )
-                            isSaving = false
-                            dismiss()
-                        }
-                    } label: {
-                        if isSaving {
-                            ProgressView().tint(NoriColors.disabled)
-                        } else {
-                            Text("Promote to Core Memory")
-                        }
-                    }
-                    .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
-                    .disabled(!canPromote)
-                }
-                .padding(16)
-            }
-            .background(NoriColors.sheetBackground)
-            .navigationTitle("Promote to Core")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .interactiveDismissDisabled(isSaving)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .foregroundStyle(NoriColors.ink2)
-                        .disabled(isSaving)
                 }
             }
-        }
-    }
-}
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
 
-private struct MemoryFactEditorSheet: View {
-    @Bindable var store: NoriStore
-    let existing: MemoryFact?
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var factText: String
-    @State private var section: String
-    @State private var about: String
-    @State private var pinned: Bool
-    @State private var isSaving = false
-    @State private var errorMessage: String?
-
-    private let maxBytes = 2000
-
-    init(store: NoriStore, existing: MemoryFact?) {
-        self.store = store
-        self.existing = existing
-        _factText = State(initialValue: existing?.text ?? "")
-        _section = State(initialValue: existing?.section ?? "")
-        _about = State(initialValue: existing?.about ?? "")
-        _pinned = State(initialValue: existing?.pinned ?? false)
-    }
-
-    private var byteCount: Int {
-        factText.trimmingCharacters(in: .whitespacesAndNewlines).utf8.count
-    }
-
-    private var isValid: Bool {
-        byteCount > 0 && byteCount <= maxBytes && !isSaving
-    }
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    if let errorMessage {
-                        NoriNotice(
-                            title: "Couldn’t save memory",
-                            detail: errorMessage,
-                            tone: .danger,
-                            systemImage: "exclamationmark.triangle.fill"
-                        )
-                    }
-
-                    HStack {
-                        Text("What should Nori remember?")
-                            .font(NoriTypography.metaSemibold)
-                            .foregroundStyle(NoriColors.ink)
-                        Spacer()
-                        Text("\(byteCount) / \(maxBytes)")
-                            .font(NoriTypography.monoSmall)
-                            .foregroundStyle(byteCount > maxBytes ? NoriColors.danger : NoriColors.ink3)
-                    }
-
-                    TextField(
-                        "Prefers aisle seats and direct morning flights…",
-                        text: $factText,
-                        axis: .vertical
-                    )
-                    .lineLimit(3...6)
-                    .textFieldStyle(.plain)
-                    .foregroundStyle(NoriColors.ink)
-                    .tint(NoriColors.accent)
-                    .padding(12)
-                    .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                            .strokeBorder(byteCount > maxBytes ? NoriColors.danger : NoriColors.cardBorder, lineWidth: 1)
-                    )
-
-                    HStack(spacing: 10) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Section (optional)")
-                                .font(NoriTypography.metaSemibold)
-                                .foregroundStyle(NoriColors.ink)
-                            TextField("Travel, Work…", text: $section)
-                                .textFieldStyle(.plain)
-                                .foregroundStyle(NoriColors.ink)
-                                .tint(NoriColors.accent)
-                                .padding(.horizontal, 12)
-                                .frame(height: 40)
-                                .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
-                        }
-
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("About (optional)")
-                                .font(NoriTypography.metaSemibold)
-                                .foregroundStyle(NoriColors.ink)
-                            TextField("Flights, Q3…", text: $about)
-                                .textFieldStyle(.plain)
-                                .foregroundStyle(NoriColors.ink)
-                                .tint(NoriColors.accent)
-                                .padding(.horizontal, 12)
-                                .frame(height: 40)
-                                .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
-                        }
-                    }
-
-                    Toggle(isOn: $pinned) {
-                        Text("Pin in Core Memory")
-                            .font(.system(size: 13.5, weight: .medium))
-                            .foregroundStyle(NoriColors.ink)
-                    }
-                    .tint(NoriColors.brandPrimary)
-
-                    Button {
-                        save()
-                    } label: {
-                        if isSaving {
-                            ProgressView().tint(NoriColors.disabled)
-                        } else {
-                            Text(existing == nil ? "Save" : "Save changes")
-                        }
-                    }
-                    .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
-                    .disabled(!isValid)
-                }
-                .padding(16)
-            }
-            .background(NoriColors.sheetBackground)
-            .navigationTitle(existing == nil ? "Add Memory" : "Edit Memory")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .interactiveDismissDisabled(isSaving)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .foregroundStyle(NoriColors.ink2)
-                        .disabled(isSaving)
-                }
-            }
-        }
-    }
-
-    private func save() {
-        guard isValid else { return }
-        let cleanSection = section.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cleanAbout = about.trimmingCharacters(in: .whitespacesAndNewlines)
-        isSaving = true
-        errorMessage = nil
-        Task {
-            do {
-                if let existing {
-                    _ = try await store.updateMemory(
-                        memoryID: existing.id,
-                        text: factText,
-                        section: cleanSection.isEmpty ? nil : cleanSection,
-                        about: cleanAbout.isEmpty ? nil : cleanAbout,
-                        pinned: pinned
-                    )
-                } else {
-                    await store.addMemory(
-                        text: factText,
-                        section: cleanSection.isEmpty ? nil : cleanSection,
-                        about: cleanAbout.isEmpty ? nil : cleanAbout,
-                        pinned: pinned
-                    )
-                }
-                isSaving = false
-                dismiss()
-            } catch {
-                isSaving = false
-                errorMessage = error.localizedDescription
+            if showDivider {
+                Rectangle()
+                    .fill(NoriColors.hairline)
+                    .frame(height: 1)
+                    .padding(.leading, 14)
             }
         }
     }

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { KeyRound, Lock } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import {
   deleteModelKey,
@@ -11,10 +10,10 @@ import {
   type ModelKeysResponse,
 } from "@/lib/assistant/api";
 import { announce } from "@/lib/assistant/announce";
-import { relative } from "@/lib/assistant/format";
 import { useResource, useResourceInvalidation } from "@/lib/assistant/useResource";
 import { cn } from "@/lib/utils";
-import { Confirm, Empty, Failure, Field, inputClass, Loading, Notice, Pill, Section } from "./ui";
+import { ProviderBrandIcon } from "./BrandIcons";
+import { Confirm, Empty, Failure, Field, inputClass, Loading, Notice, Row, Rows, Section } from "./ui";
 
 export function needsByokSetup(data?: ModelKeysResponse, hasHomeChat = false): boolean {
   return !!data?.byok_required && !hasHomeChat && !data.providers.some((provider) => provider.configured);
@@ -24,13 +23,19 @@ export function byokPromptLabel(data?: ModelKeysResponse): string {
   return data?.providers.length === 1 ? data.providers[0].label : "model provider";
 }
 
-export function ApiKeysSettings({ onKeySaved, hasHomeChat = false }: { onKeySaved?: (provider: ModelKeyProvider) => void; hasHomeChat?: boolean }) {
+export function ApiKeysSettings({
+  onKeySaved,
+  hasHomeChat = false,
+}: {
+  onKeySaved?: (provider: ModelKeyProvider) => void;
+  hasHomeChat?: boolean;
+}) {
   const keys = useResource<ModelKeysResponse>("/settings/model-keys", { poll: 0, versioned: false });
   const invalidate = useResourceInvalidation();
 
   if (keys.loading) return <Loading />;
   if (!keys.data) {
-    return <Failure error={keys.error ?? "API keys are unavailable."} onRetry={() => void keys.reload()} />;
+    return <Failure error={keys.error ?? "Providers are unavailable."} onRetry={() => void keys.reload()} />;
   }
 
   const updateProvider = (updated: ModelKeyProvider) => {
@@ -79,8 +84,8 @@ export function ApiKeysContent({
   const requiresKey = needsByokSetup(data, hasHomeChat);
   const primaryLabel = byokPromptLabel(data);
 
-  const startEditing = (provider: string) => {
-    setEditingProvider(provider);
+  const toggleEditing = (provider: string) => {
+    setEditingProvider((current) => (current === provider ? null : provider));
     setDraftKey("");
     setProviderErrors((prev) => {
       if (!(provider in prev)) return prev;
@@ -152,7 +157,7 @@ export function ApiKeysContent({
   };
 
   return (
-    <Section title="API Keys">
+    <Section title="Providers">
       <div className="space-y-3">
         {requiresKey && (
           <Notice tone="warning">
@@ -162,20 +167,10 @@ export function ApiKeysContent({
 
         {!!error && <Failure error={error} onRetry={onRetry} />}
 
-        <Notice tone="neutral">
-          <span className="inline-flex items-center gap-2">
-            <Lock size={14} className="shrink-0" aria-hidden />
-            <span>API keys are encrypted at rest and never displayed again after saving.</span>
-          </span>
-        </Notice>
-
         {data.providers.length === 0 ? (
-          <Empty>No model key providers are available.</Empty>
+          <Empty>No model providers are available.</Empty>
         ) : (
-          <ul
-            aria-label="Model providers"
-            className="divide-y divide-hairline overflow-hidden rounded-card border border-card-border bg-surface"
-          >
+          <Rows label="Providers">
             {data.providers.map((provider) => {
               const isEditing = editingProvider === provider.provider;
               const isSaving = busyProvider?.provider === provider.provider && busyProvider.action === "save";
@@ -184,81 +179,34 @@ export function ApiKeysContent({
               const providerError = providerErrors[provider.provider];
 
               return (
-                <li key={provider.provider} className="px-4 py-3.5">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <span
-                      className={cn(
-                        "grid size-9 shrink-0 place-items-center rounded-[10px]",
-                        provider.configured ? "bg-accent-subtle text-accent-text" : "bg-fill-1 text-ink-2",
-                      )}
-                    >
-                      <KeyRound size={18} strokeWidth={1.85} aria-hidden />
-                    </span>
-
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-row font-semibold text-ink">{provider.label}</span>
-                        {!provider.configured && <Pill tone="neutral">Not set</Pill>}
-                      </div>
-                      {provider.configured && (
-                        <p className="mt-0.5 text-meta text-ink-2">
-                          {provider.last4 || provider.updated_at ? (
-                            <>
-                              {provider.last4 && (
-                                <span className="font-mono text-mono-data text-ink">••••{provider.last4}</span>
-                              )}
-                              {provider.updated_at && <span>{provider.last4 && " · "}Updated {relative(provider.updated_at)}</span>}
-                            </>
-                          ) : (
-                            "Configured"
-                          )}
-                        </p>
-                      )}
-                    </div>
-
-                    {!isEditing && (
-                      <div className="flex shrink-0 items-center gap-2">
-                        <Button
-                          size="sm"
-                          variant={provider.configured ? "neutral" : "primary"}
-                          disabled={!!busyProvider}
-                          onClick={() => startEditing(provider.provider)}
-                        >
-                          {provider.configured ? "Replace" : "Add key"}
-                        </Button>
-                        {provider.configured && (
-                          <Confirm
-                            danger
-                            title={`Remove ${provider.label} key?`}
-                            body="Models using this key will require another key or model selection."
-                            confirm="Remove"
-                            onConfirm={() => void handleDelete(provider)}
-                            trigger={
-                              <Button size="sm" variant="quiet" disabled={!!busyProvider}>
-                                {isDeleting ? "Removing…" : "Remove"}
-                              </Button>
-                            }
-                          />
-                        )}
-                      </div>
-                    )}
-                  </div>
+                <li key={provider.provider}>
+                  <Row
+                    onClick={() => toggleEditing(provider.provider)}
+                    leading={<ProviderBrandIcon provider={provider.provider} />}
+                    title={provider.label}
+                    trailing={
+                      provider.configured && provider.last4 ? (
+                        <span className="font-mono text-mono-data text-ink-2">••••{provider.last4}</span>
+                      ) : undefined
+                    }
+                    chevron
+                  />
 
                   {!isEditing && providerError && (
-                    <div className="mt-3">
+                    <div className="px-4 pb-3">
                       <Notice tone="danger">{providerError}</Notice>
                     </div>
                   )}
 
                   {isEditing && (
                     <form
-                      className="mt-3.5 space-y-3 border-t border-hairline pt-3.5"
+                      className="space-y-3 border-t border-hairline px-4 py-4"
                       onSubmit={(event) => {
                         event.preventDefault();
                         void handleSave(provider);
                       }}
                     >
-                      <Field label={provider.configured ? `New ${provider.label} API key` : `${provider.label} API key`}>
+                      <Field label={provider.configured ? `Replace ${provider.label} API key` : `${provider.label} API key`}>
                         <input
                           type="password"
                           autoComplete="new-password"
@@ -284,28 +232,49 @@ export function ApiKeysContent({
                         />
                       </Field>
 
+                      <p className="text-caption text-ink-3">
+                        Encrypted at rest and never shown again after saving.
+                      </p>
+
                       {providerError && <Notice tone="danger">{providerError}</Notice>}
 
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Button type="submit" size="sm" variant="primary" disabled={isBusy || !draftKey.trim()}>
-                          {isSaving ? "Saving…" : "Save"}
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="quiet"
-                          disabled={isBusy}
-                          onClick={() => cancelEditing(provider.provider)}
-                        >
-                          Cancel
-                        </Button>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <Button type="submit" size="sm" variant="primary" disabled={isBusy || !draftKey.trim()}>
+                            {isSaving ? "Saving…" : "Save"}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="quiet"
+                            disabled={isBusy}
+                            onClick={() => cancelEditing(provider.provider)}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+
+                        {provider.configured && (
+                          <Confirm
+                            danger
+                            title={`Remove ${provider.label} key?`}
+                            body="Models using this key will require another key or model selection."
+                            confirm="Remove"
+                            onConfirm={() => void handleDelete(provider)}
+                            trigger={
+                              <Button type="button" size="sm" variant="danger" disabled={!!busyProvider}>
+                                {isDeleting ? "Removing…" : "Remove"}
+                              </Button>
+                            }
+                          />
+                        )}
                       </div>
                     </form>
                   )}
                 </li>
               );
             })}
-          </ul>
+          </Rows>
         )}
       </div>
     </Section>

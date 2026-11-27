@@ -8,16 +8,12 @@ import UIKit
 public struct ModelsSettingsView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Bindable private var store: NoriStore
-    @State private var selection = ModelSelection()
-    @State private var draftBase = ModelSelection()
-    @State private var draftRevision: Int?
     @State private var isLoading = false
     @State private var isSaving = false
     @State private var modelLoadError: String?
     @State private var keyLoadError: String?
     @State private var homeLoadError: String?
     @State private var saveError: String?
-    @State private var hasConflict = false
     @State private var suggestedProvider: String?
     @State private var showingSuggestion = false
 
@@ -27,22 +23,78 @@ public struct ModelsSettingsView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                NoriSectionHeader("Models and reasoning")
-                if let settings = store.modelSettings {
-                    modelSelectionCard(settings: settings)
-                    if let modelLoadError {
-                        NoriNotice(title: "Could not refresh models", detail: modelLoadError, tone: .danger) {
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 0) {
+                    NoriSectionHeader("Default models")
+                    if let settings = store.modelSettings {
+                        defaultModelsSection(settings: settings)
+                        if let modelLoadError {
+                            NoriNotice(title: "Could not refresh models", detail: modelLoadError, tone: .danger) {
+                                Button("Retry") { Task { await load() } }
+                                    .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                            }
+                            .padding(.top, 8)
+                        }
+                    } else if isLoading {
+                        NoriCard { ProgressView().tint(NoriColors.accent) }
+                    } else if let modelLoadError {
+                        NoriNotice(title: "Could not load models", detail: modelLoadError, tone: .danger) {
                             Button("Retry") { Task { await load() } }
                                 .buttonStyle(NoriButtonStyle(.quiet, compact: true))
                         }
                     }
-                } else if isLoading {
-                    NoriCard { ProgressView().tint(NoriColors.accent) }
-                } else if let modelLoadError {
-                    NoriNotice(title: "Could not load models", detail: modelLoadError, tone: .danger) {
-                        Button("Retry") { Task { await load() } }
-                            .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                }
+
+                VStack(alignment: .leading, spacing: 0) {
+                    NoriSectionHeader("Providers")
+                    if store.needsModelKeySetup && !hasPairedHomeDevice {
+                        NoriNotice(
+                            title: "Add a provider API key to use Chat and Work.",
+                            tone: .warning,
+                            systemImage: "key.fill"
+                        )
+                        .padding(.bottom, 10)
+                    }
+                    if let keyLoadError {
+                        NoriNotice(title: "Could not load providers", detail: keyLoadError, tone: .danger)
+                            .padding(.bottom, 10)
+                    }
+                    if store.modelKeys.providers.isEmpty {
+                        if !isLoading {
+                            NoriCard {
+                                Text("No model providers are available.")
+                                    .font(NoriTypography.meta)
+                                    .foregroundStyle(NoriColors.ink2)
+                            }
+                        }
+                    } else {
+                        NoriRows {
+                            ForEach(Array(store.modelKeys.providers.enumerated()), id: \.element.id) { index, provider in
+                                let isLast = index == store.modelKeys.providers.count - 1
+                                NavigationLink {
+                                    ProviderKeyDetailView(
+                                        store: store,
+                                        provider: provider,
+                                        onSaved: { savedID in Task { await didSaveKey(savedID) } },
+                                        onRemoved: { Task { await reloadModels() } }
+                                    )
+                                } label: {
+                                    NoriBrandRow(
+                                        title: provider.label,
+                                        brand: NoriBrandKind.forProvider(provider: provider.provider),
+                                        showChevron: true,
+                                        showDivider: !isLast
+                                    ) {
+                                        if provider.configured, let masked = provider.maskedKeyDisplay {
+                                            Text(masked)
+                                                .font(NoriTypography.monoSmall)
+                                                .foregroundStyle(NoriColors.ink2)
+                                        }
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
                     }
                 }
 
@@ -51,45 +103,6 @@ public struct ModelsSettingsView: View {
                     loadError: homeLoadError,
                     onRetry: { Task { await reloadHomeConnectors() } }
                 )
-
-                NoriSectionHeader("API Keys")
-                if store.needsModelKeySetup && !hasPairedHomeDevice {
-                    NoriNotice(
-                        title: "API key required",
-                        detail: "Add a provider API key to use Chat and Work.",
-                        tone: .warning,
-                        systemImage: "key.fill"
-                    )
-                }
-                NoriNotice(
-                    title: "Encrypted at rest",
-                    detail: "Keys are encrypted on the server before storage and are never shown again after saving.",
-                    tone: .neutral,
-                    systemImage: "lock.shield"
-                )
-                if store.modelKeys.providers.isEmpty {
-                    if let keyLoadError {
-                        NoriNotice(title: "Could not load API keys", detail: keyLoadError, tone: .danger)
-                    } else if !isLoading {
-                        NoriCard {
-                            Text("No model key providers are available.")
-                                .font(NoriTypography.meta)
-                                .foregroundStyle(NoriColors.ink2)
-                        }
-                    }
-                } else {
-                    if let keyLoadError {
-                        NoriNotice(title: "Could not refresh API keys", detail: keyLoadError, tone: .danger)
-                    }
-                    ForEach(store.modelKeys.providers) { provider in
-                        ModelKeyProviderCard(
-                            store: store,
-                            provider: provider,
-                            onSaved: { provider in Task { await didSaveKey(provider) } },
-                            onRemoved: { Task { await reloadModels() } }
-                        )
-                    }
-                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -101,13 +114,13 @@ public struct ModelsSettingsView: View {
                 do { try await Task.sleep(for: .seconds(10)) } catch { break }
                 if store.homeConnectors?.enabled == true {
                     try? await store.refreshHomeConnectors()
-                    if !hasUnsavedDraft { await reloadModels() }
+                    await reloadModels()
                 }
             }
         }
         .refreshable { await load() }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active && !hasUnsavedDraft {
+            if phase == .active {
                 Task { await load() }
             }
         }
@@ -121,17 +134,12 @@ public struct ModelsSettingsView: View {
             Button("Use recommended models") {
                 guard let provider = suggestedProvider,
                       let recommended = store.modelSettings?.recommendations[provider] else { return }
-                selection = recommended
-                Task { await saveSelection() }
+                Task { await commitSelection(recommended) }
             }
             Button("Keep current models", role: .cancel) { suggestedProvider = nil }
         } message: {
             Text(recommendationSummary)
         }
-    }
-
-    private var hasUnsavedDraft: Bool {
-        draftRevision != nil && selection != draftBase
     }
 
     private var hasPairedHomeDevice: Bool {
@@ -153,172 +161,101 @@ public struct ModelsSettingsView: View {
         return "Chat: \(chat)\nWork: \(work)"
     }
 
-    private func modelSelectionCard(settings: ModelSettingsResponse) -> some View {
+    @ViewBuilder
+    private func defaultModelsSection(settings: ModelSettingsResponse) -> some View {
         let profiles = settings.modelProfiles.profiles
+        let selection = settings.selection
         let chatProfile = profiles.first { $0.id == selection.chatProfileID && $0.lanes.contains("chat") }
-        let taskProfile = profiles.first { $0.id == selection.taskProfileID && $0.lanes.contains("task") }
-        return NoriCard {
-            VStack(alignment: .leading, spacing: 12) {
-                if profiles.isEmpty && selection.homeOnly != true && selection.chatProfileID == nil && selection.taskProfileID == nil {
-                    Text("Add an API key or connect a home computer to choose models.")
-                        .font(NoriTypography.meta)
-                        .foregroundStyle(NoriColors.ink2)
-                } else {
-                    profilePicker("Chat model", lane: "chat", profiles: profiles, selectedID: Binding(
-                        get: { selection.chatProfileID ?? "" },
-                        set: { id in
-                            selection.chatProfileID = id.isEmpty ? nil : id
-                            let nextProfile = profiles.first { $0.id == id }
-                            let supported = nextProfile?.supportedReasoning ?? []
-                            if let effort = selection.chatReasoning, !supported.contains(effort) {
-                                if let defaultEffort = nextProfile?.defaultReasoning,
-                                   !defaultEffort.isEmpty,
-                                   supported.contains(defaultEffort) {
-                                    selection.chatReasoning = defaultEffort
-                                } else {
-                                    selection.chatReasoning = nil
-                                }
-                            }
-                        }
-                    ))
-                    if let chatProfile, !(chatProfile.supportedReasoning?.isEmpty ?? true) {
-                        reasoningPicker("Chat reasoning", profile: chatProfile, effort: Binding(
-                            get: { selection.chatReasoning ?? "" },
-                            set: { selection.chatReasoning = $0.isEmpty ? nil : $0 }
-                        ))
-                    }
-                    Rectangle()
-                        .fill(NoriColors.hairline)
-                        .frame(height: 1)
-                    profilePicker("Work model", lane: "task", profiles: profiles, selectedID: Binding(
-                        get: { selection.taskProfileID ?? "" },
-                        set: { id in
-                            selection.taskProfileID = id.isEmpty ? nil : id
-                            let nextProfile = profiles.first { $0.id == id }
-                            let supported = nextProfile?.supportedReasoning ?? []
-                            if let effort = selection.taskReasoning, !supported.contains(effort) {
-                                if let defaultEffort = nextProfile?.defaultReasoning,
-                                   !defaultEffort.isEmpty,
-                                   supported.contains(defaultEffort) {
-                                    selection.taskReasoning = defaultEffort
-                                } else {
-                                    selection.taskReasoning = nil
-                                }
-                            }
-                        }
-                    ))
-                    if let taskProfile, !(taskProfile.supportedReasoning?.isEmpty ?? true) {
-                        reasoningPicker("Work reasoning", profile: taskProfile, effort: Binding(
-                            get: { selection.taskReasoning ?? "" },
-                            set: { selection.taskReasoning = $0.isEmpty ? nil : $0 }
-                        ))
-                    }
-                    if store.homeConnectors?.enabled == true || selection.homeOnly == true {
-                        Toggle(isOn: Binding(
-                            get: { selection.homeOnly == true },
-                            set: { selection.homeOnly = $0 }
-                        )) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Use home models only").font(NoriTypography.rowTitle)
-                                Text("Model requests use your home computer. Nori still stores your conversations.")
-                                    .font(NoriTypography.meta)
-                                    .foregroundStyle(NoriColors.ink2)
-                            }
-                        }
-                        .tint(NoriColors.brandPrimary)
-                        .disabled(isSaving || (selection.homeOnly != true && chatProfile?.backend != "home"))
-                    }
-                    let homeWorkInvalid = selection.homeOnly == true && selection.taskProfileID != nil && taskProfile?.backend != "home"
-                    if homeWorkInvalid {
-                        NoriNotice(title: "Choose a home Work model or clear the Work model before saving.", tone: .warning)
-                    }
-                    if let saveError {
-                        NoriNotice(title: "Could not save models", detail: saveError, tone: .danger) {
-                            if hasConflict {
-                                Button("Load saved models") { Task { await discardAndReloadModels() } }
-                                    .buttonStyle(NoriButtonStyle(.quiet, compact: true))
-                            }
-                        }
-                    }
-                    Button(isSaving ? "Saving…" : "Save models") {
-                        Task { await saveSelection() }
-                    }
-                    .buttonStyle(NoriButtonStyle(.primary, fullWidth: true, compact: true))
-                    .disabled(isSaving || !hasUnsavedDraft || hasConflict || homeWorkInvalid)
-                }
-            }
-        }
-    }
+        let workProfile = profiles.first { $0.id == selection.taskProfileID && $0.lanes.contains("task") }
+        let chatUnavailable = selection.chatProfileID != nil && chatProfile == nil
+        let workUnavailable = selection.taskProfileID != nil && workProfile == nil
+        let showHomeOnly = store.homeConnectors?.enabled == true || selection.homeOnly == true
 
-    private func profilePicker(
-        _ title: String, lane: String, profiles: [ModelProfile], selectedID: Binding<String>
-    ) -> some View {
-        let available = profiles.filter { $0.lanes.contains(lane) }
-        let isWork = lane == "task"
-        let homeOnly = selection.homeOnly == true
-        let selectedLabel: String = {
-            if selectedID.wrappedValue.isEmpty {
-                return isWork ? "No Work model" : "Choose a model"
-            }
-            if let match = available.first(where: { $0.id == selectedID.wrappedValue }) {
-                return profileLabel(match)
-            }
-            return "Unavailable · choose a model"
-        }()
-        return VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(NoriTypography.metaSemibold)
-                .foregroundStyle(NoriColors.ink2)
-            Menu {
-                if isWork {
-                    Button {
-                        selectedID.wrappedValue = ""
-                    } label: {
-                        if selectedID.wrappedValue.isEmpty {
-                            Label("No Work model", systemImage: "checkmark")
-                        } else {
-                            Text("No Work model")
-                        }
-                    }
-                    profileOptions(available, selectedID: selectedID)
-                } else {
-                    let workProfiles = available.filter { $0.lanes.contains("task") }
-                    let chatProfiles = available.filter { !$0.lanes.contains("task") }
-                    if !workProfiles.isEmpty {
-                        Section("Chat and Work") { profileOptions(workProfiles, selectedID: selectedID) }
-                    }
-                    if !chatProfiles.isEmpty {
-                        Section("Chat only") { profileOptions(chatProfiles, selectedID: selectedID) }
-                    }
-                }
-            } label: {
-                pickerFieldLabel(selectedLabel, isPlaceholder: selectedID.wrappedValue.isEmpty)
-            }
-            .buttonStyle(.plain)
-            .disabled(isSaving || (available.isEmpty && (!isWork || selectedID.wrappedValue.isEmpty)))
-            if isWork {
-                let hasWorkModels = available.contains { !homeOnly || $0.backend == "home" }
-                Text(hasWorkModels
-                     ? "These models can run web searches and use connected apps in Work."
-                     : homeOnly ? "No home models are available for Work." : "No models are available for Work yet.")
+        if profiles.isEmpty && selection.homeOnly != true && selection.chatProfileID == nil && selection.taskProfileID == nil {
+            NoriCard {
+                Text("Add a provider key or pair a home computer to choose models.")
                     .font(NoriTypography.meta)
                     .foregroundStyle(NoriColors.ink2)
             }
-        }
-    }
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                if let saveError {
+                    NoriNotice(title: "Could not save models", detail: saveError, tone: .danger)
+                }
+                if chatUnavailable || workUnavailable {
+                    NoriNotice(title: "One of your selected models is unavailable. Choose an available model.", tone: .warning)
+                }
+                NoriRows {
+                    NavigationLink {
+                        ModelPickerView(
+                            store: store,
+                            lane: "chat",
+                            title: "Chat model",
+                            onCommit: { next in try await commitSelectionThrowing(next) }
+                        )
+                    } label: {
+                        NoriRow(title: "Chat", showChevron: true, showDivider: true) {
+                            Text(chatProfile.map(profileLabel) ?? (chatUnavailable ? "Unavailable" : "Choose"))
+                                .font(NoriTypography.meta)
+                                .foregroundStyle(chatUnavailable ? NoriColors.warning : NoriColors.ink2)
+                                .lineLimit(1)
+                        }
+                    }
+                    .buttonStyle(.plain)
 
-    private func profileOptions(_ profiles: [ModelProfile], selectedID: Binding<String>) -> some View {
-        ForEach(profiles) { profile in
-            Button {
-                selectedID.wrappedValue = profile.id
-            } label: {
-                if profile.id == selectedID.wrappedValue {
-                    Label(profileLabel(profile), systemImage: "checkmark")
-                } else {
-                    Text(profileLabel(profile))
+                    NavigationLink {
+                        ModelPickerView(
+                            store: store,
+                            lane: "task",
+                            title: "Work model",
+                            onCommit: { next in try await commitSelectionThrowing(next) }
+                        )
+                    } label: {
+                        NoriRow(title: "Work", showChevron: true, showDivider: showHomeOnly) {
+                            Text(workProfile.map(profileLabel) ?? (workUnavailable ? "Unavailable" : "None"))
+                                .font(NoriTypography.meta)
+                                .foregroundStyle(workUnavailable ? NoriColors.warning : NoriColors.ink2)
+                                .lineLimit(1)
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    if showHomeOnly {
+                        NoriRow(title: "Home models only", showDivider: false) {
+                            Toggle(
+                                "Home models only",
+                                isOn: Binding(
+                                    get: { selection.homeOnly == true },
+                                    set: { nextHomeOnly in
+                                        var next = selection
+                                        next.homeOnly = nextHomeOnly
+                                        if nextHomeOnly {
+                                            if chatProfile?.backend != "home",
+                                               let homeChat = profiles.first(where: { $0.backend == "home" && $0.lanes.contains("chat") }) {
+                                                next.chatProfileID = homeChat.id
+                                                next.chatReasoning = homeChat.defaultReasoning
+                                            }
+                                            if workProfile != nil && workProfile?.backend != "home" {
+                                                let homeWork = profiles.first(where: { $0.backend == "home" && $0.lanes.contains("task") })
+                                                next.taskProfileID = homeWork?.id
+                                                next.taskReasoning = homeWork?.defaultReasoning
+                                            }
+                                        }
+                                        Task { await commitSelection(next) }
+                                    }
+                                )
+                            )
+                            .labelsHidden()
+                            .tint(NoriColors.brandPrimary)
+                            .disabled(
+                                isSaving ||
+                                    (selection.homeOnly != true &&
+                                        !profiles.contains(where: { $0.backend == "home" && $0.lanes.contains("chat") }))
+                            )
+                        }
+                    }
                 }
             }
-            .disabled(selection.homeOnly == true && profile.backend != "home")
         }
     }
 
@@ -330,71 +267,6 @@ public struct ModelsSettingsView: View {
         }
     }
 
-    private func reasoningPicker(_ title: String, profile: ModelProfile, effort: Binding<String>) -> some View {
-        let defaultLabel: String = {
-            if let def = profile.defaultReasoning, !def.isEmpty {
-                return "Default (\(def.capitalized))"
-            }
-            return "Default"
-        }()
-        let selectedLabel = effort.wrappedValue.isEmpty ? defaultLabel : effort.wrappedValue.capitalized
-        return VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(NoriTypography.metaSemibold)
-                .foregroundStyle(NoriColors.ink2)
-            Menu {
-                Button {
-                    effort.wrappedValue = ""
-                } label: {
-                    if effort.wrappedValue.isEmpty {
-                        Label(defaultLabel, systemImage: "checkmark")
-                    } else {
-                        Text(defaultLabel)
-                    }
-                }
-                ForEach(profile.supportedReasoning ?? [], id: \.self) { value in
-                    Button {
-                        effort.wrappedValue = value
-                    } label: {
-                        if value == effort.wrappedValue {
-                            Label(value.capitalized, systemImage: "checkmark")
-                        } else {
-                            Text(value.capitalized)
-                        }
-                    }
-                }
-            } label: {
-                pickerFieldLabel(selectedLabel, isPlaceholder: false)
-            }
-            .buttonStyle(.plain)
-            .disabled(isSaving)
-        }
-    }
-
-    private func pickerFieldLabel(_ text: String, isPlaceholder: Bool) -> some View {
-        HStack(spacing: 8) {
-            Text(text)
-                .font(NoriTypography.meta)
-                .foregroundStyle(isPlaceholder ? NoriColors.ink3 : NoriColors.ink)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Image(systemName: "chevron.up.chevron.down")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(NoriColors.accent)
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 40)
-        .background(
-            NoriColors.elevated,
-            in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
-        )
-    }
-
     private func load() async {
         isLoading = true
         defer { isLoading = false }
@@ -404,67 +276,24 @@ public struct ModelsSettingsView: View {
         async let keys: Void = store.refreshModelKeysThrowing()
         async let models: Void = store.refreshModelSettings()
         async let home: Void = store.refreshHomeConnectors()
-        do {
-            try await models
-            adoptSettingsIfUnedited()
-        } catch {
-            modelLoadError = error.localizedDescription
-        }
-        do {
-            try await keys
-        } catch {
-            keyLoadError = error.localizedDescription
-        }
-        do {
-            try await home
-        } catch is CancellationError {
-            return
-        } catch {
-            homeLoadError = error.localizedDescription
-        }
+        do { try await models } catch { modelLoadError = error.localizedDescription }
+        do { try await keys } catch { keyLoadError = error.localizedDescription }
+        do { try await home } catch is CancellationError { return } catch { homeLoadError = error.localizedDescription }
     }
 
     private func reloadHomeConnectors() async {
         homeLoadError = nil
-        do {
-            try await store.refreshHomeConnectors()
-        } catch is CancellationError {
-            return
-        } catch {
-            homeLoadError = error.localizedDescription
-        }
+        do { try await store.refreshHomeConnectors() }
+        catch is CancellationError { return }
+        catch { homeLoadError = error.localizedDescription }
     }
 
     private func reloadModels() async {
         do {
             try await store.refreshModelSettings()
-            adoptSettingsIfUnedited()
             modelLoadError = nil
         } catch {
             modelLoadError = error.localizedDescription
-        }
-    }
-
-    private func adoptSettingsIfUnedited() {
-        guard !hasUnsavedDraft, let settings = store.modelSettings else { return }
-        adoptSettings(settings)
-    }
-
-    private func adoptSettings(_ settings: ModelSettingsResponse) {
-        selection = settings.selection
-        draftBase = settings.selection
-        draftRevision = settings.revision
-    }
-
-    private func discardAndReloadModels() async {
-        do {
-            try await store.refreshModelSettings()
-            if let settings = store.modelSettings { adoptSettings(settings) }
-            modelLoadError = nil
-            saveError = nil
-            hasConflict = false
-        } catch {
-            saveError = error.localizedDescription
         }
     }
 
@@ -477,217 +306,358 @@ public struct ModelsSettingsView: View {
         showingSuggestion = true
     }
 
-    private func saveSelection() async {
-        guard let draftRevision else {
-            saveError = "Reload model settings and try again."
-            return
+    private func commitSelection(_ next: ModelSelection) async {
+        do {
+            try await commitSelectionThrowing(next)
+        } catch {
+            saveError = error.localizedDescription
+        }
+    }
+
+    private func commitSelectionThrowing(_ next: ModelSelection) async throws {
+        guard let settings = store.modelSettings else {
+            throw NoriAPIError(message: "Reload model settings and try again.")
         }
         isSaving = true
         saveError = nil
-        hasConflict = false
+        defer { isSaving = false }
+        try await store.saveModelSettings(next, expectedRevision: settings.revision)
+    }
+}
+
+// MARK: - Searchable Model Picker with Top Reasoning Control
+
+private struct ModelPickerView: View {
+    @Bindable var store: NoriStore
+    let lane: String
+    let title: String
+    let onCommit: (ModelSelection) async throws -> Void
+
+    @State private var searchQuery = ""
+    @State private var isSaving = false
+    @State private var pickerError: String?
+
+    private var isWork: Bool { lane == "task" }
+
+    private var settings: ModelSettingsResponse? { store.modelSettings }
+    private var selection: ModelSelection { settings?.selection ?? ModelSelection() }
+    private var homeOnly: Bool { selection.homeOnly == true }
+    private var selectedID: String? { isWork ? selection.taskProfileID : selection.chatProfileID }
+    private var selectedEffort: String? { isWork ? selection.taskReasoning : selection.chatReasoning }
+
+    private var laneProfiles: [ModelProfile] {
+        (settings?.modelProfiles.profiles ?? []).filter { profile in
+            profile.lanes.contains(lane) && (!homeOnly || profile.backend == "home")
+        }
+    }
+
+    private var selectedProfile: ModelProfile? {
+        laneProfiles.first { $0.id == selectedID }
+    }
+
+    private var filteredProfiles: [ModelProfile] {
+        let needle = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !needle.isEmpty else { return laneProfiles }
+        return laneProfiles.filter { profile in
+            profile.label.lowercased().contains(needle)
+                || profile.model.lowercased().contains(needle)
+                || profile.backend.lowercased().contains(needle)
+        }
+    }
+
+    private var cloudProfiles: [ModelProfile] {
+        filteredProfiles.filter { $0.backend != "home" }
+    }
+
+    private var homeProfiles: [ModelProfile] {
+        filteredProfiles.filter { $0.backend == "home" }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                if let pickerError {
+                    NoriNotice(title: "Could not save model", detail: pickerError, tone: .danger)
+                }
+
+                if let efforts = selectedProfile?.supportedReasoning, !efforts.isEmpty {
+                    VStack(alignment: .leading, spacing: 0) {
+                        NoriSectionHeader("Reasoning")
+                        NoriSegmentedTabs(
+                            options: [NoriSegmentOption(value: "", label: "Default")] +
+                                efforts.map { NoriSegmentOption(value: $0, label: $0.capitalized) },
+                            selection: Binding(
+                                get: { selectedEffort ?? "" },
+                                set: { nextEffort in
+                                    var next = selection
+                                    let val = nextEffort.isEmpty ? nil : nextEffort
+                                    if isWork { next.taskReasoning = val } else { next.chatReasoning = val }
+                                    Task { await save(next) }
+                                }
+                            )
+                        )
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(NoriColors.ink3)
+                    TextField("Search models…", text: $searchQuery)
+                        .textFieldStyle(.plain)
+                        .font(NoriTypography.body)
+                        .foregroundStyle(NoriColors.ink)
+                        .tint(NoriColors.accent)
+                    if !searchQuery.isEmpty {
+                        Button {
+                            searchQuery = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(NoriColors.ink3)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Clear search")
+                    }
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 42)
+                .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+                        .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
+                )
+
+                if filteredProfiles.isEmpty {
+                    NoriEmptyState(
+                        title: searchQuery.isEmpty ? "No models available" : "No models match “\(searchQuery)”",
+                        message: searchQuery.isEmpty ? "Add a provider key or pair a home computer." : "Try a different keyword."
+                    )
+                } else {
+                    if !cloudProfiles.isEmpty {
+                        VStack(alignment: .leading, spacing: 0) {
+                            NoriSectionHeader("Cloud")
+                            profileRows(cloudProfiles)
+                        }
+                    }
+
+                    if !homeProfiles.isEmpty {
+                        VStack(alignment: .leading, spacing: 0) {
+                            NoriSectionHeader("Home computer")
+                            profileRows(homeProfiles)
+                        }
+                    }
+                }
+
+                if isWork && searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (selectedID != nil || !filteredProfiles.isEmpty) {
+                    NoriRows {
+                        Button {
+                            var next = selection
+                            next.taskProfileID = nil
+                            next.taskReasoning = nil
+                            Task { await save(next) }
+                        } label: {
+                            NoriRow(title: "No Work model", showDivider: false) {
+                                if selectedID == nil || selectedID?.isEmpty == true {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(NoriColors.accent)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isSaving)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 96)
+        }
+        .background(NoriColors.canvas)
+        .navigationTitle(title)
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+    }
+
+    private func profileRows(_ profiles: [ModelProfile]) -> some View {
+        NoriRows {
+            ForEach(Array(profiles.enumerated()), id: \.element.id) { index, profile in
+                let isLast = index == profiles.count - 1
+                let active = profile.id == selectedID
+                Button {
+                    pick(profile)
+                } label: {
+                    NoriBrandRow(
+                        title: profileLabel(profile),
+                        brand: NoriBrandKind.forProvider(provider: profile.backend, model: profile.model, backend: profile.backend),
+                        showDivider: !isLast
+                    ) {
+                        if active {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(NoriColors.accent)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(isSaving)
+            }
+        }
+    }
+
+    private func pick(_ profile: ModelProfile) {
+        var next = selection
+        let supported = profile.supportedReasoning ?? []
+        let current = isWork ? next.taskReasoning : next.chatReasoning
+        let resolvedEffort: String? = {
+            if let current, supported.contains(current) { return current }
+            if let def = profile.defaultReasoning, !def.isEmpty, supported.contains(def) { return def }
+            return nil
+        }()
+        if isWork {
+            next.taskProfileID = profile.id
+            next.taskReasoning = resolvedEffort
+        } else {
+            next.chatProfileID = profile.id
+            next.chatReasoning = resolvedEffort
+        }
+        Task { await save(next) }
+    }
+
+    private func save(_ next: ModelSelection) async {
+        isSaving = true
+        pickerError = nil
         defer { isSaving = false }
         do {
-            try await store.saveModelSettings(selection, expectedRevision: draftRevision)
-            if let settings = store.modelSettings { adoptSettings(settings) }
+            try await onCommit(next)
         } catch {
-            saveError = error.localizedDescription
-            if let apiError = error as? NoriAPIError, apiError.isRevisionConflict {
-                hasConflict = true
-                saveError = "Models changed on another device. Load the saved models to continue."
-            }
+            pickerError = error.localizedDescription
+        }
+    }
+
+    private func profileLabel(_ profile: ModelProfile) -> String {
+        switch profile.availability {
+        case "offline": return "\(profile.label) · Offline"
+        case "ollama_unavailable": return "\(profile.label) · Ollama unavailable"
+        default: return profile.label
         }
     }
 }
 
-// MARK: - Provider Card
+// MARK: - Provider Key Detail
 
-private struct ModelKeyProviderCard: View {
+private struct ProviderKeyDetailView: View {
     @Bindable var store: NoriStore
     let provider: ModelKeyProvider
     let onSaved: (String) -> Void
     let onRemoved: () -> Void
 
-    @State private var isEditing = false
+    @Environment(\.dismiss) private var dismiss
     @State private var keyInput = ""
     @State private var isSaving = false
     @State private var isRemoving = false
     @State private var errorMessage: String?
     @State private var showingRemoveConfirmation = false
-    @FocusState private var isInputFocused: Bool
+
+    private var liveProvider: ModelKeyProvider {
+        store.modelKeys.providers.first { $0.provider == provider.provider } ?? provider
+    }
 
     private var trimmedKey: String {
         keyInput.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var isBusy: Bool {
-        isSaving || isRemoving
-    }
-
-    private var timestampSummary: String? {
-        var parts: [String] = []
-        if let updatedAt = provider.updatedAt, !updatedAt.isEmpty {
-            parts.append("Updated \(NoriDateFormatting.relative(updatedAt))")
-        }
-        if let validatedAt = provider.validatedAt, !validatedAt.isEmpty {
-            parts.append("Validated \(NoriDateFormatting.relative(validatedAt))")
-        }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
+    private var isBusy: Bool { isSaving || isRemoving }
 
     var body: some View {
-        NoriCard(padding: 14) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .center, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(provider.label)
-                            .font(NoriTypography.rowTitle)
-                            .foregroundStyle(NoriColors.ink)
-                        if provider.configured {
-                            if let masked = provider.maskedKeyDisplay {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                NoriCard(padding: 16) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        if liveProvider.configured, let masked = liveProvider.maskedKeyDisplay {
+                            HStack {
+                                Text("Current key")
+                                    .font(NoriTypography.rowTitle)
+                                    .foregroundStyle(NoriColors.ink)
+                                Spacer()
                                 Text(masked)
                                     .font(NoriTypography.monoSmall)
                                     .foregroundStyle(NoriColors.ink2)
-                            } else {
-                                Text("Configured")
-                                    .font(NoriTypography.meta)
-                                    .foregroundStyle(NoriColors.ink2)
                             }
                         }
-                    }
 
-                    Spacer(minLength: 8)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(liveProvider.configured ? "Replace API key" : "API key")
+                                .font(NoriTypography.metaSemibold)
+                                .foregroundStyle(NoriColors.ink2)
 
-                    if !provider.configured {
-                        NoriPill("Not set", tone: .neutral)
-                    }
-                }
-
-                if provider.configured, let timestampSummary {
-                    Text(timestampSummary)
-                        .font(.system(size: 12))
-                        .foregroundStyle(NoriColors.ink3)
-                }
-
-                if isEditing {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(provider.configured ? "New \(provider.label) API key" : "\(provider.label) API key")
-                            .font(NoriTypography.metaSemibold)
-                            .foregroundStyle(NoriColors.ink2)
-
-                        SecureField(
-                            provider.configured ? "Paste new key to replace" : "Paste your API key",
-                            text: $keyInput
-                        )
-                        .textFieldStyle(.plain)
-                        .font(NoriTypography.mono)
-                        .foregroundStyle(NoriColors.ink)
-                        .tint(NoriColors.accent)
-                        .autocorrectionDisabled()
-                        #if os(iOS)
-                        .textInputAutocapitalization(.never)
-                        #endif
-                        .focused($isInputFocused)
-                        .disabled(isBusy)
-                        .padding(.horizontal, 12)
-                        .frame(height: 40)
-                        .background(
-                            NoriColors.elevated,
-                            in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                                .strokeBorder(
-                                    isInputFocused ? NoriColors.accentSignal : NoriColors.cardBorder,
-                                    lineWidth: isInputFocused ? 1.5 : 1
-                                )
-                        )
-                        .onSubmit {
-                            if !trimmedKey.isEmpty && !isBusy {
-                                saveKey()
-                            }
+                            SecureField("Paste your \(liveProvider.label) API key", text: $keyInput)
+                                .textFieldStyle(.plain)
+                                .font(NoriTypography.mono)
+                                .foregroundStyle(NoriColors.ink)
+                                .tint(NoriColors.accent)
+                                .autocorrectionDisabled()
+                                #if os(iOS)
+                                .textInputAutocapitalization(.never)
+                                #endif
+                                .disabled(isBusy)
+                                .padding(.horizontal, 12)
+                                .frame(height: 42)
+                                .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                         }
-                    }
 
-                    if let errorMessage, !errorMessage.isEmpty {
-                        NoriNotice(
-                            title: "Could not update key",
-                            detail: errorMessage,
-                            tone: .danger,
-                            systemImage: "exclamationmark.triangle.fill"
-                        )
-                    }
+                        Text("Encrypted at rest and never shown again after saving.")
+                            .font(NoriTypography.caption)
+                            .foregroundStyle(NoriColors.ink3)
 
-                    HStack(spacing: 8) {
+                        if let errorMessage, !errorMessage.isEmpty {
+                            NoriNotice(title: "Could not update key", detail: errorMessage, tone: .danger)
+                        }
+
                         Button {
                             saveKey()
                         } label: {
                             if isSaving {
-                                ProgressView()
-                                    .tint(NoriColors.onAccent)
+                                ProgressView().tint(NoriColors.onAccent)
                             } else {
                                 Text("Save")
                             }
                         }
-                        .buttonStyle(NoriButtonStyle(.primary, fullWidth: true, compact: true))
+                        .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
                         .disabled(trimmedKey.isEmpty || isBusy)
-
-                        Button("Cancel") {
-                            isEditing = false
-                            keyInput = ""
-                            errorMessage = nil
-                            isInputFocused = false
-                        }
-                        .buttonStyle(NoriButtonStyle(.quiet, compact: true))
-                        .disabled(isBusy)
-                    }
-                } else {
-                    if let errorMessage, !errorMessage.isEmpty {
-                        NoriNotice(
-                            title: "Could not update key",
-                            detail: errorMessage,
-                            tone: .danger,
-                            systemImage: "exclamationmark.triangle.fill"
-                        )
-                    }
-
-                    HStack(spacing: 8) {
-                        Button(provider.configured ? "Replace" : "Add key") {
-                            errorMessage = nil
-                            keyInput = ""
-                            isEditing = true
-                            isInputFocused = true
-                        }
-                        .buttonStyle(NoriButtonStyle(provider.configured ? .neutral : .primary, compact: true))
-                        .disabled(isBusy)
-
-                        if provider.configured {
-                            Button {
-                                showingRemoveConfirmation = true
-                            } label: {
-                                if isRemoving {
-                                    ProgressView()
-                                        .tint(NoriColors.danger)
-                                } else {
-                                    Text("Remove")
-                                }
-                            }
-                            .buttonStyle(NoriButtonStyle(.quiet, compact: true))
-                            .disabled(isBusy)
-                        }
                     }
                 }
+
+                if liveProvider.configured {
+                    Button {
+                        showingRemoveConfirmation = true
+                    } label: {
+                        if isRemoving {
+                            ProgressView().tint(NoriColors.danger)
+                        } else {
+                            Text("Remove \(liveProvider.label) key")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .buttonStyle(NoriButtonStyle(.danger, fullWidth: true))
+                    .disabled(isBusy)
+                }
             }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 96)
         }
-        .alert(
-            "Remove \(provider.label) key?",
-            isPresented: $showingRemoveConfirmation
-        ) {
-            Button("Remove", role: .destructive) {
-                removeKey()
-            }
+        .background(NoriColors.canvas)
+        .navigationTitle(liveProvider.label)
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+        .alert("Remove \(liveProvider.label) key?", isPresented: $showingRemoveConfirmation) {
+            Button("Remove", role: .destructive) { removeKey() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Nori will delete your stored key for \(provider.label). You can add a new one at any time.")
+            Text("Models using this key will require another key or model selection.")
         }
     }
 
@@ -696,16 +666,14 @@ private struct ModelKeyProviderCard: View {
         guard !keyToSave.isEmpty, !isBusy else { return }
         isSaving = true
         errorMessage = nil
-        isInputFocused = false
-
         Task {
             defer { isSaving = false }
             do {
-                _ = try await store.saveModelKey(provider: provider.provider, apiKey: keyToSave)
+                _ = try await store.saveModelKey(provider: liveProvider.provider, apiKey: keyToSave)
                 keyInput = ""
-                isEditing = false
                 triggerNotificationHaptic(.success)
-                onSaved(provider.provider)
+                onSaved(liveProvider.provider)
+                dismiss()
             } catch {
                 errorMessage = error.localizedDescription
                 triggerNotificationHaptic(.error)
@@ -717,15 +685,14 @@ private struct ModelKeyProviderCard: View {
         guard !isBusy else { return }
         isRemoving = true
         errorMessage = nil
-        isInputFocused = false
-
         Task {
             defer { isRemoving = false }
             do {
-                _ = try await store.deleteModelKey(provider: provider.provider)
+                _ = try await store.deleteModelKey(provider: liveProvider.provider)
                 keyInput = ""
                 triggerNotificationHaptic(.success)
                 onRemoved()
+                dismiss()
             } catch {
                 errorMessage = error.localizedDescription
                 triggerNotificationHaptic(.error)
@@ -735,8 +702,7 @@ private struct ModelKeyProviderCard: View {
 
     #if canImport(UIKit)
     private func triggerNotificationHaptic(_ type: UINotificationFeedbackGenerator.FeedbackType) {
-        let generator = UINotificationFeedbackGenerator()
-        generator.notificationOccurred(type)
+        UINotificationFeedbackGenerator().notificationOccurred(type)
     }
     #else
     private enum StubHapticType { case success, error }

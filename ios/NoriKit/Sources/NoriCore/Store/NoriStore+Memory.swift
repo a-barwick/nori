@@ -291,8 +291,14 @@ extension NoriStore {
 
     public func forgetLogEntry(date: String, entryID: String) async {
         let generation = sessionGeneration
-        guard let log = memoryLogs.first(where: { $0.date == date }) else { return }
         do {
+            let log: MemoryLog
+            if let cached = memoryLogs.first(where: { $0.date == date }) {
+                log = cached
+            } else {
+                log = try await transport.fetchMemoryLog(date: date)
+                guard generation == sessionGeneration else { return }
+            }
             let receipt = try await transport.performMemoryLogEntryAction(
                 date: date,
                 entryID: entryID,

@@ -135,4 +135,20 @@ struct NoriDesignTests {
         #expect(NoriRadius.approvalCard == 20)
         #expect(NoriRadius.sheet == 28)
     }
+
+    @Test("Brand icons resolve providers and apps cleanly")
+    func brandIconResolution() {
+        #expect(NoriBrandKind.forProvider(provider: "anthropic") == .anthropic)
+        #expect(NoriBrandKind.forProvider(model: "claude-sonnet-4-6") == .anthropic)
+        #expect(NoriBrandKind.forProvider(provider: "openai") == .openAI)
+        #expect(NoriBrandKind.forProvider(model: "gpt-5") == .openAI)
+        #expect(NoriBrandKind.forProvider(provider: "google") == .googleGemini)
+        #expect(NoriBrandKind.forProvider(model: "inkling-mini-2", backend: "home") == .homeComputer)
+        #expect(NoriBrandKind.forProvider(provider: "custom") == .genericKey)
+
+        #expect(NoriBrandKind.forApp(name: "Linear") == .linear)
+        #expect(NoriBrandKind.forApp(name: "Notion") == .notion)
+        #expect(NoriBrandKind.forApp(name: "Google Calendar") == .googleCalendar)
+        #expect(NoriBrandKind.forApp(name: "Home Notes") == .customApp)
+    }
 }

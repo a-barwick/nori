@@ -35,10 +35,25 @@ public struct MCPDetailView: View {
     public var body: some View {
         ScrollView {
             if let server {
+                let supportsOAuth = server.auth == .oauth || (server.auth == nil && server.observed.status == .needsSignIn)
+                let needsSignIn = server.observed.status == .needsSignIn || (supportsOAuth && server.observed.status != .connected)
+
                 VStack(alignment: .leading, spacing: 14) {
-                    if let error = server.observed.error?.message, !error.isEmpty {
+                    if needsSignIn {
                         NoriNotice(
-                            title: server.observed.status == .needsSignIn ? "Sign-in required" : "Connection error",
+                            title: server.observed.error?.message ?? "Sign in to reconnect \(server.name).",
+                            tone: .danger,
+                            systemImage: "exclamationmark.triangle.fill"
+                        ) {
+                            Button(isBusy ? "Signing in…" : "Sign in") {
+                                startOAuthFlow(for: server)
+                            }
+                            .buttonStyle(NoriButtonStyle(.primary, compact: true))
+                            .disabled(isBusy)
+                        }
+                    } else if let error = server.observed.error?.message, !error.isEmpty {
+                        NoriNotice(
+                            title: "Connection error",
                             detail: error,
                             tone: .danger,
                             systemImage: "exclamationmark.triangle.fill"
@@ -54,77 +69,68 @@ public struct MCPDetailView: View {
                         )
                     }
 
-                    NoriCard {
-                        VStack(alignment: .leading, spacing: 10) {
-                            metadataRow("Type", value: server.transport == .http ? "Remote server" : "Local server")
-
-                            if let endpoint = server.endpoint, !endpoint.isEmpty {
-                                metadataRow("Server URL", value: endpoint, monospaced: true)
-                            }
-
-                            if let lastSuccess = server.observed.lastSuccessAt, !lastSuccess.isEmpty {
-                                metadataRow("Last call", value: NoriDateFormatting.shortDateTime(lastSuccess))
-                            }
-
-                            HStack(spacing: 8) {
-                                let supportsOAuth = server.auth == .oauth || (server.auth == nil && server.observed.status == .needsSignIn)
-                                if server.transport == .stdio {
-                                    Button {
-                                        performLifecycleAction(
-                                            serverID: server.id,
-                                            action: server.observed.status == .connected ? "restart" : "start"
-                                        )
-                                    } label: {
-                                        Label(
-                                            server.observed.status == .connected ? "Restart" : "Start",
-                                            systemImage: server.observed.status == .connected ? "arrow.clockwise" : "play.fill"
-                                        )
-                                    }
-                                    .buttonStyle(NoriButtonStyle(.primary, compact: true))
-                                    .disabled(isBusy)
-
-                                    if server.observed.status == .connected {
-                                        Button("Stop") {
-                                            performLifecycleAction(serverID: server.id, action: "stop")
-                                        }
-                                        .buttonStyle(NoriButtonStyle(.neutral, compact: true))
-                                        .disabled(isBusy)
-                                    }
-                                } else if supportsOAuth && server.observed.status != .connected {
-                                    Button {
-                                        startOAuthFlow(for: server)
-                                    } label: {
-                                        Label(isBusy ? "Signing in…" : "Sign in (OAuth)", systemImage: "key.fill")
-                                    }
-                                    .buttonStyle(NoriButtonStyle(.primary, fullWidth: true, compact: true))
-                                    .disabled(isBusy)
-
-                                    if server.observed.status == .needsSignIn || server.observed.status == .failed {
-                                        Button("Reconnect") {
-                                            reconnect(serverID: server.id)
-                                        }
-                                        .buttonStyle(NoriButtonStyle(.neutral, compact: true))
-                                        .disabled(isBusy)
-                                    }
-                                } else {
-                                    Button {
-                                        reconnect(serverID: server.id)
-                                    } label: {
-                                        Label(isBusy ? "Reconnecting…" : "Reconnect", systemImage: "arrow.clockwise")
-                                    }
-                                    .buttonStyle(NoriButtonStyle(.primary, compact: true))
-                                    .disabled(isBusy)
-                                }
-
-                                Button {
-                                    showEditSheet = true
-                                } label: {
-                                    Label("Edit", systemImage: "pencil")
-                                }
-                                .buttonStyle(NoriButtonStyle(.neutral, compact: true))
+                    NoriRows {
+                        if server.transport == .http {
+                            NoriRow(title: "Enabled", showDivider: true) {
+                                Toggle(
+                                    "Enabled",
+                                    isOn: Binding(
+                                        get: { server.enabled },
+                                        set: { next in toggleEnabled(server, enabled: next) }
+                                    )
+                                )
+                                .labelsHidden()
+                                .tint(NoriColors.brandPrimary)
                                 .disabled(isBusy)
                             }
-                            .padding(.top, 4)
+                        }
+
+                        if server.transport == .stdio {
+                            let isConnected = server.observed.status == .connected
+                            Button {
+                                performLifecycleAction(
+                                    serverID: server.id,
+                                    action: isConnected ? "restart" : "start"
+                                )
+                            } label: {
+                                NoriRow(
+                                    title: isConnected ? "Restart" : "Start",
+                                    showChevron: true,
+                                    showDivider: isConnected
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isBusy)
+
+                            if isConnected {
+                                Button {
+                                    performLifecycleAction(serverID: server.id, action: "stop")
+                                } label: {
+                                    NoriRow(title: "Stop", showChevron: true, showDivider: false)
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(isBusy)
+                            }
+                        } else {
+                            Button {
+                                reconnect(serverID: server.id)
+                            } label: {
+                                NoriRow(
+                                    title: isBusy ? "Reconnecting…" : "Reconnect",
+                                    showChevron: true,
+                                    showDivider: true
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isBusy)
+
+                            Button {
+                                showEditSheet = true
+                            } label: {
+                                NoriRow(title: "Settings", showChevron: true, showDivider: false)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isBusy)
                         }
                     }
 
@@ -132,76 +138,36 @@ public struct MCPDetailView: View {
                         credentialCard(for: server)
                     }
 
-                    NoriSectionHeader("Discovered tools (\(tools.count))")
+                    NoriSectionHeader("Actions")
 
                     if tools.isEmpty {
                         NoriEmptyState(
-                            title: "No tools discovered",
-                            message: "Reconnect or finish sign-in to discover tools exposed by this server."
+                            title: "No actions yet",
+                            message: "Reconnect or finish sign-in to discover actions."
                         )
                     } else {
                         NoriRows {
                             ForEach(Array(tools.enumerated()), id: \.element.id) { index, tool in
                                 let isLast = index == tools.count - 1
-                                VStack(spacing: 0) {
-                                    HStack(alignment: .center, spacing: 10) {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(tool.title)
-                                                .font(NoriTypography.rowTitle)
-                                                .foregroundStyle(NoriColors.ink)
-                                            Text(tool.name)
-                                                .font(NoriTypography.monoSmall)
-                                                .foregroundStyle(NoriColors.ink3)
-                                                .lineLimit(1)
-                                                .truncationMode(.middle)
-                                        }
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                                        Menu {
-                                            exposureMenuButton(serverID: server.id, tool: tool, exposure: .direct, title: "Always", subtitle: "Always in Nori's tool list")
-                                            exposureMenuButton(serverID: server.id, tool: tool, exposure: .discoverable, title: "When relevant", subtitle: "Loaded when relevant")
-                                            exposureMenuButton(serverID: server.id, tool: tool, exposure: .disabled, title: "Off", subtitle: "Hidden from Nori")
-                                        } label: {
-                                            HStack(spacing: 4) {
-                                                Text(exposureLabel(for: tool.exposure))
-                                                    .font(.system(size: 12, weight: .semibold))
-                                                Image(systemName: "chevron.up.chevron.down")
-                                                    .font(.system(size: 10, weight: .semibold))
+                                let isOn = tool.exposure != .disabled
+                                NoriRow(title: tool.title, showDivider: !isLast) {
+                                    Toggle(
+                                        tool.title,
+                                        isOn: Binding(
+                                            get: { isOn },
+                                            set: { next in
+                                                Task {
+                                                    await store.setToolExposure(
+                                                        serverID: server.id,
+                                                        toolName: tool.name,
+                                                        exposure: next ? .discoverable : .disabled
+                                                    )
+                                                }
                                             }
-                                            .foregroundStyle(tool.exposure == .disabled ? NoriColors.ink3 : NoriColors.ink)
-                                            .padding(.horizontal, 10)
-                                            .frame(height: 30)
-                                            .background(NoriColors.fill1, in: Capsule())
-                                            .overlay(
-                                                Capsule()
-                                                    .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
-                                            )
-                                        }
-                                    }
-                                    .padding(.horizontal, 13)
-                                    .padding(.vertical, 12)
-
-                                    if !isLast {
-                                        Rectangle()
-                                            .fill(NoriColors.hairline)
-                                            .frame(height: 1)
-                                            .padding(.leading, 13)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    let hasDetails = (server.observed.protocolVersion?.isEmpty == false)
-                        || (server.observed.capabilities?.isEmpty == false)
-                    if hasDetails {
-                        NoriSectionHeader("Details")
-                        NoriCard {
-                            VStack(alignment: .leading, spacing: 10) {
-                                if let protocolVersion = server.observed.protocolVersion, !protocolVersion.isEmpty {
-                                    metadataRow("Protocol", value: protocolVersion, monospaced: true)
-                                }
-                                if let capabilities = server.observed.capabilities, !capabilities.isEmpty {
-                                    metadataRow("Supports", value: capabilities.joined(separator: ", "))
+                                        )
+                                    )
+                                    .labelsHidden()
+                                    .tint(NoriColors.brandPrimary)
                                 }
                             }
                         }
@@ -214,7 +180,7 @@ public struct MCPDetailView: View {
                 NoriCard {
                     HStack(spacing: 10) {
                         ProgressView().tint(NoriColors.accent)
-                        Text("Loading server…")
+                        Text("Loading app…")
                             .font(NoriTypography.meta)
                             .foregroundStyle(NoriColors.ink2)
                     }
@@ -223,8 +189,8 @@ public struct MCPDetailView: View {
                 .padding(16)
             } else {
                 NoriEmptyState(
-                    title: "MCP server not found",
-                    message: "This server may have been removed."
+                    title: "App not found",
+                    message: "This app may have been removed."
                 )
             }
         }
@@ -239,12 +205,16 @@ public struct MCPDetailView: View {
         .refreshable {
             await store.refreshApps()
         }
-        .navigationTitle(server?.name ?? "MCP Server")
+        .navigationTitle(server?.name ?? "App")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .toolbar {
-            if let server, server.observed.status != .connected {
+            if let server, !server.enabled {
+                ToolbarItem(placement: .primaryAction) {
+                    NoriPill("Off", tone: .neutral)
+                }
+            } else if let server, server.observed.status != .connected {
                 ToolbarItem(placement: .primaryAction) {
                     NoriPill(server.observed.status.displayLabel, tone: statusTone(for: server.observed.status))
                 }
@@ -261,15 +231,6 @@ public struct MCPDetailView: View {
         }
     }
 
-    private func exposureLabel(for exposure: MCPToolExposure) -> String {
-        switch exposure {
-        case .direct: return "Always"
-        case .discoverable: return "When relevant"
-        case .disabled: return "Off"
-        case .programmatic: return exposure.displayLabel
-        }
-    }
-
     @ViewBuilder
     private func credentialCard(for server: MCPServer) -> some View {
         let hasExistingToken = server.observed.status == .connected
@@ -282,7 +243,7 @@ public struct MCPDetailView: View {
         NoriCard {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .center, spacing: 8) {
-                    Label("Access token", systemImage: "key.fill")
+                    Text("Access token")
                         .font(NoriTypography.metaSemibold)
                         .foregroundStyle(NoriColors.ink)
                     Spacer()
@@ -295,21 +256,12 @@ public struct MCPDetailView: View {
                     }
                 }
 
-                Text(
-                    hasExistingToken
-                        ? "Enter a new access token or API key to replace the saved credential."
-                        : "Enter an access token or API key to authenticate with this server."
-                )
-                .font(NoriTypography.caption)
-                .foregroundStyle(NoriColors.ink2)
-                .fixedSize(horizontal: false, vertical: true)
-
                 HStack(spacing: 8) {
                     Group {
                         if isTokenVisible {
-                            TextField("Paste access token or API key", text: $accessToken)
+                            TextField("Paste access token", text: $accessToken)
                         } else {
-                            SecureField("Paste access token or API key", text: $accessToken)
+                            SecureField("Paste access token", text: $accessToken)
                         }
                     }
                     .textFieldStyle(.plain)
@@ -336,23 +288,14 @@ public struct MCPDetailView: View {
                 .padding(.horizontal, 12)
                 .frame(height: 42)
                 .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                        .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
-                )
 
                 Button {
                     saveCredential(for: server)
                 } label: {
                     if isSavingCredential {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(NoriColors.disabled)
-                            Text("Saving…")
-                        }
+                        ProgressView().tint(NoriColors.disabled)
                     } else {
-                        Text(hasExistingToken ? "Update token" : "Save access token")
+                        Text(hasExistingToken ? "Replace token" : "Save token")
                     }
                 }
                 .buttonStyle(NoriButtonStyle(.primary, fullWidth: true, compact: true))
@@ -361,39 +304,18 @@ public struct MCPDetailView: View {
         }
     }
 
-    @ViewBuilder
-    private func exposureMenuButton(
-        serverID: String,
-        tool: MCPServerTool,
-        exposure: MCPToolExposure,
-        title: String,
-        subtitle: String
-    ) -> some View {
-        Button {
-            Task {
-                await store.setToolExposure(serverID: serverID, toolName: tool.name, exposure: exposure)
-            }
-        } label: {
-            if tool.exposure == exposure {
-                Label(title, systemImage: "checkmark")
-            } else {
-                Text("\(title) — \(subtitle)")
-            }
-        }
-    }
-
-    private func metadataRow(_ label: String, value: String, monospaced: Bool = false) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(label)
-                .font(.system(size: 12.5, weight: .medium))
-                .foregroundStyle(NoriColors.ink3)
-                .frame(width: 72, alignment: .leading)
-
-            Text(value)
-                .font(monospaced ? NoriTypography.monoSmall : .system(size: 13, weight: .medium))
-                .foregroundStyle(NoriColors.ink)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+    private func toggleEnabled(_ server: MCPServer, enabled: Bool) {
+        isBusy = true
+        Task {
+            defer { isBusy = false }
+            _ = try? await store.updateMCPServer(
+                serverID: server.id,
+                name: server.name,
+                endpoint: server.endpoint,
+                auth: server.auth ?? .oauth,
+                enabled: enabled,
+                defaultExposure: server.exposure?.default ?? .discoverable
+            )
         }
     }
 
@@ -518,8 +440,6 @@ private struct EditMCPServerSheet: View {
     @State private var name: String
     @State private var endpoint: String
     @State private var auth: MCPAuthKind
-    @State private var defaultExposure: MCPToolExposure
-    @State private var enabled: Bool
     @State private var isSaving = false
     @State private var errorMessage: String?
 
@@ -529,16 +449,13 @@ private struct EditMCPServerSheet: View {
         _name = State(initialValue: server.name)
         _endpoint = State(initialValue: server.endpoint ?? "")
         _auth = State(initialValue: server.auth ?? .oauth)
-        _defaultExposure = State(initialValue: server.exposure?.default ?? .discoverable)
-        _enabled = State(initialValue: server.enabled)
     }
 
     private var canSave: Bool {
         let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanName.isEmpty, !isSaving else { return false }
         if server.transport == .http {
-            let cleanEndpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-            return !cleanEndpoint.isEmpty
+            return !endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
         return true
     }
@@ -549,7 +466,7 @@ private struct EditMCPServerSheet: View {
                 VStack(alignment: .leading, spacing: 14) {
                     if let errorMessage {
                         NoriNotice(
-                            title: "Couldn’t update server",
+                            title: "Couldn’t update app",
                             detail: errorMessage,
                             tone: .danger,
                             systemImage: "exclamationmark.triangle.fill"
@@ -560,7 +477,7 @@ private struct EditMCPServerSheet: View {
                         Text("Name")
                             .font(NoriTypography.metaSemibold)
                             .foregroundStyle(NoriColors.ink)
-                        TextField("Server name", text: $name)
+                        TextField("App name", text: $name)
                             .textFieldStyle(.plain)
                             .foregroundStyle(NoriColors.ink)
                             .tint(NoriColors.accent)
@@ -591,37 +508,17 @@ private struct EditMCPServerSheet: View {
                     }
 
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Sign-in")
+                        Text("Authentication")
                             .font(NoriTypography.metaSemibold)
                             .foregroundStyle(NoriColors.ink)
-                        Picker("Sign-in", selection: $auth) {
+                        Picker("Authentication", selection: $auth) {
                             Text("OAuth").tag(MCPAuthKind.oauth)
-                            Text("None").tag(MCPAuthKind.none)
                             Text("Access token").tag(MCPAuthKind.configured)
+                            Text("None").tag(MCPAuthKind.none)
                         }
                         .pickerStyle(.segmented)
                         .tint(NoriColors.accent)
                     }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Default tool access")
-                            .font(NoriTypography.metaSemibold)
-                            .foregroundStyle(NoriColors.ink)
-                        Picker("Tools", selection: $defaultExposure) {
-                            Text("When relevant").tag(MCPToolExposure.discoverable)
-                            Text("Always").tag(MCPToolExposure.direct)
-                            Text("Off").tag(MCPToolExposure.disabled)
-                        }
-                        .pickerStyle(.segmented)
-                        .tint(NoriColors.accent)
-                    }
-
-                    Toggle(isOn: $enabled) {
-                        Text("Server enabled")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(NoriColors.ink)
-                    }
-                    .tint(NoriColors.brandPrimary)
 
                     Button {
                         save()
@@ -629,7 +526,7 @@ private struct EditMCPServerSheet: View {
                         if isSaving {
                             ProgressView().tint(NoriColors.disabled)
                         } else {
-                            Text("Save changes")
+                            Text("Save")
                         }
                     }
                     .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
@@ -639,7 +536,7 @@ private struct EditMCPServerSheet: View {
                 .padding(16)
             }
             .background(NoriColors.sheetBackground)
-            .navigationTitle("Edit Server")
+            .navigationTitle("Settings")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -665,8 +562,8 @@ private struct EditMCPServerSheet: View {
                     name: name,
                     endpoint: server.transport == .http ? endpoint : server.endpoint,
                     auth: auth,
-                    enabled: enabled,
-                    defaultExposure: defaultExposure
+                    enabled: server.enabled,
+                    defaultExposure: server.exposure?.default ?? .discoverable
                 )
                 isSaving = false
                 dismiss()
