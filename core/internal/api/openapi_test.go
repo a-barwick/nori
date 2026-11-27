@@ -193,7 +193,7 @@ func TestOpenAPIHandlersMatchSpec(t *testing.T) {
 		Features: map[string]bool{
 			"integrations": true, "connections": true, "mcp": true,
 			"interactions": true, "work": true, "automations": true,
-			"goals": true, "library": true, "search": true,
+			"library": true, "search": true,
 			"permissions": true, "preferences": true, "memory": true,
 			"inbox": true, "operations": true,
 		},
@@ -407,7 +407,7 @@ func TestOpenAPIHandlersMatchSpec(t *testing.T) {
 		"value":             map[string]any{"action": "revoke"},
 	}, http.StatusOK)
 
-	// 6. Automations & goals & inbox
+	// 6. Automations & inbox
 	autoValue := map[string]any{
 		"title":                    "Morning briefing",
 		"instruction":              "Summarize today's agenda.",
@@ -437,29 +437,6 @@ func TestOpenAPIHandlersMatchSpec(t *testing.T) {
 	validateCall(http.MethodPost, "/v1/automations/"+createdAuto.Resource.ID+"/actions", map[string]any{
 		"request_id":        uuid.NewString(),
 		"expected_revision": createdAuto.Resource.Revision,
-		"value":             map[string]any{"action": "pause"},
-	}, http.StatusOK)
-
-	goalReceipt := validateCall(http.MethodPost, "/v1/goals", map[string]any{
-		"request_id":        uuid.NewString(),
-		"expected_revision": 0,
-		"value": map[string]any{
-			"title":               "Plan team offsite",
-			"outcome":             "Venue booked and calendar invites sent",
-			"completion_criteria": []map[string]any{{"text": "Venue confirmed"}},
-		},
-	}, http.StatusCreated)
-	var createdGoal struct {
-		Resource scheduler.Goal `json:"resource"`
-	}
-	if err := json.Unmarshal(goalReceipt, &createdGoal); err != nil {
-		t.Fatalf("unmarshal created goal: %v", err)
-	}
-	validateCall(http.MethodGet, "/v1/goals", nil, http.StatusOK)
-	validateCall(http.MethodGet, "/v1/goals/"+createdGoal.Resource.ID, nil, http.StatusOK)
-	validateCall(http.MethodPost, "/v1/goals/"+createdGoal.Resource.ID+"/actions", map[string]any{
-		"request_id":        uuid.NewString(),
-		"expected_revision": createdGoal.Resource.Revision,
 		"value":             map[string]any{"action": "pause"},
 	}, http.StatusOK)
 	validateCall(http.MethodGet, "/v1/inbox", nil, http.StatusOK)

@@ -176,7 +176,7 @@ func (s *Service) schedule(ctx context.Context, a stored, now time.Time) (*time.
 			if latest.Trigger.Kind == "once" {
 				latest.NextAt = nil
 			}
-			resource, err := state.NewResource(CollectionAutomations, latest.ID, current.Revision+1, latest, map[string]string{"status": string(latest.Status), "goal_id": latest.GoalID}, s.now())
+			resource, err := state.NewResource(CollectionAutomations, latest.ID, current.Revision+1, latest, map[string]string{"status": string(latest.Status)}, s.now())
 			if err != nil {
 				return state.MutationResult{}, err
 			}
@@ -337,7 +337,7 @@ func (s *Service) advance(ctx context.Context, r state.Resource, o occurrenceDoc
 		id := taskID(o.ID)
 		run, err := s.Accept(ctx, state.Command{
 			ID: id, RunID: id, Kind: state.CommandStart, Text: o.Instruction, BudgetUSD: o.BudgetUSD,
-			Origin: &state.TaskOrigin{AutomationID: o.AutomationID, OccurrenceID: o.ID, GoalID: o.GoalID},
+			Origin: &state.TaskOrigin{AutomationID: o.AutomationID, OccurrenceID: o.ID},
 		})
 		if err != nil && !errors.Is(err, state.ErrDuplicate) {
 			return err
@@ -502,7 +502,7 @@ func (s *Service) recordOutcomeHealth(ctx context.Context, id string, status Occ
 					"automation_id", id, "consecutive_failures", a.ConsecutiveFailures)
 			}
 		}
-		return true, map[string]string{"status": string(a.Status), "goal_id": a.GoalID}, nil
+		return true, map[string]string{"status": string(a.Status)}, nil
 	})
 }
 

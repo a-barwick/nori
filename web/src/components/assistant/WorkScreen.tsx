@@ -3,18 +3,20 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
+import { Check, ChevronRight, Clock, X } from "lucide-react";
 import { NoriMark } from "@/components/mark/NoriMark";
-import { relative } from "@/lib/assistant/format";
+import { mutate, newRequestID } from "@/lib/assistant/api";
+import { useAssistant } from "@/lib/assistant/context";
+import { when } from "@/lib/assistant/format";
 import { isActionableInteraction } from "@/lib/assistant/interactions";
 import { usePendingInteractions, useWork } from "@/lib/assistant/sources";
-import type { Interaction, WorkItem } from "@/lib/contracts/assistant";
+import { useAction, useResource, useResourceInvalidation } from "@/lib/assistant/useResource";
+import type { Automation, Interaction, WorkItem, WorkStep } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
-import { GoalsContent } from "./GoalsScreen";
 import { InteractionCard } from "./InteractionCard";
 import { LibraryContent } from "./LibraryScreen";
 import { RoutinesContent } from "./RoutinesScreen";
-import { Empty, Failure, Loading, Pill, Row, Rows, Screen, Section, UnderlineTabs, type Tone } from "./ui";
+import { Failure, Loading, Notice, Screen, Section, UnderlineTabs, type Tone } from "./ui";
 
 export {
   groupOperations,
@@ -26,12 +28,11 @@ export {
 } from "./WorkOperations";
 export { isRetryableWorkDetailError, WorkDetailScreen } from "./WorkDetailScreen";
 
-type WorkTab = "tasks" | "artifacts" | "goals" | "routines";
+type WorkTab = "artifacts" | "automations" | "tasks";
 
-function parseWorkTab(raw: string | null): WorkTab {
+export function parseWorkTab(raw: string | null): WorkTab {
   if (raw === "artifacts" || raw === "library") return "artifacts";
-  if (raw === "goals") return "goals";
-  if (raw === "routines" || raw === "scheduled") return "routines";
+  if (raw === "automations" || raw === "routines" || raw === "scheduled") return "automations";
   return "tasks";
 }
 
@@ -53,73 +54,158 @@ export function statusPill(item: WorkItem): { tone: Tone; label: string } {
   return { tone: "neutral", label: "Stopped" };
 }
 
+export type UnifiedTaskEntry =
+  | {
+      kind: "in_progress";
+      id: string;
+      taskId: string;
+      title: string;
+      steps: WorkStep[];
+      cancelRequested: boolean;
+    }
+  | {
+      kind: "todo";
+      id: string;
+      taskId?: string;
+      title: string;
+      replyHref?: string;
+      cancelRequested?: boolean;
+    }
+  | {
+      kind: "scheduled";
+      id: string;
+      automation: Automation;
+      title: string;
+      scheduleLabel: string;
+    };
+
+export function buildUnifiedTaskEntries({
+  workItems,
+  pendingInteractions,
+  automations,
+}: {
+  workItems: WorkItem[];
+  pendingInteractions: Interaction[];
+  automations: Automation[];
+}): {
+  actionableInteractions: Interaction[];
+  entries: UnifiedTaskEntry[];
+} {
+  const actionableInteractions = pendingInteractions.filter(isActionableInteraction);
+  const chatWaitingQuestions = pendingInteractions.filter((i) => !isActionableInteraction(i));
+  const actionableTaskIDs = new Set(actionableInteractions.map((i) => i.task_id).filter(Boolean));
+  const chatWaitingTaskIDs = new Set(chatWaitingQuestions.map((i) => i.task_id).filter(Boolean));
+
+  const runningEntries: UnifiedTaskEntry[] = [];
+  const queuedEntries: UnifiedTaskEntry[] = [];
+  const seenTaskIDs = new Set<string>();
+
+  for (const item of workItems) {
+    if (item.status !== "running" || item.cancel_requested) continue;
+    if (actionableTaskIDs.has(item.task_id)) continue;
+    if (item.bucket === "needs_you" || chatWaitingTaskIDs.has(item.task_id)) continue;
+    seenTaskIDs.add(item.task_id);
+    if (item.queued) {
+      queuedEntries.push({
+        kind: "todo",
+        id: `task:${item.task_id}`,
+        taskId: item.task_id,
+        title: item.title,
+        cancelRequested: item.cancel_requested,
+      });
+    } else {
+      runningEntries.push({
+        kind: "in_progress",
+        id: `task:${item.task_id}`,
+        taskId: item.task_id,
+        title: item.title,
+        steps: item.steps ?? [],
+        cancelRequested: item.cancel_requested,
+      });
+    }
+  }
+
+  const waitingInChat: { taskId?: string; title: string }[] = [];
+  const waitingSeen = new Set<string>();
+  for (const q of chatWaitingQuestions) {
+    const workItem = q.task_id ? workItems.find((item) => item.task_id === q.task_id) : undefined;
+    const key = q.task_id || q.id;
+    if (!waitingSeen.has(key)) {
+      waitingSeen.add(key);
+      waitingInChat.push({
+        taskId: q.task_id,
+        title: workItem?.title || q.task_title || "Waiting in Chat",
+      });
+    }
+  }
+  for (const item of workItems) {
+    if (
+      item.status === "running" &&
+      !item.cancel_requested &&
+      item.bucket === "needs_you" &&
+      !actionableTaskIDs.has(item.task_id) &&
+      !waitingSeen.has(item.task_id) &&
+      !seenTaskIDs.has(item.task_id)
+    ) {
+      waitingSeen.add(item.task_id);
+      waitingInChat.push({ taskId: item.task_id, title: item.title });
+    }
+  }
+
+  const waitingEntries: UnifiedTaskEntry[] = waitingInChat.map((entry) => ({
+    kind: "todo",
+    id: `chat:${entry.taskId || entry.title}`,
+    taskId: entry.taskId,
+    title: entry.title,
+    replyHref:
+      waitingInChat.length > 1
+        ? `/?compose=1&reply_title=${encodeURIComponent(entry.title)}`
+        : "/?compose=1",
+  }));
+
+  const onceScheduledAt = (item: Automation): string | undefined =>
+    item.next_at ?? (item.trigger.kind === "once" ? item.trigger.at : undefined);
+
+  const scheduledEntries: UnifiedTaskEntry[] = automations
+    .filter((item) => item.status === "enabled" && item.trigger.kind === "once" && Boolean(onceScheduledAt(item)))
+    .sort((a, b) => Date.parse(onceScheduledAt(a) ?? "9999") - Date.parse(onceScheduledAt(b) ?? "9999"))
+    .map((item) => ({
+      kind: "scheduled",
+      id: `auto:${item.id}`,
+      automation: item,
+      title: item.title,
+      scheduleLabel: when(onceScheduledAt(item)),
+    }));
+
+  return {
+    actionableInteractions,
+    entries: [...runningEntries, ...waitingEntries, ...queuedEntries, ...scheduledEntries],
+  };
+}
+
 export function WorkScreen() {
   const params = useSearchParams();
   const router = useRouter();
+  const { has } = useAssistant();
   const work = useWork();
   const pending = usePendingInteractions();
+  const automationsRes = useResource<{ items: Automation[] }>(has("automations") ? "/automations" : null, {
+    poll: 30_000,
+  });
 
   const tab = parseWorkTab(params.get("tab"));
   const selectTab = (next: WorkTab) => {
     router.replace(next === "tasks" ? "/work" : `/work?tab=${next}`, { scroll: false });
   };
 
-  const items = useMemo(() => work.items ?? [], [work.items]);
-  const pendingInteractions = useMemo(() => pending.items ?? [], [pending.items]);
-  const actionableInteractions = useMemo(
-    () => pendingInteractions.filter(isActionableInteraction),
-    [pendingInteractions],
-  );
-  const chatWaitingQuestions = useMemo(
-    () => pendingInteractions.filter((i) => !isActionableInteraction(i)),
-    [pendingInteractions],
-  );
-  const actionableTaskIDs = useMemo(
-    () => new Set(actionableInteractions.map((i) => i.task_id).filter(Boolean)),
-    [actionableInteractions],
-  );
-  const chatWaitingTaskIDs = useMemo(
-    () => new Set(chatWaitingQuestions.map((i) => i.task_id).filter(Boolean)),
-    [chatWaitingQuestions],
-  );
-
-  const waitingInChatTasks = useMemo(() => {
-    const byTaskID = new Map<string, { taskId?: string; title: string }>();
-    for (const q of chatWaitingQuestions) {
-      const workItem = q.task_id ? items.find((item) => item.task_id === q.task_id) : undefined;
-      const key = q.task_id || q.id;
-      if (!byTaskID.has(key)) {
-        byTaskID.set(key, {
-          taskId: q.task_id,
-          title: workItem?.title || q.task_title || "Waiting in Chat",
-        });
-      }
-    }
-    for (const item of items) {
-      if (item.bucket === "needs_you" && !actionableTaskIDs.has(item.task_id) && !byTaskID.has(item.task_id)) {
-        byTaskID.set(item.task_id, { taskId: item.task_id, title: item.title });
-      }
-    }
-    return [...byTaskID.values()];
-  }, [actionableTaskIDs, chatWaitingQuestions, items]);
-
-  const runningTasks = useMemo(
+  const { actionableInteractions, entries } = useMemo(
     () =>
-      items.filter(
-        (item) =>
-          item.status === "running" &&
-          item.bucket !== "needs_you" &&
-          !actionableTaskIDs.has(item.task_id) &&
-          !chatWaitingTaskIDs.has(item.task_id),
-      ),
-    [actionableTaskIDs, chatWaitingTaskIDs, items],
-  );
-  const finishedTasks = useMemo(
-    () =>
-      items
-        .filter((item) => item.status !== "running")
-        .sort((a, b) => Date.parse(b.finished_at ?? b.started_at) - Date.parse(a.finished_at ?? a.started_at)),
-    [items],
+      buildUnifiedTaskEntries({
+        workItems: work.items ?? [],
+        pendingInteractions: pending.items ?? [],
+        automations: automationsRes.data?.items ?? [],
+      }),
+    [automationsRes.data?.items, pending.items, work.items],
   );
 
   const actionableTotal = actionableInteractions.length;
@@ -134,14 +220,15 @@ export function WorkScreen() {
           value={tab}
           onChange={selectTab}
           items={[
-            { id: "tasks", label: "Tasks", count: actionableTotal || undefined },
             { id: "artifacts", label: "Artifacts" },
-            { id: "goals", label: "Goals" },
-            { id: "routines", label: "Routines" },
+            { id: "automations", label: "Automations" },
+            { id: "tasks", label: "Tasks", count: actionableTotal || undefined },
           ]}
         />
       }
     >
+      {tab === "artifacts" && <LibraryContent />}
+      {tab === "automations" && <RoutinesContent />}
       {tab === "tasks" && (
         <TasksHub
           loading={work.loading || pending.loading}
@@ -151,15 +238,69 @@ export function WorkScreen() {
           pendingRefreshing={pending.refreshing}
           onRetryPending={() => void pending.reload()}
           actionableInteractions={actionableInteractions}
-          waitingInChatTasks={waitingInChatTasks}
-          runningTasks={runningTasks}
-          finishedTasks={finishedTasks}
+          entries={entries}
+          liveWork={work.live}
         />
       )}
-      {tab === "artifacts" && <LibraryContent />}
-      {tab === "goals" && <GoalsContent />}
-      {tab === "routines" && <RoutinesContent />}
     </Screen>
+  );
+}
+
+function CircularProgressRing({ steps }: { steps: WorkStep[] }) {
+  const radius = 7.4;
+  const circumference = 2 * Math.PI * radius;
+  const doneCount = steps.filter((step) => step.status === "done").length;
+  const indeterminate = steps.length === 0 || doneCount === 0;
+  const fraction = indeterminate ? 0.28 : Math.min(0.95, doneCount / steps.length);
+  const offset = circumference * (1 - fraction);
+  const label = steps.length > 0 ? `${doneCount} of ${steps.length} steps` : "In progress";
+
+  return (
+    <svg
+      className={cn(
+        "block size-[19px] -rotate-90",
+        indeterminate && "animate-[spin_1.8s_linear_infinite] motion-reduce:animate-none",
+      )}
+      viewBox="0 0 20 20"
+      role="img"
+      aria-label={label}
+    >
+      <circle cx="10" cy="10" r={radius} fill="none" stroke="var(--fill-2)" strokeWidth="2.4" />
+      <circle
+        cx="10"
+        cy="10"
+        r={radius}
+        fill="none"
+        stroke="var(--accent)"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeDasharray={circumference.toFixed(2)}
+        strokeDashoffset={offset.toFixed(2)}
+        className="transition-[stroke-dashoffset] duration-200"
+      />
+    </svg>
+  );
+}
+
+function StepMarker({ status }: { status: WorkStep["status"] }) {
+  if (status === "done") {
+    return (
+      <span className="mt-0.5 grid size-[14px] shrink-0 place-items-center rounded-full bg-ok-bg text-ok">
+        <Check size={9} strokeWidth={3} aria-hidden />
+      </span>
+    );
+  }
+  if (status === "active") {
+    return (
+      <span className="mt-0.5 grid size-[14px] shrink-0 place-items-center">
+        <span className="pulse-dot size-[6.5px] rounded-full bg-accent" />
+      </span>
+    );
+  }
+  return (
+    <span className="mt-0.5 grid size-[14px] shrink-0 place-items-center">
+      <span className="size-[6.5px] rounded-full border-[1.5px] border-ink-3/60" />
+    </span>
   );
 }
 
@@ -171,9 +312,8 @@ function TasksHub({
   pendingRefreshing,
   onRetryPending,
   actionableInteractions,
-  waitingInChatTasks,
-  runningTasks,
-  finishedTasks,
+  entries,
+  liveWork,
 }: {
   loading: boolean;
   error?: unknown;
@@ -182,23 +322,90 @@ function TasksHub({
   pendingRefreshing: boolean;
   onRetryPending: () => void;
   actionableInteractions: Interaction[];
-  waitingInChatTasks: { taskId?: string; title: string }[];
-  runningTasks: WorkItem[];
-  finishedTasks: WorkItem[];
+  entries: UnifiedTaskEntry[];
+  liveWork: boolean;
 }) {
-  const [showAllRecent, setShowAllRecent] = useState(false);
-  const actionableTotal = actionableInteractions.length;
-  const activeTotal = waitingInChatTasks.length + runningTasks.length;
-  const visibleRecent = showAllRecent ? finishedTasks : finishedTasks.slice(0, 5);
+  const { runtime } = useAssistant();
+  const invalidate = useResourceInvalidation();
+  const action = useAction();
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => new Set());
 
-  if (loading && !error && !pendingError && !actionableTotal && !activeTotal && !finishedTasks.length) {
+  const visibleEntries = useMemo(
+    () => entries.filter((entry) => !dismissedIds.has(entry.id)),
+    [dismissedIds, entries],
+  );
+  const actionableTotal = actionableInteractions.length;
+
+  const cancelEntry = (entry: UnifiedTaskEntry) => {
+    setConfirmingId(null);
+    setDismissedIds((prev) => new Set(prev).add(entry.id));
+    if (expandedId === entry.id) setExpandedId(null);
+
+    if (entry.kind === "scheduled") {
+      void action.run(
+        `cancel:${entry.id}`,
+        async () => {
+          try {
+            await mutate<Automation>(`/automations/${encodeURIComponent(entry.automation.id)}/actions`, {
+              request_id: newRequestID(),
+              expected_revision: entry.automation.revision,
+              value: { action: "cancel" },
+            });
+            invalidate("/automations", "/work", "/assistant/summary");
+          } catch (err) {
+            setDismissedIds((prev) => {
+              const next = new Set(prev);
+              next.delete(entry.id);
+              return next;
+            });
+            throw err;
+          }
+        },
+        `Cancelled ${entry.title}.`,
+      );
+      return;
+    }
+
+    const taskId = entry.taskId;
+    if (!taskId) return;
+    void action.run(
+      `cancel:${entry.id}`,
+      async () => {
+        try {
+          if (liveWork) {
+            await mutate(`/work/${encodeURIComponent(taskId)}/actions`, {
+              request_id: newRequestID(),
+              expected_revision: 0,
+              value: { action: "stop" },
+            });
+            invalidate("/work", "/interactions", "/assistant/summary");
+          } else {
+            await runtime.commandTask(taskId, "stop");
+          }
+        } catch (err) {
+          setDismissedIds((prev) => {
+            const next = new Set(prev);
+            next.delete(entry.id);
+            return next;
+          });
+          throw err;
+        }
+      },
+      `Cancelled ${entry.title}.`,
+    );
+  };
+
+  if (loading && !error && !pendingError && !actionableTotal && !visibleEntries.length) {
     return <Loading />;
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5" onClick={() => confirmingId && setConfirmingId(null)}>
       {error ? <Failure error={error} onRetry={onRetry} /> : null}
       {pendingError ? <Failure error={pendingError} onRetry={onRetryPending} /> : null}
+      {action.error ? <Notice tone="danger">{action.error}</Notice> : null}
 
       {actionableTotal > 0 ? (
         <Section title={actionableTotal > 1 ? `Action needed · ${actionableTotal}` : "Action needed"}>
@@ -208,7 +415,7 @@ function TasksHub({
             ))}
           </div>
         </Section>
-      ) : activeTotal === 0 && !error && !pendingError && !loading && !pendingRefreshing ? (
+      ) : visibleEntries.length === 0 && !error && !pendingError && !loading && !pendingRefreshing ? (
         <div
           data-all-clear
           className="flex items-center gap-3 rounded-card border border-card-border bg-surface px-4 py-3"
@@ -220,114 +427,144 @@ function TasksHub({
         </div>
       ) : null}
 
-      {activeTotal > 0 && (
-        <Section title="Active">
-          <Rows label="Active tasks">
-            {waitingInChatTasks.map((entry) => {
-              const replyHref =
-                waitingInChatTasks.length > 1
-                  ? `/?compose=1&reply_title=${encodeURIComponent(entry.title)}`
-                  : "/?compose=1";
-              return (
+      {visibleEntries.length > 0 && (
+        <ul
+          aria-label="Tasks"
+          className="divide-y divide-hairline overflow-hidden rounded-card border border-card-border bg-surface"
+        >
+          {visibleEntries.map((entry) => {
+            const hasSteps = entry.kind === "in_progress" && entry.steps.length > 0;
+            const isExpanded = hasSteps && expandedId === entry.id;
+            const isConfirming = confirmingId === entry.id;
+            const canCancel = entry.kind === "scheduled" || Boolean(entry.taskId);
+
+            return (
+              <li key={entry.id} data-task-row={entry.id}>
                 <div
-                  key={entry.taskId || entry.title}
-                  className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-fill-1"
-                >
-                  {entry.taskId ? (
-                    <Link href={`/work/${encodeURIComponent(entry.taskId)}`} className="min-w-0 flex-1">
-                      <span className="block truncate text-row font-semibold text-ink">{entry.title}</span>
-                      <span className="mt-0.5 block truncate text-meta text-ink-2">Waiting in Chat</span>
-                    </Link>
-                  ) : (
-                    <div className="min-w-0 flex-1">
-                      <span className="block truncate text-row font-semibold text-ink">{entry.title}</span>
-                      <span className="mt-0.5 block truncate text-meta text-ink-2">Waiting in Chat</span>
-                    </div>
-                  )}
-                  <Link
-                    href={replyHref}
-                    className="shrink-0 rounded-full bg-accent-subtle px-3 py-1 text-caption font-semibold text-accent-text transition-colors hover:bg-fill-2"
-                  >
-                    Reply
-                  </Link>
-                </div>
-              );
-            })}
-            {runningTasks.map((item) => (
-              <Link
-                key={item.task_id}
-                href={`/work/${encodeURIComponent(item.task_id)}`}
-                className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-fill-1"
-              >
-                <span
+                  role={hasSteps ? "button" : undefined}
+                  tabIndex={hasSteps ? 0 : undefined}
+                  aria-expanded={hasSteps ? isExpanded : undefined}
+                  onClick={() => {
+                    if (hasSteps) setExpandedId((cur) => (cur === entry.id ? null : entry.id));
+                  }}
+                  onKeyDown={(event) => {
+                    if (hasSteps && (event.key === "Enter" || event.key === " ")) {
+                      event.preventDefault();
+                      setExpandedId((cur) => (cur === entry.id ? null : entry.id));
+                    }
+                  }}
                   className={cn(
-                    "size-[7.5px] shrink-0 rounded-full",
-                    item.operations.uncertain > 0 ? "bg-warning" : "bg-accent",
-                    !item.cancel_requested && "pulse-dot",
+                    "group flex min-h-[50px] items-center gap-3 px-4 py-3 transition-colors hover:bg-fill-1",
+                    hasSteps && "cursor-pointer",
                   )}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-row font-semibold text-ink">{item.title}</span>
-                  <span className="mt-0.5 block truncate text-meta text-ink-2">
-                    {item.cancel_requested ? "Stopping…" : item.progress || `Started ${relative(item.started_at)}`}
+                >
+                  <span className="grid size-5 shrink-0 place-items-center">
+                    {entry.kind === "in_progress" ? (
+                      <CircularProgressRing steps={entry.steps} />
+                    ) : entry.kind === "todo" ? (
+                      <span className="size-[15px] rounded-full border-[1.75px] border-hairline-strong" aria-hidden />
+                    ) : (
+                      <Clock size={15} strokeWidth={2} className="text-scheduled" aria-hidden />
+                    )}
                   </span>
-                </span>
-                {item.operations.uncertain > 0 && (
-                  <AlertTriangle size={14} className="shrink-0 text-warning" aria-label="Has an unconfirmed action" />
+
+                  <span className="min-w-0 flex-1">
+                    <span
+                      className={cn(
+                        "block truncate text-row",
+                        entry.kind === "scheduled" ? "font-medium text-ink-2" : "font-semibold text-ink",
+                      )}
+                    >
+                      {entry.title}
+                    </span>
+                  </span>
+
+                  <div className="flex shrink-0 items-center gap-2" onClick={(event) => event.stopPropagation()}>
+                    {isConfirming ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => cancelEntry(entry)}
+                          className="inline-flex h-7 items-center rounded-full bg-danger-bg px-2.5 text-caption font-semibold text-danger transition-opacity hover:opacity-90"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmingId(null)}
+                          className="inline-flex h-7 items-center rounded-full bg-fill-1 px-2.5 text-caption font-semibold text-ink-2 hover:bg-fill-2 hover:text-ink"
+                        >
+                          Keep
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        {entry.kind === "todo" && entry.replyHref && (
+                          <Link
+                            href={entry.replyHref}
+                            className="shrink-0 rounded-full bg-accent-subtle px-3 py-1 text-caption font-semibold text-accent-text transition-colors hover:bg-fill-2"
+                          >
+                            Reply
+                          </Link>
+                        )}
+                        {entry.kind === "scheduled" && entry.scheduleLabel && (
+                          <span className="text-caption font-medium whitespace-nowrap text-scheduled">
+                            {entry.scheduleLabel}
+                          </span>
+                        )}
+                        {canCancel && (
+                          <button
+                            type="button"
+                            title="Cancel task"
+                            aria-label={`Cancel ${entry.title}`}
+                            onClick={() => setConfirmingId(entry.id)}
+                            className="grid size-[26px] place-items-center rounded-full text-ink-3 opacity-60 transition-[opacity,background-color,color] hover:bg-danger-bg hover:text-danger hover:opacity-100 focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+                          >
+                            <X size={14} strokeWidth={2.1} aria-hidden />
+                          </button>
+                        )}
+                        {hasSteps && (
+                          <ChevronRight
+                            size={14}
+                            className={cn(
+                              "text-ink-3 transition-transform duration-150",
+                              isExpanded && "rotate-90",
+                            )}
+                            aria-hidden
+                          />
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {isExpanded && entry.kind === "in_progress" && (
+                  <div className="px-4 pb-3.5 pl-12">
+                    <ul className="space-y-1.5" aria-label={`Steps for ${entry.title}`}>
+                      {entry.steps.map((step, index) => (
+                        <li
+                          key={`${entry.id}-step-${index}`}
+                          className={cn(
+                            "flex items-start gap-2.5 text-[13px] leading-snug",
+                            step.status === "done"
+                              ? "text-ink-3"
+                              : step.status === "active"
+                                ? "font-semibold text-ink"
+                                : "text-ink-2",
+                          )}
+                        >
+                          <StepMarker status={step.status} />
+                          <span className="min-w-0 flex-1">{step.text}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
-                <ChevronRight size={15} className="shrink-0 text-ink-3" aria-hidden />
-              </Link>
-            ))}
-          </Rows>
-        </Section>
+              </li>
+            );
+          })}
+        </ul>
       )}
-
-      {finishedTasks.length > 0 ? (
-        <Section title="Recent">
-          <Rows label="Recent tasks">
-            {visibleRecent.map((item) => (
-              <WorkRow key={item.task_id} item={item} />
-            ))}
-          </Rows>
-          {finishedTasks.length > 5 && (
-            <button
-              type="button"
-              onClick={() => setShowAllRecent((open) => !open)}
-              className="mt-2 flex w-full items-center justify-center gap-1 py-2 text-meta font-semibold text-ink-2 hover:text-ink"
-            >
-              <span>{showAllRecent ? "Show fewer" : `Show all (${finishedTasks.length})`}</span>
-              <ChevronDown size={14} className={cn("transition-transform", showAllRecent && "rotate-180")} aria-hidden />
-            </button>
-          )}
-        </Section>
-      ) : !runningTasks.length ? (
-        <Section title="Recent">
-          <Empty>Finished tasks appear here.</Empty>
-        </Section>
-      ) : null}
     </div>
-  );
-}
-
-function WorkRow({ item }: { item: WorkItem }) {
-  const pill = statusPill(item);
-  const detailText =
-    item.error?.message ||
-    item.progress ||
-    (item.finished_at ? `Finished ${relative(item.finished_at)}` : `Started ${relative(item.started_at)}`);
-  return (
-    <Row
-      href={`/work/${encodeURIComponent(item.task_id)}`}
-      title={item.title}
-      detail={<span className="line-clamp-2">{detailText}</span>}
-      trailing={
-        <>
-          {item.operations.uncertain > 0 && (
-            <AlertTriangle size={14} className="text-warning" aria-label="Has an unconfirmed action" />
-          )}
-          <Pill tone={pill.tone}>{pill.label}</Pill>
-        </>
-      }
-    />
   );
 }

@@ -50,13 +50,6 @@ public enum OpenAPI {
         public static let diagnosticsActions = "/v1/diagnostics/actions"
         public static let events = "/v1/events"
         public static let feedback = "/v1/feedback"
-        public static let goals = "/v1/goals"
-        public static func goalsByID(id: String) -> String {
-            "/v1/goals/\(encodeSegment(id))"
-        }
-        public static func goalsActions(id: String) -> String {
-            "/v1/goals/\(encodeSegment(id))/actions"
-        }
         public static let inbox = "/v1/inbox"
         public static func inboxActions(id: String) -> String {
             "/v1/inbox/\(encodeSegment(id))/actions"
@@ -361,7 +354,6 @@ public enum OpenAPI {
         public var interactions: Bool?
         public var work: Bool?
         public var automations: Bool?
-        public var goals: Bool?
         public var library: Bool?
         public var search: Bool?
         public var permissions: Bool?
@@ -377,7 +369,6 @@ public enum OpenAPI {
             interactions: Bool? = nil,
             work: Bool? = nil,
             automations: Bool? = nil,
-            goals: Bool? = nil,
             library: Bool? = nil,
             search: Bool? = nil,
             permissions: Bool? = nil,
@@ -392,7 +383,6 @@ public enum OpenAPI {
             self.interactions = interactions
             self.work = work
             self.automations = automations
-            self.goals = goals
             self.library = library
             self.search = search
             self.permissions = permissions
@@ -531,7 +521,6 @@ public enum OpenAPI {
         public var nextAt: OpenAPI.Instant?
         public var endAt: OpenAPI.Instant?
         public var maxOccurrences: Int?
-        public var goalID: OpenAPI.ID?
         public var lastOccurrenceID: String?
         public var createdAt: OpenAPI.Instant?
         public var updatedAt: OpenAPI.Instant?
@@ -555,7 +544,6 @@ public enum OpenAPI {
             nextAt: OpenAPI.Instant? = nil,
             endAt: OpenAPI.Instant? = nil,
             maxOccurrences: Int? = nil,
-            goalID: OpenAPI.ID? = nil,
             lastOccurrenceID: String? = nil,
             createdAt: OpenAPI.Instant? = nil,
             updatedAt: OpenAPI.Instant? = nil,
@@ -578,7 +566,6 @@ public enum OpenAPI {
             self.nextAt = nextAt
             self.endAt = endAt
             self.maxOccurrences = maxOccurrences
-            self.goalID = goalID
             self.lastOccurrenceID = lastOccurrenceID
             self.createdAt = createdAt
             self.updatedAt = updatedAt
@@ -603,7 +590,6 @@ public enum OpenAPI {
             case nextAt = "next_at"
             case endAt = "end_at"
             case maxOccurrences = "max_occurrences"
-            case goalID = "goal_id"
             case lastOccurrenceID = "last_occurrence_id"
             case createdAt = "created_at"
             case updatedAt = "updated_at"
@@ -723,7 +709,6 @@ public enum OpenAPI {
         public var destinationIDs: [OpenAPI.ID]
         public var endAt: OpenAPI.Instant?
         public var maxOccurrences: Int?
-        public var goalID: OpenAPI.ID?
 
         public init(
             title: String,
@@ -737,8 +722,7 @@ public enum OpenAPI {
             executionWindowSeconds: Int,
             destinationIDs: [OpenAPI.ID],
             endAt: OpenAPI.Instant? = nil,
-            maxOccurrences: Int? = nil,
-            goalID: OpenAPI.ID? = nil
+            maxOccurrences: Int? = nil
         ) {
             self.title = title
             self.instruction = instruction
@@ -752,7 +736,6 @@ public enum OpenAPI {
             self.destinationIDs = destinationIDs
             self.endAt = endAt
             self.maxOccurrences = maxOccurrences
-            self.goalID = goalID
         }
 
         enum CodingKeys: String, CodingKey {
@@ -768,7 +751,6 @@ public enum OpenAPI {
             case destinationIDs = "destination_ids"
             case endAt = "end_at"
             case maxOccurrences = "max_occurrences"
-            case goalID = "goal_id"
         }
     }
 
@@ -2344,255 +2326,6 @@ public enum OpenAPI {
         }
     }
 
-    public struct Goal: Sendable, Codable, Hashable {
-        public var id: OpenAPI.ID
-        public var revision: OpenAPI.Revision
-        public var title: String
-        public var outcome: String
-        public var completionCriteria: [OpenAPI.GoalCriterion]
-        public var status: String
-        public var progress: String
-        public var nextActions: [String]
-        public var blockers: [OpenAPI.GoalBlocker]
-        public var linked: OpenAPI.GoalLinks
-        public var deadline: OpenAPI.Instant?
-        public var followUp: String?
-        public var createdAt: OpenAPI.Instant?
-        public var updatedAt: OpenAPI.Instant?
-        public var completedAt: OpenAPI.Instant?
-        public var authorityRuleIDs: [OpenAPI.ID]?
-
-        public init(
-            id: OpenAPI.ID,
-            revision: OpenAPI.Revision,
-            title: String,
-            outcome: String,
-            completionCriteria: [OpenAPI.GoalCriterion],
-            status: String,
-            progress: String,
-            nextActions: [String],
-            blockers: [OpenAPI.GoalBlocker],
-            linked: OpenAPI.GoalLinks,
-            deadline: OpenAPI.Instant? = nil,
-            followUp: String? = nil,
-            createdAt: OpenAPI.Instant? = nil,
-            updatedAt: OpenAPI.Instant? = nil,
-            completedAt: OpenAPI.Instant? = nil,
-            authorityRuleIDs: [OpenAPI.ID]? = nil
-        ) {
-            self.id = id
-            self.revision = revision
-            self.title = title
-            self.outcome = outcome
-            self.completionCriteria = completionCriteria
-            self.status = status
-            self.progress = progress
-            self.nextActions = nextActions
-            self.blockers = blockers
-            self.linked = linked
-            self.deadline = deadline
-            self.followUp = followUp
-            self.createdAt = createdAt
-            self.updatedAt = updatedAt
-            self.completedAt = completedAt
-            self.authorityRuleIDs = authorityRuleIDs
-        }
-
-        enum CodingKeys: String, CodingKey {
-            case id
-            case revision
-            case title
-            case outcome
-            case completionCriteria = "completion_criteria"
-            case status
-            case progress
-            case nextActions = "next_actions"
-            case blockers
-            case linked
-            case deadline
-            case followUp = "follow_up"
-            case createdAt = "created_at"
-            case updatedAt = "updated_at"
-            case completedAt = "completed_at"
-            case authorityRuleIDs = "authority_rule_ids"
-        }
-    }
-
-    public struct GoalAction: Sendable, Codable, Hashable {
-        public struct Value: Sendable, Codable, Hashable {
-            public var action: String
-            public var keepMonitors: Bool?
-
-            public init(
-                action: String,
-                keepMonitors: Bool? = nil
-            ) {
-                self.action = action
-                self.keepMonitors = keepMonitors
-            }
-
-            enum CodingKeys: String, CodingKey {
-                case action
-                case keepMonitors = "keep_monitors"
-            }
-        }
-
-        public var requestID: OpenAPI.UUID
-        public var expectedRevision: OpenAPI.Revision
-        public var value: Value
-
-        public init(
-            requestID: OpenAPI.UUID,
-            expectedRevision: OpenAPI.Revision,
-            value: Value
-        ) {
-            self.requestID = requestID
-            self.expectedRevision = expectedRevision
-            self.value = value
-        }
-
-        enum CodingKeys: String, CodingKey {
-            case requestID = "request_id"
-            case expectedRevision = "expected_revision"
-            case value
-        }
-    }
-
-    public struct GoalBlocker: Sendable, Codable, Hashable {
-        public var text: String
-        public var interactionID: String?
-        public var connectionID: String?
-
-        public init(
-            text: String,
-            interactionID: String? = nil,
-            connectionID: String? = nil
-        ) {
-            self.text = text
-            self.interactionID = interactionID
-            self.connectionID = connectionID
-        }
-
-        enum CodingKeys: String, CodingKey {
-            case text
-            case interactionID = "interaction_id"
-            case connectionID = "connection_id"
-        }
-    }
-
-    public struct GoalChange: Sendable, Codable, Hashable {
-        public var requestID: OpenAPI.UUID
-        public var expectedRevision: OpenAPI.Revision
-        public var value: OpenAPI.GoalEditable
-
-        public init(
-            requestID: OpenAPI.UUID,
-            expectedRevision: OpenAPI.Revision,
-            value: OpenAPI.GoalEditable
-        ) {
-            self.requestID = requestID
-            self.expectedRevision = expectedRevision
-            self.value = value
-        }
-
-        enum CodingKeys: String, CodingKey {
-            case requestID = "request_id"
-            case expectedRevision = "expected_revision"
-            case value
-        }
-    }
-
-    public struct GoalCriterion: Sendable, Codable, Hashable {
-        public var id: String
-        public var text: String
-        public var met: Bool
-        public var evidenceResultIDs: [String]?
-
-        public init(
-            id: String,
-            text: String,
-            met: Bool,
-            evidenceResultIDs: [String]? = nil
-        ) {
-            self.id = id
-            self.text = text
-            self.met = met
-            self.evidenceResultIDs = evidenceResultIDs
-        }
-
-        enum CodingKeys: String, CodingKey {
-            case id
-            case text
-            case met
-            case evidenceResultIDs = "evidence_result_ids"
-        }
-    }
-
-    public struct GoalEditable: Sendable, Codable, Hashable {
-        public struct CompletionCriteriaItem: Sendable, Codable, Hashable {
-            public var id: String?
-            public var text: String
-
-            public init(
-                id: String? = nil,
-                text: String
-            ) {
-                self.id = id
-                self.text = text
-            }
-        }
-
-        public var title: String
-        public var outcome: String
-        public var completionCriteria: [CompletionCriteriaItem]
-        public var deadline: OpenAPI.Instant?
-        public var followUp: String?
-
-        public init(
-            title: String,
-            outcome: String,
-            completionCriteria: [CompletionCriteriaItem],
-            deadline: OpenAPI.Instant? = nil,
-            followUp: String? = nil
-        ) {
-            self.title = title
-            self.outcome = outcome
-            self.completionCriteria = completionCriteria
-            self.deadline = deadline
-            self.followUp = followUp
-        }
-
-        enum CodingKeys: String, CodingKey {
-            case title
-            case outcome
-            case completionCriteria = "completion_criteria"
-            case deadline
-            case followUp = "follow_up"
-        }
-    }
-
-    public struct GoalLinks: Sendable, Codable, Hashable {
-        public var taskIDs: [String]
-        public var automationIDs: [String]
-        public var resultIDs: [String]
-
-        public init(
-            taskIDs: [String],
-            automationIDs: [String],
-            resultIDs: [String]
-        ) {
-            self.taskIDs = taskIDs
-            self.automationIDs = automationIDs
-            self.resultIDs = resultIDs
-        }
-
-        enum CodingKeys: String, CodingKey {
-            case taskIDs = "task_ids"
-            case automationIDs = "automation_ids"
-            case resultIDs = "result_ids"
-        }
-    }
-
     public struct GoogleDrivePickerRequest: Sendable, Codable, Hashable {
         public var returnTo: String?
 
@@ -3732,7 +3465,6 @@ public enum OpenAPI {
             public var url: String?
             public var taskID: String?
             public var conversationID: String?
-            public var goalID: String?
             public var automationID: String?
             public var provenance: OpenAPI.Provenance
             public var indexStatus: String?
@@ -3761,7 +3493,6 @@ public enum OpenAPI {
                 url: String? = nil,
                 taskID: String? = nil,
                 conversationID: String? = nil,
-                goalID: String? = nil,
                 automationID: String? = nil,
                 provenance: OpenAPI.Provenance,
                 indexStatus: String? = nil,
@@ -3789,7 +3520,6 @@ public enum OpenAPI {
                 self.url = url
                 self.taskID = taskID
                 self.conversationID = conversationID
-                self.goalID = goalID
                 self.automationID = automationID
                 self.provenance = provenance
                 self.indexStatus = indexStatus
@@ -3819,7 +3549,6 @@ public enum OpenAPI {
                 case url
                 case taskID = "task_id"
                 case conversationID = "conversation_id"
-                case goalID = "goal_id"
                 case automationID = "automation_id"
                 case provenance
                 case indexStatus = "index_status"
@@ -3849,7 +3578,6 @@ public enum OpenAPI {
             public var url: String?
             public var taskID: String?
             public var conversationID: String?
-            public var goalID: String?
             public var automationID: String?
             public var provenance: OpenAPI.Provenance
             public var indexStatus: String?
@@ -3878,7 +3606,6 @@ public enum OpenAPI {
                 url: String? = nil,
                 taskID: String? = nil,
                 conversationID: String? = nil,
-                goalID: String? = nil,
                 automationID: String? = nil,
                 provenance: OpenAPI.Provenance,
                 indexStatus: String? = nil,
@@ -3906,7 +3633,6 @@ public enum OpenAPI {
                 self.url = url
                 self.taskID = taskID
                 self.conversationID = conversationID
-                self.goalID = goalID
                 self.automationID = automationID
                 self.provenance = provenance
                 self.indexStatus = indexStatus
@@ -3936,7 +3662,6 @@ public enum OpenAPI {
                 case url
                 case taskID = "task_id"
                 case conversationID = "conversation_id"
-                case goalID = "goal_id"
                 case automationID = "automation_id"
                 case provenance
                 case indexStatus = "index_status"
@@ -3966,7 +3691,6 @@ public enum OpenAPI {
             public var url: String?
             public var taskID: String?
             public var conversationID: String?
-            public var goalID: String?
             public var automationID: String?
             public var provenance: OpenAPI.Provenance
             public var indexStatus: String?
@@ -3995,7 +3719,6 @@ public enum OpenAPI {
                 url: String? = nil,
                 taskID: String? = nil,
                 conversationID: String? = nil,
-                goalID: String? = nil,
                 automationID: String? = nil,
                 provenance: OpenAPI.Provenance,
                 indexStatus: String? = nil,
@@ -4023,7 +3746,6 @@ public enum OpenAPI {
                 self.url = url
                 self.taskID = taskID
                 self.conversationID = conversationID
-                self.goalID = goalID
                 self.automationID = automationID
                 self.provenance = provenance
                 self.indexStatus = indexStatus
@@ -4053,7 +3775,6 @@ public enum OpenAPI {
                 case url
                 case taskID = "task_id"
                 case conversationID = "conversation_id"
-                case goalID = "goal_id"
                 case automationID = "automation_id"
                 case provenance
                 case indexStatus = "index_status"
@@ -4083,7 +3804,6 @@ public enum OpenAPI {
             public var url: String?
             public var taskID: String?
             public var conversationID: String?
-            public var goalID: String?
             public var automationID: String?
             public var provenance: OpenAPI.Provenance
             public var indexStatus: String?
@@ -4112,7 +3832,6 @@ public enum OpenAPI {
                 url: String? = nil,
                 taskID: String? = nil,
                 conversationID: String? = nil,
-                goalID: String? = nil,
                 automationID: String? = nil,
                 provenance: OpenAPI.Provenance,
                 indexStatus: String? = nil,
@@ -4140,7 +3859,6 @@ public enum OpenAPI {
                 self.url = url
                 self.taskID = taskID
                 self.conversationID = conversationID
-                self.goalID = goalID
                 self.automationID = automationID
                 self.provenance = provenance
                 self.indexStatus = indexStatus
@@ -4170,7 +3888,6 @@ public enum OpenAPI {
                 case url
                 case taskID = "task_id"
                 case conversationID = "conversation_id"
-                case goalID = "goal_id"
                 case automationID = "automation_id"
                 case provenance
                 case indexStatus = "index_status"
@@ -4200,7 +3917,6 @@ public enum OpenAPI {
             public var url: String?
             public var taskID: String?
             public var conversationID: String?
-            public var goalID: String?
             public var automationID: String?
             public var provenance: OpenAPI.Provenance
             public var indexStatus: String?
@@ -4229,7 +3945,6 @@ public enum OpenAPI {
                 url: String? = nil,
                 taskID: String? = nil,
                 conversationID: String? = nil,
-                goalID: String? = nil,
                 automationID: String? = nil,
                 provenance: OpenAPI.Provenance,
                 indexStatus: String? = nil,
@@ -4257,7 +3972,6 @@ public enum OpenAPI {
                 self.url = url
                 self.taskID = taskID
                 self.conversationID = conversationID
-                self.goalID = goalID
                 self.automationID = automationID
                 self.provenance = provenance
                 self.indexStatus = indexStatus
@@ -4287,7 +4001,6 @@ public enum OpenAPI {
                 case url
                 case taskID = "task_id"
                 case conversationID = "conversation_id"
-                case goalID = "goal_id"
                 case automationID = "automation_id"
                 case provenance
                 case indexStatus = "index_status"
@@ -4363,7 +4076,6 @@ public enum OpenAPI {
         public var url: String?
         public var taskID: String?
         public var conversationID: String?
-        public var goalID: String?
         public var automationID: String?
         public var provenance: OpenAPI.Provenance
         public var indexStatus: String?
@@ -4390,7 +4102,6 @@ public enum OpenAPI {
             url: String? = nil,
             taskID: String? = nil,
             conversationID: String? = nil,
-            goalID: String? = nil,
             automationID: String? = nil,
             provenance: OpenAPI.Provenance,
             indexStatus: String? = nil,
@@ -4416,7 +4127,6 @@ public enum OpenAPI {
             self.url = url
             self.taskID = taskID
             self.conversationID = conversationID
-            self.goalID = goalID
             self.automationID = automationID
             self.provenance = provenance
             self.indexStatus = indexStatus
@@ -4444,7 +4154,6 @@ public enum OpenAPI {
             case url
             case taskID = "task_id"
             case conversationID = "conversation_id"
-            case goalID = "goal_id"
             case automationID = "automation_id"
             case provenance
             case indexStatus = "index_status"
@@ -6296,7 +6005,6 @@ public enum OpenAPI {
         public var title: String?
         public var createdAt: OpenAPI.Instant?
         public var updatedAt: OpenAPI.Instant?
-        public var goalID: OpenAPI.ID?
         public var summary: String?
 
         public init(
@@ -6314,7 +6022,6 @@ public enum OpenAPI {
             title: String? = nil,
             createdAt: OpenAPI.Instant? = nil,
             updatedAt: OpenAPI.Instant? = nil,
-            goalID: OpenAPI.ID? = nil,
             summary: String? = nil
         ) {
             self.id = id
@@ -6331,7 +6038,6 @@ public enum OpenAPI {
             self.title = title
             self.createdAt = createdAt
             self.updatedAt = updatedAt
-            self.goalID = goalID
             self.summary = summary
         }
 
@@ -6350,7 +6056,6 @@ public enum OpenAPI {
             case title
             case createdAt = "created_at"
             case updatedAt = "updated_at"
-            case goalID = "goal_id"
             case summary
         }
     }
@@ -6420,7 +6125,6 @@ public enum OpenAPI {
         public var expiresAt: OpenAPI.Instant?
         public var maxOperations: Int?
         public var title: String?
-        public var goalID: OpenAPI.ID?
 
         public init(
             effect: String,
@@ -6432,8 +6136,7 @@ public enum OpenAPI {
             automationID: OpenAPI.ID? = nil,
             expiresAt: OpenAPI.Instant? = nil,
             maxOperations: Int? = nil,
-            title: String? = nil,
-            goalID: OpenAPI.ID? = nil
+            title: String? = nil
         ) {
             self.effect = effect
             self.toolIDs = toolIDs
@@ -6445,7 +6148,6 @@ public enum OpenAPI {
             self.expiresAt = expiresAt
             self.maxOperations = maxOperations
             self.title = title
-            self.goalID = goalID
         }
 
         enum CodingKeys: String, CodingKey {
@@ -6459,7 +6161,6 @@ public enum OpenAPI {
             case expiresAt = "expires_at"
             case maxOperations = "max_operations"
             case title
-            case goalID = "goal_id"
         }
     }
 
@@ -7198,23 +6899,6 @@ public enum OpenAPI {
                 case itemID = "item_id"
             }
         }
-        public struct GoalPayload: Sendable, Codable, Hashable {
-            public var kind: String
-            public var goalID: OpenAPI.ID
-
-            public init(
-                kind: String,
-                goalID: OpenAPI.ID
-            ) {
-                self.kind = kind
-                self.goalID = goalID
-            }
-
-            enum CodingKeys: String, CodingKey {
-                case kind
-                case goalID = "goal_id"
-            }
-        }
         public struct AutomationPayload: Sendable, Codable, Hashable {
             public var kind: String
             public var automationID: OpenAPI.ID
@@ -7265,7 +6949,6 @@ public enum OpenAPI {
         case conversation(ConversationPayload)
         case task(TaskPayload)
         case library(LibraryPayload)
-        case goal(GoalPayload)
         case automation(AutomationPayload)
         case memory(MemoryPayload)
 
@@ -7283,8 +6966,6 @@ public enum OpenAPI {
                 self = .task(try TaskPayload(from: decoder))
             case "library":
                 self = .library(try LibraryPayload(from: decoder))
-            case "goal":
-                self = .goal(try GoalPayload(from: decoder))
             case "automation":
                 self = .automation(try AutomationPayload(from: decoder))
             case "memory":
@@ -7301,8 +6982,6 @@ public enum OpenAPI {
             case .task(let value):
                 try value.encode(to: encoder)
             case .library(let value):
-                try value.encode(to: encoder)
-            case .goal(let value):
                 try value.encode(to: encoder)
             case .automation(let value):
                 try value.encode(to: encoder)
@@ -7487,7 +7166,6 @@ public enum OpenAPI {
         public var messageID: String?
         public var automationID: OpenAPI.ID?
         public var occurrenceID: String?
-        public var goalID: OpenAPI.ID?
         public var continuesTaskID: String?
 
         public init(
@@ -7495,14 +7173,12 @@ public enum OpenAPI {
             messageID: String? = nil,
             automationID: OpenAPI.ID? = nil,
             occurrenceID: String? = nil,
-            goalID: OpenAPI.ID? = nil,
             continuesTaskID: String? = nil
         ) {
             self.conversationID = conversationID
             self.messageID = messageID
             self.automationID = automationID
             self.occurrenceID = occurrenceID
-            self.goalID = goalID
             self.continuesTaskID = continuesTaskID
         }
 
@@ -7511,7 +7187,6 @@ public enum OpenAPI {
             case messageID = "message_id"
             case automationID = "automation_id"
             case occurrenceID = "occurrence_id"
-            case goalID = "goal_id"
             case continuesTaskID = "continues_task_id"
         }
     }
@@ -7952,6 +7627,8 @@ public enum OpenAPI {
         public var startedAt: OpenAPI.Instant
         public var finishedAt: OpenAPI.Instant?
         public var cancelRequested: Bool
+        public var queued: Bool?
+        public var steps: [OpenAPI.WorkStep]?
         public var partial: Bool?
         public var error: OpenAPI.ErrorDetail?
 
@@ -7971,6 +7648,8 @@ public enum OpenAPI {
             startedAt: OpenAPI.Instant,
             finishedAt: OpenAPI.Instant? = nil,
             cancelRequested: Bool,
+            queued: Bool? = nil,
+            steps: [OpenAPI.WorkStep]? = nil,
             partial: Bool? = nil,
             error: OpenAPI.ErrorDetail? = nil
         ) {
@@ -7989,6 +7668,8 @@ public enum OpenAPI {
             self.startedAt = startedAt
             self.finishedAt = finishedAt
             self.cancelRequested = cancelRequested
+            self.queued = queued
+            self.steps = steps
             self.partial = partial
             self.error = error
         }
@@ -8009,6 +7690,8 @@ public enum OpenAPI {
             case startedAt = "started_at"
             case finishedAt = "finished_at"
             case cancelRequested = "cancel_requested"
+            case queued
+            case steps
             case partial
             case error
         }
@@ -8039,7 +7722,6 @@ public enum OpenAPI {
         public var messageID: String?
         public var automationID: OpenAPI.ID?
         public var occurrenceID: String?
-        public var goalID: OpenAPI.ID?
         public var continuesTaskID: String?
 
         public init(
@@ -8048,7 +7730,6 @@ public enum OpenAPI {
             messageID: String? = nil,
             automationID: OpenAPI.ID? = nil,
             occurrenceID: String? = nil,
-            goalID: OpenAPI.ID? = nil,
             continuesTaskID: String? = nil
         ) {
             self.kind = kind
@@ -8056,7 +7737,6 @@ public enum OpenAPI {
             self.messageID = messageID
             self.automationID = automationID
             self.occurrenceID = occurrenceID
-            self.goalID = goalID
             self.continuesTaskID = continuesTaskID
         }
 
@@ -8066,7 +7746,6 @@ public enum OpenAPI {
             case messageID = "message_id"
             case automationID = "automation_id"
             case occurrenceID = "occurrence_id"
-            case goalID = "goal_id"
             case continuesTaskID = "continues_task_id"
         }
     }
@@ -8086,6 +7765,19 @@ public enum OpenAPI {
         enum CodingKeys: String, CodingKey {
             case taskID = "task_id"
             case operationID = "operation_id"
+        }
+    }
+
+    public struct WorkStep: Sendable, Codable, Hashable {
+        public var text: String
+        public var status: String
+
+        public init(
+            text: String,
+            status: String
+        ) {
+            self.text = text
+            self.status = status
         }
     }
 

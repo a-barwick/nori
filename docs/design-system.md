@@ -162,7 +162,7 @@ Use multiples of `4 pt`: `4`, `8`, `12`, `16`, `20`, `24`, `32`.
 - **Modal Sheets:** Sit one surface level above the canvas (`background.sheet` `#0E0E13`), with inputs slightly lighter (`background.elevated` `#14141A`) and selected categories using soft violet surfaces (`background.selected` `#261F38`) rather than saturated fills.
 - **Copy & Sublabels:**
   - **No filler sublabels.** Only show a row subtitle or card sublabel when it displays real live data or state (e.g., `0.3 / 24 KB`, `2 connected`, `3 rules`, `Dark`, `America/Los_Angeles · $5.00 / task`). Never add explanatory filler that repeats a title, describes an obvious control, or fills an empty state with extra taglines.
-  - **Plain, positive English.** When a screen needs a brief explanation (such as empty Goals), write one clear, positive sentence for non-technical readers—never define something by what it is *not*.
+  - **Plain, positive English.** When a screen needs a brief explanation, write one clear, positive sentence for non-technical readers—never define something by what it is *not*.
 
 ---
 

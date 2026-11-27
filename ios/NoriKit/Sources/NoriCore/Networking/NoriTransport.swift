@@ -23,8 +23,6 @@ public struct NoriFullSnapshot: Sendable, Hashable {
     public var didLoadWorkingMemory: Bool
     public var automations: [Automation]
     public var didLoadAutomations: Bool
-    public var goals: [Goal]
-    public var didLoadGoals: Bool
     public var permissions: [PermissionRule]
     public var didLoadPermissions: Bool
     public var preferences: Preferences
@@ -46,7 +44,6 @@ public struct NoriFullSnapshot: Sendable, Hashable {
         memoryLogs: [MemoryLog] = [],
         workingMemory: WorkingMemory = WorkingMemory(),
         automations: [Automation] = [],
-        goals: [Goal] = [],
         permissions: [PermissionRule] = [],
         preferences: Preferences = Preferences(),
         modelKeys: ModelKeysResponse = ModelKeysResponse(),
@@ -60,7 +57,6 @@ public struct NoriFullSnapshot: Sendable, Hashable {
         didLoadMemoryLogs: Bool = true,
         didLoadWorkingMemory: Bool = true,
         didLoadAutomations: Bool = true,
-        didLoadGoals: Bool = true,
         didLoadPermissions: Bool = true,
         didLoadPreferences: Bool = true,
         didLoadModelKeys: Bool = true,
@@ -88,8 +84,6 @@ public struct NoriFullSnapshot: Sendable, Hashable {
         self.didLoadWorkingMemory = didLoadWorkingMemory
         self.automations = automations
         self.didLoadAutomations = didLoadAutomations
-        self.goals = goals
-        self.didLoadGoals = didLoadGoals
         self.permissions = permissions
         self.didLoadPermissions = didLoadPermissions
         self.preferences = preferences
@@ -233,7 +227,6 @@ public protocol NoriTransport: Sendable {
         action: String,
         requestID: String
     ) async throws -> MutationReceipt<Automation>
-    func fetchGoals() async throws -> [Goal]
     func fetchPermissions() async throws -> [PermissionRule]
     func createPermissionRule(
         _ rule: PermissionRuleEditable,

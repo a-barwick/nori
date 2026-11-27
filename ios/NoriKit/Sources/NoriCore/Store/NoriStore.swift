@@ -16,7 +16,6 @@ public enum NoriDeepLink: Sendable, Hashable {
     case library
     case memory
     case routines
-    case goals
     case settings
     case onboarding
     case workDetail(String)
@@ -60,7 +59,6 @@ public enum NoriDeepLink: Sendable, Hashable {
         case "activity": return .activitySheet
         case "memory": return .memory
         case "routines", "automations": return .routines
-        case "goals": return .goals
         case "settings": return .settings
         case "onboarding": return .onboarding
         case "oauth", "callback": return .oauthCallback(url)
@@ -127,7 +125,6 @@ public final class NoriStore {
     public internal(set) var hasLoadedWorkingMemory = false
     public var memorySearchHits: [MemorySearchHit] = []
     public var automations: [Automation]
-    public var goals: [Goal]
     public var permissions: [PermissionRule]
     public var preferences: Preferences
     public internal(set) var hasLoadedPreferences = false
@@ -211,7 +208,6 @@ public final class NoriStore {
         self.memoryLogs = []
         self.workingMemory = WorkingMemory()
         self.automations = []
-        self.goals = []
         self.permissions = []
         self.preferences = Preferences()
         self.modelKeys = ModelKeysResponse()
@@ -376,7 +372,6 @@ public final class NoriStore {
         hasLoadedWorkingMemory = false
         memorySearchHits = []
         automations = []
-        goals = []
         permissions = []
         preferences = Preferences()
         hasLoadedPreferences = false

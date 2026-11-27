@@ -129,7 +129,6 @@ function Permissions() {
           <span className="block text-row font-medium">{rule.summary ?? rule.title ?? "Permission"}</span>
           <span className="mt-0.5 block text-meta text-ink-2">{[rule.action_classes.map((effect) => EFFECT_LABEL[effect]).join(", "), rule.connection_ids.map((id) => id === "*" ? "all tools & MCP servers" : account(id)?.title ?? server(id)?.name ?? id).join(", "), rule.recipients?.length ? `to ${rule.recipients.join(", ")}` : "", rule.expires_at ? `until ${when(rule.expires_at)}` : "", rule.max_operations ? `up to ${rule.max_operations} times` : ""].filter(Boolean).join(" · ")}</span>
           {rule.automation_id && <Link href={`/routines/${encodeURIComponent(rule.automation_id)}`} className="text-meta text-accent-text hover:underline">Automation</Link>}
-          {rule.goal_id && <Link href={`/goals/${encodeURIComponent(rule.goal_id)}`} className="text-meta text-accent-text hover:underline">Goal</Link>}
         </span>
         <Pill tone={effectMeta.tone}>{effectMeta.label}</Pill>
         <Confirm danger title="Remove this permission?" body={revokeRuleConfirmationBody(rule)} confirm="Remove" onConfirm={() => void revoke(rule)}

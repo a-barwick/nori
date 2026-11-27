@@ -29,8 +29,7 @@ func buildCapabilitySummary(services *platform.AssistantServices, cfg settings.S
 			},
 			BuiltIn: []string{
 				"one-time reminders",
-				"recurring routines and monitors",
-				"goals",
+				"recurring automations and monitors",
 				"saved artifacts",
 				"memory",
 			},

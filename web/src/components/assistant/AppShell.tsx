@@ -295,7 +295,6 @@ function Frame({ scope, children }: { scope: string; children: ReactNode }) {
       match: (p) =>
         p.startsWith("/work") ||
         p.startsWith("/library") ||
-        p.startsWith("/goals") ||
         p.startsWith("/routines"),
     },
     {

@@ -6,11 +6,26 @@ public enum WorkBucket: String, Sendable, Codable, Hashable, CaseIterable {
     case finished
 }
 
+public struct WorkStep: Sendable, Codable, Hashable {
+    public enum Status: String, Sendable, Codable, Hashable {
+        case done
+        case active
+        case upcoming
+    }
+
+    public var text: String
+    public var status: Status
+
+    public init(text: String, status: Status) {
+        self.text = text
+        self.status = status
+    }
+}
+
 public struct WorkOrigin: Sendable, Codable, Hashable {
     public enum Kind: String, Sendable, Codable, Hashable {
         case conversation
         case automation
-        case goal
         case external
     }
 
@@ -19,7 +34,6 @@ public struct WorkOrigin: Sendable, Codable, Hashable {
     public var messageID: String?
     public var automationID: String?
     public var occurrenceID: String?
-    public var goalID: String?
     public var continuesTaskID: String?
 
     enum CodingKeys: String, CodingKey {
@@ -28,7 +42,6 @@ public struct WorkOrigin: Sendable, Codable, Hashable {
         case messageID = "message_id"
         case automationID = "automation_id"
         case occurrenceID = "occurrence_id"
-        case goalID = "goal_id"
         case continuesTaskID = "continues_task_id"
     }
 
@@ -38,7 +51,6 @@ public struct WorkOrigin: Sendable, Codable, Hashable {
         messageID: String? = nil,
         automationID: String? = nil,
         occurrenceID: String? = nil,
-        goalID: String? = nil,
         continuesTaskID: String? = nil
     ) {
         self.kind = kind
@@ -46,15 +58,13 @@ public struct WorkOrigin: Sendable, Codable, Hashable {
         self.messageID = messageID
         self.automationID = automationID
         self.occurrenceID = occurrenceID
-        self.goalID = goalID
         self.continuesTaskID = continuesTaskID
     }
 
     public var displayLabel: String {
         switch kind {
         case .conversation: return "Chat"
-        case .automation: return "Routine"
-        case .goal: return "Goal"
+        case .automation: return "Automation"
         case .external: return "External"
         }
     }
@@ -109,6 +119,8 @@ public struct WorkItem: Sendable, Codable, Hashable, Identifiable {
     public var startedAt: String
     public var finishedAt: String?
     public var cancelRequested: Bool
+    public var queued: Bool?
+    public var steps: [WorkStep]?
     public var partial: Bool?
     public var error: ErrorDetail?
 
@@ -128,6 +140,8 @@ public struct WorkItem: Sendable, Codable, Hashable, Identifiable {
         case startedAt = "started_at"
         case finishedAt = "finished_at"
         case cancelRequested = "cancel_requested"
+        case queued
+        case steps
         case partial
         case error
     }
@@ -148,6 +162,8 @@ public struct WorkItem: Sendable, Codable, Hashable, Identifiable {
         startedAt: String,
         finishedAt: String? = nil,
         cancelRequested: Bool = false,
+        queued: Bool? = nil,
+        steps: [WorkStep]? = nil,
         partial: Bool? = nil,
         error: ErrorDetail? = nil
     ) {
@@ -166,6 +182,8 @@ public struct WorkItem: Sendable, Codable, Hashable, Identifiable {
         self.startedAt = startedAt
         self.finishedAt = finishedAt
         self.cancelRequested = cancelRequested
+        self.queued = queued
+        self.steps = steps
         self.partial = partial
         self.error = error
     }

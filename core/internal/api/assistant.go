@@ -491,10 +491,10 @@ func (a *Assistant) rules(w http.ResponseWriter, r *http.Request) {
 	if rules == nil {
 		rules = []permissions.Rule{}
 	}
-	automation, goal := r.URL.Query().Get("automation_id"), r.URL.Query().Get("goal_id")
+	automation := r.URL.Query().Get("automation_id")
 	filtered := rules[:0]
 	for _, rule := range rules {
-		if (automation == "" || rule.AutomationID == automation) && (goal == "" || rule.GoalID == goal) {
+		if automation == "" || rule.AutomationID == automation {
 			filtered = append(filtered, rule)
 		}
 	}

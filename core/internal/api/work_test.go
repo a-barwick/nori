@@ -472,3 +472,60 @@ func TestWorkDetailWebSearchOperationsProjection(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkItemQueuedAndStepsProjection(t *testing.T) {
+	ctx := context.Background()
+	backend := memstore.New()
+	u := users.User{
+		ID:          "33333333-3333-4333-8333-333333333333",
+		Email:       "carol@example.com",
+		DisplayName: "Carol",
+		TimeZone:    "UTC",
+	}
+	store := state.Compose(records.NewShared(backend, u, 5.0), memstore.NewArtifacts())
+	a := &Assistant{Store: store}
+
+	queuedRun := state.Run{
+		ID:        "run-queued",
+		Title:     "Prep Q4 review brief",
+		Status:    state.RunRunning,
+		Revision:  1,
+		StartedAt: time.Now().UTC(),
+	}
+	queuedItem := a.item(ctx, queuedRun, nil, nil, nil)
+	if !queuedItem.Queued {
+		t.Fatalf("expected fresh unstarted running task to have Queued=true")
+	}
+	if len(queuedItem.Steps) != 0 {
+		t.Fatalf("expected queued task to have no steps yet, got %+v", queuedItem.Steps)
+	}
+
+	activeRun := state.Run{
+		ID:           "run-active",
+		Title:        "Plan Kyoto weekend",
+		Status:       state.RunRunning,
+		Revision:     1,
+		Incorporated: 1,
+		Progress:     "Comparing ryokan options",
+		StartedAt:    time.Now().UTC(),
+	}
+	ops := []state.OperationRecord{
+		{ID: "op1", Name: "web_search", Outcome: "confirmed"},
+		{ID: "op2", Name: "web_search", Outcome: "confirmed"},
+		{ID: "op3", Name: "capability_load", Outcome: "confirmed"},
+		{ID: "op4", Name: "gmail_search", Outcome: "attempted", Action: &state.Action{Text: "Check flight confirmations"}},
+	}
+	activeItem := a.item(ctx, activeRun, ops, nil, nil)
+	if activeItem.Queued {
+		t.Fatalf("expected active task to have Queued=false")
+	}
+	if len(activeItem.Steps) != 2 {
+		t.Fatalf("expected 2 grouped steps, got %+v", activeItem.Steps)
+	}
+	if activeItem.Steps[0].Text != "Searched the web (2 queries)" || activeItem.Steps[0].Status != "done" {
+		t.Fatalf("unexpected step[0]: %+v", activeItem.Steps[0])
+	}
+	if activeItem.Steps[1].Text != "Check flight confirmations" || activeItem.Steps[1].Status != "active" {
+		t.Fatalf("unexpected step[1]: %+v", activeItem.Steps[1])
+	}
+}

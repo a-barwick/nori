@@ -83,7 +83,6 @@ struct RoutingAndCodableTests {
         #expect(NoriDeepLink.parse(URL(string: "nori://library/doc-123")!) == .document("doc-123"))
         #expect(NoriDeepLink.parse(URL(string: "nori://routines")!) == .routines)
         #expect(NoriDeepLink.parse(URL(string: "nori://automations")!) == .routines)
-        #expect(NoriDeepLink.parse(URL(string: "nori://goals")!) == .goals)
         #expect(NoriDeepLink.parse(URL(string: "nori://settings")!) == .settings)
 
         #expect(NoriDeepLink.parse(URL(string: "nori://activity")!) == .activitySheet)
@@ -224,11 +223,11 @@ struct RoutingAndCodableTests {
         #expect(decoded.isWritable == false)
     }
 
-    @Test("Parity display labels align with Web (Archived, Routine)")
+    @Test("Parity display labels align with Web (Archived, Automation)")
     func parityDisplayLabels() {
         #expect(MemoryProvenance.summaryEvicted.displayLabel == "Archived")
-        #expect(WorkOrigin(kind: .automation).displayLabel == "Routine")
-        #expect(SearchHit.Kind.automation.displayLabel == "Routine")
+        #expect(WorkOrigin(kind: .automation).displayLabel == "Automation")
+        #expect(SearchHit.Kind.automation.displayLabel == "Automation")
         let op = OperationProjection(id: "op-1", name: "mail.send", authoritySource: "automation")
         #expect(op.displayAuthorityLabel == "a routine")
     }

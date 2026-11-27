@@ -503,7 +503,7 @@ describe("3-state custom permission rules UI and helpers", () => {
         ["deny", "Never allow", ["r_deny"]],
         ["ask", "Ask first", ["r_ask"]],
         ["allow", "Allow automatically", ["r_allow"]],
-        ["scoped", "For automations and goals", ["r_auto"]],
+        ["scoped", "For automations", ["r_auto"]],
       ],
     );
 

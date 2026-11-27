@@ -126,9 +126,6 @@ extension NoriStore {
         if snapshot.didLoadAutomations {
             self.automations = snapshot.automations
         }
-        if snapshot.didLoadGoals {
-            self.goals = snapshot.goals
-        }
         if snapshot.didLoadPermissions {
             self.permissions = snapshot.permissions
         }

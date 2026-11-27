@@ -160,12 +160,6 @@ func (w *World) stepCommandBatch(ctx context.Context, uw *UserWorld) {
 				if w.RNG.IntN(3) == 0 {
 					cmd.BudgetUSD = 0.25 + float64(w.RNG.IntN(4))*0.25
 				}
-				if len(uw.goalIDs) > 0 && w.RNG.IntN(3) == 0 {
-					cmd.Origin = &state.TaskOrigin{
-						ConversationID: "assistant",
-						GoalID:         uw.goalIDs[w.RNG.IntN(len(uw.goalIDs))],
-					}
-				}
 				batch = append(batch, cmd)
 			}
 		}
@@ -1008,9 +1002,6 @@ func (w *World) stepScheduler(ctx context.Context, uw *UserWorld) {
 		_, err = uw.Scheduler.Act(ctx, id, w.IDs.Next(), cur.Revision, act)
 		w.Record(uw.User.ID, "sched", "auto.act", fmt.Sprintf("id=%s status=%s action=%s err=%v", id, cur.Status, act.Action, err))
 
-	case roll < 80:
-		w.stepGoal(ctx, uw)
-
 	default:
 		next, err := uw.Scheduler.Tick(ctx)
 		nextStr := "<nil>"
@@ -1071,61 +1062,7 @@ func (w *World) randomAutomationEditable(uw *UserWorld) scheduler.Editable {
 			ToolIDs:       []string{permissions.Wildcard},
 		}
 	}
-	if len(uw.goalIDs) > 0 && w.RNG.IntN(3) == 0 {
-		ed.GoalID = uw.goalIDs[w.RNG.IntN(len(uw.goalIDs))]
-	}
 	return ed
-}
-
-func (w *World) stepGoal(ctx context.Context, uw *UserWorld) {
-	if len(uw.goalIDs) == 0 || (len(uw.goalIDs) < 4 && w.RNG.IntN(2) == 0) {
-		ge := scheduler.GoalEditable{
-			Title:    fmt.Sprintf("Sim Goal %d", w.step),
-			Outcome:  "Achieve verified state",
-			FollowUp: []string{"none", "remind", "monitor"}[w.RNG.IntN(3)],
-			CompletionCriteria: []struct {
-				ID   string `json:"id,omitempty"`
-				Text string `json:"text"`
-			}{{ID: "c1", Text: "criterion 1"}},
-		}
-		receipt, err := uw.Scheduler.SaveGoal(ctx, "", w.IDs.Next(), 0, ge)
-		if err == nil {
-			var g scheduler.Goal
-			if json.Unmarshal(receipt.Resource, &g) == nil && g.ID != "" {
-				uw.goalIDs = append(uw.goalIDs, g.ID)
-			}
-		}
-		w.Record(uw.User.ID, "sched", "goal.create", fmt.Sprintf("err=%v", err))
-		return
-	}
-
-	id := uw.goalIDs[w.RNG.IntN(len(uw.goalIDs))]
-	g, err := uw.Scheduler.Goal(ctx, id)
-	if err != nil {
-		w.Record(uw.User.ID, "sched", "goal.read_err", fmt.Sprintf("id=%s err=%v", id, err))
-		return
-	}
-	if g.Status == "active" && w.RNG.IntN(2) == 0 {
-		_, err = uw.Scheduler.RecordProgress(ctx, id, w.IDs.Next(), scheduler.GoalProgress{
-			Progress:    fmt.Sprintf("progress step %d", w.step),
-			NextActions: []string{"next step"},
-		})
-		w.Record(uw.User.ID, "sched", "goal.progress", fmt.Sprintf("id=%s err=%v", id, err))
-		return
-	}
-
-	actName := "pause"
-	switch g.Status {
-	case "active":
-		actName = []string{"pause", "complete", "abandon"}[w.RNG.IntN(3)]
-	case "paused":
-		actName = []string{"resume", "complete", "abandon"}[w.RNG.IntN(3)]
-	}
-	_, err = uw.Scheduler.ActGoal(ctx, id, w.IDs.Next(), g.Revision, scheduler.GoalAction{
-		Action:       actName,
-		KeepMonitors: w.RNG.IntN(2) == 0,
-	})
-	w.Record(uw.User.ID, "sched", "goal.act", fmt.Sprintf("id=%s status=%s act=%s err=%v", id, g.Status, actName, err))
 }
 
 func (w *World) stepConversation(ctx context.Context, uw *UserWorld) {

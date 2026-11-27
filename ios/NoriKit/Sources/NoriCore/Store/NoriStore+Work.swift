@@ -252,28 +252,15 @@ extension NoriStore {
         }
     }
 
-    public func refreshRoutinesAndGoals() async {
+    public func refreshAutomations() async {
         let generation = sessionGeneration
-        let activeTransport = transport
-        async let autosResult: Result<[Automation], Error> = {
-            do { return .success(try await activeTransport.fetchAutomations()) }
-            catch { return .failure(error) }
-        }()
-        async let goalsResult: Result<[Goal], Error> = {
-            do { return .success(try await activeTransport.fetchGoals()) }
-            catch { return .failure(error) }
-        }()
-
-        let (autosRes, goalsRes) = await (autosResult, goalsResult)
-        guard generation == sessionGeneration else { return }
-        if case .failure(let err) = autosRes, await handleAuthFailureIfNeeded(err) { return }
-        if case .failure(let err) = goalsRes, await handleAuthFailureIfNeeded(err) { return }
-
-        if case .success(let autos) = autosRes {
+        do {
+            let autos = try await transport.fetchAutomations()
+            guard generation == sessionGeneration else { return }
             self.automations = autos
-        }
-        if case .success(let freshGoals) = goalsRes {
-            self.goals = freshGoals
+        } catch {
+            guard generation == sessionGeneration else { return }
+            _ = await handleAuthFailureIfNeeded(error)
         }
     }
 

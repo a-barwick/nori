@@ -249,11 +249,11 @@ func openAPISchemaConformance() throws {
     try assertCodableConformance(AssistantSummary.self, schema: "AssistantSummary", spec: spec)
     try assertCodableConformance(APIErrorPayload.self, schema: "APIError", spec: spec)
 
-    // Automations & Goals (including all 4 Trigger variants: once, recurring, event_relative, watch)
+    // Automations (including all 4 Trigger variants: once, recurring, event_relative, watch)
     try assertCodableConformance(AutomationTrigger.self, schema: "Trigger", spec: spec)
     try assertCodableConformance(Automation.self, schema: "Automation", spec: spec)
     try assertCodableConformance(AutomationEditable.self, schema: "AutomationEditable", spec: spec)
-    try assertCodableConformance(Goal.self, schema: "Goal", spec: spec)
+    try assertCodableConformance(WorkStep.self, schema: "WorkStep", spec: spec)
 
     // Memory
     try assertCodableConformance(MemoryFact.self, schema: "MemoryFact", spec: spec)
@@ -326,7 +326,6 @@ func generatedOpenAPISchemaConformance() throws {
     try assertCodableConformance(OpenAPI.DataResetRequest.self, schema: "DataResetRequest", spec: spec)
     try assertCodableConformance(OpenAPI.FeedbackRequest.self, schema: "FeedbackRequest", spec: spec)
     try assertCodableConformance(OpenAPI.AutomationChange.self, schema: "AutomationChange", spec: spec)
-    try assertCodableConformance(OpenAPI.GoalChange.self, schema: "GoalChange", spec: spec)
     try assertCodableConformance(OpenAPI.ConnectionChange.self, schema: "ConnectionChange", spec: spec)
     try assertCodableConformance(OpenAPI.PreferencesChange.self, schema: "PreferencesChange", spec: spec)
     try assertCodableConformance(OpenAPI.PermissionRuleChange.self, schema: "PermissionRuleChange", spec: spec)

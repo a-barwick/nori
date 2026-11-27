@@ -1424,21 +1424,17 @@ struct MemoryReceiptsAndStoreTests {
         store.coreMemories = [cachedFact]
         store.automations = [cachedAuto]
 
-        let freshGoal = Goal(id: "goal-new", revision: 1, title: "Ship Phase 1", status: .active)
         await mock.setCustomSnapshot(NoriFullSnapshot(
             coreMemories: [],
             automations: [],
-            goals: [freshGoal],
             didLoadCoreMemories: false,
             didLoadAutomations: false,
-            didLoadGoals: true,
             partialErrors: ["core_memories": "503", "automations": "503"]
         ))
 
         await store.refreshAll()
         #expect(store.coreMemories == [cachedFact])
         #expect(store.automations == [cachedAuto])
-        #expect(store.goals == [freshGoal])
     }
 
     @Test("Decodes all 6 backend memory action receipt shapes from core/internal/api/memory.go")

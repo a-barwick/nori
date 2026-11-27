@@ -47,10 +47,6 @@
 <li>Nori has no Web Push or SMTP email delivery. Any other destination fails with <code>destination_missing</code>, so the host app can send external notifications.</li>
 </ul>
 </section>
-<section><h2>Goals</h2>
-<p>A goal (<code>/v1/goals</code>) tracks a longer-running outcome with completion criteria, progress notes, blockers and next actions. It links to the tasks and automations working toward it.</p>
-<p>A failed run leaves the goal unchanged. Completing a goal stops its attached automations unless the user chooses to keep them.</p>
-</section>
-<details class="sources"><summary>Sources</summary><p><code>core/internal/scheduler/service.go</code> · <code>core/internal/scheduler/tick.go</code> · <code>core/internal/scheduler/recurrence.go</code> · <code>core/internal/scheduler/delivery.go</code> · <code>core/internal/scheduler/goals.go</code> · <code>core/internal/scheduler/types.go</code> · <code>core/internal/api/scheduling.go</code> · <code>api/openapi.yaml</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/internal/scheduler/service.go</code> · <code>core/internal/scheduler/tick.go</code> · <code>core/internal/scheduler/recurrence.go</code> · <code>core/internal/scheduler/delivery.go</code> · <code>core/internal/scheduler/types.go</code> · <code>core/internal/api/scheduling.go</code> · <code>api/openapi.yaml</code></p></details>
 </body>
 </html>

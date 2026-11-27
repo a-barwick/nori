@@ -21,7 +21,7 @@ func startActivity(ctx context.Context, name, kind string, run state.Run, revisi
 	}
 	if o := run.Origin; o != nil {
 		for key, value := range map[string]string{"nori.automation.id": o.AutomationID, "nori.occurrence.id": o.OccurrenceID,
-			"nori.goal.id": o.GoalID, "nori.task.continues": o.ContinuesTaskID} {
+			"nori.task.continues": o.ContinuesTaskID} {
 			if value != "" {
 				attrs = append(attrs, attribute.String(key, value))
 			}

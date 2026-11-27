@@ -11,7 +11,7 @@ public struct RoutinesView: View {
     }
 
     private var activeAutomations: [Automation] {
-        let nonCancelled = store.automations.filter { $0.status != .cancelled }
+        let nonCancelled = store.automations.filter { $0.status != .cancelled && $0.trigger.kind != "once" }
         let enabled = nonCancelled.filter { $0.status == .enabled }
         let paused = nonCancelled.filter { $0.status != .enabled }
         return enabled + paused
@@ -42,7 +42,7 @@ public struct RoutinesView: View {
             }()
             return "Next up: \(next.title), \(when)."
         }
-        return "All routines are currently paused."
+        return "All automations are currently paused."
     }
 
     public var body: some View {
@@ -54,7 +54,7 @@ public struct RoutinesView: View {
 
                 if activeAutomations.isEmpty {
                     NoriEmptyState(
-                        title: "No routines yet",
+                        title: "No automations yet",
                         message: "Ask Nori in Chat to set up recurring briefs, monitors, or scheduled checks."
                     )
                 } else {
@@ -74,7 +74,7 @@ public struct RoutinesView: View {
         }
         .background(NoriColors.canvas)
         .refreshable {
-            await store.refreshRoutinesAndGoals()
+            await store.refreshAutomations()
         }
     }
 

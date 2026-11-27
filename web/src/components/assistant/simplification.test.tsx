@@ -11,9 +11,8 @@ import {
   parseAppearance,
 } from "@/lib/appearance";
 import { AssistantProvider } from "@/lib/assistant/context";
-import type { WorkItem } from "@/lib/contracts/assistant";
-import { GOAL_EXAMPLES } from "./GoalsScreen";
-import { statusPill } from "./WorkScreen";
+import type { Automation, WorkItem } from "@/lib/contracts/assistant";
+import { buildUnifiedTaskEntries, parseWorkTab, statusPill } from "./WorkScreen";
 import { THINKING_WORDS } from "@/lib/thinkingWords";
 import { buildUnits } from "@/lib/units";
 import { isChatInlineInteraction } from "@/lib/assistant/interactions";
@@ -200,11 +199,77 @@ describe("Web UI simplification pass & design system parity", () => {
     assert.match(inactiveHtml, /stroke="currentColor"/);
   });
 
-  test("GOAL_EXAMPLES provides starter prompts that kick off goals in Chat", () => {
-    assert.ok(GOAL_EXAMPLES.length >= 3);
-    for (const example of GOAL_EXAMPLES) {
-      assert.ok(example.title.trim().length > 0);
-      assert.match(example.prompt, /goal/i);
-    }
+  test("buildUnifiedTaskEntries orders active, queued, and one-off scheduled tasks without archived runs", () => {
+    assert.equal(parseWorkTab(null), "tasks");
+    assert.equal(parseWorkTab("artifacts"), "artifacts");
+    assert.equal(parseWorkTab("routines"), "automations");
+    assert.equal(parseWorkTab("automations"), "automations");
+
+    const baseWork: Omit<WorkItem, "task_id" | "title" | "status" | "bucket"> = {
+      instruction_revision: 1,
+      origin: { kind: "conversation", conversation_id: "assistant" },
+      interaction_ids: [],
+      operations: { total: 0, uncertain: 0, failed: 0, submitted: 0 },
+      result_ids: [],
+      cost: { status: "known", amount_usd: 0.01 },
+      started_at: "2026-11-26T10:00:00Z",
+      cancel_requested: false,
+    };
+    const workItems: WorkItem[] = [
+      { ...baseWork, task_id: "t-done", title: "Finished old run", status: "completed", bucket: "finished" },
+      { ...baseWork, task_id: "t-queued", title: "Queued Q4 brief", status: "running", bucket: "working", queued: true },
+      {
+        ...baseWork,
+        task_id: "t-active",
+        title: "Plan Kyoto trip",
+        status: "running",
+        bucket: "working",
+        steps: [{ text: "Compare flights", status: "done" }, { text: "Shortlist ryokans", status: "active" }],
+      },
+    ];
+    const automations: Automation[] = [
+      {
+        id: "a-once",
+        revision: 1,
+        title: "Follow up with Sam",
+        instruction: "Check SOW",
+        status: "enabled",
+        trigger: { kind: "once", at: "2026-12-01T17:00:00Z" },
+        connection_ids: [],
+        authority_rule_ids: [],
+        budget_usd: 1,
+        max_active_runs: 1,
+        missed_run: "latest",
+        execution_window_seconds: 3600,
+        destination_ids: [],
+        next_at: "2026-12-01T17:00:00Z",
+      },
+      {
+        id: "a-recurring",
+        revision: 1,
+        title: "Morning brief",
+        instruction: "Daily summary",
+        status: "enabled",
+        trigger: { kind: "recurring", local_start: "2026-11-26T08:00", timezone: "UTC", rrule: "FREQ=DAILY" },
+        connection_ids: [],
+        authority_rule_ids: [],
+        budget_usd: 1,
+        max_active_runs: 1,
+        missed_run: "skip",
+        execution_window_seconds: 3600,
+        destination_ids: [],
+        next_at: "2026-11-27T08:00:00Z",
+      },
+    ];
+
+    const { entries } = buildUnifiedTaskEntries({ workItems, pendingInteractions: [], automations });
+    assert.deepEqual(
+      entries.map((entry) => [entry.kind, entry.title]),
+      [
+        ["in_progress", "Plan Kyoto trip"],
+        ["todo", "Queued Q4 brief"],
+        ["scheduled", "Follow up with Sam"],
+      ],
+    );
   });
 });

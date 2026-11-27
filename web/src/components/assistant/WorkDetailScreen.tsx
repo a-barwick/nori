@@ -567,11 +567,7 @@ function PlainDetailsSection({ item, continuedBy }: { item: WorkItem; continuedB
         <dd className="min-w-0 text-ink-2">
           {item.origin.kind === "automation" && item.origin.automation_id ? (
             <Link className="font-medium text-accent-text hover:underline" href={`/routines/${encodeURIComponent(item.origin.automation_id)}`}>
-              Routine
-            </Link>
-          ) : item.origin.kind === "goal" && item.origin.goal_id ? (
-            <Link className="font-medium text-accent-text hover:underline" href={`/goals/${encodeURIComponent(item.origin.goal_id)}`}>
-              Goal
+              Automation
             </Link>
           ) : item.origin.kind === "external" ? (
             "Another app"
