@@ -375,6 +375,41 @@ export const inputBase =
   "rounded-tile border border-card-border bg-fill-1 px-3 py-2 text-input text-ink placeholder:text-ink-3 focus-visible:border-accent-signal focus-visible:bg-surface";
 export const inputClass = `w-full ${inputBase}`;
 
+export function Switch({
+  checked,
+  onCheckedChange,
+  disabled,
+  label,
+}: {
+  checked: boolean;
+  onCheckedChange: (next: boolean) => void;
+  disabled?: boolean;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onCheckedChange(!checked)}
+      className={cn(
+        "relative inline-flex h-[25px] w-[42px] shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-signal disabled:cursor-not-allowed disabled:opacity-50",
+        checked ? "bg-accent" : "bg-fill-2",
+      )}
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "pointer-events-none block size-[19px] rounded-full bg-white shadow-xs transition-transform",
+          checked ? "translate-x-[20px]" : "translate-x-[3px]",
+        )}
+      />
+    </button>
+  );
+}
+
 export function UnderlineTabs<T extends string>({
   value,
   onChange,

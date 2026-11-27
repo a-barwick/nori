@@ -25,6 +25,16 @@ public struct APICostsView: View {
     @State private var requestID = UUID()
     @State private var owner: APICostOwner?
     @State private var showingCostInfo = false
+    @State private var editingBudget: BudgetField?
+    @State private var budgetDraft = ""
+    @State private var isSavingBudget = false
+    @State private var budgetError: String?
+    @State private var preferencesLoadError: String?
+
+    private enum BudgetField: Hashable {
+        case task
+        case monthly
+    }
 
     public init(store: NoriStore) {
         self.store = store
@@ -71,13 +81,25 @@ public struct APICostsView: View {
                 } else if let response {
                     costContent(response)
                 }
+
+                if store.hasLoadedPreferences {
+                    budgetsSection
+                } else if let preferencesLoadError {
+                    VStack(alignment: .leading, spacing: 0) {
+                        NoriSectionHeader("Budgets")
+                        NoriNotice(title: "Could not load budgets", detail: preferencesLoadError, tone: .danger) {
+                            Button("Retry") { Task { await loadPreferences() } }
+                                .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                        }
+                    }
+                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
             .padding(.bottom, 96)
         }
         .background(NoriColors.canvas)
-        .navigationTitle("API Costs")
+        .navigationTitle("Usage & Budgets")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
@@ -94,11 +116,19 @@ public struct APICostsView: View {
             }
         }
         .task(id: store.authState.email) {
-            if store.authState.isSignedIn && store.modelSettings == nil && store.capabilities?.modelProfiles == nil {
-                try? await store.refreshModelSettings()
+            if store.authState.isSignedIn {
+                if store.modelSettings == nil && store.capabilities?.modelProfiles == nil {
+                    try? await store.refreshModelSettings()
+                }
+                if !store.hasLoadedPreferences {
+                    await loadPreferences()
+                }
             }
         }
-        .refreshable { await load() }
+        .refreshable {
+            await load()
+            await loadPreferences()
+        }
         .sheet(isPresented: $showingCostInfo) {
             NavigationStack {
                 ScrollView {
@@ -138,7 +168,7 @@ public struct APICostsView: View {
                 HStack(alignment: .top, spacing: 8) {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
-                            Text("Recorded cost")
+                            Text("Recorded spend")
                                 .font(NoriTypography.metaSemibold)
                                 .foregroundStyle(NoriColors.ink2)
                             Button {
@@ -151,7 +181,7 @@ public struct APICostsView: View {
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
-                            .accessibilityLabel("About recorded cost")
+                            .accessibilityLabel("About recorded spend")
                         }
                         .frame(height: 24, alignment: .leading)
 
@@ -188,6 +218,29 @@ public struct APICostsView: View {
                             .accessibilityLabel("Clear model filter, \(modelName(selectedModel))")
                         }
                     }
+                }
+
+                if response.days == 30,
+                   selectedModel == nil,
+                   amount.hasKnownCost,
+                   let monthly = store.preferences.budgets.monthlyUSD,
+                   monthly > 0 {
+                    let ratio = min(1.0, max(0.0, amount.costUSD / monthly))
+                    let barColor: Color = ratio >= 1.0 ? NoriColors.danger : ratio >= 0.8 ? NoriColors.warning : NoriColors.brandPrimary
+                    VStack(alignment: .leading, spacing: 6) {
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(NoriColors.fill1)
+                                Capsule().fill(barColor).frame(width: geo.size.width * ratio)
+                            }
+                        }
+                        .frame(height: 5)
+                        Text("\(Int((ratio * 100).rounded()))% of \(costString(monthly)) monthly limit")
+                            .font(NoriTypography.caption)
+                            .monospacedDigit()
+                            .foregroundStyle(NoriColors.ink3)
+                    }
+                    .padding(.top, 12)
                 }
 
                 if amount.totalCalls == 0 {
@@ -228,20 +281,26 @@ public struct APICostsView: View {
                 NoriSectionHeader("By model")
                 NoriRows {
                     ForEach(Array(response.models.enumerated()), id: \.element.id) { index, model in
+                        let isLocalOnly = model.amount.localCalls > 0 && model.amount.localCalls == model.amount.totalCalls
+                        let profile = modelProfile(model.model)
                         Button {
                             selectedModel = selectedModel == model.model ? nil : model.model
                         } label: {
-                            NoriRow(
+                            NoriBrandRow(
                                 title: modelName(model.model),
-                                detail: modelDetail(model.amount),
+                                brand: NoriBrandKind.forProvider(
+                                    provider: profile?.backend,
+                                    model: model.model,
+                                    backend: isLocalOnly ? "home" : profile?.backend
+                                ),
                                 showDivider: index < response.models.count - 1,
                                 wrapTitle: true
                             ) {
                                 HStack(spacing: 6) {
-                                    Text(modelCost(model.amount))
-                                        .font(.system(size: model.amount.hasKnownCost ? 14.5 : 12.5, weight: .semibold))
+                                    Text(isLocalOnly ? "Local" : modelCost(model.amount))
+                                        .font(.system(size: model.amount.hasKnownCost && !isLocalOnly ? 14.5 : 12.5, weight: .semibold))
                                         .monospacedDigit()
-                                        .foregroundStyle(model.amount.hasKnownCost ? NoriColors.ink : NoriColors.ink2)
+                                        .foregroundStyle(model.amount.hasKnownCost && !isLocalOnly ? NoriColors.ink : NoriColors.ink2)
                                     if selectedModel == model.model {
                                         Image(systemName: "checkmark")
                                             .font(.system(size: 12, weight: .semibold))
@@ -254,6 +313,145 @@ public struct APICostsView: View {
                         .accessibilityAddTraits(selectedModel == model.model ? .isSelected : [])
                     }
                 }
+            }
+        }
+    }
+
+    private var budgetsSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            NoriSectionHeader("Budgets")
+            if let budgetError {
+                NoriNotice(title: budgetError, tone: .danger)
+                    .padding(.bottom, 8)
+            }
+            NoriRows {
+                budgetRow(
+                    field: .task,
+                    title: "Per-task limit",
+                    display: costString(store.preferences.budgets.taskUSD),
+                    placeholder: "2.00",
+                    showDivider: true
+                )
+                budgetRow(
+                    field: .monthly,
+                    title: "Monthly limit",
+                    display: store.preferences.budgets.monthlyUSD.map(costString) ?? "No limit",
+                    placeholder: "No limit",
+                    showDivider: false
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func budgetRow(
+        field: BudgetField,
+        title: String,
+        display: String,
+        placeholder: String,
+        showDivider: Bool
+    ) -> some View {
+        if editingBudget == field {
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    Text(title)
+                        .font(NoriTypography.rowTitle)
+                        .foregroundStyle(NoriColors.ink)
+                    Spacer(minLength: 4)
+                    TextField(placeholder, text: $budgetDraft)
+                        .textFieldStyle(.plain)
+                        .font(NoriTypography.monoSmall)
+                        .foregroundStyle(NoriColors.ink)
+                        .tint(NoriColors.accent)
+                        #if os(iOS)
+                        .keyboardType(.decimalPad)
+                        #endif
+                        .frame(width: 84)
+                        .padding(.horizontal, 10)
+                        .frame(height: 34)
+                        .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous))
+                    Button("Save") { saveBudget(field) }
+                        .buttonStyle(NoriButtonStyle(.primary, compact: true))
+                        .disabled(isSavingBudget)
+                    Button("Cancel") {
+                        editingBudget = nil
+                        budgetError = nil
+                    }
+                    .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                    .disabled(isSavingBudget)
+                }
+                .padding(.horizontal, 13)
+                .padding(.vertical, 10)
+
+                if showDivider {
+                    Rectangle()
+                        .fill(NoriColors.hairline)
+                        .frame(height: 1)
+                        .padding(.leading, 13)
+                }
+            }
+        } else {
+            Button {
+                budgetError = nil
+                editingBudget = field
+                switch field {
+                case .task:
+                    budgetDraft = String(format: "%.2f", store.preferences.budgets.taskUSD)
+                case .monthly:
+                    budgetDraft = store.preferences.budgets.monthlyUSD.map { String(format: "%.2f", $0) } ?? ""
+                }
+            } label: {
+                NoriRow(title: title, showChevron: true, showDivider: showDivider) {
+                    Text(display)
+                        .font(NoriTypography.meta)
+                        .monospacedDigit()
+                        .foregroundStyle(NoriColors.ink2)
+                }
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func loadPreferences() async {
+        preferencesLoadError = nil
+        do {
+            try await store.refreshPreferencesThrowing()
+        } catch is CancellationError {
+            return
+        } catch {
+            preferencesLoadError = error.localizedDescription
+        }
+    }
+
+    private func saveBudget(_ field: BudgetField) {
+        let trimmed = budgetDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        var updated = store.preferences
+        switch field {
+        case .task:
+            guard !trimmed.isEmpty, let value = Double(trimmed), value.isFinite, value >= 0 else {
+                budgetError = "Enter a valid per-task limit (0 or more)."
+                return
+            }
+            updated.budgets.taskUSD = value
+        case .monthly:
+            if trimmed.isEmpty {
+                updated.budgets.monthlyUSD = nil
+            } else if let value = Double(trimmed), value.isFinite, value >= 0 {
+                updated.budgets.monthlyUSD = value
+            } else {
+                budgetError = "Enter a valid monthly limit (0 or more), or leave blank for no limit."
+                return
+            }
+        }
+        isSavingBudget = true
+        budgetError = nil
+        Task {
+            defer { isSavingBudget = false }
+            do {
+                try await store.savePreferences(updated)
+                editingBudget = nil
+            } catch {
+                budgetError = error.localizedDescription
             }
         }
     }
@@ -552,9 +750,13 @@ public struct APICostsView: View {
         return details.joined(separator: " · ")
     }
 
+    private func modelProfile(_ model: String) -> ModelProfile? {
+        let profiles = store.modelSettings?.modelProfiles.profiles ?? store.capabilities?.modelProfiles?.profiles ?? []
+        return profiles.first(where: { $0.model == model })
+    }
+
     private func modelName(_ model: String) -> String {
         guard !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Unknown model" }
-        let profiles = store.modelSettings?.modelProfiles.profiles ?? store.capabilities?.modelProfiles?.profiles ?? []
-        return profiles.first(where: { $0.model == model })?.label ?? model
+        return modelProfile(model)?.label ?? model
     }
 }

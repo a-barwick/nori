@@ -17,7 +17,8 @@ All Web visual tokens and reusable primitives live in `web/src/app/globals.css`,
 | `web/src/app/layout.tsx` | Loads Figtree & IBM Plex Mono fonts and injects `APPEARANCE_BOOT_SCRIPT` in `<head>` to prevent FOUC |
 | `web/src/components/mark/NoriMark.tsx` | Appearance-aware SVG mascot (`NoriMark`, `Medallion`) and monochrome navigation icon (`NoriTabIcon`) |
 | `web/src/components/ui/primitives.tsx` | Base controls (`Button` with 5 semantic kinds + centralized disabled state, `IconButton` + `Tip`) |
-| `web/src/components/assistant/ui.tsx` | Screen & list primitives (`Screen`, `Section`, `Rows`, `Row`, `Pill`, `Badge`, `Notice`, `Empty`, `Confirm`, `UnderlineTabs`, `Tabs`, `Field`, `inputBase`) |
+| `web/src/components/assistant/ui.tsx` | Screen & list primitives (`Screen`, `Section`, `Rows`, `Row`, `Switch`, `Pill`, `Badge`, `Notice`, `Empty`, `Confirm`, `UnderlineTabs`, `Tabs`, `Field`, `inputBase`) |
+| `web/src/components/assistant/BrandIcons.tsx` | Brand mark wells (`BrandIconWell`, `AppBrandIcon`, `ProviderBrandIcon`) for Google services, custom apps, and model providers |
 | `web/src/components/shell/AppFrame.tsx` | Full-bleed desktop top bar (`60px`) and mobile bottom 3-tab shell (`Chat`, `Work`, `More`) |
 
 ---
@@ -100,7 +101,14 @@ Never pair `bg-ink` with `text-surface` for selected pills, tabs, or tooltips (i
 - **Work → Tasks:** `Action needed` approval cards above a single unified list of open tasks (active tasks with circular progress rings and inline-expandable read-only steps, queued tasks, and one-off scheduled tasks), with inline `Cancel` / `Keep` confirmation and no archived task history. Shows a slim single-row `All clear` bar when idle.
 - **Work → Automations:** Recurring routines, monitors, and event-relative automations with quick Run / Pause controls.
 - **Work → Artifacts:** Starts directly with Search + Kind filter chips + clean chronological list (no oversized hero banner pulling the newest item out of flow).
-- **More:** Flat grouped rows under **Workspace** (`Apps & MCP`, `Memory`), **Settings** (`Models`, `Standing Permissions`, `Preferences & Budgets`, `Appearance`), and **Account** (`Account`, `Action History`, `Diagnostics`)—no top hero card or oversized 2-up workspace tiles.
+- **More:** Flat grouped rows with zero navigation sublabels under **Nori** (`Apps`, `Memory`, `Permissions`), **Settings** (`Models`, `Usage & Budgets`, `Preferences`, `Appearance`), and **Account** (`Account`, housing `Action History`, `Diagnostics`, `Legal`, `Reset data`, `Delete account`, and `Sign out`). Pills appear only for exceptions (`1 attention`, `Required`, `Reconnecting`, `Offline`).
+- **More Subpages:**
+  - **Apps (`/apps`):** Real Google Calendar, Google Drive, Gmail, Linear, and Notion icons (`AppBrandIcon`), direct switches for Google services, collapsed `Sign-in options` when adding a custom app, and plain on/off `Actions` switches on app detail screens.
+  - **Memory (`/memory`):** Unified search bar across saved facts and past chat notes, canonical topic folders with counts, and inline `×` → `Forget` / `Keep` confirmation.
+  - **Permissions (`/settings/permissions`):** Simple `Allowed`, `Ask first`, and `Blocked` groups with semantic status dots and inline `×` → `Remove` / `Keep` confirmation.
+  - **Models (`/settings/models`):** Auto-saving `Chat` and `Work` rows opening a searchable picker with `Reasoning` pinned at the top, brand-icon `Providers` rows (`ProviderBrandIcon`), and a `Home computer` section with `+ Pair`.
+  - **Usage & Budgets (`/settings/api-costs`):** Combines `Recorded spend`, monthly budget progress bar, inline-editable `Per-task limit` and `Monthly limit` rows, and single-line `By model` rows with brand icons.
+  - **Preferences (`/settings/preferences`):** Region (`Time zone`, `Language & region`), single-row `Working hours` summary drilling into the day-by-day schedule editor, and `Default accounts` with brand icons.
 
 ### Chat Chrome & Mascot
 - Assistant replies sit directly on `bg-canvas` (`--bg-bubble-nori: transparent`); user replies use `bg-accent text-on-accent`.
@@ -113,8 +121,8 @@ Never pair `bg-ink` with `text-surface` for selected pills, tabs, or tooltips (i
 - Inputs (`inputBase` / `inputClass`) sit on `bg-fill-1` with `border-card-border` (hairline in Light, borderless in Dark) and transition to `border-accent-signal` on `:focus-visible`.
 
 ### Copy & Sublabels
-- **No filler sublabels.** Only show a row `detail` or card subtitle when it carries live data or state (e.g., `0.3 / 24 KB`, `3 rules`, `Dark`, `2 connected`). Never add explanatory filler that repeats the title, explains an obvious control, or fills an empty state with extra taglines.
-- **Plain, positive English.** When a screen needs a brief explanation, write one clear, positive sentence for non-technical readers—never start by defining what something is *not*.
+- **No navigation or toggle sublabels.** Navigation menu rows, toggle rows, and clean list items render a single title line. Use trailing text only for editable settings values (such as `Claude Sonnet 4.6`, `$2.00`, `America/Los_Angeles`) and reserve `Pill` badges strictly for exceptions.
+- **Plain, positive English.** Write one clear sentence when explanation is needed, and never use the phrase `"needs you"`.
 
 ---
 

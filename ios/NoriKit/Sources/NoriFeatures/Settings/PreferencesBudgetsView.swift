@@ -7,13 +7,13 @@ private let preferenceDayOrder = [1, 2, 3, 4, 5, 6, 0]
 
 private func humanizeAccountPurpose(_ purpose: String) -> String {
     switch purpose {
-    case "calendar.create": return "New events go to"
-    case "calendar.read": return "Read events from"
-    case "calendar.write": return "Update events in"
-    case "mail.send": return "Send mail as"
-    case "mail.read": return "Read mail from"
-    case "files.read": return "Read files from"
-    case "files.write": return "Save files to"
+    case "calendar.create": return "New events"
+    case "calendar.read": return "Read events"
+    case "calendar.write": return "Update events"
+    case "mail.send": return "Send mail"
+    case "mail.read": return "Read mail"
+    case "files.read": return "Read files"
+    case "files.write": return "Save files"
     default:
         let words = purpose
             .replacingOccurrences(of: ".", with: " ")
@@ -25,22 +25,28 @@ private func humanizeAccountPurpose(_ purpose: String) -> String {
     }
 }
 
+private func brandForPurpose(_ purpose: String) -> NoriBrandKind {
+    if purpose.hasPrefix("calendar") { return .googleCalendar }
+    if purpose.hasPrefix("mail") { return .gmail }
+    if purpose.hasPrefix("files") { return .googleDrive }
+    return .customApp
+}
+
 public struct PreferencesBudgetsView: View {
     @Bindable private var store: NoriStore
-    @State private var showingEditPreferences = false
+    @State private var editingField: RegionField?
+    @State private var draftValue = ""
+    @State private var isSaving = false
     @State private var isLoading = false
     @State private var loadError: String?
 
-    public init(store: NoriStore) {
-        self.store = store
+    private enum RegionField: Hashable {
+        case timezone
+        case locale
     }
 
-    private var budgetDetailString: String {
-        let taskStr = String(format: "$%.2f per task", store.preferences.budgets.taskUSD)
-        if let monthly = store.preferences.budgets.monthlyUSD {
-            return "\(taskStr) · \(String(format: "$%.2f", monthly)) monthly cap"
-        }
-        return taskStr
+    public init(store: NoriStore) {
+        self.store = store
     }
 
     private var localeDisplay: String {
@@ -48,16 +54,25 @@ public struct PreferencesBudgetsView: View {
         return trimmed.isEmpty ? "Not set" : trimmed
     }
 
-    private var workingHoursSummary: [WorkingHoursSlot] {
-        preferenceDayOrder.compactMap { day in
+    private var workingHoursSummaryText: String {
+        let ordered = preferenceDayOrder.compactMap { day in
             store.preferences.workingHours.first { $0.day == day }
         }
+        guard !ordered.isEmpty else { return "Not set" }
+        let sameTimes = ordered.allSatisfy { $0.start == ordered[0].start && $0.end == ordered[0].end }
+        let days = ordered.map(\.day)
+        let dayLabel = days == [1, 2, 3, 4, 5] ? "Mon – Fri" : "\(ordered.count) days"
+        return sameTimes ? "\(dayLabel) · \(ordered[0].start)–\(ordered[0].end)" : dayLabel
     }
 
     private var sortedAccountDefaults: [(purpose: String, connectionID: String)] {
         store.preferences.accountDefaults
             .sorted { $0.key < $1.key }
             .map { (purpose: $0.key, connectionID: $0.value) }
+    }
+
+    private var activeConnections: [Connection] {
+        store.connections.filter { $0.status != .disconnected }
     }
 
     private func connectionLabel(for id: String) -> String {
@@ -93,46 +108,40 @@ public struct PreferencesBudgetsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 } else if store.hasLoadedPreferences {
-                    NoriRows {
-                        NoriRow(
-                            title: "Time zone",
-                            detail: store.preferences.timezone,
-                            showDivider: true
-                        )
-
-                        NoriRow(
-                            title: "Language and region",
-                            detail: localeDisplay,
-                            showDivider: true
-                        )
-
-                        NoriRow(
-                            title: "Task budget",
-                            detail: budgetDetailString,
-                            showDivider: false
-                        )
+                    VStack(alignment: .leading, spacing: 0) {
+                        NoriSectionHeader("Region")
+                        NoriRows {
+                            regionRow(
+                                field: .timezone,
+                                title: "Time zone",
+                                displayValue: store.preferences.timezone,
+                                placeholder: "America/Los_Angeles",
+                                showDivider: true
+                            )
+                            regionRow(
+                                field: .locale,
+                                title: "Language & region",
+                                displayValue: localeDisplay,
+                                placeholder: "en-US",
+                                showDivider: false
+                            )
+                        }
                     }
 
                     VStack(alignment: .leading, spacing: 0) {
-                        NoriSectionHeader("Working hours")
-                        if workingHoursSummary.isEmpty {
-                            NoriCard {
-                                Text("No working hours set.")
-                                    .font(NoriTypography.meta)
-                                    .foregroundStyle(NoriColors.ink2)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        } else {
-                            NoriRows {
-                                ForEach(Array(workingHoursSummary.enumerated()), id: \.element.day) { index, slot in
-                                    let dayName = (0..<preferenceDayNames.count).contains(slot.day) ? preferenceDayNames[slot.day] : "Day \(slot.day)"
-                                    NoriRow(
-                                        title: dayName,
-                                        detail: "\(slot.start) – \(slot.end)",
-                                        showDivider: index < workingHoursSummary.count - 1
-                                    )
+                        NoriSectionHeader("Schedule")
+                        NoriRows {
+                            NavigationLink {
+                                WorkingHoursEditorView(store: store)
+                            } label: {
+                                NoriRow(title: "Working hours", showChevron: true, showDivider: false) {
+                                    Text(workingHoursSummaryText)
+                                        .font(NoriTypography.meta)
+                                        .monospacedDigit()
+                                        .foregroundStyle(NoriColors.ink2)
                                 }
                             }
+                            .buttonStyle(.plain)
                         }
                     }
 
@@ -141,11 +150,31 @@ public struct PreferencesBudgetsView: View {
                             NoriSectionHeader("Default accounts")
                             NoriRows {
                                 ForEach(Array(sortedAccountDefaults.enumerated()), id: \.element.purpose) { index, entry in
-                                    NoriRow(
+                                    NoriBrandRow(
                                         title: humanizeAccountPurpose(entry.purpose),
-                                        detail: connectionLabel(for: entry.connectionID),
+                                        brand: brandForPurpose(entry.purpose),
                                         showDivider: index < sortedAccountDefaults.count - 1
-                                    )
+                                    ) {
+                                        if activeConnections.count > 1 {
+                                            Picker(
+                                                humanizeAccountPurpose(entry.purpose),
+                                                selection: Binding(
+                                                    get: { store.preferences.accountDefaults[entry.purpose] ?? entry.connectionID },
+                                                    set: { nextID in saveAccountDefault(purpose: entry.purpose, connectionID: nextID) }
+                                                )
+                                            ) {
+                                                ForEach(activeConnections) { conn in
+                                                    Text(connectionLabel(for: conn.id)).tag(conn.id)
+                                                }
+                                            }
+                                            .pickerStyle(.menu)
+                                            .tint(NoriColors.accent)
+                                        } else {
+                                            Text(connectionLabel(for: entry.connectionID))
+                                                .font(NoriTypography.meta)
+                                                .foregroundStyle(NoriColors.ink2)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -165,28 +194,93 @@ public struct PreferencesBudgetsView: View {
             await loadPreferences()
         }
         .background(NoriColors.canvas)
-        .navigationTitle("Preferences & Budgets")
+        .navigationTitle("Preferences")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         #endif
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button("Edit") {
-                    showingEditPreferences = true
+    }
+
+    @ViewBuilder
+    private func regionRow(
+        field: RegionField,
+        title: String,
+        displayValue: String,
+        placeholder: String,
+        showDivider: Bool
+    ) -> some View {
+        if editingField == field {
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    Text(title)
+                        .font(NoriTypography.rowTitle)
+                        .foregroundStyle(NoriColors.ink)
+                    Spacer(minLength: 4)
+                    TextField(placeholder, text: $draftValue)
+                        .textFieldStyle(.plain)
+                        .font(NoriTypography.meta)
+                        .foregroundStyle(NoriColors.ink)
+                        .tint(NoriColors.accent)
+                        .autocorrectionDisabled()
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
+                        .frame(width: 140)
+                        .padding(.horizontal, 10)
+                        .frame(height: 34)
+                        .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous))
+                    Button("Save") { saveRegion(field) }
+                        .buttonStyle(NoriButtonStyle(.primary, compact: true))
+                        .disabled(isSaving || (field == .timezone && draftValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                    Button("Cancel") { editingField = nil }
+                        .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                        .disabled(isSaving)
                 }
-                .disabled(!store.hasLoadedPreferences)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(NoriColors.accent)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 10)
+
+                if showDivider {
+                    Rectangle()
+                        .fill(NoriColors.hairline)
+                        .frame(height: 1)
+                        .padding(.leading, 13)
+                }
             }
+        } else {
+            Button {
+                editingField = field
+                draftValue = field == .timezone ? store.preferences.timezone : (store.preferences.locale ?? "")
+            } label: {
+                NoriRow(title: title, showChevron: true, showDivider: showDivider) {
+                    Text(displayValue)
+                        .font(NoriTypography.meta)
+                        .foregroundStyle(NoriColors.ink2)
+                }
+            }
+            .buttonStyle(.plain)
         }
-        .sheet(isPresented: $showingEditPreferences) {
-            EditPreferencesSheet(store: store)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-                .presentationBackground(NoriColors.sheetBackground)
-                .presentationCornerRadius(NoriRadius.sheet)
+    }
+
+    private func saveRegion(_ field: RegionField) {
+        let trimmed = draftValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if field == .timezone && trimmed.isEmpty { return }
+        var updated = store.preferences
+        switch field {
+        case .timezone: updated.timezone = trimmed
+        case .locale: updated.locale = trimmed.isEmpty ? nil : trimmed
         }
+        isSaving = true
+        Task {
+            defer { isSaving = false }
+            await store.updatePreferences(updated)
+            editingField = nil
+        }
+    }
+
+    private func saveAccountDefault(purpose: String, connectionID: String) {
+        var updated = store.preferences
+        updated.accountDefaults[purpose] = connectionID
+        Task { await store.updatePreferences(updated) }
     }
 
     private func loadPreferences() async {
@@ -203,289 +297,121 @@ public struct PreferencesBudgetsView: View {
     }
 }
 
-private struct EditPreferencesSheet: View {
+private struct WorkingHoursEditorView: View {
     @Bindable var store: NoriStore
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var timezone = ""
-    @State private var locale = ""
-    @State private var taskBudgetText = ""
-    @State private var monthlyCapText = ""
-    @State private var workingHoursByDay: [Int: (start: String, end: String)] = [:]
-    @State private var accountDefaults: [String: String] = [:]
+    @State private var hoursByDay: [Int: (start: String, end: String)] = [:]
     @State private var isSaving = false
-    @State private var errorMessage: String?
-
-    private var activeConnections: [Connection] {
-        store.connections.filter { $0.status != .disconnected }
-    }
-
-    private var validationError: String? {
-        if timezone.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "Enter a time zone."
-        }
-        let trimmedTask = taskBudgetText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedTask.isEmpty, let taskVal = Double(trimmedTask), taskVal.isFinite, taskVal >= 0 else {
-            return "Enter a valid per-task budget (0 or more)."
-        }
-        let trimmedMonthly = monthlyCapText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedMonthly.isEmpty {
-            guard let monthlyVal = Double(trimmedMonthly), monthlyVal.isFinite, monthlyVal >= 0 else {
-                return "Enter a valid monthly cap (0 or more), or leave blank."
-            }
-        }
-        return nil
-    }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Time zone")
-                            .font(NoriTypography.metaSemibold)
-                            .foregroundStyle(NoriColors.ink)
-                        TextField("America/Los_Angeles", text: $timezone)
-                            .textFieldStyle(.plain)
-                            .foregroundStyle(NoriColors.ink)
-                            .tint(NoriColors.accent)
-                            .autocorrectionDisabled()
-                            #if os(iOS)
-                            .textInputAutocapitalization(.never)
-                            #endif
-                            .padding(.horizontal, 12)
-                            .frame(height: 40)
-                            .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
-                    }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Language and region")
-                            .font(NoriTypography.metaSemibold)
-                            .foregroundStyle(NoriColors.ink)
-                        TextField("en-US", text: $locale)
-                            .textFieldStyle(.plain)
-                            .foregroundStyle(NoriColors.ink)
-                            .tint(NoriColors.accent)
-                            .autocorrectionDisabled()
-                            #if os(iOS)
-                            .textInputAutocapitalization(.never)
-                            #endif
-                            .padding(.horizontal, 12)
-                            .frame(height: 40)
-                            .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
-                    }
-
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Per-task budget ($)")
-                                .font(NoriTypography.metaSemibold)
-                                .foregroundStyle(NoriColors.ink)
-                            TextField("1.00", text: $taskBudgetText)
-                                .textFieldStyle(.plain)
-                                .font(NoriTypography.mono)
-                                .foregroundStyle(NoriColors.ink)
-                                .tint(NoriColors.accent)
-                                #if os(iOS)
-                                .keyboardType(.decimalPad)
-                                #endif
-                                .padding(.horizontal, 12)
-                                .frame(height: 40)
-                                .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
-                        }
-
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Monthly cap ($)")
-                                .font(NoriTypography.metaSemibold)
-                                .foregroundStyle(NoriColors.ink)
-                            TextField("No limit", text: $monthlyCapText)
-                                .textFieldStyle(.plain)
-                                .font(NoriTypography.mono)
-                                .foregroundStyle(NoriColors.ink)
-                                .tint(NoriColors.accent)
-                                #if os(iOS)
-                                .keyboardType(.decimalPad)
-                                #endif
-                                .padding(.horizontal, 12)
-                                .frame(height: 40)
-                                .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Working hours")
-                            .font(NoriTypography.metaSemibold)
-                            .foregroundStyle(NoriColors.ink)
-
-                        VStack(spacing: 8) {
-                            ForEach(preferenceDayOrder, id: \.self) { day in
-                                let isEnabled = workingHoursByDay[day] != nil
-                                HStack(spacing: 10) {
-                                    Toggle(isOn: Binding(
-                                        get: { workingHoursByDay[day] != nil },
-                                        set: { enabled in
-                                            if enabled {
-                                                workingHoursByDay[day] = ("09:00", "17:30")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                NoriRows {
+                    ForEach(Array(preferenceDayOrder.enumerated()), id: \.element) { index, day in
+                        let isLast = index == preferenceDayOrder.count - 1
+                        let slot = hoursByDay[day]
+                        VStack(spacing: 0) {
+                            HStack(spacing: 10) {
+                                Toggle(
+                                    preferenceDayNames[day],
+                                    isOn: Binding(
+                                        get: { hoursByDay[day] != nil },
+                                        set: { on in
+                                            if on {
+                                                hoursByDay[day] = ("09:00", "17:30")
                                             } else {
-                                                workingHoursByDay.removeValue(forKey: day)
+                                                hoursByDay.removeValue(forKey: day)
                                             }
+                                            commit()
                                         }
-                                    )) {
-                                        Text(preferenceDayNames[day])
-                                            .font(NoriTypography.metaSemibold)
-                                            .foregroundStyle(NoriColors.ink)
-                                    }
-                                    .toggleStyle(.switch)
-                                    .tint(NoriColors.brandPrimary)
-                                    .frame(width: 100)
+                                    )
+                                )
+                                .labelsHidden()
+                                .tint(NoriColors.brandPrimary)
+                                .disabled(isSaving)
 
-                                    if isEnabled {
-                                        TextField("09:00", text: Binding(
-                                            get: { workingHoursByDay[day]?.start ?? "09:00" },
-                                            set: { workingHoursByDay[day] = ($0, workingHoursByDay[day]?.end ?? "17:30") }
-                                        ))
-                                        .textFieldStyle(.plain)
-                                        .font(NoriTypography.monoSmall)
-                                        .foregroundStyle(NoriColors.ink)
-                                        .tint(NoriColors.accent)
-                                        .multilineTextAlignment(.center)
-                                        .frame(height: 34)
-                                        .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous))
+                                Text(preferenceDayNames[day])
+                                    .font(NoriTypography.rowTitle)
+                                    .foregroundStyle(NoriColors.ink)
 
-                                        Text("–")
-                                            .foregroundStyle(NoriColors.ink3)
+                                Spacer(minLength: 8)
 
-                                        TextField("17:30", text: Binding(
-                                            get: { workingHoursByDay[day]?.end ?? "17:30" },
-                                            set: { workingHoursByDay[day] = (workingHoursByDay[day]?.start ?? "09:00", $0) }
-                                        ))
-                                        .textFieldStyle(.plain)
-                                        .font(NoriTypography.monoSmall)
-                                        .foregroundStyle(NoriColors.ink)
-                                        .tint(NoriColors.accent)
-                                        .multilineTextAlignment(.center)
-                                        .frame(height: 34)
-                                        .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous))
-                                    } else {
-                                        Spacer()
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if !accountDefaults.isEmpty && !activeConnections.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Default accounts")
-                                .font(NoriTypography.metaSemibold)
-                                .foregroundStyle(NoriColors.ink)
-
-                            ForEach(accountDefaults.keys.sorted(), id: \.self) { purpose in
-                                HStack {
-                                    Text(humanizeAccountPurpose(purpose))
-                                        .font(NoriTypography.meta)
-                                        .foregroundStyle(NoriColors.ink2)
-                                    Spacer()
-                                    Picker(humanizeAccountPurpose(purpose), selection: Binding(
-                                        get: { accountDefaults[purpose] ?? "" },
-                                        set: { accountDefaults[purpose] = $0 }
-                                    )) {
-                                        ForEach(activeConnections) { conn in
-                                            let label = [conn.title, conn.account?.label]
-                                                .compactMap { $0 }
-                                                .filter { !$0.isEmpty }
-                                                .joined(separator: " · ")
-                                            Text(label.isEmpty ? conn.id : label).tag(conn.id)
-                                        }
-                                    }
-                                    .pickerStyle(.menu)
+                                if slot != nil {
+                                    TextField("09:00", text: Binding(
+                                        get: { hoursByDay[day]?.start ?? "09:00" },
+                                        set: { hoursByDay[day] = ($0, hoursByDay[day]?.end ?? "17:30") }
+                                    ))
+                                    .onSubmit { commit() }
+                                    .textFieldStyle(.plain)
+                                    .font(NoriTypography.monoSmall)
+                                    .foregroundStyle(NoriColors.ink)
                                     .tint(NoriColors.accent)
+                                    .multilineTextAlignment(.center)
+                                    .frame(width: 64, height: 32)
+                                    .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous))
+
+                                    Text("–").foregroundStyle(NoriColors.ink3)
+
+                                    TextField("17:30", text: Binding(
+                                        get: { hoursByDay[day]?.end ?? "17:30" },
+                                        set: { hoursByDay[day] = (hoursByDay[day]?.start ?? "09:00", $0) }
+                                    ))
+                                    .onSubmit { commit() }
+                                    .textFieldStyle(.plain)
+                                    .font(NoriTypography.monoSmall)
+                                    .foregroundStyle(NoriColors.ink)
+                                    .tint(NoriColors.accent)
+                                    .multilineTextAlignment(.center)
+                                    .frame(width: 64, height: 32)
+                                    .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous))
+                                } else {
+                                    Text("Off")
+                                        .font(NoriTypography.meta)
+                                        .foregroundStyle(NoriColors.ink3)
                                 }
-                                .padding(.horizontal, 12)
-                                .frame(minHeight: 40)
-                                .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                            }
+                            .padding(.horizontal, 13)
+                            .padding(.vertical, 11)
+
+                            if !isLast {
+                                Rectangle()
+                                    .fill(NoriColors.hairline)
+                                    .frame(height: 1)
+                                    .padding(.leading, 13)
                             }
                         }
                     }
-
-                    if let errorMessage {
-                        NoriNotice(title: "Could not save preferences", detail: errorMessage, tone: .danger)
-                    }
-
-                    Button {
-                        save()
-                    } label: {
-                        if isSaving {
-                            ProgressView().tint(NoriColors.disabled)
-                        } else {
-                            Text("Save preferences")
-                        }
-                    }
-                    .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
-                    .disabled(isSaving || validationError != nil)
-                    .padding(.top, 6)
-                }
-                .padding(16)
-            }
-            .background(NoriColors.sheetBackground)
-            .navigationTitle("Preferences")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .foregroundStyle(NoriColors.ink2)
-                        .disabled(isSaving)
                 }
             }
-            .interactiveDismissDisabled(isSaving)
-            .onAppear {
-                timezone = store.preferences.timezone
-                locale = store.preferences.locale ?? ""
-                taskBudgetText = String(format: "%.2f", store.preferences.budgets.taskUSD)
-                monthlyCapText = store.preferences.budgets.monthlyUSD.map { String(format: "%.2f", $0) } ?? ""
-                workingHoursByDay = Dictionary(
-                    uniqueKeysWithValues: store.preferences.workingHours.map { ($0.day, ($0.start, $0.end)) }
-                )
-                accountDefaults = store.preferences.accountDefaults
-            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 96)
+        }
+        .background(NoriColors.canvas)
+        .navigationTitle("Working hours")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+        .onAppear {
+            hoursByDay = Dictionary(
+                uniqueKeysWithValues: store.preferences.workingHours.map { ($0.day, ($0.start, $0.end)) }
+            )
+        }
+        .onDisappear {
+            commit()
         }
     }
 
-    private func save() {
-        if let validationError {
-            errorMessage = validationError
-            return
-        }
-        isSaving = true
-        errorMessage = nil
-        var updated = store.preferences
-        updated.timezone = timezone.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedLocale = locale.trimmingCharacters(in: .whitespacesAndNewlines)
-        updated.locale = trimmedLocale.isEmpty ? nil : trimmedLocale
-        if let taskVal = Double(taskBudgetText.trimmingCharacters(in: .whitespacesAndNewlines)), taskVal.isFinite, taskVal >= 0 {
-            updated.budgets.taskUSD = taskVal
-        }
-        let trimmedMonthly = monthlyCapText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedMonthly.isEmpty {
-            updated.budgets.monthlyUSD = nil
-        } else if let monthlyVal = Double(trimmedMonthly), monthlyVal.isFinite, monthlyVal >= 0 {
-            updated.budgets.monthlyUSD = monthlyVal
-        }
-        updated.workingHours = workingHoursByDay
+    private func commit() {
+        let slots = hoursByDay
             .map { WorkingHoursSlot(day: $0.key, start: $0.value.start, end: $0.value.end) }
             .sorted { $0.day < $1.day }
-        updated.accountDefaults = accountDefaults
-
+        guard slots != store.preferences.workingHours else { return }
+        var updated = store.preferences
+        updated.workingHours = slots
+        isSaving = true
         Task {
-            do {
-                try await store.savePreferences(updated)
-                isSaving = false
-                dismiss()
-            } catch {
-                isSaving = false
-                errorMessage = error.localizedDescription
-            }
+            defer { isSaving = false }
+            await store.updatePreferences(updated)
         }
     }
 }

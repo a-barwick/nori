@@ -49,6 +49,16 @@ describe("API costs", () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/settings/models")) return Response.json(settings);
+      if (url.endsWith("/preferences")) {
+        return Response.json({
+          revision: 1,
+          timezone: "America/Los_Angeles",
+          working_hours: [],
+          default_destination_ids: [],
+          account_defaults: {},
+          budgets: { task_usd: 2, monthly_usd: 50 },
+        });
+      }
       if (url.endsWith("days=30")) return Response.json(reports[30]);
       if (url.endsWith("days=7")) return Response.json(reports[7]);
       if (url.endsWith("days=1")) return new Promise<Response>((resolve) => { resolveToday = resolve; });

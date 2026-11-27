@@ -2,51 +2,89 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Plus, Server } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { mutate, newRequestID, sendSecret } from "@/lib/assistant/api";
 import { useAssistantConfig } from "@/lib/assistant/context";
-import { plural, relative } from "@/lib/assistant/format";
 import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant/useResource";
 import { useStripSearchParams } from "@/lib/browser";
-import type { AuthAttempt, Connection, HealthCode, MCPCredentialInput, MCPServer, MCPServerTool as MCPTool } from "@/lib/contracts/assistant";
+import type {
+  AuthAttempt,
+  Connection,
+  HealthCode,
+  MCPCredentialInput,
+  MCPServer,
+  MCPServerTool as MCPTool,
+} from "@/lib/contracts/assistant";
 import { useHydrated } from "@/lib/hooks";
 import "@/lib/desktop";
 import { cn } from "@/lib/utils";
-import { safeAuthorizeURL } from "./InteractionCard";
+import { AppBrandIcon } from "./BrandIcons";
 import { GoogleConnection } from "./GoogleConnection";
-import { Empty, Failure, Field, inputBase, inputClass, Loading, Notice, NotYet, Pill, Row, Rows, Screen, Section, type Tone } from "./ui";
+import { safeAuthorizeURL } from "./InteractionCard";
+import {
+  Empty,
+  Failure,
+  Field,
+  inputBase,
+  inputClass,
+  Loading,
+  Notice,
+  NotYet,
+  Pill,
+  Row,
+  Rows,
+  Screen,
+  Section,
+  Switch,
+  type Tone,
+} from "./ui";
 
 type List<T> = { items: T[] };
 
 const HEALTH: Record<HealthCode, { tone: Tone; label: string }> = {
-  ready: { tone: "ok", label: "Ready" }, needs_sign_in: { tone: "danger", label: "Needs sign-in" }, needs_more_access: { tone: "warning", label: "Needs more access" },
-  revoked: { tone: "danger", label: "Access removed" }, rate_limited: { tone: "warning", label: "Slowed down by provider" }, temporarily_failing: { tone: "warning", label: "Having trouble" },
-  provider_unavailable: { tone: "warning", label: "Provider is down" }, credential_store_unavailable: { tone: "danger", label: "Can’t save this account" },
+  ready: { tone: "ok", label: "Ready" },
+  needs_sign_in: { tone: "danger", label: "Needs sign-in" },
+  needs_more_access: { tone: "warning", label: "Needs more access" },
+  revoked: { tone: "danger", label: "Access removed" },
+  rate_limited: { tone: "warning", label: "Slowed down by provider" },
+  temporarily_failing: { tone: "warning", label: "Having trouble" },
+  provider_unavailable: { tone: "warning", label: "Provider is down" },
+  credential_store_unavailable: { tone: "danger", label: "Can’t save this account" },
 };
 
 function healthOf(connection: Connection): HealthCode | undefined {
   const code = connection.health.code;
-  if (connection.status === "needs_attention" && (!code || code === "ready")) return connection.missing_scopes?.length ? "needs_more_access" : "needs_sign_in";
+  if (connection.status === "needs_attention" && (!code || code === "ready")) {
+    return connection.missing_scopes?.length ? "needs_more_access" : "needs_sign_in";
+  }
   return code;
 }
 
 export function connectionState(connection: Connection): { tone: Tone; label: string } {
   if (connection.status === "connecting") return { tone: "neutral", label: "Connecting" };
-  if (connection.status === "disconnected" || connection.status === "not_connected") return { tone: "neutral", label: "Not connected" };
+  if (connection.status === "disconnected" || connection.status === "not_connected") {
+    return { tone: "neutral", label: "Not connected" };
+  }
   if (connection.status === "disabled") return { tone: "neutral", label: "Off" };
   if (connection.status === "disconnecting") return { tone: "neutral", label: "Disconnecting" };
   return HEALTH[healthOf(connection) ?? "ready"] ?? { tone: "neutral", label: connection.status };
 }
 
-export async function startSignIn(connection: Pick<Connection, "id" | "revision">, action: "connect" | "repair", returnTo: string, capabilities?: string[]) {
+export async function startSignIn(
+  connection: Pick<Connection, "id" | "revision">,
+  action: "connect" | "repair",
+  returnTo: string,
+  capabilities?: string[],
+) {
   if (window.noriDesktop) {
     await window.noriDesktop.openInBrowser();
     return;
   }
-  const receipt = await mutate<Connection>(`/connections/${encodeURIComponent(connection.id)}/actions`, {
-    request_id: newRequestID(), expected_revision: connection.revision, value: { action, return_to: returnTo, ...(capabilities?.length ? { capabilities } : {}) },
-  }) as { auth?: AuthAttempt };
+  const receipt = (await mutate<Connection>(`/connections/${encodeURIComponent(connection.id)}/actions`, {
+    request_id: newRequestID(),
+    expected_revision: connection.revision,
+    value: { action, return_to: returnTo, ...(capabilities?.length ? { capabilities } : {}) },
+  })) as { auth?: AuthAttempt };
   const url = receipt.auth && safeAuthorizeURL(receipt.auth.authorize_url);
   if (!url) throw new Error("Nori didn’t return a sign-in link. Try again.");
   window.location.assign(url);
@@ -68,13 +106,21 @@ export function AppsScreen() {
   const signedInServer = params.get("mcp");
   const signInResult = params.get("result");
   useEffect(() => {
-    if (signedInServer) router.replace(`/apps/mcp/${encodeURIComponent(signedInServer)}?result=${encodeURIComponent(signInResult ?? "")}`);
+    if (signedInServer) {
+      router.replace(`/apps/mcp/${encodeURIComponent(signedInServer)}?result=${encodeURIComponent(signInResult ?? "")}`);
+    }
   }, [signedInServer, signInResult, router]);
-  if (!has("mcp") && !has("connections")) return <Screen title="Apps & MCP" back="/more" backLabel="More"><NotYet what="MCP servers" /></Screen>;
+  if (!has("mcp") && !has("connections")) {
+    return (
+      <Screen title="Apps" back="/more" backLabel="More">
+        <NotYet what="Apps" />
+      </Screen>
+    );
+  }
   return (
-    <Screen title="Apps & MCP" back="/more" backLabel="More">
+    <Screen title="Apps" back="/more" backLabel="More">
       {has("connections") && <GoogleConnection />}
-      {has("mcp") ? <MCPServers /> : <NotYet what="MCP servers" />}
+      {has("mcp") ? <CustomApps /> : <NotYet what="Custom apps" />}
       {has("connections") && <ActiveConnections />}
     </Screen>
   );
@@ -82,32 +128,75 @@ export function AppsScreen() {
 
 function ActiveConnections() {
   const connections = useResource<List<Connection>>("/connections", { poll: 30_000 });
-  const items = (connections.data?.items ?? []).filter((connection) => connection.integration_id !== "google" && connection.status !== "disconnected" && !(connection.status === "not_connected" && !connection.account?.provider_id));
+  const items = (connections.data?.items ?? []).filter(
+    (connection) =>
+      connection.integration_id !== "google" &&
+      connection.status !== "disconnected" &&
+      !(connection.status === "not_connected" && !connection.account?.provider_id),
+  );
   if (!items.length) return null;
   return (
-    <Section title="Connections">
-      <Rows>{items.map((connection) => {
-        const state = connectionState(connection);
-        return <Row key={connection.id} title={[connection.title, connection.account?.label].filter(Boolean).join(" · ")}
-          detail={connection.health.message || (connection.health.last_success_at ? `Last used ${relative(connection.health.last_success_at)}` : undefined)}
-          trailing={state.tone !== "ok" ? <Pill tone={state.tone}>{state.label}</Pill> : undefined} />;
-      })}</Rows>
+    <Section title="Connected accounts">
+      <Rows>
+        {items.map((connection) => {
+          const state = connectionState(connection);
+          return (
+            <Row
+              key={connection.id}
+              leading={<AppBrandIcon name={connection.title} />}
+              title={connection.title}
+              trailing={state.tone !== "ok" ? <Pill tone={state.tone}>{state.label}</Pill> : undefined}
+            />
+          );
+        })}
+      </Rows>
     </Section>
   );
 }
 
-function MCPServers() {
+function CustomApps() {
   const servers = useResource<List<MCPServer>>("/mcp", { poll: 15_000 });
   const [adding, setAdding] = useState(false);
   if (servers.loading) return <Loading />;
-  if (servers.error && !servers.data) return <Failure error={servers.error} onRetry={() => void servers.reload()} />;
+  if (servers.error && !servers.data) {
+    return <Failure error={servers.error} onRetry={() => void servers.reload()} />;
+  }
   const items = servers.data?.items ?? [];
   return (
-    <Section title="MCP servers" actions={!adding ? <Button size="sm" variant="primary" onClick={() => setAdding(true)}><Plus size={15} aria-hidden />Add server</Button> : undefined}>
-      {adding && <div className="mb-4"><NewMCPServer onDone={() => setAdding(false)} /></div>}
-      {items.length ? <Rows>{items.map((server) => <Row key={server.id} href={`/apps/mcp/${encodeURIComponent(server.id)}`} leading={<span className="grid size-9 place-items-center rounded-tile bg-fill-1"><Server size={18} aria-hidden /></span>}
-        title={server.name} detail={`${server.transport === "http" ? "Remote server" : "Local server"}${server.observed.tool_count !== undefined ? ` · ${plural(server.observed.tool_count, "tool")}` : ""}${server.observed.error ? ` · ${server.observed.error.message}` : ""}`}
-        trailing={<MCPStatus server={server} />} />)}</Rows> : !adding && <Empty>No MCP servers yet.</Empty>}
+    <Section
+      title="Custom apps"
+      actions={
+        !adding ? (
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            className="text-meta font-semibold text-accent-text hover:underline"
+          >
+            + Add
+          </button>
+        ) : undefined
+      }
+    >
+      {adding && (
+        <div className="mb-4">
+          <NewMCPServer onDone={() => setAdding(false)} />
+        </div>
+      )}
+      {items.length ? (
+        <Rows label="Custom apps">
+          {items.map((server) => (
+            <Row
+              key={server.id}
+              href={`/apps/mcp/${encodeURIComponent(server.id)}`}
+              leading={<AppBrandIcon name={server.name} endpoint={server.endpoint} />}
+              title={server.name}
+              trailing={<MCPStatus server={server} />}
+            />
+          ))}
+        </Rows>
+      ) : (
+        !adding && <Empty>No custom apps yet.</Empty>
+      )}
     </Section>
   );
 }
@@ -118,7 +207,13 @@ function isValidMCPEndpoint(raw: string) {
   try {
     const parsed = new URL(value);
     if (parsed.protocol === "https:") return true;
-    return parsed.protocol === "http:" && (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost" || parsed.hostname === "[::1]" || parsed.hostname.endsWith(".local"));
+    return (
+      parsed.protocol === "http:" &&
+      (parsed.hostname === "127.0.0.1" ||
+        parsed.hostname === "localhost" ||
+        parsed.hostname === "[::1]" ||
+        parsed.hostname.endsWith(".local"))
+    );
   } catch {
     return false;
   }
@@ -131,26 +226,92 @@ function NewMCPServer({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState("");
   const [endpoint, setEndpoint] = useState("");
   const [auth, setAuth] = useState<"oauth" | "none" | "configured">("oauth");
-  const [exposure, setExposure] = useState<"direct" | "discoverable" | "disabled">("discoverable");
+  const [showSignInOptions, setShowSignInOptions] = useState(false);
   const validEndpoint = isValidMCPEndpoint(endpoint);
-  const save = () => action.run("save", async () => {
-    const receipt = await mutate<MCPServer>("/mcp", { request_id: newRequestID(), expected_revision: 0, value: { name: name.trim(), transport: "http", endpoint: endpoint.trim(), auth, enabled: true, exposure: { default: exposure } } });
-    invalidate("/mcp", "/integrations");
-    router.push(`/apps/mcp/${encodeURIComponent((receipt.resource as MCPServer).id)}`);
-  });
-  return <form className="space-y-4 rounded-card border border-card-border bg-surface p-4" onSubmit={(event) => { event.preventDefault(); if (name.trim() && validEndpoint) void save(); }}>
-    <div className="flex flex-wrap gap-3">
-      <Field label="Name"><input value={name} onChange={(event) => setName(event.target.value)} className={cn(inputBase, "w-56")} placeholder="Home notes" required /></Field>
-      <Field label="Server URL"><input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} className={cn(inputBase, "w-96 max-w-full")} placeholder="https://mcp.example.com/mcp" inputMode="url" required /></Field>
-    </div>
-    <div className="flex flex-wrap gap-3">
-      <Field label="Sign-in"><select value={auth} onChange={(event) => setAuth(event.target.value as typeof auth)} className={cn(inputBase, "w-auto")}><option value="oauth">OAuth</option><option value="none">None</option><option value="configured">Access token</option></select></Field>
-      <Field label="Tools"><select value={exposure} onChange={(event) => setExposure(event.target.value as typeof exposure)} className={cn(inputBase, "w-auto")}><option value="discoverable">When relevant</option><option value="direct">Always</option><option value="disabled">Off</option></select></Field>
-    </div>
-    {endpoint && !validEndpoint && <p role="alert" className="text-meta text-danger">Use an https:// address, or http://localhost / 127.0.0.1 / .local for a local server.</p>}
-    {action.error && <Notice tone="danger">{action.error}</Notice>}
-    <div className="flex gap-2"><Button type="submit" variant="primary" disabled={!name.trim() || !validEndpoint || !!action.pending}>{action.pending ? "Adding…" : "Add server"}</Button><Button variant="quiet" onClick={onDone}>Cancel</Button></div>
-  </form>;
+  const save = () =>
+    action.run("save", async () => {
+      const receipt = await mutate<MCPServer>("/mcp", {
+        request_id: newRequestID(),
+        expected_revision: 0,
+        value: {
+          name: name.trim(),
+          transport: "http",
+          endpoint: endpoint.trim(),
+          auth,
+          enabled: true,
+          exposure: { default: "discoverable" },
+        },
+      });
+      invalidate("/mcp", "/integrations");
+      router.push(`/apps/mcp/${encodeURIComponent((receipt.resource as MCPServer).id)}`);
+    });
+  return (
+    <form
+      className="space-y-4 rounded-card border border-card-border bg-surface p-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (name.trim() && validEndpoint) void save();
+      }}
+    >
+      <Field label="Name">
+        <input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          className={inputClass}
+          placeholder="Home notes"
+          required
+        />
+      </Field>
+      <Field label="Server URL">
+        <input
+          value={endpoint}
+          onChange={(event) => setEndpoint(event.target.value)}
+          className={inputClass}
+          placeholder="https://mcp.example.com/mcp"
+          inputMode="url"
+          required
+        />
+      </Field>
+      <div>
+        <button
+          type="button"
+          onClick={() => setShowSignInOptions((current) => !current)}
+          className="text-meta font-semibold text-accent-text hover:underline"
+        >
+          {showSignInOptions ? "Hide sign-in options" : "Sign-in options"}
+        </button>
+        {showSignInOptions && (
+          <div className="mt-3">
+            <Field label="Authentication">
+              <select
+                value={auth}
+                onChange={(event) => setAuth(event.target.value as typeof auth)}
+                className={cn(inputBase, "w-full sm:w-auto")}
+              >
+                <option value="oauth">OAuth</option>
+                <option value="configured">Access token</option>
+                <option value="none">None</option>
+              </select>
+            </Field>
+          </div>
+        )}
+      </div>
+      {endpoint && !validEndpoint && (
+        <p role="alert" className="text-meta text-danger">
+          Use an https:// address, or http://localhost / 127.0.0.1 / .local for a local server.
+        </p>
+      )}
+      {action.error && <Notice tone="danger">{action.error}</Notice>}
+      <div className="flex gap-2">
+        <Button type="submit" variant="primary" disabled={!name.trim() || !validEndpoint || !!action.pending}>
+          {action.pending ? "Adding…" : "Add app"}
+        </Button>
+        <Button variant="quiet" onClick={onDone}>
+          Cancel
+        </Button>
+      </div>
+    </form>
+  );
 }
 
 function Credential({ server, onSaved }: { server: MCPServer; onSaved: (next: MCPServer) => void }) {
@@ -159,26 +320,96 @@ function Credential({ server, onSaved }: { server: MCPServer; onSaved: (next: MC
   const [token, setToken] = useState("");
   const [replacing, setReplacing] = useState(false);
   const present = server.observed.credential === "present";
-  const save = () => action.run("save", async () => {
-    const value = token.trim();
-    setToken("");
-    const body: MCPCredentialInput = { request_id: newRequestID(), token: value };
-    const receipt = await sendSecret<MCPServer>(`/mcp/${encodeURIComponent(server.id)}/credential`, body);
-    onSaved(receipt.resource as MCPServer); setReplacing(false); invalidate(`/mcp/${encodeURIComponent(server.id)}/tools`);
-  });
-  if (present && !replacing) return <div className="flex flex-wrap items-center gap-3"><span className="text-meta text-ink-2">Token saved</span><Button size="sm" variant="quiet" onClick={() => setReplacing(true)}>Replace</Button></div>;
-  return <form className="flex flex-col gap-2 sm:flex-row" onSubmit={(event) => { event.preventDefault(); if (token.trim()) void save(); }}>
-    <input aria-label="Token" type="password" autoComplete="off" spellCheck={false} value={token} onChange={(event) => setToken(event.target.value)} className={inputClass} placeholder={present ? "New token" : "Paste the server’s access token"} />
-    <div className="flex gap-2"><Button type="submit" variant="primary" disabled={!token.trim() || !!action.pending}>{action.pending ? "Saving…" : "Save"}</Button>{replacing && <Button variant="quiet" onClick={() => { setReplacing(false); setToken(""); }}>Cancel</Button>}</div>
-    {action.error && <p role="alert" className="text-meta text-danger">{/credential storage is not configured/i.test(action.error) ? "This Nori can’t store access tokens yet. Nothing was saved." : action.error}</p>}
-  </form>;
+  const save = () =>
+    action.run("save", async () => {
+      const value = token.trim();
+      setToken("");
+      const body: MCPCredentialInput = { request_id: newRequestID(), token: value };
+      const receipt = await sendSecret<MCPServer>(`/mcp/${encodeURIComponent(server.id)}/credential`, body);
+      onSaved(receipt.resource as MCPServer);
+      setReplacing(false);
+      invalidate(`/mcp/${encodeURIComponent(server.id)}/tools`);
+    });
+  if (present && !replacing) {
+    return (
+      <Rows>
+        <Row
+          title="Access token"
+          trailing={
+            <Button size="sm" variant="quiet" onClick={() => setReplacing(true)}>
+              Replace
+            </Button>
+          }
+        />
+      </Rows>
+    );
+  }
+  return (
+    <form
+      className="space-y-3 rounded-card border border-card-border bg-surface p-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (token.trim()) void save();
+      }}
+    >
+      <Field label="Access token">
+        <input
+          aria-label="Token"
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          value={token}
+          onChange={(event) => setToken(event.target.value)}
+          className={inputClass}
+          placeholder={present ? "New token" : "Paste the app’s access token"}
+        />
+      </Field>
+      <div className="flex gap-2">
+        <Button type="submit" size="sm" variant="primary" disabled={!token.trim() || !!action.pending}>
+          {action.pending ? "Saving…" : "Save"}
+        </Button>
+        {replacing && (
+          <Button
+            size="sm"
+            variant="quiet"
+            onClick={() => {
+              setReplacing(false);
+              setToken("");
+            }}
+          >
+            Cancel
+          </Button>
+        )}
+      </div>
+      {action.error && (
+        <p role="alert" className="text-meta text-danger">
+          {/credential storage is not configured/i.test(action.error)
+            ? "This Nori can’t store access tokens yet. Nothing was saved."
+            : action.error}
+        </p>
+      )}
+    </form>
+  );
 }
 
 function MCPStatus({ server }: { server: MCPServer }) {
+  if (!server.enabled) return <Pill tone="neutral">Off</Pill>;
   const status = server.observed.status;
   if (status === "connected") return null;
   const tone: Tone = status === "failed" || status === "needs_sign_in" ? "danger" : status === "connecting" ? "working" : "neutral";
-  return <Pill tone={tone}>{{ connecting: "Connecting", disconnected: server.transport === "stdio" ? "Stopped" : "Not connected", needs_sign_in: "Needs sign-in", failed: "Failed", disabled: "Off" }[status]}</Pill>;
+  return (
+    <Pill tone={tone}>
+      {
+        {
+          connecting: "Connecting",
+          disconnected: server.transport === "stdio" ? "Stopped" : "Not connected",
+          needs_sign_in: "Needs sign-in",
+          failed: "Failed",
+          disabled: "Off",
+        }[status]
+      }
+    </Pill>
+  );
 }
 
 export function MCPDetailScreen({ id }: { id: string }) {
@@ -191,29 +422,108 @@ export function MCPDetailScreen({ id }: { id: string }) {
   const { result } = useReturnedResult();
   const [editing, setEditing] = useState(false);
   const item = server.data;
-  if (server.loading) return <Screen title="MCP server" back="/apps"><Loading /></Screen>;
-  if (!item) return <Screen title="MCP server" back="/apps"><Failure error={server.error ?? "Not found."} /></Screen>;
-  const act = (value: Record<string, unknown>, label: string) => action.run(label, async () => {
-    const receipt = await mutate<MCPServer>(`/mcp/${encodeURIComponent(id)}/actions`, { request_id: newRequestID(), expected_revision: item.revision, value });
-    server.apply(receipt.resource as MCPServer); invalidate(`/mcp/${encodeURIComponent(id)}/tools`);
-  });
-  const signIn = () => action.run("sign_in", async () => {
-    if (window.noriDesktop) {
-      await window.noriDesktop.openInBrowser();
-      return;
-    }
-    const receipt = await mutate<MCPServer>(`/mcp/${encodeURIComponent(id)}/actions`, { request_id: newRequestID(), expected_revision: item.revision, value: { action: "sign_in" } }) as { auth?: AuthAttempt };
-    const url = receipt.auth && safeAuthorizeURL(receipt.auth.authorize_url);
-    if (!url) throw new Error("Nori didn’t return a sign-in link. Try again.");
-    window.location.assign(url);
-  });
+  if (server.loading) {
+    return (
+      <Screen title="App" back="/apps" backLabel="Apps">
+        <Loading />
+      </Screen>
+    );
+  }
+  if (!item) {
+    return (
+      <Screen title="App" back="/apps" backLabel="Apps">
+        <Failure error={server.error ?? "Not found."} />
+      </Screen>
+    );
+  }
+
+  const act = (value: Record<string, unknown>, label: string) =>
+    action.run(label, async () => {
+      const receipt = await mutate<MCPServer>(`/mcp/${encodeURIComponent(id)}/actions`, {
+        request_id: newRequestID(),
+        expected_revision: item.revision,
+        value,
+      });
+      server.apply(receipt.resource as MCPServer);
+      invalidate("/mcp", `/mcp/${encodeURIComponent(id)}/tools`);
+    });
+
+  const toggleEnabled = (nextEnabled: boolean) =>
+    action.run("toggle-enabled", async () => {
+      const receipt = await mutate<MCPServer>(
+        `/mcp/${encodeURIComponent(id)}`,
+        {
+          request_id: newRequestID(),
+          expected_revision: item.revision,
+          value: {
+            name: item.name,
+            transport: item.transport,
+            ...(item.transport === "http" && item.endpoint ? { endpoint: item.endpoint } : {}),
+            auth: item.auth ?? "oauth",
+            enabled: nextEnabled,
+            exposure: item.exposure,
+          },
+        },
+        "PUT",
+      );
+      server.apply(receipt.resource as MCPServer);
+      invalidate("/mcp", `/mcp/${encodeURIComponent(id)}/tools`);
+    });
+
+  const signIn = () =>
+    action.run("sign_in", async () => {
+      if (window.noriDesktop) {
+        await window.noriDesktop.openInBrowser();
+        return;
+      }
+      const receipt = (await mutate<MCPServer>(`/mcp/${encodeURIComponent(id)}/actions`, {
+        request_id: newRequestID(),
+        expected_revision: item.revision,
+        value: { action: "sign_in" },
+      })) as { auth?: AuthAttempt };
+      const url = receipt.auth && safeAuthorizeURL(receipt.auth.authorize_url);
+      if (!url) throw new Error("Nori didn’t return a sign-in link. Try again.");
+      window.location.assign(url);
+    });
+
   const observed = item.observed;
-  const hasTechnicalDetails = !!observed.protocol_version || !!observed.capabilities?.length;
-  return <Screen title={item.name} back="/apps" line={observed.error?.message ?? (observed.status === "connected" && observed.last_success_at ? `Last call ${relative(observed.last_success_at)}.` : undefined)}
-    actions={<MCPStatus server={item} />}>
-    {result && <div className="mb-4"><Notice tone={result === "connected" ? "ok" : "danger"}>{result === "connected" ? "Signed in." : "Sign-in didn’t finish. Nothing was saved; try again."}</Notice></div>}
-    {action.error && <div className="mb-4"><Notice tone="danger">{action.error}</Notice></div>}
-    <Section title="Connection"><div className="rounded-card border border-card-border bg-surface p-4">
+  const needsSignIn =
+    observed.status === "needs_sign_in" || (item.auth === "oauth" && observed.status !== "connected");
+
+  return (
+    <Screen title={item.name} back="/apps" backLabel="Apps" actions={<MCPStatus server={item} />}>
+      {result && (
+        <div className="mb-4">
+          <Notice tone={result === "connected" ? "ok" : "danger"}>
+            {result === "connected" ? "Signed in." : "Sign-in didn’t finish. Nothing was saved; try again."}
+          </Notice>
+        </div>
+      )}
+      {needsSignIn && (
+        <div className="mb-4">
+          <Notice
+            tone="danger"
+            action={
+              <Button size="sm" variant="primary" disabled={!!action.pending} onClick={() => void signIn()}>
+                {action.pending === "sign_in" ? "Opening…" : desktop ? "Continue in browser" : "Sign in"}
+              </Button>
+            }
+          >
+            {observed.error?.message || `Sign in to reconnect ${item.name}.`}
+          </Notice>
+        </div>
+      )}
+      {!needsSignIn && observed.error?.message && (
+        <div className="mb-4">
+          <Notice tone="danger">{observed.error.message}</Notice>
+        </div>
+      )}
+      {action.error && (
+        <div className="mb-4">
+          <Notice tone="danger">{action.error}</Notice>
+        </div>
+      )}
+
       {editing ? (
         <EditMCPServer
           server={item}
@@ -225,45 +535,82 @@ export function MCPDetailScreen({ id }: { id: string }) {
           }}
         />
       ) : (
-        <>
-          <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-meta">
-            <dt className="text-ink-3">Type</dt><dd>{item.transport === "http" ? "Remote server" : "Local server"}</dd>
-            {item.endpoint && <><dt className="text-ink-3">Server URL</dt><dd className="[overflow-wrap:anywhere]">{item.endpoint}</dd></>}
-            {!item.enabled && <><dt className="text-ink-3">Status</dt><dd className="text-ink-2">Disabled</dd></>}
-          </dl>
-          {desktop && (observed.status === "needs_sign_in" || item.auth === "oauth" && observed.status !== "connected") && <p className="mt-3 text-meta text-ink-2">Sign in to Nori with the same account in your browser, then continue the connection there.</p>}
-          <div className="mt-4 flex flex-wrap gap-2">
-            {item.transport === "stdio" ? <>
-              <Button size="sm" variant="primary" disabled={!!action.pending} onClick={() => void act({ action: observed.status === "connected" ? "restart" : "start" }, "start")}>{observed.status === "connected" ? "Restart" : "Start"}</Button>
-              {observed.status === "connected" && <Button size="sm" disabled={!!action.pending} onClick={() => void act({ action: "stop" }, "stop")}>Stop</Button>}
-            </> : <Button size="sm" variant="primary" disabled={!!action.pending} onClick={() => void act({ action: "reconnect" }, "reconnect")}>Reconnect</Button>}
-            {(observed.status === "needs_sign_in" || item.auth === "oauth" && observed.status !== "connected") && <Button size="sm" disabled={!!action.pending} onClick={() => void signIn()}>{action.pending === "sign_in" ? "Opening…" : desktop ? "Continue in browser" : "Sign in"}</Button>}
-            <Button size="sm" variant="neutral" disabled={!!action.pending} onClick={() => setEditing(true)}>Edit</Button>
-          </div>
-        </>
+        <Rows label="App controls">
+          {item.transport === "http" && (
+            <Row
+              title="Enabled"
+              trailing={
+                <Switch
+                  checked={item.enabled}
+                  label={`Enable ${item.name}`}
+                  disabled={!!action.pending}
+                  onCheckedChange={(next) => void toggleEnabled(next)}
+                />
+              }
+            />
+          )}
+          {item.transport === "stdio" ? (
+            <>
+              <Row
+                title={observed.status === "connected" ? "Restart" : "Start"}
+                onClick={() => void act({ action: observed.status === "connected" ? "restart" : "start" }, "start")}
+                chevron
+              />
+              {observed.status === "connected" && (
+                <Row title="Stop" onClick={() => void act({ action: "stop" }, "stop")} chevron />
+              )}
+            </>
+          ) : (
+            <Row
+              title={action.pending === "reconnect" ? "Reconnecting…" : "Reconnect"}
+              onClick={() => void act({ action: "reconnect" }, "reconnect")}
+              chevron
+            />
+          )}
+          {item.transport === "http" && <Row title="Settings" onClick={() => setEditing(true)} chevron />}
+        </Rows>
       )}
-    </div></Section>
-    {item.auth === "configured" && <Section title="Access token"><Credential server={item} onSaved={(next) => server.apply(next)} /></Section>}
-    <Section title="Tools">
-      {tools.loading ? <Loading /> : tools.data?.items.length ? <Rows>{tools.data.items.map((tool) => <li key={tool.name} className="flex min-h-14 flex-wrap items-center gap-3 px-4 py-2">
-        <span className="min-w-0 flex-1"><span className="block text-row font-medium">{tool.title}</span><span className="block font-mono text-mono-data text-ink-3">{tool.name}</span></span>
-        <label className="text-meta text-ink-2"><span className="sr-only">How Nori sees {tool.title}</span>
-          <select value={tool.exposure} onChange={(event) => void act({ action: "set_exposure", tool: tool.name, exposure: event.target.value }, `exposure:${tool.name}`)} className={cn(inputBase, "h-9 py-0")}>
-            <option value="direct">Always</option><option value="discoverable">When relevant</option><option value="disabled">Off</option>
-          </select></label>
-      </li>)}</Rows> : <Empty>No tools discovered.</Empty>}
-    </Section>
-    {hasTechnicalDetails && (
-      <Section title="Details">
-        <div className="rounded-card border border-card-border bg-surface p-4">
-          <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-meta">
-            {observed.protocol_version && <><dt className="text-ink-3">Protocol</dt><dd className="font-mono text-mono-data">{observed.protocol_version}</dd></>}
-            {!!observed.capabilities?.length && <><dt className="text-ink-3">Supports</dt><dd>{observed.capabilities.join(", ")}</dd></>}
-          </dl>
-        </div>
+
+      {item.auth === "configured" && (
+        <Section title="Access token">
+          <Credential server={item} onSaved={(next) => server.apply(next)} />
+        </Section>
+      )}
+
+      <Section title="Actions">
+        {tools.loading ? (
+          <Loading />
+        ) : tools.data?.items.length ? (
+          <Rows label="Actions">
+            {tools.data.items.map((tool) => {
+              const isOn = tool.exposure !== "disabled";
+              return (
+                <Row
+                  key={tool.name}
+                  title={tool.title}
+                  trailing={
+                    <Switch
+                      checked={isOn}
+                      label={tool.title}
+                      disabled={!!action.pending}
+                      onCheckedChange={(next) =>
+                        void act(
+                          { action: "set_exposure", tool: tool.name, exposure: next ? "discoverable" : "disabled" },
+                          `exposure:${tool.name}`,
+                        )
+                      }
+                    />
+                  }
+                />
+              );
+            })}
+          </Rows>
+        ) : (
+          <Empty>No actions discovered yet.</Empty>
+        )}
       </Section>
-    )}
-  </Screen>;
+    </Screen>
+  );
 }
 
 function EditMCPServer({
@@ -279,63 +626,78 @@ function EditMCPServer({
   const [name, setName] = useState(server.name);
   const [endpoint, setEndpoint] = useState(server.endpoint ?? "");
   const [auth, setAuth] = useState<"oauth" | "none" | "configured">(server.auth ?? "oauth");
-  const [exposure, setExposure] = useState<"direct" | "discoverable" | "disabled">(
-    (server.exposure?.default === "direct" || server.exposure?.default === "disabled") ? server.exposure.default : "discoverable",
-  );
-  const [enabled, setEnabled] = useState(server.enabled);
   const validEndpoint = server.transport !== "http" || isValidMCPEndpoint(endpoint);
-  const save = () => action.run("save", async () => {
-    const receipt = await mutate<MCPServer>(`/mcp/${encodeURIComponent(server.id)}`, {
-      request_id: newRequestID(),
-      expected_revision: server.revision,
-      value: {
-        name: name.trim(),
-        transport: server.transport,
-        ...(server.transport === "http" ? { endpoint: endpoint.trim() } : {}),
-        auth,
-        enabled,
-        exposure: { ...server.exposure, default: exposure },
-      },
-    }, "PUT");
-    onSaved(receipt.resource as MCPServer);
-  });
+  const save = () =>
+    action.run("save", async () => {
+      const receipt = await mutate<MCPServer>(
+        `/mcp/${encodeURIComponent(server.id)}`,
+        {
+          request_id: newRequestID(),
+          expected_revision: server.revision,
+          value: {
+            name: name.trim(),
+            transport: server.transport,
+            ...(server.transport === "http" ? { endpoint: endpoint.trim() } : {}),
+            auth,
+            enabled: server.enabled,
+            exposure: server.exposure,
+          },
+        },
+        "PUT",
+      );
+      onSaved(receipt.resource as MCPServer);
+    });
   return (
-    <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); if (name.trim() && validEndpoint) void save(); }}>
-      <div className="flex flex-wrap gap-3">
-        <Field label="Name"><input value={name} onChange={(event) => setName(event.target.value)} className={cn(inputBase, "w-56")} required /></Field>
-        {server.transport === "http" && (
-          <Field label="Server URL"><input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} className={cn(inputBase, "w-96 max-w-full")} inputMode="url" required /></Field>
-        )}
-      </div>
-      <div className="flex flex-wrap gap-3">
-        <Field label="Sign-in">
-          <select value={auth} onChange={(event) => setAuth(event.target.value as typeof auth)} className={cn(inputBase, "w-auto")}>
-            <option value="oauth">OAuth</option>
-            <option value="none">None</option>
-            <option value="configured">Access token</option>
-          </select>
+    <form
+      className="space-y-4 rounded-card border border-card-border bg-surface p-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (name.trim() && validEndpoint) void save();
+      }}
+    >
+      <Field label="Name">
+        <input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          className={inputClass}
+          required
+        />
+      </Field>
+      {server.transport === "http" && (
+        <Field label="Server URL">
+          <input
+            value={endpoint}
+            onChange={(event) => setEndpoint(event.target.value)}
+            className={inputClass}
+            inputMode="url"
+            required
+          />
         </Field>
-        <Field label="Tools">
-          <select value={exposure} onChange={(event) => setExposure(event.target.value as typeof exposure)} className={cn(inputBase, "w-auto")}>
-            <option value="discoverable">When relevant</option>
-            <option value="direct">Always</option>
-            <option value="disabled">Off</option>
-          </select>
-        </Field>
-      </div>
-      <label className="flex items-center gap-2 text-meta text-ink">
-        <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="size-4 accent-accent" />
-        Server enabled
-      </label>
+      )}
+      <Field label="Authentication">
+        <select
+          value={auth}
+          onChange={(event) => setAuth(event.target.value as typeof auth)}
+          className={cn(inputBase, "w-full sm:w-auto")}
+        >
+          <option value="oauth">OAuth</option>
+          <option value="configured">Access token</option>
+          <option value="none">None</option>
+        </select>
+      </Field>
       {server.transport === "http" && endpoint && !validEndpoint && (
-        <p role="alert" className="text-meta text-danger">Use an https:// address, or http://localhost / 127.0.0.1 / .local for a local server.</p>
+        <p role="alert" className="text-meta text-danger">
+          Use an https:// address, or http://localhost / 127.0.0.1 / .local for a local server.
+        </p>
       )}
       {action.error && <Notice tone="danger">{action.error}</Notice>}
       <div className="flex gap-2">
         <Button type="submit" size="sm" variant="primary" disabled={!name.trim() || !validEndpoint || !!action.pending}>
-          {action.pending ? "Saving…" : "Save changes"}
+          {action.pending ? "Saving…" : "Save"}
         </Button>
-        <Button size="sm" variant="quiet" onClick={onCancel}>Cancel</Button>
+        <Button size="sm" variant="quiet" onClick={onCancel}>
+          Cancel
+        </Button>
       </div>
     </form>
   );

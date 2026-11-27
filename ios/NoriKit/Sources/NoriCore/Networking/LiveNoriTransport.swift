@@ -1253,6 +1253,10 @@ public actor LiveNoriTransport: NoriTransport {
         return resp.items
     }
 
+    public func fetchMemoryLog(date: String) async throws -> MemoryLog {
+        try await getJSON(OpenAPI.Path.memoryLogsByDate(date: date))
+    }
+
     public func fetchWorkingMemory() async throws -> WorkingMemory {
         try await getJSON(OpenAPI.Path.memoryWorking)
     }

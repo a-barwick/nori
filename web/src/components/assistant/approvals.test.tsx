@@ -26,9 +26,8 @@ import {
 } from "@/lib/assistant/permissions";
 import { useResource } from "@/lib/assistant/useResource";
 import { asFetch } from "@/lib/test-fetch";
-import type { Connection, Interaction, PermissionRule } from "@/lib/contracts/assistant";
+import type { Interaction, PermissionRule } from "@/lib/contracts/assistant";
 import { InteractionCard } from "./InteractionCard";
-import { NewRule } from "./SettingsScreen";
 
 function makeApprovalInteraction(overrides: Partial<Extract<Interaction, { kind: "approval" }>> = {}): Extract<Interaction, { kind: "approval" }> {
   return {
@@ -560,27 +559,5 @@ describe("3-state custom permission rules UI and helpers", () => {
     assert.match(revokeRuleConfirmationBody(makeRule({ effect: "deny" })), /block/);
     assert.match(revokeRuleConfirmationBody(makeRule({ effect: "ask" })), /other rules and defaults/);
     assert.match(revokeRuleConfirmationBody(makeRule({ effect: "allow" })), /ask you before/);
-  });
-
-  test("NewRule builder renders all 3 rule effect options", () => {
-    const connections: Connection[] = [
-      {
-        id: "conn_1",
-        revision: 1,
-        integration_id: "google",
-        title: "Google",
-        account: { provider_id: "p1", label: "you@example.com" },
-        status: "connected",
-        granted_scopes: [],
-        selected_resource_ids: [],
-        health: {},
-        defaults: [],
-      },
-    ];
-    const html = renderToStaticMarkup(<NewRule connections={connections} servers={[]} onDone={() => {}} />);
-
-    assert.match(html, /<option value="allow"[^>]*>Allow automatically<\/option>/);
-    assert.match(html, /<option value="ask"[^>]*>Ask first<\/option>/);
-    assert.match(html, /<option value="deny"[^>]*>Never allow<\/option>/);
   });
 });

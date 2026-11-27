@@ -41,13 +41,14 @@ test("Google connection requests only the services the user selects", async () =
       <SearchParamsContext.Provider value={new URLSearchParams()}><ResourceCacheContext.Provider value={createResourceCache()}><GoogleConnection /></ResourceCacheContext.Provider></SearchParamsContext.Provider>,
     ));
     await settleTestDOM();
-    const boxes = [...target.querySelectorAll("input[type=checkbox]")] as HTMLInputElement[];
-    assert.equal(boxes.length, 3);
-    const connect = [...target.querySelectorAll("button")].find((button) => button.textContent === "Connect Google");
-    assert.ok(connect?.disabled);
-    await act(async () => boxes[2].click());
-    assert.equal(connect?.disabled, false);
-    await act(async () => connect?.click());
+    const switches = [...target.querySelectorAll('button[role="switch"]')] as HTMLButtonElement[];
+    assert.equal(switches.length, 3);
+    assert.equal(switches.every((sw) => sw.getAttribute("aria-checked") === "false"), true);
+    await act(async () => switches[2].click());
+    await settleTestDOM();
+    const cont = [...document.querySelectorAll("button")].find((button) => button.textContent === "Continue");
+    assert.ok(cont);
+    await act(async () => cont.click());
     await settleTestDOM();
     const create = calls.find((call) => call.url === "/api/v1/connections" && call.method === "POST");
     const signIn = calls.find((call) => call.url.endsWith("/actions"));
@@ -82,7 +83,7 @@ test("Drive file selection starts through the server and lists authorized files"
     ));
     await settleTestDOM();
     assert.match(target.textContent ?? "", /Trip plan/);
-    const choose = [...target.querySelectorAll("button")].find((button) => button.textContent === "Choose files");
+    const choose = [...target.querySelectorAll("button")].find((button) => button.textContent?.includes("Choose Drive files"));
     assert.ok(choose);
     await act(async () => choose.click());
     await settleTestDOM();

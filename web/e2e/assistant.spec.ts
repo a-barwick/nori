@@ -100,8 +100,8 @@ test("Models offers recommendations after key setup and saves account choices", 
 
   await page.goto(signInURL("first", "/settings/models"));
   await expect(page.getByRole("heading", { name: "Models", exact: true }).first()).toBeVisible();
-  const anthropic = page.locator("li").filter({ hasText: "Anthropic" });
-  await anthropic.getByRole("button", { name: "Add key" }).click();
+  const anthropic = page.locator("li").filter({ hasText: "Anthropic" }).first();
+  await anthropic.getByRole("button", { name: /Anthropic/ }).click();
   await anthropic.getByLabel("Anthropic API key").fill("sk-test");
   await anthropic.getByRole("button", { name: "Save", exact: true }).click();
   const dialog = page.getByRole("alertdialog");
@@ -109,21 +109,22 @@ test("Models offers recommendations after key setup and saves account choices", 
   await expect(dialog).toContainText("Claude Opus 5.5 · Low");
   await expect(dialog).toContainText("Claude Haiku 5.5 · Low");
   await dialog.getByRole("button", { name: "Keep current models" }).click();
-  await expect(page.getByLabel("Chat model")).toHaveValue("openai-sol");
+  await expect(page.getByRole("button", { name: /Chat.*GPT-6\.2 Sol/ })).toBeVisible();
   expect(writes).toHaveLength(0);
 
-  await page.getByLabel("Chat model").selectOption("anthropic-opus");
-  await page.getByRole("button", { name: "Save models" }).click();
+  await page.getByRole("button", { name: /Chat.*GPT-6\.2 Sol/ }).click();
+  await page.getByRole("button", { name: "Claude Opus 5.5" }).click();
   await expect.poll(() => writes.length).toBe(1);
-  await anthropic.getByRole("button", { name: "Replace" }).click();
-  await anthropic.getByLabel("New Anthropic API key").fill("sk-new-test");
+  await page.getByRole("button", { name: "Models", exact: true }).click();
+  await anthropic.getByRole("button", { name: /Anthropic/ }).click();
+  await anthropic.getByLabel("Replace Anthropic API key").fill("sk-new-test");
   await anthropic.getByRole("button", { name: "Save", exact: true }).click();
   await dialog.getByRole("button", { name: "Use recommended models" }).click();
   await expect.poll(() => writes.length).toBe(2);
-  await expect(page.getByLabel("Work model")).toHaveValue("anthropic-haiku");
+  await expect(page.getByRole("button", { name: /Work.*Claude Haiku 5\.5/ })).toBeVisible();
   await page.reload();
-  await expect(page.getByLabel("Chat model")).toHaveValue("anthropic-opus");
-  await expect(page.getByLabel("Work model")).toHaveValue("anthropic-haiku");
+  await expect(page.getByRole("button", { name: /Chat.*Claude Opus 5\.5/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Work.*Claude Haiku 5\.5/ })).toBeVisible();
 });
 
 test("Work waits for pending approvals and offers a retry after a failed read", async ({ page, request }) => {
@@ -287,7 +288,7 @@ test("sign out closes other tabs and sign in restores the workspace", async ({ p
 
   await page.getByRole("button", { name: "Sign in with Google" }).click();
   await page.goto(signInURL("first", "/more"));
-  await expect(page.getByRole("link", { name: "Reset data" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Account" })).toBeVisible();
   await secondTab.close();
 });
 
@@ -339,14 +340,13 @@ test("an interrupted reset can be safely resumed after reload", async ({ page, r
 test("a key save blocked by reset enters recovery and a stale resume preserves newer data", async ({ page, request }) => {
   expect((await request.post(controlURL("/prepare-reset-alternate"))).status()).toBe(204);
   await page.goto(signInURL("second", "/settings/models"));
-  const openai = page.locator("li").filter({ hasText: "OpenAI" });
-  await openai.getByRole("button", { name: "Add key" }).click();
+  const openai = page.locator("li").filter({ hasText: "OpenAI" }).first();
+  await openai.getByRole("button", { name: /OpenAI/ }).click();
   await openai.getByLabel("OpenAI API key").fill("sk-test");
   expect((await request.post(controlURL("/pending-reset-alternate"))).status()).toBe(204);
   await openai.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Finish your data reset" })).toBeVisible();
   await expect(page.getByLabel("OpenAI API key")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Add key" })).toHaveCount(0);
 
   expect((await request.post(controlURL("/finish-reset-alternate-with-new-data"))).status()).toBe(204);
   const staleResume = page.waitForResponse((response) => response.url().endsWith("/api/v1/settings/reset") && response.request().method() === "POST");
@@ -377,6 +377,7 @@ test("reset clears saved model keys and choices and opens onboarding in both tab
   const secondTab = await context.newPage();
   await secondTab.goto(`${app}/more`);
   await expect(secondTab.getByText("Settings", { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Account" }).click();
   await page.getByRole("link", { name: "Reset data" }).click();
   await expect(page.getByText(/saved API keys, and model choices/)).toBeVisible();
   const confirm = page.getByLabel("Type RESET to confirm");

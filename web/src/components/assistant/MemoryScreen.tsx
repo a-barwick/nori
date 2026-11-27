@@ -1,45 +1,17 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDownToLine, ArrowUpRight, Pencil, Pin, PinOff, Plus, Search } from "lucide-react";
+import { ArrowLeft, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
-import { mutate, newRequestID } from "@/lib/assistant/api";
+import { getJSON, mutate, newRequestID } from "@/lib/assistant/api";
 import { useAssistantConfig } from "@/lib/assistant/context";
-import { relative } from "@/lib/assistant/format";
 import { useResource } from "@/lib/assistant/useResource";
-import type { MemoryAction, MemoryFact, MemoryLog, WorkingMemory } from "@/lib/contracts/assistant";
+import type { MemoryFact, MemoryLog, MemorySearchResponse } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
-import { DailyLogsTab } from "./memory/DailyLogsTab";
-import { MemoryFactForm, useVersionedMemoryMutation } from "./memory/MemoryFactForm";
-import {
-  buildEditableValue,
-  buildMemoryHref,
-  coreBudgetStats,
-  filterCoreMemories,
-  formatByteBudget,
-  messageJumpHref,
-  parseMemoryTab,
-  provenanceInfo,
-  SECTION_SUGGESTIONS,
-  validateMemoryText,
-  type MemoryTab,
-} from "./memory/memoryHelpers";
-import { WorkingMemoryTab } from "./memory/WorkingMemoryTab";
-import {
-  Confirm,
-  Empty,
-  Failure,
-  inputClass,
-  Loading,
-  Notice,
-  NotYet,
-  Pill,
-  Rows,
-  Screen,
-  UnderlineTabs,
-} from "./ui";
+import { useVersionedMemoryMutation } from "./memory/MemoryFactForm";
+import { formatLogDate, groupMemoriesByTopic, normalizeMemoryTopic } from "./memory/memoryHelpers";
+import { Empty, Failure, inputClass, Loading, Notice, NotYet, Row, Rows, Screen, Section } from "./ui";
 
 export {
   buildMemoryHref,
@@ -49,9 +21,11 @@ export {
   formatByteBudget,
   formatKB,
   formatWatermark,
+  groupMemoriesByTopic,
   MAX_MEMORY_TEXT_BYTES,
   memoryHitHref,
   messageJumpHref,
+  normalizeMemoryTopic,
   parseMemoryTab,
   provenanceInfo,
   requiresReauthorForPromote,
@@ -70,41 +44,82 @@ export function MemoryScreen() {
   const router = useRouter();
   const enabled = has("memory");
 
-  const tab = parseMemoryTab(params.get("tab"), params.get("date"), params.get("entry"));
+  const initialQuery = params.get("q") ?? "";
+  const selectedTopicParam = params.get("topic") ?? undefined;
   const selectedId = params.get("id") ?? undefined;
   const selectedDate = params.get("date") ?? undefined;
   const selectedEntry = params.get("entry") ?? undefined;
-  const initialQuery = params.get("q") ?? "";
 
-  const [adding, setAdding] = useState(false);
+  const [query, setQuery] = useState(initialQuery);
+  const [settledQuery, setSettledQuery] = useState(initialQuery.trim());
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setSettledQuery(query.trim()), 200);
+    return () => clearTimeout(timer);
+  }, [query]);
 
   const core = useResource<List<MemoryFact>>(enabled ? "/memory" : null, { poll: 30_000 });
-  const working = useResource<WorkingMemory>(enabled ? "/memory/working" : null, { poll: 30_000 });
-  const logs = useResource<List<MemoryLog>>(enabled ? "/memory/logs?limit=30" : null, { poll: 30_000 });
-
-  const hasSelectedDateInList = useMemo(
-    () => !selectedDate || (logs.data?.items ?? []).some((log) => log.date === selectedDate),
-    [logs.data?.items, selectedDate],
-  );
+  const searchPath =
+    enabled && settledQuery ? `/memory/search?q=${encodeURIComponent(settledQuery)}&limit=20` : null;
+  const searchRes = useResource<MemorySearchResponse>(searchPath, { poll: 0, versioned: false });
   const deepDateLog = useResource<MemoryLog>(
-    enabled && tab === "logs" && selectedDate && !hasSelectedDateInList
-      ? `/memory/logs/${encodeURIComponent(selectedDate)}`
-      : null,
+    enabled && selectedDate ? `/memory/logs/${encodeURIComponent(selectedDate)}` : null,
     { poll: 0 },
   );
+  const mutation = useVersionedMemoryMutation();
 
-  const coreItems = useMemo(() => core.data?.items ?? [], [core.data?.items]);
-  const mergedLogs = useMemo(() => {
-    const items = logs.data?.items ?? [];
-    if (!deepDateLog.data || items.some((item) => item.date === deepDateLog.data!.date)) return items;
-    return [deepDateLog.data, ...items].sort((a, b) => b.date.localeCompare(a.date));
-  }, [logs.data?.items, deepDateLog.data]);
-  const logEntryCount = useMemo(() => mergedLogs.reduce((sum, log) => sum + log.entries.length, 0), [mergedLogs]);
-  const workingItems = useMemo(() => working.data?.items ?? [], [working.data?.items]);
-  const budget = useMemo(() => coreBudgetStats(coreItems, working.data), [coreItems, working.data]);
+  const facts = useMemo(() => core.data?.items ?? [], [core.data?.items]);
+  const topics = useMemo(() => groupMemoriesByTopic(facts), [facts]);
 
-  const selectTab = (next: MemoryTab) => {
-    router.replace(buildMemoryHref({ tab: next }), { scroll: false });
+  const resolvedTopic = useMemo(() => {
+    if (selectedTopicParam) return selectedTopicParam;
+    if (selectedId) {
+      const matched = facts.find((fact) => fact.id === selectedId);
+      if (matched) return normalizeMemoryTopic(matched.section);
+    }
+    return undefined;
+  }, [selectedTopicParam, selectedId, facts]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const el = document.getElementById(`memory-${selectedId}`);
+    el?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [selectedId, resolvedTopic, facts.length]);
+
+  const forgetFact = async (fact: MemoryFact) => {
+    const ok = await mutation.run(
+      `forget:${fact.id}`,
+      () =>
+        mutate(`/memory/${encodeURIComponent(fact.id)}/actions`, {
+          request_id: newRequestID(),
+          expected_revision: fact.revision,
+          value: { action: "forget" },
+        }),
+      "Memory forgotten.",
+    );
+    if (ok) setConfirmId(null);
+  };
+
+  const forgetLogEntry = async (date: string, entryId: string, knownRevision?: number) => {
+    const ok = await mutation.run(
+      `forget-log:${entryId}`,
+      async () => {
+        const revision =
+          knownRevision ?? (await getJSON<MemoryLog>(`/memory/logs/${encodeURIComponent(date)}`)).revision;
+        return mutate(`/memory/logs/${encodeURIComponent(date)}/${encodeURIComponent(entryId)}/actions`, {
+          request_id: newRequestID(),
+          expected_revision: revision,
+          value: { action: "forget" },
+        });
+      },
+      "Memory forgotten.",
+    );
+    if (ok) {
+      setConfirmId(null);
+      if (searchPath) void searchRes.reload();
+      if (selectedDate === date) void deepDateLog.reload();
+    }
   };
 
   if (!enabled) {
@@ -115,397 +130,305 @@ export function MemoryScreen() {
     );
   }
 
-  const openAdd = () => {
-    setAdding(true);
-    if (tab !== "core") selectTab("core");
+  const openTopic = (topic: string) => {
+    setConfirmId(null);
+    router.replace(`/memory?topic=${encodeURIComponent(topic)}`, { scroll: false });
   };
 
+  const closeSubView = () => {
+    setConfirmId(null);
+    router.replace("/memory", { scroll: false });
+  };
+
+  if (selectedDate && !query.trim()) {
+    const log = deepDateLog.data;
+    const entries = log
+      ? selectedEntry
+        ? log.entries.filter((item) => item.id === selectedEntry)
+        : log.entries
+      : [];
+    const shownEntries = entries.length ? entries : (log?.entries ?? []);
+    return (
+      <Screen title={formatLogDate(selectedDate)}>
+        <button
+          type="button"
+          onClick={closeSubView}
+          className="mb-4 inline-flex h-8 items-center gap-1.5 rounded-full bg-fill-1 px-3 text-meta font-semibold text-ink transition-colors hover:bg-fill-2"
+        >
+          <ArrowLeft size={14} aria-hidden />
+          Memory
+        </button>
+        {deepDateLog.error && <Failure error={deepDateLog.error} onRetry={() => void deepDateLog.reload()} />}
+        {mutation.error && (
+          <div className="mb-4">
+            <Notice tone="danger">{mutation.error}</Notice>
+          </div>
+        )}
+        {deepDateLog.loading && !log ? (
+          <Loading label="Loading past chat notes…" />
+        ) : shownEntries.length && log ? (
+          <Rows label="Past chats">
+            {shownEntries.map((entry) => {
+              const rowId = `log:${entry.id}`;
+              return (
+                <ForgettableRow
+                  key={entry.id}
+                  id={rowId}
+                  text={entry.text}
+                  highlighted={selectedEntry === entry.id}
+                  confirming={confirmId === rowId}
+                  busy={mutation.pending === `forget-log:${entry.id}`}
+                  onStartConfirm={() => setConfirmId(rowId)}
+                  onCancel={() => setConfirmId(null)}
+                  onConfirm={() => void forgetLogEntry(log.date, entry.id, log.revision)}
+                />
+              );
+            })}
+          </Rows>
+        ) : (
+          <Empty>No notes found for {formatLogDate(selectedDate)}.</Empty>
+        )}
+      </Screen>
+    );
+  }
+
+  if (resolvedTopic && !query.trim()) {
+    const topicFacts = facts.filter((fact) => normalizeMemoryTopic(fact.section) === resolvedTopic);
+    return (
+      <Screen title={resolvedTopic}>
+        <button
+          type="button"
+          onClick={closeSubView}
+          className="mb-4 inline-flex h-8 items-center gap-1.5 rounded-full bg-fill-1 px-3 text-meta font-semibold text-ink transition-colors hover:bg-fill-2"
+        >
+          <ArrowLeft size={14} aria-hidden />
+          Memory
+        </button>
+        {mutation.error && (
+          <div className="mb-4">
+            <Notice tone="danger">{mutation.error}</Notice>
+          </div>
+        )}
+        {core.loading && !core.data ? (
+          <Loading label="Loading memories…" />
+        ) : topicFacts.length ? (
+          <Rows label={resolvedTopic}>
+            {topicFacts.map((fact) => (
+              <ForgettableRow
+                key={fact.id}
+                id={fact.id}
+                text={fact.text}
+                highlighted={selectedId === fact.id}
+                confirming={confirmId === fact.id}
+                busy={mutation.pending === `forget:${fact.id}`}
+                onStartConfirm={() => setConfirmId(fact.id)}
+                onCancel={() => setConfirmId(null)}
+                onConfirm={() => void forgetFact(fact)}
+              />
+            ))}
+          </Rows>
+        ) : (
+          <Empty>Nothing left in {resolvedTopic}.</Empty>
+        )}
+      </Screen>
+    );
+  }
+
+  const trimmed = query.trim();
+  const needle = trimmed.toLowerCase();
+  const matchingFacts = trimmed
+    ? facts.filter(
+        (fact) =>
+          fact.text.toLowerCase().includes(needle) ||
+          normalizeMemoryTopic(fact.section).toLowerCase().includes(needle),
+      )
+    : [];
+  const logHits = trimmed ? (searchRes.data?.items ?? []).filter((hit) => hit.layer === "log") : [];
+
   return (
-    <Screen
-      title="Memory"
-      back="/more"
-      backLabel="More"
-      actions={
-        <Button variant="primary" size="sm" onClick={openAdd}>
-          <Plus size={15} aria-hidden />
-          Add memory
-        </Button>
-      }
-      tabs={
-        <UnderlineTabs
-          label="Memory layers"
-          value={tab}
-          onChange={selectTab}
-          items={[
-            { id: "core", label: "Core", count: coreItems.length || undefined },
-            { id: "logs", label: "Daily Logs", count: logEntryCount || undefined },
-            { id: "working", label: "Working", count: workingItems.length || undefined },
-          ]}
-        />
-      }
-    >
-      <datalist id="memory-sections">
-        {SECTION_SUGGESTIONS.map((option) => (
-          <option key={option} value={option} />
-        ))}
-      </datalist>
+    <Screen title="Memory" back="/more" backLabel="More">
+      <div className="space-y-4">
+        <label className="relative block">
+          <span className="sr-only">Search everything Nori remembers</span>
+          <Search
+            size={16}
+            className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-ink-3"
+            aria-hidden
+          />
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setConfirmId(null);
+            }}
+            placeholder="Search everything Nori remembers…"
+            className={cn(inputClass, "h-11 pr-9 pl-10")}
+          />
+          {query && (
+            <button
+              type="button"
+              aria-label="Clear search"
+              onClick={() => {
+                setQuery("");
+                setSettledQuery("");
+                setConfirmId(null);
+              }}
+              className="absolute top-1/2 right-2.5 -translate-y-1/2 rounded-full p-1 text-ink-3 hover:bg-fill-1 hover:text-ink"
+            >
+              <X size={15} aria-hidden />
+            </button>
+          )}
+        </label>
 
-      {tab === "core" && (
-        <CoreMemoryTab
-          key={`core:${initialQuery}`}
-          core={core}
-          items={coreItems}
-          budget={budget}
-          selectedId={selectedId}
-          initialQuery={initialQuery}
-          adding={adding}
-          setAdding={setAdding}
-        />
-      )}
+        {core.error && <Failure error={core.error} onRetry={() => void core.reload()} />}
+        {mutation.error && <Notice tone="danger">{mutation.error}</Notice>}
 
-      {tab === "logs" && (
-        <DailyLogsTab
-          key={`logs:${initialQuery}`}
-          logs={logs}
-          deepDateLog={deepDateLog}
-          items={mergedLogs}
-          selectedDate={selectedDate}
-          selectedEntry={selectedEntry}
-          initialQuery={initialQuery}
-          onJump={(href) => router.replace(href, { scroll: false })}
-        />
-      )}
+        {trimmed ? (
+          <div className="space-y-5">
+            {searchRes.error && <Failure error={searchRes.error} onRetry={() => void searchRes.reload()} />}
 
-      {tab === "working" && <WorkingMemoryTab working={working} />}
+            {matchingFacts.length > 0 && (
+              <Section title="Saved">
+                <Rows label="Saved">
+                  {matchingFacts.map((fact) => (
+                    <ForgettableRow
+                      key={fact.id}
+                      id={fact.id}
+                      text={fact.text}
+                      detail={normalizeMemoryTopic(fact.section)}
+                      confirming={confirmId === fact.id}
+                      busy={mutation.pending === `forget:${fact.id}`}
+                      onStartConfirm={() => setConfirmId(fact.id)}
+                      onCancel={() => setConfirmId(null)}
+                      onConfirm={() => void forgetFact(fact)}
+                    />
+                  ))}
+                </Rows>
+              </Section>
+            )}
+
+            {logHits.length > 0 && (
+              <Section title="Past chats">
+                <Rows label="Past chats">
+                  {logHits.map((hit, idx) => {
+                    const rowId = `log:${hit.entry_id ?? hit.log_date ?? idx}`;
+                    const canForget = Boolean(hit.log_date && hit.entry_id);
+                    return (
+                      <ForgettableRow
+                        key={rowId}
+                        id={rowId}
+                        text={hit.snippet}
+                        detail={hit.log_date ? formatLogDate(hit.log_date) : undefined}
+                        confirming={confirmId === rowId}
+                        busy={mutation.pending === `forget-log:${hit.entry_id}`}
+                        canForget={canForget}
+                        onStartConfirm={() => setConfirmId(rowId)}
+                        onCancel={() => setConfirmId(null)}
+                        onConfirm={() => {
+                          if (hit.log_date && hit.entry_id) {
+                            void forgetLogEntry(hit.log_date, hit.entry_id);
+                          }
+                        }}
+                      />
+                    );
+                  })}
+                </Rows>
+              </Section>
+            )}
+
+            {!matchingFacts.length && !logHits.length && !searchRes.error && (
+              searchRes.loading || settledQuery !== trimmed ? (
+                <Loading label="Searching memory…" />
+              ) : (
+                <Empty>Nothing matches “{trimmed}”.</Empty>
+              )
+            )}
+          </div>
+        ) : core.loading && !core.data ? (
+          <Loading label="Loading memory…" />
+        ) : topics.length ? (
+          <Rows label="Memory topics">
+            {topics.map((group) => (
+              <Row
+                key={group.topic}
+                onClick={() => openTopic(group.topic)}
+                title={group.topic}
+                trailing={
+                  <span className="text-meta font-medium tabular-nums text-ink-3">
+                    {group.items.length}
+                  </span>
+                }
+                chevron
+              />
+            ))}
+          </Rows>
+        ) : (
+          <Empty>Nori will remember helpful details as you chat.</Empty>
+        )}
+      </div>
     </Screen>
   );
 }
 
-function CoreMemoryTab({
-  core,
-  items,
-  budget,
-  selectedId,
-  initialQuery,
-  adding,
-  setAdding,
+function ForgettableRow({
+  id,
+  text,
+  detail,
+  highlighted = false,
+  confirming,
+  busy,
+  canForget = true,
+  onStartConfirm,
+  onCancel,
+  onConfirm,
 }: {
-  core: ReturnType<typeof useResource<List<MemoryFact>>>;
-  items: MemoryFact[];
-  budget: ReturnType<typeof coreBudgetStats>;
-  selectedId?: string;
-  initialQuery: string;
-  adding: boolean;
-  setAdding: (open: boolean) => void;
+  id: string;
+  text: string;
+  detail?: string;
+  highlighted?: boolean;
+  confirming: boolean;
+  busy?: boolean;
+  canForget?: boolean;
+  onStartConfirm: () => void;
+  onCancel: () => void;
+  onConfirm: () => void;
 }) {
-  const mutation = useVersionedMemoryMutation();
-  const [query, setQuery] = useState(initialQuery);
-  const [editingId, setEditingId] = useState<string>();
-  const [editText, setEditText] = useState("");
-  const [editAbout, setEditAbout] = useState("");
-  const [editSection, setEditSection] = useState("");
-  const [editPinned, setEditPinned] = useState(false);
-
-  const [newText, setNewText] = useState("");
-  const [newAbout, setNewAbout] = useState("");
-  const [newSection, setNewSection] = useState("");
-  const [newPinned, setNewPinned] = useState(false);
-
-  const filtered = useMemo(() => filterCoreMemories(items, query), [items, query]);
-  const pinnedCount = useMemo(() => items.filter((item) => item.pinned).length, [items]);
-
-  useEffect(() => {
-    if (!selectedId) return;
-    const el = document.getElementById(`memory-${selectedId}`);
-    el?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [selectedId, items.length]);
-
-  const createValidation = validateMemoryText(newText);
-  const createFact = async () => {
-    if (!createValidation.ok) return;
-    const created = await mutation.run(
-      "create",
-      () =>
-        mutate<MemoryFact>("/memory", {
-          request_id: newRequestID(),
-          expected_revision: 0,
-          value: buildEditableValue({ text: createValidation.text, about: newAbout, section: newSection, pinned: newPinned }),
-        }),
-      "Memory saved.",
-    );
-    if (created) {
-      setNewText("");
-      setNewAbout("");
-      setNewSection("");
-      setNewPinned(false);
-      setAdding(false);
-    }
-  };
-
-  const startEdit = (fact: MemoryFact) => {
-    setEditingId(fact.id);
-    setEditText(fact.text);
-    setEditAbout(fact.about ?? "");
-    setEditSection(fact.section ?? "");
-    setEditPinned(!!fact.pinned);
-  };
-
-  const editValidation = validateMemoryText(editText);
-  const saveEdit = async (fact: MemoryFact) => {
-    if (!editValidation.ok) return;
-    const saved = await mutation.run(
-      `edit:${fact.id}`,
-      () =>
-        mutate<MemoryFact>(
-          `/memory/${encodeURIComponent(fact.id)}`,
-          {
-            request_id: newRequestID(),
-            expected_revision: fact.revision,
-            value: {
-              text: editValidation.text,
-              ...(editAbout.trim() ? { about: editAbout.trim() } : {}),
-              ...(editSection.trim() ? { section: editSection.trim() } : {}),
-              pinned: editPinned,
-            },
-          },
-          "PUT",
-        ),
-      "Memory updated.",
-    );
-    if (saved) setEditingId(undefined);
-  };
-
-  const factAction = (fact: MemoryFact, kind: Extract<MemoryAction["value"]["action"], "pin" | "unpin" | "demote" | "forget">) => {
-    const label: Record<typeof kind, string> = {
-      pin: "Pinned to Core Memory.",
-      unpin: "Unpinned.",
-      demote: "Moved to Daily Logs.",
-      forget: "Memory forgotten.",
-    };
-    return mutation.run(
-      `${kind}:${fact.id}`,
-      () =>
-        mutate(`/memory/${encodeURIComponent(fact.id)}/actions`, {
-          request_id: newRequestID(),
-          expected_revision: fact.revision,
-          value: { action: kind },
-        }),
-      label[kind],
-    );
-  };
-
-  const barColor = budget.tone === "danger" ? "bg-danger" : budget.tone === "warning" ? "bg-warning" : "bg-accent";
-
   return (
-    <div className="space-y-4">
-      <div className="rounded-card border border-card-border bg-surface p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <span className="text-meta font-medium text-ink">Core budget</span>
-            <Pill tone={budget.tone}>{formatByteBudget(budget.used, budget.budget)}</Pill>
+    <li
+      id={`memory-${id}`}
+      className={cn(
+        "group flex items-start gap-3 px-4 py-3.5",
+        highlighted && "bg-accent-subtle/40 ring-1 ring-inset ring-accent",
+      )}
+    >
+      <span className="min-w-0 flex-1">
+        <span className="block whitespace-pre-wrap text-body leading-relaxed text-ink [overflow-wrap:anywhere]">
+          {text}
+        </span>
+        {detail && <span className="mt-1 block text-caption text-ink-3">{detail}</span>}
+      </span>
+      {canForget && (
+        confirming ? (
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Button size="sm" variant="danger" disabled={busy} onClick={onConfirm}>
+              {busy ? "Forgetting…" : "Forget"}
+            </Button>
+            <Button size="sm" variant="quiet" disabled={busy} onClick={onCancel}>
+              Keep
+            </Button>
           </div>
-          {pinnedCount > 0 && (
-            <span className="text-caption text-ink-3">{pinnedCount} pinned</span>
-          )}
-        </div>
-        <div
-          className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-fill-1"
-          role="progressbar"
-          aria-label="Core Memory budget usage"
-          aria-valuenow={budget.used}
-          aria-valuemin={0}
-          aria-valuemax={budget.budget}
-        >
-          <div className={cn("h-full rounded-full transition-[width]", barColor)} style={{ width: `${Math.round(budget.ratio * 100)}%` }} />
-        </div>
-        <p className="mt-2 text-caption text-ink-3">
-          Loaded into every chat. Pinned items stay in Core; older unpinned items move to Daily Logs when full.
-        </p>
-      </div>
-
-      {adding && (
-        <MemoryFactForm
-          className="rounded-card border border-card-border bg-surface p-4"
-          heading="Add memory"
-          headingAs="h2"
-          text={newText}
-          onTextChange={setNewText}
-          textLabel="Fact"
-          textAriaLabel="New memory text"
-          textPlaceholder="Prefers aisle seats and direct morning flights…"
-          section={newSection}
-          onSectionChange={setNewSection}
-          about={newAbout}
-          onAboutChange={setNewAbout}
-          pinned={newPinned}
-          onPinnedChange={setNewPinned}
-          pinnedLabel="Pin in Core Memory"
-          validationError={newText.trim().length > 0 && !createValidation.ok ? createValidation.reason : undefined}
-          submitLabel="Save memory"
-          submittingLabel="Saving…"
-          submitting={mutation.pending === "create"}
-          submitDisabled={!createValidation.ok || !!mutation.pending}
-          onSubmit={() => void createFact()}
-          onCancel={() => setAdding(false)}
-        />
+        ) : (
+          <button
+            type="button"
+            aria-label="Forget"
+            onClick={onStartConfirm}
+            className="grid size-7 shrink-0 place-items-center rounded-full text-ink-3 opacity-60 transition-colors hover:bg-danger-bg hover:text-danger hover:opacity-100 focus-visible:opacity-100 sm:opacity-35 sm:group-hover:opacity-100"
+          >
+            <X size={14} aria-hidden />
+          </button>
+        )
       )}
-
-      <label className="relative block">
-        <span className="sr-only">Filter core memories</span>
-        <Search size={17} className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-ink-3" aria-hidden />
-        <input
-          type="search"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Filter core memories by text, section, or topic"
-          className={cn(inputClass, "h-11 pl-10")}
-        />
-      </label>
-
-      {core.error && <Failure error={core.error} onRetry={() => void core.reload()} />}
-      {mutation.error && <Notice tone="danger">{mutation.error}</Notice>}
-
-      {core.loading ? (
-        <Loading label="Loading Core Memory…" />
-      ) : filtered.length ? (
-        <Rows label="Core memories">
-          {filtered.map((fact) => {
-            const prov = provenanceInfo(fact.provenance);
-            const selected = selectedId === fact.id;
-            const jumpToChat = messageJumpHref(fact.origin.message_id, "message");
-            const busyThis = mutation.pending?.endsWith(`:${fact.id}`);
-            return (
-              <li
-                key={fact.id}
-                id={`memory-${fact.id}`}
-                className={cn("px-4 py-3.5", selected && "bg-accent-subtle/40 ring-1 ring-inset ring-accent")}
-              >
-                {editingId === fact.id ? (
-                  <MemoryFactForm
-                    heading="Edit memory"
-                    text={editText}
-                    onTextChange={setEditText}
-                    textAriaLabel="Edit memory text"
-                    section={editSection}
-                    onSectionChange={setEditSection}
-                    sectionLabel="Section"
-                    sectionPlaceholder="Preferences"
-                    about={editAbout}
-                    onAboutChange={setEditAbout}
-                    aboutLabel="About"
-                    aboutPlaceholder="the user"
-                    pinned={editPinned}
-                    onPinnedChange={setEditPinned}
-                    pinnedLabel="Pinned"
-                    validationError={!editValidation.ok ? editValidation.reason : undefined}
-                    submitLabel="Save"
-                    submittingLabel="Saving…"
-                    submitting={mutation.pending === `edit:${fact.id}`}
-                    submitDisabled={!editValidation.ok || !!mutation.pending}
-                    onSubmit={() => void saveEdit(fact)}
-                    onCancel={() => setEditingId(undefined)}
-                  />
-                ) : (
-                  <div className="space-y-2">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <p className="min-w-0 flex-1 whitespace-pre-wrap text-body text-ink [overflow-wrap:anywhere]">{fact.text}</p>
-                      {fact.pinned && <Pill tone="accent">Pinned</Pill>}
-                    </div>
-
-                    {fact.source_text && (
-                      <blockquote className="border-l-2 border-hairline-strong pl-2.5 text-caption text-ink-2 [overflow-wrap:anywhere]">
-                        “{fact.source_text}”
-                      </blockquote>
-                    )}
-
-                    <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
-                      <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-caption text-ink-3">
-                        {fact.section && <span>{fact.section}</span>}
-                        <span>{prov.label}</span>
-                        {fact.about && <span>About {fact.about}</span>}
-                        <span>Saved {relative(fact.created_at)}</span>
-                        {fact.updated_at && fact.updated_at !== fact.created_at && (
-                          <span>· updated {relative(fact.updated_at)}</span>
-                        )}
-                        {fact.scope === "chat" && <span>· this chat only</span>}
-                        {jumpToChat && (
-                          <Link href={jumpToChat} className="inline-flex items-center gap-0.5 text-accent-text hover:underline">
-                            Source message
-                            <ArrowUpRight size={12} aria-hidden />
-                          </Link>
-                        )}
-                        {fact.origin.task_id && (
-                          <Link
-                            href={`/work/${encodeURIComponent(fact.origin.task_id)}`}
-                            className="inline-flex items-center gap-0.5 text-accent-text hover:underline"
-                          >
-                            Source task
-                            <ArrowUpRight size={12} aria-hidden />
-                          </Link>
-                        )}
-                      </span>
-
-                      <div className="flex flex-wrap items-center gap-1">
-                        <Button
-                          size="sm"
-                          variant="quiet"
-                          disabled={!!busyThis}
-                          onClick={() => void factAction(fact, fact.pinned ? "unpin" : "pin")}
-                        >
-                          {fact.pinned ? <PinOff size={14} aria-hidden /> : <Pin size={14} aria-hidden />}
-                          {fact.pinned ? "Unpin" : "Pin"}
-                        </Button>
-                        <Button size="sm" variant="quiet" disabled={!!busyThis} onClick={() => startEdit(fact)}>
-                          <Pencil size={14} aria-hidden />
-                          Edit
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="quiet"
-                          disabled={!!busyThis}
-                          onClick={() => void factAction(fact, "demote")}
-                        >
-                          <ArrowDownToLine size={14} aria-hidden />
-                          Move to log
-                        </Button>
-                        <Confirm
-                          danger
-                          title="Forget this memory?"
-                          body="Nori stops using it. Chats where it came up stay as they are."
-                          confirm="Forget"
-                          onConfirm={() => void factAction(fact, "forget")}
-                          trigger={
-                            <Button size="sm" variant="danger-quiet" disabled={!!busyThis}>
-                              Forget
-                            </Button>
-                          }
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </Rows>
-      ) : (
-        <Empty
-          action={
-            query.trim() ? (
-              <Button size="sm" variant="neutral" onClick={() => setQuery("")}>
-                Clear filter
-              </Button>
-            ) : (
-              <Button size="sm" variant="primary" onClick={() => setAdding(true)}>
-                <Plus size={14} aria-hidden />
-                Add memory
-              </Button>
-            )
-          }
-        >
-          {query.trim() ? `No core memories match “${query.trim()}”.` : "Nothing in Core Memory yet."}
-        </Empty>
-      )}
-    </div>
+    </li>
   );
 }

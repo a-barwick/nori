@@ -10,9 +10,11 @@ import {
   formatByteBudget,
   formatKB,
   formatWatermark,
+  groupMemoriesByTopic,
   MAX_MEMORY_TEXT_BYTES,
   memoryHitHref,
   messageJumpHref,
+  normalizeMemoryTopic,
   parseMemoryTab,
   provenanceInfo,
   requiresReauthorForPromote,
@@ -239,5 +241,43 @@ describe("working memory watermark formatting", () => {
     assert.match(compacted.windowThrough, /12:00.*2 hours ago/);
     assert.match(compacted.lastDream, /11:00.*3 hours ago/);
     assert.equal(formatWatermark(undefined, "Not extracted yet", now, "UTC"), "Not extracted yet");
+  });
+
+  test("normalizeMemoryTopic and groupMemoriesByTopic organize facts into canonical topic folders", () => {
+    assert.equal(normalizeMemoryTopic(undefined), "About you");
+    assert.equal(normalizeMemoryTopic("profile"), "About you");
+    assert.equal(normalizeMemoryTopic("Preferences"), "Preferences");
+    assert.equal(normalizeMemoryTopic("work"), "Projects");
+    assert.equal(normalizeMemoryTopic("family"), "People");
+    assert.equal(normalizeMemoryTopic("routine"), "Home & Routine");
+    assert.equal(normalizeMemoryTopic("dining"), "Travel & Food");
+    assert.equal(normalizeMemoryTopic("guitar"), "Guitar");
+
+    const make = (id: string, section?: string): MemoryFact => ({
+      id,
+      revision: 1,
+      text: `Fact ${id}`,
+      section,
+      scope: "user",
+      created_at: "2026-11-27T00:00:00Z",
+      origin: {},
+    });
+
+    const grouped = groupMemoriesByTopic([
+      make("1", "guitar"),
+      make("2", "dining"),
+      make("3", "Preferences"),
+      make("4", undefined),
+      make("5", "profile"),
+    ]);
+    assert.deepEqual(
+      grouped.map((g) => [g.topic, g.items.length]),
+      [
+        ["About you", 2],
+        ["Preferences", 1],
+        ["Travel & Food", 1],
+        ["Guitar", 1],
+      ],
+    );
   });
 });

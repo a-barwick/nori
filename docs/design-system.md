@@ -160,9 +160,18 @@ Use multiples of `4 pt`: `4`, `8`, `12`, `16`, `20`, `24`, `32`.
   - **Clarification cards** omit warning colors entirely so questions feel calmer than authorization gates.
 - **Buttons:** Support 5 semantic kinds—`Primary` (`brand.primary`), `Secondary` (surface + `border.strong`), `Tonal` (`background.selected` + `brand.accent`), `Quiet` (`background.elevated`), and `Destructive` (`status.errorBg` + `status.error`)—plus a visibly muted **Disabled** state (`#14141A` bg, `#6B6578` fg, no border in dark mode) handled centrally by the button component.
 - **Modal Sheets:** Sit one surface level above the canvas (`background.sheet` `#0E0E13`), with inputs slightly lighter (`background.elevated` `#14141A`) and selected categories using soft violet surfaces (`background.selected` `#261F38`) rather than saturated fills.
+- **Brand Icon Wells:** Third-party integrations and model providers (Google Calendar, Google Drive, Gmail, Linear, Notion, Anthropic, OpenAI, Google) render brand marks inside a `34–36 pt` rounded-`10 pt` tile (`#FFFFFF` with hairline border in Light, `#181820` with `8%` white border in Dark). Unknown custom apps use a neutral plug icon; home computers use a neutral computer icon.
+- **More Tab & Settings Architecture:**
+  - The More hub contains 8 rows in three groups: **Nori** (`Apps`, `Memory`, `Permissions`), **Settings** (`Models`, `Usage & Budgets`, `Preferences`, `Appearance`), and **Account** (`Account`, which contains `Action History`, `Diagnostics`, `Legal`, `Reset data`, `Delete account`, and `Sign out`).
+  - **Memory** uses topic folders (`About you`, `Preferences`, `Projects`, `People`, `Home & Routine`, `Travel & Food`) and a unified search bar across saved facts and past chat notes. Hide storage tabs (`Core`, `Daily Logs`, `Working`), byte budgets, and compaction metadata from everyday screens.
+  - **Apps** uses direct service switches for Google Calendar, Google Drive, and Gmail, and simple on/off action switches for custom apps without raw `snake_case` tool IDs or protocol details.
+  - **Permissions** groups rules into `Allowed`, `Ask first`, and `Blocked` without a manual rule-builder form or filter bar.
+  - **Models** uses auto-saving `Chat` and `Work` rows that open a searchable model picker with the `Reasoning` control pinned at the top above the search input.
+  - **Usage & Budgets** combines recorded spend with `Per-task limit`, `Monthly limit`, and a thin monthly budget progress bar inside the 30-day card.
+  - **Inline Destructive Confirmation:** Forgetting a memory fact or removing a permission uses an inline `×` control that expands into two buttons (`Forget` / `Keep` or `Remove` / `Keep`) in place.
 - **Copy & Sublabels:**
-  - **No filler sublabels.** Only show a row subtitle or card sublabel when it displays real live data or state (e.g., `0.3 / 24 KB`, `2 connected`, `3 rules`, `Dark`, `America/Los_Angeles · $5.00 / task`). Never add explanatory filler that repeats a title, describes an obvious control, or fills an empty state with extra taglines.
-  - **Plain, positive English.** When a screen needs a brief explanation, write one clear, positive sentence for non-technical readers—never define something by what it is *not*.
+  - **No sublabels on navigation menus or toggle rows.** Navigation rows, toggle rows, and clean list items render a single title line. Use trailing values only for editable settings values (such as `Claude Sonnet 4.6`, `$2.00`, or `America/Los_Angeles`) and reserve pills for exceptions (such as `1 attention`, `Required`, `Needs sign-in`, `Reconnecting`, or `Offline`).
+  - **Plain, positive English.** Write one clear sentence when a screen requires explanation, and never use the phrase `"needs you"` anywhere in UI or copy.
 
 ---
 

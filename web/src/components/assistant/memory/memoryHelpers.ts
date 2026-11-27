@@ -199,3 +199,43 @@ export function buildEditableValue(input: { text: string; about: string; section
   if (input.pinned) value.pinned = true;
   return value;
 }
+
+const CANONICAL_TOPICS: { match: RegExp; label: string }[] = [
+  { match: /^(about|about you|profile|identity|bio|background|user)$/i, label: "About you" },
+  { match: /^(preference|preferences|style|communication|likes|dislikes)$/i, label: "Preferences" },
+  { match: /^(project|projects|work|goals|decisions)$/i, label: "Projects" },
+  { match: /^(people|person|contacts|family|friends|relationships|team)$/i, label: "People" },
+  { match: /^(home|routine|routines|home & routine|schedule|health|habits)$/i, label: "Home & Routine" },
+  { match: /^(travel|food|travel & food|dining|places|trips)$/i, label: "Travel & Food" },
+];
+
+const TOPIC_ORDER = ["About you", "Preferences", "Projects", "People", "Home & Routine", "Travel & Food"];
+
+export function normalizeMemoryTopic(section?: string): string {
+  const trimmed = section?.trim();
+  if (!trimmed) return "About you";
+  for (const entry of CANONICAL_TOPICS) {
+    if (entry.match.test(trimmed)) return entry.label;
+  }
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
+export function groupMemoriesByTopic(facts: MemoryFact[]): { topic: string; items: MemoryFact[] }[] {
+  const map = new Map<string, MemoryFact[]>();
+  for (const fact of facts) {
+    const topic = normalizeMemoryTopic(fact.section);
+    const list = map.get(topic);
+    if (list) list.push(fact);
+    else map.set(topic, [fact]);
+  }
+  return Array.from(map.entries())
+    .map(([topic, items]) => ({ topic, items }))
+    .sort((a, b) => {
+      const ia = TOPIC_ORDER.indexOf(a.topic);
+      const ib = TOPIC_ORDER.indexOf(b.topic);
+      if (ia !== -1 && ib !== -1) return ia - ib;
+      if (ia !== -1) return -1;
+      if (ib !== -1) return 1;
+      return a.topic.localeCompare(b.topic);
+    });
+}

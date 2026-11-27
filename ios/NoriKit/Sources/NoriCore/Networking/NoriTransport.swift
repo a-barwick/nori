@@ -203,6 +203,7 @@ public protocol NoriTransport: Sendable {
 
     func fetchCoreMemories() async throws -> [MemoryFact]
     func fetchMemoryLogs() async throws -> [MemoryLog]
+    func fetchMemoryLog(date: String) async throws -> MemoryLog
     func fetchWorkingMemory() async throws -> WorkingMemory
     func searchMemory(query: String, layer: String?, limit: Int) async throws -> MemorySearchResponse
     func createMemory(
@@ -330,6 +331,14 @@ public extension NoriTransport {
             return found
         }
         throw NoriAPIError(message: "Interaction not found.", statusCode: 404)
+    }
+
+    func fetchMemoryLog(date: String) async throws -> MemoryLog {
+        let all = try await fetchMemoryLogs()
+        if let found = all.first(where: { $0.date == date }) {
+            return found
+        }
+        throw NoriAPIError(message: "Memory log not found.", statusCode: 404)
     }
 
     func searchMemory(query: String, layer: String? = nil, limit: Int = 20) async throws -> MemorySearchResponse {

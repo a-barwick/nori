@@ -144,9 +144,6 @@ describe("BYOK API Keys client and Settings UI", () => {
     );
     assert.match(configuredHtml, /Vercel AI Gateway/);
     assert.match(configuredHtml, /••••a1b2/);
-    assert.match(configuredHtml, /encrypted at rest/i);
-    assert.match(configuredHtml, /Replace/);
-    assert.match(configuredHtml, /Remove/);
     assert.equal(/Add your Vercel AI Gateway API key below/.test(configuredHtml), false);
 
     const requiredUnconfiguredData: ModelKeysResponse = {
@@ -164,16 +161,16 @@ describe("BYOK API Keys client and Settings UI", () => {
       <ApiKeysContent data={requiredUnconfiguredData} onProviderUpdated={() => {}} />,
     );
     assert.match(requiredHtml, /Add your Vercel AI Gateway API key below/);
-    assert.match(requiredHtml, /Not set/);
-    assert.match(requiredHtml, /Add key/);
+    assert.equal(/Not set/.test(requiredHtml), false);
 
     const editingHtml = renderToStaticMarkup(
       <ApiKeysContent
-        data={requiredUnconfiguredData}
+        data={configuredData}
         onProviderUpdated={() => {}}
         initialEditingProvider="vercel_ai_gateway"
       />,
     );
+    assert.match(editingHtml, /encrypted at rest/i);
     assert.match(editingHtml, /type="password"/);
     assert.match(editingHtml, /autoComplete="new-password"/i);
     assert.match(editingHtml, /data-1p-ignore/i);
@@ -182,5 +179,6 @@ describe("BYOK API Keys client and Settings UI", () => {
     assert.match(editingHtml, /spellCheck="false"/i);
     assert.match(editingHtml, />Save</);
     assert.match(editingHtml, />Cancel</);
+    assert.match(editingHtml, />Remove</);
   });
 });
