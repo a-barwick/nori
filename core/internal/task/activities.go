@@ -518,6 +518,18 @@ func questionPayloadJSON(q state.Question) json.RawMessage {
 	return data
 }
 
+func isStructuredQuestion(q state.Question) bool {
+	if len(q.Clears) > 0 {
+		return false
+	}
+	switch q.Input {
+	case "choice", "multi_choice", "confirm", "date":
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *Activities) Ask(ctx context.Context, p QuestionProjection) (err error) {
 	ctx, span := startActivity(ctx, "task.question", "CHAIN", a.activityRun(ctx, p.RunID), p.Revision)
 	defer func() { recordActivityFailure(ctx, err, "task.question"); span.End() }()
@@ -526,15 +538,20 @@ func (a *Activities) Ask(ctx context.Context, p QuestionProjection) (err error) 
 		return err
 	}
 	if p.Question.Kind != state.QuestionWork && a.Executor != nil && a.Executor.Permissions != nil {
-		revision := p.Revision
-		title := clip(run.Request, 200)
-		if _, err := a.Executor.Permissions.Open(ctx, permissions.Interaction{
-			ID: p.Question.ID, TaskID: p.RunID, InstructionRevision: &revision, Kind: "question", Prompt: p.Question.Text,
-			Payload: questionPayloadJSON(p.Question), LegacyQuestionID: p.Question.ID, TaskTitle: title,
-		}, ""); err != nil {
-			return err
+		if _, lookupErr := a.Executor.Permissions.Interaction(ctx, p.Question.ID); lookupErr == nil {
+			// An approval, sign-in, or account-selection card was already opened for this question.
+			p.Question.Interactive = true
+		} else if isStructuredQuestion(p.Question) {
+			revision := p.Revision
+			title := clip(run.Request, 200)
+			if _, err := a.Executor.Permissions.Open(ctx, permissions.Interaction{
+				ID: p.Question.ID, TaskID: p.RunID, InstructionRevision: &revision, Kind: "question", Prompt: p.Question.Text,
+				Payload: questionPayloadJSON(p.Question), LegacyQuestionID: p.Question.ID, TaskTitle: title,
+			}, ""); err != nil {
+				return err
+			}
+			p.Question.Interactive = true
 		}
-		p.Question.Interactive = true
 	}
 	return a.Store.ProjectQuestion(ctx, p.RunID, p.Revision, p.Question)
 }

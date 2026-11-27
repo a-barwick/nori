@@ -91,6 +91,7 @@ public struct LibraryItem: Sendable, Codable, Hashable, Identifiable {
     public var data: AnyJSON?
     public var collection: String?
     public var previewText: String?
+    public var excerpt: String?
     public var deleteEffect: String?
     public var revision: Int
 
@@ -119,6 +120,7 @@ public struct LibraryItem: Sendable, Codable, Hashable, Identifiable {
         case data
         case collection
         case previewText = "preview_text"
+        case excerpt
         case deleteEffect = "delete_effect"
         case revision
     }
@@ -148,6 +150,7 @@ public struct LibraryItem: Sendable, Codable, Hashable, Identifiable {
         data: AnyJSON? = nil,
         collection: String? = nil,
         previewText: String? = nil,
+        excerpt: String? = nil,
         deleteEffect: String? = nil,
         revision: Int = 1
     ) {
@@ -175,6 +178,7 @@ public struct LibraryItem: Sendable, Codable, Hashable, Identifiable {
         self.data = data
         self.collection = collection
         self.previewText = previewText
+        self.excerpt = excerpt
         self.deleteEffect = deleteEffect
         self.revision = revision
     }

@@ -62,6 +62,7 @@ type workItem struct {
 	StartedAt           time.Time      `json:"started_at"`
 	FinishedAt          *time.Time     `json:"finished_at,omitempty"`
 	CancelRequested     bool           `json:"cancel_requested"`
+	Partial             bool           `json:"partial,omitempty"`
 	Error               *errorDetail   `json:"error,omitempty"`
 }
 
@@ -183,7 +184,21 @@ func (a *Assistant) item(ctx context.Context, run state.Run, ops []state.Operati
 		item.Bucket = "working"
 	}
 	if run.Error != "" {
-		item.Error = &errorDetail{Code: "task_failed", Message: clip(run.Error, 1000)}
+		code := "task_failed"
+		msg := strings.TrimSpace(run.Error)
+		lower := strings.ToLower(msg)
+		if run.Status == state.RunFailed && (strings.HasPrefix(lower, "incomplete") || strings.Contains(lower, "spending limit") || strings.Contains(lower, "budget")) {
+			item.Partial = true
+			code = "task_incomplete"
+			if strings.HasPrefix(lower, "incomplete") {
+				rest := strings.TrimSpace(msg[len("incomplete"):])
+				rest = strings.TrimSpace(strings.TrimLeft(rest, ".:- "))
+				if rest != "" {
+					msg = rest
+				}
+			}
+		}
+		item.Error = &errorDetail{Code: code, Message: clip(msg, 1000)}
 	}
 	return item
 }

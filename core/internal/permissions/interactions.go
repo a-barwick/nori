@@ -24,6 +24,7 @@ type Interaction struct {
 	ConversationID      string          `json:"conversation_id,omitempty"`
 	AutomationID        string          `json:"automation_id,omitempty"`
 	Kind                string          `json:"kind"`
+	Surface             string          `json:"surface,omitempty"`
 	Status              string          `json:"status"`
 	Prompt              string          `json:"prompt"`
 	Payload             json.RawMessage `json:"payload"`
@@ -73,6 +74,22 @@ type Response struct {
 	RememberAsDefault bool     `json:"remember_as_default,omitempty"`
 }
 
+func interactionSurface(kind string, payload json.RawMessage) string {
+	if kind != "question" {
+		return "chat"
+	}
+	var q struct {
+		Input string `json:"input"`
+	}
+	if err := json.Unmarshal(payload, &q); err == nil {
+		switch q.Input {
+		case "choice", "multi_choice", "confirm", "date":
+			return "chat"
+		}
+	}
+	return "work"
+}
+
 func (s *Service) decodeInteraction(r state.Resource) (Interaction, stored, error) {
 	var body stored
 	if err := r.Decode(&body); err != nil {
@@ -85,6 +102,7 @@ func (s *Service) decodeInteraction(r state.Resource) (Interaction, stored, erro
 	if i.Payload == nil {
 		i.Payload = json.RawMessage("{}")
 	}
+	i.Surface = interactionSurface(i.Kind, i.Payload)
 	if i.Status == "pending" && i.ExpiresAt != nil && s.now().After(*i.ExpiresAt) {
 		i.Status = "expired"
 	}

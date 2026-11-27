@@ -86,6 +86,78 @@ func TestStructuredRequestInputOpensCardWithoutWakingOuterLoop(t *testing.T) {
 	}
 }
 
+func TestFreeTextRequestInputWakesOuterLoopWithoutOpeningCard(t *testing.T) {
+	ctx := context.Background()
+	f := newRunnerFixture(t, func(_ context.Context, callNum int, _ agent.Request) (agent.Response, error) {
+		if callNum == 1 {
+			return toolCallResponse("c-ask-text", "request_input", map[string]any{
+				"question": "Where are you flying from and which weekend?",
+			}, 0.02), nil
+		}
+		return toolCallResponse("c-done", "complete", map[string]any{
+			"answer": "Done.", "evidence": []any{}, "unmet": []any{},
+		}, 0.02), nil
+	})
+
+	run := f.startTask(ctx, "run-freetext-ask", "Plan a weekend getaway")
+	outcome, err := f.claimAndRun(ctx, run.ID, "worker-ask-text-1")
+	if err != nil || outcome != task.OutcomeParked {
+		t.Fatalf("claimAndRun = (%s, %v), want (parked, nil)", outcome, err)
+	}
+
+	pending, _, err := f.perms.Interactions(ctx, "pending", run.ID, "", 10)
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("expected 0 pending interaction cards for free-text question, got (%+v, %v)", pending, err)
+	}
+
+	_, turn, err := f.store.AcquireConversation(ctx, "outer-worker", "turn-freetext-check")
+	if err != nil || turn == nil {
+		t.Fatalf("expected outer conversation wake for free-text question, got (%+v, %v)", turn, err)
+	}
+
+	gotRun, err := f.store.GetRun(ctx, run.ID)
+	if err != nil || gotRun.Question == nil || gotRun.Question.Interactive {
+		t.Fatalf("expected run.Question.Interactive=false, got %+v (err=%v)", gotRun.Question, err)
+	}
+}
+
+func TestGoalCreateInvalidDeadlineDoesNotTriggerUncertainWriteLockout(t *testing.T) {
+	ctx := context.Background()
+	f := newRunnerFixture(t, func(_ context.Context, callNum int, _ agent.Request) (agent.Response, error) {
+		switch callNum {
+		case 1:
+			return toolCallResponse("c-goal-bad", "goal_create", map[string]any{
+				"title":               "Plan weekend trip",
+				"outcome":             "Booked itinerary under $900",
+				"completion_criteria": []any{"Flights and hotel compared"},
+				"deadline":            "2026-11-27",
+			}, 0.02), nil
+		case 2:
+			return toolCallResponse("c-goal-good", "goal_create", map[string]any{
+				"title":               "Plan weekend trip",
+				"outcome":             "Booked itinerary under $900",
+				"completion_criteria": []any{"Flights and hotel compared"},
+				"deadline":            "2026-11-27T23:59:59Z",
+			}, 0.02), nil
+		default:
+			return toolCallResponse("c-done", "complete", map[string]any{
+				"answer": "Goal saved.", "evidence": []any{}, "unmet": []any{},
+			}, 0.02), nil
+		}
+	})
+	sched := attachNoriScheduler(t, f, "America/Los_Angeles")
+
+	run := f.startTask(ctx, "run-goal-bad-deadline", "Create a goal to plan a weekend trip by Friday")
+	outcome, err := f.claimAndRun(ctx, run.ID, "worker-goal-1")
+	if err != nil || outcome != task.OutcomeDone {
+		t.Fatalf("claimAndRun = (%s, %v), want (done, nil) without uncertain lockout", outcome, err)
+	}
+	goals, err := sched.Goals(ctx, "active")
+	if err != nil || len(goals) != 1 || goals[0].Title != "Plan weekend trip" {
+		t.Fatalf("expected 1 saved goal after self-correction, got (%+v, %v)", goals, err)
+	}
+}
+
 func TestOneTimeNoriReminderExecutesImmediatelyAndEmitsReminderPart(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 25, 6, 55, 0, 0, time.UTC)

@@ -446,6 +446,32 @@ describe("InteractionCard and inline chat stream rendering", () => {
     const inlineIdx = html.indexOf("data-inline-interactions");
     const statusIdx = html.indexOf("1 task in progress");
     assert.ok(messageIdx >= 0 && inlineIdx > messageIdx && statusIdx > inlineIdx);
+
+    // A newer user message sent AFTER the cards must appear BELOW them chronologically.
+    const chronoHtml = renderToStaticMarkup(
+      <AssistantProvider localMode>
+        <Thread
+          conversation={{
+            title: "Nori",
+            items: [
+              { id: "m1", sender: "me", at: Date.parse("2026-11-24T19:00:00Z"), text: "Send the update" },
+              { id: "m2", sender: "me", at: Date.parse("2026-11-24T19:15:00Z"), text: "Nevermind, next topic" },
+            ],
+          }}
+          interactions={merged}
+          emptyMessage="Say hello"
+          hasOlder={false}
+          loadingOlder={false}
+          onLoadOlder={() => {}}
+          onOpenDocument={() => {}}
+          onUnread={() => {}}
+        />
+      </AssistantProvider>,
+    );
+    const firstMsgIdx = chronoHtml.indexOf("Send the update");
+    const cardIdx = chronoHtml.indexOf("int_live_1");
+    const laterMsgIdx = chronoHtml.indexOf("Nevermind, next topic");
+    assert.ok(firstMsgIdx >= 0 && cardIdx > firstMsgIdx && laterMsgIdx > cardIdx);
   });
 });
 

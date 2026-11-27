@@ -159,6 +159,12 @@ function interactionTimestamp(interaction: Interaction): number {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
+export function isChatInlineInteraction(interaction: Interaction): boolean {
+  if (interaction.surface) return interaction.surface === "chat";
+  if (interaction.kind !== "question") return true;
+  return interaction.payload.input !== "text";
+}
+
 export function mergeInlineInteractions(
   pending: Interaction[],
   sessionResolved: Record<string, InlineInteractionEntry>,

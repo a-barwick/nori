@@ -83,6 +83,7 @@ type libraryItem struct {
 	DataKind       string          `json:"data_kind,omitempty"`
 	DeleteEffect   string          `json:"delete_effect,omitempty"`
 	PreviewText    string          `json:"preview_text,omitempty"`
+	Excerpt        string          `json:"excerpt,omitempty"`
 	Provenance     provenance      `json:"provenance"`
 	IndexStatus    string          `json:"index_status,omitempty"`
 	CreatedAt      time.Time       `json:"created_at"`
@@ -135,7 +136,19 @@ func (a *Assistant) libraryItem(result state.Result, overlay *state.Resource) li
 		item.IndexStatus = "unsupported"
 	}
 	if result.Text != "" {
-		item.PreviewText = clipRunes(result.Text, 2048)
+		previewSource := result.Text
+		if kind == "answer" || kind == "report" || kind == "document" {
+			if extracted, rest := state.ExtractDocumentTitle(result.Text); extracted != "" {
+				if item.Title == "" || item.Title != extracted {
+					item.Title = extracted
+				}
+				if rest != "" {
+					previewSource = rest
+				}
+			}
+		}
+		item.PreviewText = clipRunes(previewSource, 2048)
+		item.Excerpt = state.PlainExcerpt(previewSource, 240)
 	}
 	item.DeleteEffect = "Removes it from your Library and search. The task that made it keeps its record."
 	if result.URL != "" {

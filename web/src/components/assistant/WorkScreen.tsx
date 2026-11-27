@@ -34,6 +34,10 @@ function parseWorkTab(raw: string | null): WorkTab {
   return "tasks";
 }
 
+export function isPartialWorkItem(item: WorkItem): boolean {
+  return Boolean(item.partial || item.error?.code === "task_incomplete");
+}
+
 export function statusPill(item: WorkItem): { tone: Tone; label: string } {
   if (item.cancel_requested && item.status === "running") return { tone: "neutral", label: "Stopping" };
   if (item.bucket === "needs_you") return { tone: "warning", label: "Action needed" };
@@ -43,6 +47,7 @@ export function statusPill(item: WorkItem): { tone: Tone; label: string } {
   if (item.status === "completed") {
     return item.operations.uncertain ? { tone: "warning", label: "Unconfirmed" } : { tone: "ok", label: "Done" };
   }
+  if (isPartialWorkItem(item)) return { tone: "warning", label: "Partial" };
   if (item.status === "failed") return { tone: "danger", label: "Failed" };
   return { tone: "neutral", label: "Stopped" };
 }
@@ -243,15 +248,15 @@ function TasksHub({
 
 function WorkRow({ item }: { item: WorkItem }) {
   const pill = statusPill(item);
+  const detailText =
+    item.error?.message ||
+    item.progress ||
+    (item.finished_at ? `Finished ${relative(item.finished_at)}` : `Started ${relative(item.started_at)}`);
   return (
     <Row
       href={`/work/${encodeURIComponent(item.task_id)}`}
       title={item.title}
-      detail={
-        item.error?.message ||
-        item.progress ||
-        (item.finished_at ? `Finished ${relative(item.finished_at)}` : `Started ${relative(item.started_at)}`)
-      }
+      detail={<span className="line-clamp-2">{detailText}</span>}
       trailing={
         <>
           {item.operations.uncertain > 0 && (

@@ -519,6 +519,9 @@ func (a *Activities) runExternal(ctx context.Context, in ToolInput, op *state.Op
 		if outcome == "" {
 			outcome = "confirmed"
 		}
+		if outcome == "failed" && errors.Is(result.Err, invoke.ErrInvalidArguments) && result.Cleared == "" {
+			result.Cleared = state.ClearedDidNotRun
+		}
 		if (outcome == "failed" || outcome == "uncertain") && result.Cleared != "" && op.Cleared == "" {
 			op.Cleared = result.Cleared
 		}

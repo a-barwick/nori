@@ -14,6 +14,9 @@ import { AssistantProvider } from "@/lib/assistant/context";
 import type { WorkItem } from "@/lib/contracts/assistant";
 import { GOAL_EXAMPLES } from "./GoalsScreen";
 import { statusPill } from "./WorkScreen";
+import { THINKING_WORDS } from "@/lib/thinkingWords";
+import { buildUnits } from "@/lib/units";
+import { isChatInlineInteraction } from "@/lib/assistant/interactions";
 
 describe("Web UI simplification pass & design system parity", () => {
   test("appearance helpers normalize values and emit anti-FOUC boot script", () => {
@@ -48,6 +51,16 @@ describe("Web UI simplification pass & design system parity", () => {
     assert.deepEqual(statusPill(base), { tone: "warning", label: "Action needed" });
     assert.deepEqual(statusPill({ ...base, bucket: "working" }), { tone: "working", label: "Working" });
     assert.deepEqual(statusPill({ ...base, status: "completed", bucket: "finished" }), { tone: "ok", label: "Done" });
+    assert.deepEqual(
+      statusPill({
+        ...base,
+        status: "failed",
+        bucket: "finished",
+        partial: true,
+        error: { code: "task_incomplete", message: "Missing roster.", retryable: false },
+      }),
+      { tone: "warning", label: "Partial" },
+    );
     assert.deepEqual(statusPill({ ...base, status: "failed", bucket: "finished" }), { tone: "danger", label: "Failed" });
   });
 
@@ -121,7 +134,61 @@ describe("Web UI simplification pass & design system parity", () => {
     const thinkingActiveMatches = thinkingHtml.match(/data-active-avatar="true"/g) ?? [];
     assert.equal(thinkingActiveMatches.length, 1);
     assert.ok(thinkingHtml.indexOf("Latest reply") < thinkingHtml.indexOf('data-active-avatar="true"'));
-    assert.ok(thinkingHtml.indexOf('data-active-avatar="true"') < thinkingHtml.indexOf("Nori is thinking"));
+    assert.ok(thinkingHtml.includes("data-thinking-indicator"));
+    assert.ok(THINKING_WORDS.some((word) => thinkingHtml.includes(word)));
+    assert.equal(thinkingHtml.includes("Details"), false);
+  });
+
+  test("buildUnits renders engine-segmented cover, page card, and trailing narrative in order", () => {
+    const units = buildUnits([
+      {
+        id: "m-doc",
+        sender: "nori",
+        at: Date.parse("2026-11-26T15:00:00Z"),
+        text: "",
+        parts: [
+          { type: "text", text: "The task didn't verify the full roster." },
+          { type: "page", display: "page", title: "Sudden Impact in Santa Clara", text: "## Preview\nThe NFC West rematch." },
+          { type: "text", text: "Want the full-length version pasted in?" },
+        ],
+      },
+    ]);
+
+    const nonSep = units.filter((u) => u.type !== "sep");
+    assert.deepEqual(
+      nonSep.map((u) => u.type),
+      ["group", "page", "group"],
+    );
+    assert.equal(nonSep[0].type === "group" ? nonSep[0].units[0]?.markdown : "", "The task didn't verify the full roster.");
+    assert.equal(nonSep[1].type === "page" ? nonSep[1].title : "", "Sudden Impact in Santa Clara");
+    assert.equal(nonSep[2].type === "group" ? nonSep[2].units[0]?.markdown : "", "Want the full-length version pasted in?");
+  });
+
+  test("isChatInlineInteraction honors engine surface field and hides work-only questions", () => {
+    assert.equal(
+      isChatInlineInteraction({
+        id: "q_text",
+        revision: 1,
+        kind: "question",
+        surface: "work",
+        status: "pending",
+        prompt: "What happened?",
+        payload: { input: "text" },
+      }),
+      false,
+    );
+    assert.equal(
+      isChatInlineInteraction({
+        id: "q_choice",
+        revision: 1,
+        kind: "question",
+        surface: "chat",
+        status: "pending",
+        prompt: "Which calendar?",
+        payload: { input: "choice", options: [{ id: "work", label: "Work" }] },
+      }),
+      true,
+    );
   });
 
   test("NoriTabIcon renders active solid mask and inactive outline variants", () => {

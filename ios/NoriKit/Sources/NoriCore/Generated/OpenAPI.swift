@@ -3010,6 +3010,7 @@ public enum OpenAPI {
             public var conversationID: String?
             public var automationID: OpenAPI.ID?
             public var status: String
+            public var surface: String?
             public var prompt: String
             public var actionDigest: String?
             public var expiresAt: OpenAPI.Instant?
@@ -3030,6 +3031,7 @@ public enum OpenAPI {
                 conversationID: String? = nil,
                 automationID: OpenAPI.ID? = nil,
                 status: String,
+                surface: String? = nil,
                 prompt: String,
                 actionDigest: String? = nil,
                 expiresAt: OpenAPI.Instant? = nil,
@@ -3049,6 +3051,7 @@ public enum OpenAPI {
                 self.conversationID = conversationID
                 self.automationID = automationID
                 self.status = status
+                self.surface = surface
                 self.prompt = prompt
                 self.actionDigest = actionDigest
                 self.expiresAt = expiresAt
@@ -3070,6 +3073,7 @@ public enum OpenAPI {
                 case conversationID = "conversation_id"
                 case automationID = "automation_id"
                 case status
+                case surface
                 case prompt
                 case actionDigest = "action_digest"
                 case expiresAt = "expires_at"
@@ -3091,6 +3095,7 @@ public enum OpenAPI {
             public var conversationID: String?
             public var automationID: OpenAPI.ID?
             public var status: String
+            public var surface: String?
             public var prompt: String
             public var actionDigest: String?
             public var expiresAt: OpenAPI.Instant?
@@ -3111,6 +3116,7 @@ public enum OpenAPI {
                 conversationID: String? = nil,
                 automationID: OpenAPI.ID? = nil,
                 status: String,
+                surface: String? = nil,
                 prompt: String,
                 actionDigest: String? = nil,
                 expiresAt: OpenAPI.Instant? = nil,
@@ -3130,6 +3136,7 @@ public enum OpenAPI {
                 self.conversationID = conversationID
                 self.automationID = automationID
                 self.status = status
+                self.surface = surface
                 self.prompt = prompt
                 self.actionDigest = actionDigest
                 self.expiresAt = expiresAt
@@ -3151,6 +3158,7 @@ public enum OpenAPI {
                 case conversationID = "conversation_id"
                 case automationID = "automation_id"
                 case status
+                case surface
                 case prompt
                 case actionDigest = "action_digest"
                 case expiresAt = "expires_at"
@@ -3172,6 +3180,7 @@ public enum OpenAPI {
             public var conversationID: String?
             public var automationID: OpenAPI.ID?
             public var status: String
+            public var surface: String?
             public var prompt: String
             public var actionDigest: String?
             public var expiresAt: OpenAPI.Instant?
@@ -3192,6 +3201,7 @@ public enum OpenAPI {
                 conversationID: String? = nil,
                 automationID: OpenAPI.ID? = nil,
                 status: String,
+                surface: String? = nil,
                 prompt: String,
                 actionDigest: String? = nil,
                 expiresAt: OpenAPI.Instant? = nil,
@@ -3211,6 +3221,7 @@ public enum OpenAPI {
                 self.conversationID = conversationID
                 self.automationID = automationID
                 self.status = status
+                self.surface = surface
                 self.prompt = prompt
                 self.actionDigest = actionDigest
                 self.expiresAt = expiresAt
@@ -3232,6 +3243,7 @@ public enum OpenAPI {
                 case conversationID = "conversation_id"
                 case automationID = "automation_id"
                 case status
+                case surface
                 case prompt
                 case actionDigest = "action_digest"
                 case expiresAt = "expires_at"
@@ -3253,6 +3265,7 @@ public enum OpenAPI {
             public var conversationID: String?
             public var automationID: OpenAPI.ID?
             public var status: String
+            public var surface: String?
             public var prompt: String
             public var actionDigest: String?
             public var expiresAt: OpenAPI.Instant?
@@ -3273,6 +3286,7 @@ public enum OpenAPI {
                 conversationID: String? = nil,
                 automationID: OpenAPI.ID? = nil,
                 status: String,
+                surface: String? = nil,
                 prompt: String,
                 actionDigest: String? = nil,
                 expiresAt: OpenAPI.Instant? = nil,
@@ -3292,6 +3306,7 @@ public enum OpenAPI {
                 self.conversationID = conversationID
                 self.automationID = automationID
                 self.status = status
+                self.surface = surface
                 self.prompt = prompt
                 self.actionDigest = actionDigest
                 self.expiresAt = expiresAt
@@ -3313,6 +3328,7 @@ public enum OpenAPI {
                 case conversationID = "conversation_id"
                 case automationID = "automation_id"
                 case status
+                case surface
                 case prompt
                 case actionDigest = "action_digest"
                 case expiresAt = "expires_at"
@@ -3375,6 +3391,7 @@ public enum OpenAPI {
         public var conversationID: String?
         public var automationID: OpenAPI.ID?
         public var status: String
+        public var surface: String?
         public var prompt: String
         public var actionDigest: String?
         public var expiresAt: OpenAPI.Instant?
@@ -3393,6 +3410,7 @@ public enum OpenAPI {
             conversationID: String? = nil,
             automationID: OpenAPI.ID? = nil,
             status: String,
+            surface: String? = nil,
             prompt: String,
             actionDigest: String? = nil,
             expiresAt: OpenAPI.Instant? = nil,
@@ -3410,6 +3428,7 @@ public enum OpenAPI {
             self.conversationID = conversationID
             self.automationID = automationID
             self.status = status
+            self.surface = surface
             self.prompt = prompt
             self.actionDigest = actionDigest
             self.expiresAt = expiresAt
@@ -3429,6 +3448,7 @@ public enum OpenAPI {
             case conversationID = "conversation_id"
             case automationID = "automation_id"
             case status
+            case surface
             case prompt
             case actionDigest = "action_digest"
             case expiresAt = "expires_at"
@@ -3721,6 +3741,7 @@ public enum OpenAPI {
             public var deletedAt: OpenAPI.Instant?
             public var collection: String?
             public var previewText: String?
+            public var excerpt: String?
             public var deleteEffect: String?
             public var revision: OpenAPI.Revision
             public var dataKind: String
@@ -3749,6 +3770,7 @@ public enum OpenAPI {
                 deletedAt: OpenAPI.Instant? = nil,
                 collection: String? = nil,
                 previewText: String? = nil,
+                excerpt: String? = nil,
                 deleteEffect: String? = nil,
                 revision: OpenAPI.Revision,
                 dataKind: String,
@@ -3776,6 +3798,7 @@ public enum OpenAPI {
                 self.deletedAt = deletedAt
                 self.collection = collection
                 self.previewText = previewText
+                self.excerpt = excerpt
                 self.deleteEffect = deleteEffect
                 self.revision = revision
                 self.dataKind = dataKind
@@ -3805,6 +3828,7 @@ public enum OpenAPI {
                 case deletedAt = "deleted_at"
                 case collection
                 case previewText = "preview_text"
+                case excerpt
                 case deleteEffect = "delete_effect"
                 case revision
                 case dataKind = "data_kind"
@@ -3834,6 +3858,7 @@ public enum OpenAPI {
             public var deletedAt: OpenAPI.Instant?
             public var collection: String?
             public var previewText: String?
+            public var excerpt: String?
             public var deleteEffect: String?
             public var revision: OpenAPI.Revision
             public var dataKind: String
@@ -3862,6 +3887,7 @@ public enum OpenAPI {
                 deletedAt: OpenAPI.Instant? = nil,
                 collection: String? = nil,
                 previewText: String? = nil,
+                excerpt: String? = nil,
                 deleteEffect: String? = nil,
                 revision: OpenAPI.Revision,
                 dataKind: String,
@@ -3889,6 +3915,7 @@ public enum OpenAPI {
                 self.deletedAt = deletedAt
                 self.collection = collection
                 self.previewText = previewText
+                self.excerpt = excerpt
                 self.deleteEffect = deleteEffect
                 self.revision = revision
                 self.dataKind = dataKind
@@ -3918,6 +3945,7 @@ public enum OpenAPI {
                 case deletedAt = "deleted_at"
                 case collection
                 case previewText = "preview_text"
+                case excerpt
                 case deleteEffect = "delete_effect"
                 case revision
                 case dataKind = "data_kind"
@@ -3947,6 +3975,7 @@ public enum OpenAPI {
             public var deletedAt: OpenAPI.Instant?
             public var collection: String?
             public var previewText: String?
+            public var excerpt: String?
             public var deleteEffect: String?
             public var revision: OpenAPI.Revision
             public var dataKind: String
@@ -3975,6 +4004,7 @@ public enum OpenAPI {
                 deletedAt: OpenAPI.Instant? = nil,
                 collection: String? = nil,
                 previewText: String? = nil,
+                excerpt: String? = nil,
                 deleteEffect: String? = nil,
                 revision: OpenAPI.Revision,
                 dataKind: String,
@@ -4002,6 +4032,7 @@ public enum OpenAPI {
                 self.deletedAt = deletedAt
                 self.collection = collection
                 self.previewText = previewText
+                self.excerpt = excerpt
                 self.deleteEffect = deleteEffect
                 self.revision = revision
                 self.dataKind = dataKind
@@ -4031,6 +4062,7 @@ public enum OpenAPI {
                 case deletedAt = "deleted_at"
                 case collection
                 case previewText = "preview_text"
+                case excerpt
                 case deleteEffect = "delete_effect"
                 case revision
                 case dataKind = "data_kind"
@@ -4060,6 +4092,7 @@ public enum OpenAPI {
             public var deletedAt: OpenAPI.Instant?
             public var collection: String?
             public var previewText: String?
+            public var excerpt: String?
             public var deleteEffect: String?
             public var revision: OpenAPI.Revision
             public var dataKind: String
@@ -4088,6 +4121,7 @@ public enum OpenAPI {
                 deletedAt: OpenAPI.Instant? = nil,
                 collection: String? = nil,
                 previewText: String? = nil,
+                excerpt: String? = nil,
                 deleteEffect: String? = nil,
                 revision: OpenAPI.Revision,
                 dataKind: String,
@@ -4115,6 +4149,7 @@ public enum OpenAPI {
                 self.deletedAt = deletedAt
                 self.collection = collection
                 self.previewText = previewText
+                self.excerpt = excerpt
                 self.deleteEffect = deleteEffect
                 self.revision = revision
                 self.dataKind = dataKind
@@ -4144,6 +4179,7 @@ public enum OpenAPI {
                 case deletedAt = "deleted_at"
                 case collection
                 case previewText = "preview_text"
+                case excerpt
                 case deleteEffect = "delete_effect"
                 case revision
                 case dataKind = "data_kind"
@@ -4173,6 +4209,7 @@ public enum OpenAPI {
             public var deletedAt: OpenAPI.Instant?
             public var collection: String?
             public var previewText: String?
+            public var excerpt: String?
             public var deleteEffect: String?
             public var revision: OpenAPI.Revision
             public var dataKind: String?
@@ -4201,6 +4238,7 @@ public enum OpenAPI {
                 deletedAt: OpenAPI.Instant? = nil,
                 collection: String? = nil,
                 previewText: String? = nil,
+                excerpt: String? = nil,
                 deleteEffect: String? = nil,
                 revision: OpenAPI.Revision,
                 dataKind: String? = nil,
@@ -4228,6 +4266,7 @@ public enum OpenAPI {
                 self.deletedAt = deletedAt
                 self.collection = collection
                 self.previewText = previewText
+                self.excerpt = excerpt
                 self.deleteEffect = deleteEffect
                 self.revision = revision
                 self.dataKind = dataKind
@@ -4257,6 +4296,7 @@ public enum OpenAPI {
                 case deletedAt = "deleted_at"
                 case collection
                 case previewText = "preview_text"
+                case excerpt
                 case deleteEffect = "delete_effect"
                 case revision
                 case dataKind = "data_kind"
@@ -4332,6 +4372,7 @@ public enum OpenAPI {
         public var deletedAt: OpenAPI.Instant?
         public var collection: String?
         public var previewText: String?
+        public var excerpt: String?
         public var deleteEffect: String?
         public var revision: OpenAPI.Revision
 
@@ -4358,6 +4399,7 @@ public enum OpenAPI {
             deletedAt: OpenAPI.Instant? = nil,
             collection: String? = nil,
             previewText: String? = nil,
+            excerpt: String? = nil,
             deleteEffect: String? = nil,
             revision: OpenAPI.Revision
         ) {
@@ -4383,6 +4425,7 @@ public enum OpenAPI {
             self.deletedAt = deletedAt
             self.collection = collection
             self.previewText = previewText
+            self.excerpt = excerpt
             self.deleteEffect = deleteEffect
             self.revision = revision
         }
@@ -4410,6 +4453,7 @@ public enum OpenAPI {
             case deletedAt = "deleted_at"
             case collection
             case previewText = "preview_text"
+            case excerpt
             case deleteEffect = "delete_effect"
             case revision
         }
@@ -7904,6 +7948,7 @@ public enum OpenAPI {
         public var startedAt: OpenAPI.Instant
         public var finishedAt: OpenAPI.Instant?
         public var cancelRequested: Bool
+        public var partial: Bool?
         public var error: OpenAPI.ErrorDetail?
 
         public init(
@@ -7922,6 +7967,7 @@ public enum OpenAPI {
             startedAt: OpenAPI.Instant,
             finishedAt: OpenAPI.Instant? = nil,
             cancelRequested: Bool,
+            partial: Bool? = nil,
             error: OpenAPI.ErrorDetail? = nil
         ) {
             self.taskID = taskID
@@ -7939,6 +7985,7 @@ public enum OpenAPI {
             self.startedAt = startedAt
             self.finishedAt = finishedAt
             self.cancelRequested = cancelRequested
+            self.partial = partial
             self.error = error
         }
 
@@ -7958,6 +8005,7 @@ public enum OpenAPI {
             case startedAt = "started_at"
             case finishedAt = "finished_at"
             case cancelRequested = "cancel_requested"
+            case partial
             case error
         }
     }

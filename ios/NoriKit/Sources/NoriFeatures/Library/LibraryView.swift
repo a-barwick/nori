@@ -172,10 +172,13 @@ public struct LibraryView: View {
     }
 
     private func rowDetail(for item: NoriCore.LibraryItem) -> String {
-        if item.createdAt.isEmpty {
-            return item.provenance.content.displayLabel
+        let meta: String = item.createdAt.isEmpty
+            ? item.provenance.content.displayLabel
+            : "\(item.provenance.content.displayLabel) · \(NoriDateFormatting.relative(item.createdAt))"
+        if let excerpt = item.excerpt?.trimmingCharacters(in: .whitespacesAndNewlines), !excerpt.isEmpty {
+            return "\(excerpt)\n\(meta)"
         }
-        return "\(item.provenance.content.displayLabel) · \(NoriDateFormatting.relative(item.createdAt))"
+        return meta
     }
 
     private func iconName(for item: NoriCore.LibraryItem) -> String {

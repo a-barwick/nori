@@ -2171,6 +2171,7 @@ export interface components {
             started_at: components["schemas"]["Instant"];
             finished_at?: components["schemas"]["Instant"];
             cancel_requested: boolean;
+            partial?: boolean;
             error?: components["schemas"]["ErrorDetail"];
         };
         WorkDetail: {
@@ -2298,6 +2299,8 @@ export interface components {
             automation_id?: components["schemas"]["ID"];
             /** @enum {string} */
             status: "pending" | "resolved" | "expired" | "superseded";
+            /** @enum {string} */
+            surface?: "chat" | "work";
             prompt: string;
             action_digest?: string;
             expires_at?: components["schemas"]["Instant"];
@@ -2880,6 +2883,7 @@ export interface components {
             deleted_at?: components["schemas"]["Instant"];
             collection?: string;
             preview_text?: string;
+            excerpt?: string;
             delete_effect?: string;
             revision: components["schemas"]["Revision"];
         };

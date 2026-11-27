@@ -14,6 +14,11 @@ public enum InteractionStatus: String, Sendable, Codable, Hashable {
     case superseded
 }
 
+public enum InteractionSurface: String, Sendable, Codable, Hashable {
+    case chat
+    case work
+}
+
 public struct QuestionOption: Sendable, Codable, Hashable, Identifiable {
     public var id: String
     public var label: String
@@ -315,6 +320,7 @@ public struct Interaction: Sendable, Codable, Hashable, Identifiable {
     public var conversationID: String?
     public var automationID: String?
     public var status: InteractionStatus
+    public var surface: InteractionSurface?
     public var prompt: String
     public var payload: InteractionPayload
     public var actionDigest: String?
@@ -335,6 +341,7 @@ public struct Interaction: Sendable, Codable, Hashable, Identifiable {
         case conversationID = "conversation_id"
         case automationID = "automation_id"
         case status
+        case surface
         case prompt
         case payload
         case actionDigest = "action_digest"
@@ -356,6 +363,7 @@ public struct Interaction: Sendable, Codable, Hashable, Identifiable {
         conversationID: String? = nil,
         automationID: String? = nil,
         status: InteractionStatus = .pending,
+        surface: InteractionSurface? = nil,
         prompt: String,
         payload: InteractionPayload,
         actionDigest: String? = nil,
@@ -375,6 +383,7 @@ public struct Interaction: Sendable, Codable, Hashable, Identifiable {
         self.conversationID = conversationID
         self.automationID = automationID
         self.status = status
+        self.surface = surface
         self.prompt = prompt
         self.payload = payload
         self.actionDigest = actionDigest
@@ -397,6 +406,7 @@ public struct Interaction: Sendable, Codable, Hashable, Identifiable {
         self.conversationID = try c.decodeIfPresent(String.self, forKey: .conversationID)
         self.automationID = try c.decodeIfPresent(String.self, forKey: .automationID)
         self.status = try c.decodeIfPresent(InteractionStatus.self, forKey: .status) ?? .pending
+        self.surface = try? c.decodeIfPresent(InteractionSurface.self, forKey: .surface)
         self.prompt = try c.decodeIfPresent(String.self, forKey: .prompt) ?? ""
         self.actionDigest = try c.decodeIfPresent(String.self, forKey: .actionDigest)
         self.expiresAt = try c.decodeIfPresent(String.self, forKey: .expiresAt)
@@ -445,6 +455,7 @@ public struct Interaction: Sendable, Codable, Hashable, Identifiable {
         try c.encodeIfPresent(conversationID, forKey: .conversationID)
         try c.encodeIfPresent(automationID, forKey: .automationID)
         try c.encode(status, forKey: .status)
+        try c.encodeIfPresent(surface, forKey: .surface)
         try c.encode(prompt, forKey: .prompt)
         try c.encodeIfPresent(actionDigest, forKey: .actionDigest)
         try c.encodeIfPresent(expiresAt, forKey: .expiresAt)

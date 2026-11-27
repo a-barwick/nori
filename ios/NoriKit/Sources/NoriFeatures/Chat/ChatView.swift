@@ -54,12 +54,16 @@ public struct ChatView: View {
         )
     }
 
+    private var inlinePendingInteractions: [Interaction] {
+        store.pendingInteractions.filter(\.isChatInlineEligible)
+    }
+
     private var hasVisiblePendingInteraction: Bool {
-        store.pendingInteractions.contains { visiblePendingInteractionIDs.contains($0.id) }
+        inlinePendingInteractions.contains { visiblePendingInteractionIDs.contains($0.id) }
     }
 
     private var shouldShowNeedsYouBanner: Bool {
-        store.needsYouCount > 0 && !hasVisiblePendingInteraction
+        !inlinePendingInteractions.isEmpty && !hasVisiblePendingInteraction
     }
 
     private var activeBackgroundTasksCount: Int {
@@ -186,23 +190,13 @@ public struct ChatView: View {
                             .id("streaming-reply-anchor")
                         } else if shouldShowInlineWorkLine {
                             if store.isThinking {
-                                HStack(alignment: .center, spacing: 8) {
-                                    NoriMark(size: 28, state: .thinking)
-                                        .matchedGeometryEffect(id: "active-nori-avatar", in: noriAvatarNamespace)
-
-                                    InlineWorkLine(
-                                        label: workLineLabel,
-                                        showMark: false,
-                                        onDetails: onOpenActivity
-                                    )
-                                }
-                                .padding(.top, 4)
-                                .padding(.bottom, 10)
-                                .id("work-line-anchor")
+                                NoriThinkingIndicator(avatarNamespace: noriAvatarNamespace)
+                                    .padding(.top, 4)
+                                    .padding(.bottom, 10)
+                                    .id("work-line-anchor")
                             } else {
                                 InlineWorkLine(
                                     label: workLineLabel,
-                                    showMark: true,
                                     onDetails: onOpenActivity
                                 )
                                 .padding(.top, 6)
@@ -622,29 +616,109 @@ private struct InlineNeedsYouBanner: View {
     }
 }
 
+enum NoriThinkingWords {
+    static let all: [String] = [
+        // Whimsical (Claude-style)
+        "Onigirifying…",
+        "Umamifying…",
+        "Norifying…",
+        "Makifying…",
+        "Temaki-ing…",
+        "Wasabi-ing…",
+        "Sushifying…",
+        "Dashi-ing…",
+        "Omakase-ing…",
+        "Kombulating…",
+        "Mirinating…",
+        "Musubifying…",
+        "Bentofying…",
+        "Misofying…",
+        "Furikake-ing…",
+        "Yuzufying…",
+        "Matchafying…",
+        "Mochifying…",
+        // Cozy sushi prep
+        "Rolling the nori…",
+        "Seasoning the rice…",
+        "Toasting the seaweed…",
+        "Pressing the onigiri…",
+        "Simmering dashi…",
+        "Grating wasabi…",
+        "Plating…",
+        "Fanning the rice…",
+        "Tucking in the filling…",
+        "Sprinkling sesame seeds…",
+        "Folding the tamago…",
+        "Slicing the maki…",
+        "Brushing with soy…",
+        "Shaving bonito flakes…",
+        "Pickling the ginger…",
+        "Pouring green tea…",
+        "Setting the chopsticks…"
+    ]
+}
+
+private struct NoriThinkingIndicator: View {
+    let avatarNamespace: Namespace.ID
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var wordIndex: Int = Int.random(in: 0..<NoriThinkingWords.all.count)
+
+    private var currentWord: String {
+        NoriThinkingWords.all[wordIndex % NoriThinkingWords.all.count]
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            NoriMark(size: 26, state: .thinking)
+                .matchedGeometryEffect(id: "active-nori-avatar", in: avatarNamespace)
+
+            Text(currentWord)
+                .font(.system(size: 13.5, weight: .medium))
+                .foregroundStyle(NoriColors.ink2)
+                .contentTransition(reduceMotion ? .identity : .opacity)
+        }
+        .padding(.vertical, 3)
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2.6))
+                guard !Task.isCancelled else { break }
+                if reduceMotion {
+                    wordIndex = (wordIndex + 1) % NoriThinkingWords.all.count
+                } else {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        wordIndex = (wordIndex + 1) % NoriThinkingWords.all.count
+                    }
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(currentWord)
+    }
+}
+
 private struct InlineWorkLine: View {
     let label: String
-    var showMark: Bool = true
     let onDetails: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            if showMark {
-                NoriMark(size: 18, state: .thinking)
+        Button(action: onDetails) {
+            HStack(spacing: 8) {
+                PulsingStatusDot(color: NoriColors.brandPrimary, size: 7, animated: true)
+                Text(label)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(NoriColors.ink2)
+                    .lineLimit(1)
             }
-            Text(label)
-                .font(.system(size: 12.5))
-                .foregroundStyle(NoriColors.ink2)
-                .lineLimit(2)
-            Spacer(minLength: 8)
-            Button("Details", action: onDetails)
-                .font(.system(size: 12.5, weight: .semibold))
-                .foregroundStyle(NoriColors.accent)
-                .buttonStyle(.plain)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(NoriColors.surface, in: Capsule())
+            .overlay(
+                Capsule()
+                    .strokeBorder(NoriColors.hairline, lineWidth: 1)
+            )
         }
-        .padding(.horizontal, 11)
-        .padding(.vertical, 8)
-        .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .buttonStyle(.plain)
     }
 }
 

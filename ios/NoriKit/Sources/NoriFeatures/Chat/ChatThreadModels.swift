@@ -36,6 +36,19 @@ enum BubblePosition {
     }
 }
 
+extension Interaction {
+    var isChatInlineEligible: Bool {
+        if let surface {
+            return surface == .chat
+        }
+        guard kind == .question else { return true }
+        if case .question(let payload) = payload {
+            return payload.input != .text
+        }
+        return false
+    }
+}
+
 enum ChatThreadUnit: Identifiable {
     case separator(id: String, label: String)
     case page(message: Message, part: MessagePart)
@@ -66,7 +79,7 @@ enum ChatThreadUnit: Identifiable {
         var datedInteractions: [(index: Int, date: Date, interaction: Interaction)] = []
         var undatedInteractions: [Interaction] = []
 
-        for (idx, interaction) in pendingInteractions.enumerated() {
+        for (idx, interaction) in pendingInteractions.filter(\.isChatInlineEligible).enumerated() {
             if let rawDate = interaction.createdAt,
                let parsedDate = NoriDateFormatting.parse(rawDate) {
                 datedInteractions.append((index: idx, date: parsedDate, interaction: interaction))
@@ -123,9 +136,27 @@ enum ChatThreadUnit: Identifiable {
                 continue
             }
 
-            if let pagePart = msg.pagePart {
+            if !msg.isFromUser, let parts = msg.parts, parts.contains(where: { $0.display == "page" || $0.type == "page" || ($0.type == "card" && $0.kind == "file") }) {
+                for (index, part) in parts.enumerated() {
+                    if part.display == "page" || part.type == "page" || (part.type == "card" && part.kind == "file") {
+                        flushBuffer()
+                        result.append(.page(message: msg, part: part))
+                    } else if part.type == "text",
+                              let trimmed = part.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+                              !trimmed.isEmpty {
+                        var segment = msg
+                        segment.id = index == 0 ? msg.id : "\(msg.id)-text-\(index)"
+                        segment.text = trimmed
+                        segment.parts = nil
+                        if let last = buffer.last, last.isFromUser == segment.isFromUser {
+                            buffer.append(segment)
+                        } else {
+                            flushBuffer()
+                            buffer = [segment]
+                        }
+                    }
+                }
                 flushBuffer()
-                result.append(.page(message: msg, part: pagePart))
                 continue
             }
 

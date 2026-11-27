@@ -680,8 +680,9 @@ func (a *Activities) PublishRef(ctx context.Context, in RefPublication) (run sta
 			return state.Run{}, e
 		}
 		in.Text, _ = call.Args["answer"].(string)
+		title, _ := call.Args["title"].(string)
 		proposed := proposal(call)
-		in.Answer = &state.ResultDraft{Checked: in.Status == state.RunCompleted, Evidence: proposed.Evidence, Unmet: proposed.Unmet}
+		in.Answer = &state.ResultDraft{Title: title, Checked: in.Status == state.RunCompleted, Evidence: proposed.Evidence, Unmet: proposed.Unmet}
 		if ops, e := a.Store.Operations(ctx, in.RunID); e == nil {
 			in.Answer.Artifacts, in.Answer.Cited = citedOutputs(ops, proposed.Evidence)
 			if in.Status == state.RunCompleted {

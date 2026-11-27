@@ -16,12 +16,13 @@ function legacyInteraction(run: Run): Interaction | undefined {
   if (!question || run.status !== "running" || question.resolved_by || question.kind !== "input") return undefined;
   return {
     id: `legacy:${question.id}`, revision: question.instruction_revision, task_id: run.id, instruction_revision: question.instruction_revision,
-    conversation_id: "assistant", kind: "question", status: "pending", prompt: question.text, payload: { input: "text" }, legacy_question_id: question.id,
+    conversation_id: "assistant", kind: "question", surface: "work", status: "pending", prompt: question.text, payload: { input: "text" }, legacy_question_id: question.id,
   };
 }
 
 function legacyWorkItem(run: Run, session?: Session): WorkItem {
   const waiting = run.status === "running" && !!((run.question && !run.question.resolved_by) || run.waiting);
+  const partial = run.status === "failed" && /^incomplete\b/i.test(run.error || "");
   return {
     task_id: run.id, title: legacyTitle(run, session), status: run.status,
     bucket: run.status !== "running" ? "finished" : waiting ? "needs_you" : "working",
@@ -32,7 +33,16 @@ function legacyWorkItem(run: Run, session?: Session): WorkItem {
     result_ids: (session?.results ?? []).filter((result) => result.run_id === run.id).map((result) => result.id),
     cost: { status: run.spent_usd === undefined ? "unknown" : run.cost_unknown ? "unknown" : "known", amount_usd: run.spent_usd, budget_usd: run.budget_usd },
     parent_task_id: run.parent_id, started_at: run.started_at, finished_at: run.finished_at, cancel_requested: run.cancel_requested,
-    ...(run.error ? { error: { code: run.status, message: run.error, retryable: false } } : {}),
+    ...(partial ? { partial: true } : {}),
+    ...(run.error
+      ? {
+          error: {
+            code: partial ? "task_incomplete" : run.status,
+            message: partial ? run.error.replace(/^incomplete[.:-\s]*/i, "").trim() || run.error : run.error,
+            retryable: false,
+          },
+        }
+      : {}),
   };
 }
 

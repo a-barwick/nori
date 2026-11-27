@@ -612,7 +612,7 @@ func (a *Assistant) legacyQuestions(ctx context.Context, taskID string, stored [
 		}
 		revision := q.Revision
 		out = append(out, permissions.Interaction{
-			ID: q.ID, Revision: 1, TaskID: run.ID, InstructionRevision: &revision, Kind: "question", Status: "pending",
+			ID: q.ID, Revision: 1, TaskID: run.ID, InstructionRevision: &revision, Kind: "question", Surface: "work", Status: "pending",
 			Prompt: q.Text, Payload: json.RawMessage(`{"input":"text"}`), LegacyQuestionID: q.ID, TaskTitle: clip(run.Request, 200),
 		})
 	}
