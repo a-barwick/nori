@@ -20,7 +20,7 @@ var errorCategories = map[string]bool{
 	"task.completion.check": true, "task.completion.jev": true,
 	"task.evidence": true, "task.history": true, "task.completion": true,
 	"startup": true, "operation": true, "http.request": true, "http.panic": true, "http.listen": true, "wake.conversation": true, "wake.worker": true,
-	"worker.lifecycle": true, "conversation.accept": true, "conversation.snapshot": true,
+	"worker.lifecycle": true, "worker.panic": true, "conversation.accept": true, "conversation.snapshot": true,
 	"conversation.process": true, "conversation.attempt": true, "conversation.command": true,
 	"model.outer": true, "model.classifier": true, "model.task": true,
 	"task.delivery": true, "task.model": true, "task.tool": true, "task.question": true,

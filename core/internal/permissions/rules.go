@@ -612,3 +612,45 @@ func (s *Service) AuthoritySource(ctx context.Context, ref string) string {
 	}
 	return a.Source
 }
+
+func (s *Service) AuthoritySources(ctx context.Context, refs []string) map[string]string {
+	out := make(map[string]string, len(refs))
+	if len(refs) == 0 {
+		return out
+	}
+	unique := make([]string, 0, len(refs))
+	seen := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		if ref == "" {
+			continue
+		}
+		if _, ok := seen[ref]; ok {
+			continue
+		}
+		seen[ref] = struct{}{}
+		unique = append(unique, ref)
+	}
+	if len(unique) == 0 {
+		return out
+	}
+	if batch, ok := s.Store.(interface {
+		ResourcesByIDs(context.Context, string, []string) ([]state.Resource, error)
+	}); ok {
+		resources, err := batch.ResourcesByIDs(ctx, CollectionAuthority, unique)
+		if err == nil {
+			for _, r := range resources {
+				var a authority
+				if r.Decode(&a) == nil {
+					out[r.ID] = a.Source
+				}
+			}
+			return out
+		}
+	}
+	for _, ref := range unique {
+		if src := s.AuthoritySource(ctx, ref); src != "" {
+			out[ref] = src
+		}
+	}
+	return out
+}

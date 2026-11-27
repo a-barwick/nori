@@ -195,6 +195,39 @@ func (b *Backend) Query(ctx context.Context, s docstore.QuerySpec) ([]docstore.R
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if len(s.Collections) > 0 {
+		for _, col := range s.Collections {
+			if err := b.faultInjector().maybeQueryErrFor(col); err != nil {
+				return nil, err
+			}
+		}
+		b.mu.Lock()
+		perCol := make(map[string]map[string][]byte, len(s.Collections))
+		for _, col := range s.Collections {
+			if _, ok := perCol[col]; ok {
+				continue
+			}
+			perCol[col] = cloneCollection(b.docs[col])
+		}
+		b.mu.Unlock()
+		var out []docstore.Record
+		seen := make(map[string]struct{}, len(s.Collections))
+		for _, col := range s.Collections {
+			if _, ok := seen[col]; ok {
+				continue
+			}
+			seen[col] = struct{}{}
+			sub := s
+			sub.Collection = col
+			sub.Collections = nil
+			recs, err := executeQuery(perCol[col], sub)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, recs...)
+		}
+		return out, nil
+	}
 	if err := b.faultInjector().maybeQueryErrFor(s.Collection); err != nil {
 		return nil, err
 	}
@@ -542,6 +575,25 @@ func (t *transaction) Get(ctx context.Context, path string) (docstore.Record, er
 func (t *transaction) Query(ctx context.Context, s docstore.QuerySpec) ([]docstore.Record, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if len(s.Collections) > 0 {
+		var out []docstore.Record
+		seen := make(map[string]struct{}, len(s.Collections))
+		for _, col := range s.Collections {
+			if _, ok := seen[col]; ok {
+				continue
+			}
+			seen[col] = struct{}{}
+			sub := s
+			sub.Collection = col
+			sub.Collections = nil
+			recs, err := t.Query(ctx, sub)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, recs...)
+		}
+		return out, nil
 	}
 	if err := t.b.faultInjector().maybeQueryErrFor("tx:" + s.Collection); err != nil {
 		return nil, err

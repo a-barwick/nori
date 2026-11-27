@@ -234,31 +234,81 @@ func projectWorkSteps(run state.Run, ops []state.OperationRecord) []workStep {
 	return steps
 }
 
+type workLookup struct {
+	runs             map[string]state.Run
+	missingRuns      map[string]bool
+	automationTitles map[string]string
+}
+
 func (a *Assistant) item(ctx context.Context, run state.Run, ops []state.OperationRecord, pending []string, results []string) workItem {
+	return a.itemWithLookup(ctx, run, ops, pending, results, nil)
+}
+
+func (a *Assistant) itemWithLookup(ctx context.Context, run state.Run, ops []state.OperationRecord, pending []string, results []string, lookup *workLookup) workItem {
 	item := workItem{
 		TaskID: run.ID, Title: state.TaskTitle(run), Status: string(run.Status), InstructionRevision: run.Revision,
 		Origin: originOf(run), InteractionIDs: pending, Progress: run.Progress, ResultIDs: results,
 		ParentTaskID: run.ParentID, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt, CancelRequested: run.CancelRequested,
 	}
-	if item.Origin.Kind == "automation" && a.Scheduler != nil {
-		if automation, err := a.Scheduler.Get(ctx, item.Origin.AutomationID); err == nil {
-			item.Title = automation.Title
+	lookupAutomationTitle := func(id string) (string, bool) {
+		if id == "" || a.Scheduler == nil {
+			return "", false
+		}
+		if lookup != nil {
+			if title, ok := lookup.automationTitles[id]; ok {
+				return title, title != ""
+			}
+		}
+		automation, err := a.Scheduler.Get(ctx, id)
+		if err != nil {
+			if lookup != nil {
+				lookup.automationTitles[id] = ""
+			}
+			return "", false
+		}
+		if lookup != nil {
+			lookup.automationTitles[id] = automation.Title
+		}
+		return automation.Title, true
+	}
+	lookupRun := func(id string) (state.Run, error) {
+		if lookup != nil {
+			if r, ok := lookup.runs[id]; ok {
+				return r, nil
+			}
+			if lookup.missingRuns[id] {
+				return state.Run{}, state.ErrNotFound
+			}
+		}
+		r, err := a.Store.GetRun(ctx, id)
+		if lookup != nil {
+			if err == nil {
+				lookup.runs[id] = r
+			} else {
+				lookup.missingRuns[id] = true
+			}
+		}
+		return r, err
+	}
+	if item.Origin.Kind == "automation" {
+		if title, ok := lookupAutomationTitle(item.Origin.AutomationID); ok {
+			item.Title = title
 		}
 	}
 	if item.Origin.ContinuesTaskID != "" {
-		previous, err := a.Store.GetRun(ctx, item.Origin.ContinuesTaskID)
+		previous, err := lookupRun(item.Origin.ContinuesTaskID)
 		for hops := 0; err == nil && hops < 8 && previous.Origin != nil && previous.Origin.ContinuesTaskID != ""; hops++ {
-			earlier, lookup := a.Store.GetRun(ctx, previous.Origin.ContinuesTaskID)
-			if lookup != nil {
+			earlier, lookupErr := lookupRun(previous.Origin.ContinuesTaskID)
+			if lookupErr != nil {
 				break
 			}
 			previous = earlier
 		}
 		if err == nil {
 			title := state.TaskTitle(previous)
-			if previous.Origin != nil && previous.Origin.AutomationID != "" && a.Scheduler != nil {
-				if automation, err := a.Scheduler.Get(ctx, previous.Origin.AutomationID); err == nil {
-					title = automation.Title
+			if previous.Origin != nil && previous.Origin.AutomationID != "" {
+				if autoTitle, ok := lookupAutomationTitle(previous.Origin.AutomationID); ok {
+					title = autoTitle
 				}
 			}
 			item.Title = "Continue: " + strings.TrimPrefix(title, "Continue: ")
@@ -340,6 +390,30 @@ func (a *Assistant) resultIDs(ctx context.Context) (map[string][]string, error) 
 	return byRun, nil
 }
 
+func (a *Assistant) operationsByRuns(ctx context.Context, runs []state.Run) (map[string][]state.OperationRecord, error) {
+	if len(runs) == 0 {
+		return map[string][]state.OperationRecord{}, nil
+	}
+	if batch, ok := a.Store.(interface {
+		OperationsByRuns(context.Context, []string) (map[string][]state.OperationRecord, error)
+	}); ok {
+		ids := make([]string, len(runs))
+		for i, r := range runs {
+			ids[i] = r.ID
+		}
+		return batch.OperationsByRuns(ctx, ids)
+	}
+	out := make(map[string][]state.OperationRecord, len(runs))
+	for _, r := range runs {
+		ops, err := a.Store.Operations(ctx, r.ID)
+		if err != nil {
+			return nil, err
+		}
+		out[r.ID] = ops
+	}
+	return out, nil
+}
+
 func (a *Assistant) workItems(ctx context.Context) ([]workItem, error) {
 	runs, err := a.Store.RecentRuns(ctx, 200)
 	if err != nil {
@@ -357,13 +431,21 @@ func (a *Assistant) workItems(ctx context.Context) ([]workItem, error) {
 	if err != nil {
 		return nil, err
 	}
+	opsByRun, err := a.operationsByRuns(ctx, runs)
+	if err != nil {
+		return nil, err
+	}
+	lookup := &workLookup{
+		runs:             make(map[string]state.Run, len(runs)),
+		missingRuns:      map[string]bool{},
+		automationTitles: map[string]string{},
+	}
+	for _, run := range runs {
+		lookup.runs[run.ID] = run
+	}
 	items := make([]workItem, 0, len(runs))
 	for _, run := range runs {
-		ops, err := a.Store.Operations(ctx, run.ID)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, a.item(ctx, run, ops, byTask[run.ID], results[run.ID]))
+		items = append(items, a.itemWithLookup(ctx, run, opsByRun[run.ID], byTask[run.ID], results[run.ID], lookup))
 	}
 	return items, nil
 }
@@ -433,7 +515,7 @@ func (a *Assistant) detail(ctx context.Context, taskID string) (workDetail, erro
 	return detail, nil
 }
 
-func (a *Assistant) projectOperations(ctx context.Context, run state.Run, ops []state.OperationRecord) []operationProjection {
+func (a *Assistant) connectionLabels(ctx context.Context) map[string]string {
 	labels := map[string]string{}
 	if a.Connections != nil {
 		if records, _, err := a.Connections.Records(ctx); err == nil {
@@ -442,6 +524,25 @@ func (a *Assistant) projectOperations(ctx context.Context, run state.Run, ops []
 			}
 		}
 	}
+	return labels
+}
+
+func (a *Assistant) projectOperations(ctx context.Context, run state.Run, ops []state.OperationRecord) []operationProjection {
+	labels := a.connectionLabels(ctx)
+	var authSources map[string]string
+	if a.Permissions != nil {
+		refs := make([]string, 0, len(ops))
+		for _, op := range ops {
+			if op.AuthorityRef != "" {
+				refs = append(refs, op.AuthorityRef)
+			}
+		}
+		authSources = a.Permissions.AuthoritySources(ctx, refs)
+	}
+	return projectOperationsWith(run, ops, labels, authSources)
+}
+
+func projectOperationsWith(run state.Run, ops []state.OperationRecord, labels map[string]string, authSources map[string]string) []operationProjection {
 	out := make([]operationProjection, 0, len(ops))
 	for _, op := range ops {
 		p := operationProjection{OperationRecord: op, Owner: operationOwner{Type: "task", ID: run.ID}, TaskTitle: state.TaskTitle(run)}
@@ -456,8 +557,8 @@ func (a *Assistant) projectOperations(ctx context.Context, run state.Run, ops []
 		if op.ConnectionID != "" {
 			p.AccountSummary = labels[op.ConnectionID]
 		}
-		if op.AuthorityRef != "" && a.Permissions != nil {
-			p.AuthoritySource = a.Permissions.AuthoritySource(ctx, op.AuthorityRef)
+		if op.AuthorityRef != "" {
+			p.AuthoritySource = authSources[op.AuthorityRef]
 		}
 		for _, ref := range op.ProviderRefs {
 			if ref.URL != "" {
@@ -484,20 +585,45 @@ func (a *Assistant) workOperations(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Assistant) operations(w http.ResponseWriter, r *http.Request) {
-	runs, err := a.Store.RecentRuns(r.Context(), 100)
+	ctx := r.Context()
+	runs, err := a.Store.RecentRuns(ctx, 100)
 	if err != nil {
 		writeAPIError(w, err, "", nil)
 		return
 	}
+	opsByRun, err := a.operationsByRuns(ctx, runs)
+	if err != nil {
+		writeAPIError(w, err, "", nil)
+		return
+	}
+	labels := a.connectionLabels(ctx)
 	connection := r.URL.Query().Get("connection_id")
+
+	var refs []string
+	if a.Permissions != nil {
+		count := 0
+		for _, run := range runs {
+			for _, op := range opsByRun[run.ID] {
+				if connection == "" || op.ConnectionID == connection {
+					if op.AuthorityRef != "" {
+						refs = append(refs, op.AuthorityRef)
+					}
+					count++
+				}
+			}
+			if count >= 500 {
+				break
+			}
+		}
+	}
+	var authSources map[string]string
+	if a.Permissions != nil && len(refs) > 0 {
+		authSources = a.Permissions.AuthoritySources(ctx, refs)
+	}
+
 	out := []operationProjection{}
 	for _, run := range runs {
-		ops, err := a.Store.Operations(r.Context(), run.ID)
-		if err != nil {
-			writeAPIError(w, err, "", nil)
-			return
-		}
-		for _, p := range a.projectOperations(r.Context(), run, ops) {
+		for _, p := range projectOperationsWith(run, opsByRun[run.ID], labels, authSources) {
 			if connection == "" || p.ConnectionID == connection {
 				out = append(out, p)
 			}
@@ -567,21 +693,33 @@ func nextSummaryRevision(nowMS int64) int64 {
 }
 
 func (a *Assistant) summary(w http.ResponseWriter, r *http.Request) {
-	items, err := a.workItems(r.Context())
+	ctx := r.Context()
+	openRuns, err := a.Store.OpenTasks(ctx)
 	if err != nil {
 		writeAPIError(w, err, "", nil)
 		return
 	}
+	pending, err := a.pendingInteractions(ctx, "")
+	if err != nil {
+		writeAPIError(w, err, "", nil)
+		return
+	}
+	pendingByTask := make(map[string]bool, len(pending))
+	for _, i := range pending {
+		pendingByTask[i.TaskID] = true
+	}
 	var s summary
-	for _, item := range items {
-		switch item.Bucket {
-		case "needs_you":
+	for _, run := range openRuns {
+		if run.Status != state.RunRunning {
+			continue
+		}
+		if pendingByTask[run.ID] || (run.Question != nil && run.Question.ResolvedBy == "" && run.Question.Revision == run.Revision) {
 			s.NeedsYou++
-		case "working":
+		} else {
 			s.Working++
 		}
 	}
-	records, _, err := a.Connections.Records(r.Context())
+	records, _, err := a.Connections.Records(ctx)
 	if err != nil {
 		writeAPIError(w, err, "", nil)
 		return
@@ -592,10 +730,10 @@ func (a *Assistant) summary(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if a.NextScheduled != nil {
-		s.NextScheduledAt = a.NextScheduled(r.Context())
+		s.NextScheduledAt = a.NextScheduled(ctx)
 	}
 	if a.InboxUnread != nil {
-		s.InboxUnread = a.InboxUnread(r.Context())
+		s.InboxUnread = a.InboxUnread(ctx)
 	}
 	s.Revision = nextSummaryRevision(time.Now().UnixMilli())
 	writeJSON(w, 200, s)

@@ -53,22 +53,34 @@ public struct LibraryView: View {
 
     private var groupedCollections: [(name: String?, items: [NoriCore.LibraryItem])] {
         let items = filteredSavedItems
-        let collections = Array(
-            NSOrderedSet(array: items.compactMap(\.collection))
-        ).compactMap { $0 as? String }
+        guard !items.isEmpty else { return [] }
 
-        if collections.isEmpty {
-            return items.isEmpty ? [] : [(nil, items)]
+        var collectionOrder: [String] = []
+        var buckets: [String: [NoriCore.LibraryItem]] = [:]
+        var ungrouped: [NoriCore.LibraryItem] = []
+
+        for item in items {
+            if let col = item.collection {
+                if buckets[col] == nil {
+                    collectionOrder.append(col)
+                }
+                buckets[col, default: []].append(item)
+            } else {
+                ungrouped.append(item)
+            }
+        }
+
+        if collectionOrder.isEmpty {
+            return [(nil, ungrouped)]
         }
 
         var groups: [(String?, [NoriCore.LibraryItem])] = []
-        for col in collections {
-            let matching = items.filter { $0.collection == col }
-            if !matching.isEmpty {
+        groups.reserveCapacity(collectionOrder.count + (ungrouped.isEmpty ? 0 : 1))
+        for col in collectionOrder {
+            if let matching = buckets[col], !matching.isEmpty {
                 groups.append((col, matching))
             }
         }
-        let ungrouped = items.filter { $0.collection == nil }
         if !ungrouped.isEmpty {
             groups.append(("Saved", ungrouped))
         }
@@ -77,7 +89,7 @@ public struct LibraryView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            LazyVStack(alignment: .leading, spacing: 14) {
                 searchBar
                 filterChipsBar
 

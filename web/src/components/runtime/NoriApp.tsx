@@ -3,13 +3,12 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
-import { needsByokSetup } from "@/components/assistant/ApiKeysSettings";
-import { hasSelectedHomeChat } from "@/components/assistant/ModelsSettings";
 import { Notice } from "@/components/assistant/ui";
 import { Thread } from "@/components/chat/Thread";
 import type { ModelKeysResponse, ModelSettings } from "@/lib/assistant/api";
-import { useAssistant, useChatLive } from "@/lib/assistant/context";
+import { useAssistant, useChatDraft } from "@/lib/assistant/context";
 import { isChatInlineInteraction, mergeInlineInteractions, type InlineInteractionEntry } from "@/lib/assistant/interactions";
+import { hasSelectedHomeChat, needsByokSetup } from "@/lib/assistant/modelSetup";
 import { usePendingInteractions } from "@/lib/assistant/sources";
 import { useResource } from "@/lib/assistant/useResource";
 import type { Interaction } from "@/lib/contracts/assistant";
@@ -35,13 +34,42 @@ function partsOf(message: Pick<Message, "text" | "parts">) {
   };
 }
 
+function ConnectedRuntimeComposer({
+  accept,
+  disabled,
+  unread,
+  onJump,
+}: {
+  accept?: string;
+  disabled: boolean;
+  unread: number;
+  onJump: () => void;
+}) {
+  const { runtime } = useAssistant();
+  const { draft, draftFiles } = useChatDraft();
+  return (
+    <RuntimeComposer
+      accept={accept}
+      draft={draft}
+      setDraft={runtime.setDraft}
+      disabled={disabled}
+      onSend={() => void runtime.send()}
+      files={draftFiles}
+      onAttach={runtime.attachFiles}
+      onRetryFile={(file) => void runtime.retryFile(file)}
+      onRemoveFile={runtime.removeFile}
+      unread={unread}
+      onJump={onJump}
+    />
+  );
+}
+
 export function ChatScreen() {
   const router = useRouter();
   const { runtime, debug, capabilities } = useAssistant();
-  const { draft, draftFiles, streamingDelta } = useChatLive();
   const accepted = capabilities?.upload_accept;
   const uploadAccept = accepted ? [...accepted.media_types, ...(accepted.extensions ?? [])].join(",") : undefined;
-  const { session, pending, activeTasks, loading, error, reconnecting } = runtime;
+  const { session, pending, activeTasks, loading, error, reconnecting, retryTurn, loadOlder } = runtime;
   const pendingInteractions = usePendingInteractions();
   const modelKeys = useResource<ModelKeysResponse>("/settings/model-keys", { poll: 60_000, versioned: false });
   const models = useResource<ModelSettings>("/settings/models", { poll: 60_000 });
@@ -63,6 +91,16 @@ export function ChatScreen() {
     jump: () => {},
   });
   const onUnread = useCallback((count: number, jump: () => void) => setUnread({ count, jump }), []);
+  const handleStatusDetails = useCallback(() => router.push("/work"), [router]);
+  const handleOpenDocument = useCallback(
+    (item: TextItem, body: string, title?: string) => setDocument({ body, at: item.at, title }),
+    [],
+  );
+  const handleRetryMessage = useCallback(
+    (item: TextItem) => void retryTurn({ turn_id: item.turnId, message_id: item.id }),
+    [retryTurn],
+  );
+  const handleLoadOlder = useCallback(() => void loadOlder(), [loadOlder]);
 
   const conversation = useMemo<Conversation>(() => {
     const generatedRequests = new Set(session?.dispatches?.map((dispatch) => `${dispatch.id}-user`));
@@ -156,21 +194,20 @@ export function ChatScreen() {
       <div className="min-h-0 flex-1">
         <Thread
           conversation={conversation}
-          onStatusDetails={() => router.push("/work")}
-          onOpenDocument={(item, body, title) => setDocument({ body, at: item.at, title })}
+          onStatusDetails={handleStatusDetails}
+          onOpenDocument={handleOpenDocument}
           status={work}
           thinking={runtime.conversationBusy}
-          streamingText={streamingDelta?.text}
           interactions={inlineInteractions}
           onInteractionResolved={handleInteractionResolved}
-          onRetryMessage={(item) => void runtime.retryTurn({ turn_id: item.turnId, message_id: item.id })}
+          onRetryMessage={handleRetryMessage}
           retryingMessageId={runtime.retryingMessageId}
           onUnread={onUnread}
           onShown={runtime.markShown}
           readPosition={session?.read_position}
           hasOlder={!!session?.next_cursor}
           loadingOlder={runtime.loadingOlder}
-          onLoadOlder={() => void runtime.loadOlder()}
+          onLoadOlder={handleLoadOlder}
           emptyMessage={
             loading
               ? "Loading conversation…"
@@ -251,16 +288,9 @@ export function ChatScreen() {
         </div>
       )}
 
-      <RuntimeComposer
+      <ConnectedRuntimeComposer
         accept={uploadAccept}
-        draft={draft}
-        setDraft={runtime.setDraft}
         disabled={!session || loading || !!session.conversation?.introducing}
-        onSend={() => void runtime.send()}
-        files={draftFiles}
-        onAttach={runtime.attachFiles}
-        onRetryFile={(file) => void runtime.retryFile(file)}
-        onRemoveFile={runtime.removeFile}
         unread={unread.count}
         onJump={unread.jump}
       />

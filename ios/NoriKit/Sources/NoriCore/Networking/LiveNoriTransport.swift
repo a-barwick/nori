@@ -64,10 +64,15 @@ public actor LiveNoriTransport: NoriTransport {
     private let authProvider: AuthTokenProvider
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    private static let cachedUserIDKeyPrefix = "nori.transport.resolvedUserID.v1."
+
     private let sseInitialBackoffSeconds: Double
     private let sseRolloverDelayMilliseconds: Int
     private let localEmail: String?
+    private nonisolated(unsafe) let userDefaults: UserDefaults?
     private var resolvedUserID: String?
+    private var cachedAccountEmail: String?
+    private var resolvedUserIDFromDiskCache: Bool = false
     private var identityGeneration: UInt64 = 0
     private var inFlightUserResolve: (generation: UInt64, task: Task<String, Error>)?
 
@@ -77,10 +82,16 @@ public actor LiveNoriTransport: NoriTransport {
         urlSession: URLSession? = nil,
         sseInitialBackoffSeconds: Double = 1.0,
         sseRolloverDelayMilliseconds: Int = 250,
-        localEmail: String? = nil
+        localEmail: String? = nil,
+        userDefaultsSuiteName: String? = nil
     ) {
         self.baseURL = baseURL
         self.localEmail = localEmail
+        if let userDefaultsSuiteName {
+            self.userDefaults = UserDefaults(suiteName: userDefaultsSuiteName)
+        } else {
+            self.userDefaults = (urlSession == nil) ? .standard : nil
+        }
         self.router = NoriEndpointRouter(baseURL: baseURL)
         if let urlSession {
             self.session = urlSession
@@ -112,12 +123,39 @@ public actor LiveNoriTransport: NoriTransport {
         self.sseRolloverDelayMilliseconds = max(0, sseRolloverDelayMilliseconds)
     }
 
-    public func clearCachedIdentity() {
+    private func userIDCacheKey(for email: String) -> String {
+        "\(Self.cachedUserIDKeyPrefix)\(baseURL.absoluteString.lowercased())::\(email.lowercased())"
+    }
+
+    private func removePersistedUserID(for email: String?) {
+        guard let email, !email.isEmpty else { return }
+        userDefaults?.removeObject(forKey: userIDCacheKey(for: email))
+    }
+
+    public func clearCachedIdentity(email: String? = nil) {
         identityGeneration &+= 1
         inFlightUserResolve?.task.cancel()
         inFlightUserResolve = nil
+        removePersistedUserID(for: email)
+        removePersistedUserID(for: cachedAccountEmail)
+        removePersistedUserID(for: localEmail)
         resolvedUserID = nil
+        cachedAccountEmail = nil
+        resolvedUserIDFromDiskCache = false
         NoriTelemetryRuntime.shared.setUser(id: nil)
+    }
+
+    private func invalidateDiskCachedUserID() {
+        removePersistedUserID(for: cachedAccountEmail)
+        removePersistedUserID(for: localEmail)
+        resolvedUserID = nil
+        resolvedUserIDFromDiskCache = false
+    }
+
+    private func invalidateDiskCachedUserIDIfUsed(previousUserID: String) -> Bool {
+        guard resolvedUserIDFromDiskCache, resolvedUserID == previousUserID else { return false }
+        invalidateDiskCachedUserID()
+        return true
     }
 
     private func currentIdentityGeneration() -> UInt64 {
@@ -211,14 +249,36 @@ public actor LiveNoriTransport: NoriTransport {
         )
     }
 
+    private func currentAccountEmail() async -> String? {
+        if let localEmail, !localEmail.isEmpty {
+            return localEmail
+        }
+        if let email = await authProvider.loadSession()?.email, !email.isEmpty {
+            return email
+        }
+        return nil
+    }
+
     private func ensureUserID() async throws -> String {
         if let resolvedUserID { return resolvedUserID }
+        let generation = identityGeneration
+        let accountEmail = await currentAccountEmail()
+        guard generation == identityGeneration else { throw CancellationError() }
+        if let resolvedUserID { return resolvedUserID }
+        if let accountEmail,
+           let cached = userDefaults?.string(forKey: userIDCacheKey(for: accountEmail)),
+           !cached.isEmpty {
+            self.resolvedUserID = cached
+            self.cachedAccountEmail = accountEmail
+            self.resolvedUserIDFromDiskCache = true
+            NoriTelemetryRuntime.shared.setUser(id: cached)
+            return cached
+        }
         if let existing = inFlightUserResolve, existing.generation == identityGeneration {
             return try await existing.task.value
         }
-        let generation = identityGeneration
         let task = Task<String, Error> {
-            try await self.performEnsureUserID(generation: generation)
+            try await self.performEnsureUserID(generation: generation, accountEmail: accountEmail)
         }
         inFlightUserResolve = (generation: generation, task: task)
         defer {
@@ -229,7 +289,7 @@ public actor LiveNoriTransport: NoriTransport {
         return try await task.value
     }
 
-    private func performEnsureUserID(generation: UInt64) async throws -> String {
+    private func performEnsureUserID(generation: UInt64, accountEmail: String?) async throws -> String {
         try await withRequestSpan(route: "/api/users/resolve", method: "POST") { span in
             let url = try router.unscopedURL(path: "/api/users/resolve")
             var req = URLRequest(url: url)
@@ -241,6 +301,11 @@ public actor LiveNoriTransport: NoriTransport {
             let resolved = try decoder.decode(ResolveResponse.self, from: data)
             guard generation == identityGeneration, !Task.isCancelled else { throw CancellationError() }
             self.resolvedUserID = resolved.id
+            self.cachedAccountEmail = accountEmail
+            self.resolvedUserIDFromDiskCache = false
+            if let accountEmail, !accountEmail.isEmpty {
+                userDefaults?.set(resolved.id, forKey: userIDCacheKey(for: accountEmail))
+            }
             NoriTelemetryRuntime.shared.setUser(id: resolved.id)
             NoriLogger.auth.info("user.resolved", attributes: ["nori.user.id": resolved.id], breadcrumb: true)
             return resolved.id
@@ -412,13 +477,30 @@ public actor LiveNoriTransport: NoriTransport {
         }
     }
 
+    private func withResolvedUserRetry<T>(
+        _ operation: (String) async throws -> T
+    ) async throws -> T {
+        let userID = try await ensureUserID()
+        let usedDiskCache = resolvedUserIDFromDiskCache
+        do {
+            return try await operation(userID)
+        } catch let apiError as NoriAPIError
+            where usedDiskCache && (apiError.statusCode == 401 || apiError.statusCode == 403 || apiError.statusCode == 404) {
+            invalidateDiskCachedUserID()
+            let refreshedUserID = try await ensureUserID()
+            guard refreshedUserID != userID else { throw apiError }
+            return try await operation(refreshedUserID)
+        }
+    }
+
     private func getJSON<T: Decodable>(_ path: String, queryItems: [URLQueryItem] = []) async throws -> T {
         try await withRequestSpan(route: normalizedRoute(for: path), method: "GET") { span in
-            let userID = try await ensureUserID()
-            span.setTag("nori.user.id", value: userID)
-            let url = try router.scopedURL(path: path, userID: userID, queryItems: queryItems)
-            let data = try await authenticatedData(URLRequest(url: url), span: span)
-            return try decoder.decode(T.self, from: data)
+            try await withResolvedUserRetry { userID in
+                span.setTag("nori.user.id", value: userID)
+                let url = try router.scopedURL(path: path, userID: userID, queryItems: queryItems)
+                let data = try await authenticatedData(URLRequest(url: url), span: span)
+                return try decoder.decode(T.self, from: data)
+            }
         }
     }
 
@@ -429,26 +511,29 @@ public actor LiveNoriTransport: NoriTransport {
         using requestSession: URLSession? = nil
     ) async throws -> Response {
         try await withRequestSpan(route: normalizedRoute(for: path), method: method) { span in
-            let userID = try await ensureUserID()
-            span.setTag("nori.user.id", value: userID)
-            let url = try router.scopedURL(path: path, userID: userID)
-            var req = URLRequest(url: url)
-            req.httpMethod = method
-            req.httpBody = try encoder.encode(body)
-            let data = try await authenticatedData(req, contentType: "application/json", using: requestSession, span: span)
-            return try decoder.decode(Response.self, from: data)
+            let encodedBody = try encoder.encode(body)
+            return try await withResolvedUserRetry { userID in
+                span.setTag("nori.user.id", value: userID)
+                let url = try router.scopedURL(path: path, userID: userID)
+                var req = URLRequest(url: url)
+                req.httpMethod = method
+                req.httpBody = encodedBody
+                let data = try await authenticatedData(req, contentType: "application/json", using: requestSession, span: span)
+                return try decoder.decode(Response.self, from: data)
+            }
         }
     }
 
     private func deleteJSON<Response: Decodable>(_ path: String) async throws -> Response {
         try await withRequestSpan(route: normalizedRoute(for: path), method: "DELETE") { span in
-            let userID = try await ensureUserID()
-            span.setTag("nori.user.id", value: userID)
-            let url = try router.scopedURL(path: path, userID: userID)
-            var req = URLRequest(url: url)
-            req.httpMethod = "DELETE"
-            let data = try await authenticatedData(req, span: span)
-            return try decoder.decode(Response.self, from: data)
+            try await withResolvedUserRetry { userID in
+                span.setTag("nori.user.id", value: userID)
+                let url = try router.scopedURL(path: path, userID: userID)
+                var req = URLRequest(url: url)
+                req.httpMethod = "DELETE"
+                let data = try await authenticatedData(req, span: span)
+                return try decoder.decode(Response.self, from: data)
+            }
         }
     }
 
@@ -744,6 +829,12 @@ public actor LiveNoriTransport: NoriTransport {
                         guard await self.currentIdentityGeneration() == streamGeneration else { break }
                         guard let http = response as? HTTPURLResponse else {
                             throw NoriAPIError(message: "Invalid event stream response.", statusCode: 0, retryable: true)
+                        }
+
+                        if http.statusCode == 401 || http.statusCode == 403 || http.statusCode == 404 {
+                            if await self.invalidateDiskCachedUserIDIfUsed(previousUserID: userID) {
+                                continue
+                            }
                         }
 
                         if http.statusCode == 401 {

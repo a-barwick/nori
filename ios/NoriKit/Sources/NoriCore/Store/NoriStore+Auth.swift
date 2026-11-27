@@ -25,6 +25,9 @@ extension NoriStore {
         connectionState = .connecting
         defer { if generation == sessionGeneration { isLoading = false } }
 
+        // Start independent bootstrap context fetches in parallel with fetchSession.
+        startChatContextTasks()
+
         do {
             let initialSession = try await transport.fetchSession(before: nil)
             guard generation == sessionGeneration, !Task.isCancelled else { return }
@@ -37,7 +40,8 @@ extension NoriStore {
             connectionState = .reconnecting
             lastError = error.localizedDescription
         }
-        startChatSession()
+        guard generation == sessionGeneration, authState.isSignedIn, !Task.isCancelled else { return }
+        startEventStream()
     }
 
     public func beginGoogleSignIn(callbackURL: URL, pkce: GoogleOAuthPKCE) async throws -> GoogleSignInResult {
@@ -74,12 +78,13 @@ extension NoriStore {
     }
 
     public func completeGoogleSignIn(callbackURL: URL, pkce: GoogleOAuthPKCE) async {
+        let previousEmail = authState.email
         sessionGeneration &+= 1
         let generation = sessionGeneration
         clearUserState()
         authError = nil
         authState = .signingIn
-        await clearTransportIdentity()
+        await clearTransportIdentity(email: previousEmail)
         guard generation == sessionGeneration else { return }
         do {
             let code = try pkce.extractAuthorizationCode(from: callbackURL)
@@ -93,12 +98,13 @@ extension NoriStore {
     }
 
     public func completeSignedInSession(_ authSession: AuthSession) async {
+        let previousEmail = authState.email
         sessionGeneration &+= 1
         let generation = sessionGeneration
         clearUserState()
         authError = nil
         authState = .signingIn
-        await clearTransportIdentity()
+        await clearTransportIdentity(email: previousEmail)
         guard generation == sessionGeneration else { return }
         await finishSignedInSession(authSession, generation: generation)
     }
@@ -107,7 +113,7 @@ extension NoriStore {
         do {
             await authProvider.saveSession(authSession)
             guard generation == sessionGeneration else { return }
-            await clearTransportIdentity()
+            await clearTransportIdentity(email: authSession.email)
             guard generation == sessionGeneration else { return }
             let initialSession = try await transport.fetchSession(before: nil)
             guard generation == sessionGeneration else { return }
@@ -124,9 +130,10 @@ extension NoriStore {
     }
 
     private func failSignIn(_ error: Error, generation: UInt64) async {
+        let previousEmail = authState.email
         await authProvider.clearSession()
         guard generation == sessionGeneration else { return }
-        await clearTransportIdentity()
+        await clearTransportIdentity(email: previousEmail)
         guard generation == sessionGeneration else { return }
         authState = .signedOut
         connectionState = .offline
@@ -142,11 +149,12 @@ extension NoriStore {
     }
 
     public func signOut() async {
+        let previousEmail = authState.email
         sessionGeneration &+= 1
         accountDeletePending = false
         clearUserState()
         NoriLogger.auth.info("auth.signed_out", breadcrumb: true)
-        await clearTransportIdentity()
+        await clearTransportIdentity(email: previousEmail)
         await authProvider.clearSession()
     }
 

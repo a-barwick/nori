@@ -82,6 +82,53 @@ func (s *composed) UsageWindowSummary(ctx context.Context, hourCutoff, dayCutoff
 	return 0, 0, 0, nil
 }
 
+func (s *composed) OperationsByRuns(ctx context.Context, runIDs []string) (map[string][]OperationRecord, error) {
+	if r, ok := s.Database.(interface {
+		OperationsByRuns(context.Context, []string) (map[string][]OperationRecord, error)
+	}); ok {
+		return r.OperationsByRuns(ctx, runIDs)
+	}
+	out := make(map[string][]OperationRecord, len(runIDs))
+	for _, id := range runIDs {
+		ops, err := s.Database.Operations(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		out[id] = ops
+	}
+	return out, nil
+}
+
+func (s *composed) GetRuns(ctx context.Context, ids []string) (map[string]Run, error) {
+	if r, ok := s.Database.(interface {
+		GetRuns(context.Context, []string) (map[string]Run, error)
+	}); ok {
+		return r.GetRuns(ctx, ids)
+	}
+	out := make(map[string]Run, len(ids))
+	for _, id := range ids {
+		if run, err := s.Database.GetRun(ctx, id); err == nil {
+			out[run.ID] = run
+		}
+	}
+	return out, nil
+}
+
+func (s *composed) ResourcesByIDs(ctx context.Context, collection string, ids []string) ([]Resource, error) {
+	if r, ok := s.Database.(interface {
+		ResourcesByIDs(context.Context, string, []string) ([]Resource, error)
+	}); ok {
+		return r.ResourcesByIDs(ctx, collection, ids)
+	}
+	out := make([]Resource, 0, len(ids))
+	for _, id := range ids {
+		if res, err := s.Database.Resource(ctx, collection, id); err == nil {
+			out = append(out, res)
+		}
+	}
+	return out, nil
+}
+
 var ErrReserveUnsupported = errors.New("state: atomic usage reservation unsupported")
 
 func (s *composed) ReserveUsage(

@@ -21,7 +21,8 @@ extension NoriStore {
         }
     }
 
-    public func refreshWorkAndInteractions() async {
+    public func refreshWorkAndInteractions(force: Bool = true) async {
+        guard !isRefreshFresh(.workAndInteractions, force: force) else { return }
         let generation = sessionGeneration
         workRefreshID &+= 1
         let refreshID = workRefreshID
@@ -32,6 +33,7 @@ extension NoriStore {
                 settledWorkRefreshID = refreshID
                 workItems = work
                 hasLoadedWorkItems = true
+                markRefreshed(.workAndInteractions)
                 reportFailedWorkItemsIfNeeded(work)
                 assistantSummary?.working = activeWorkItems.count
             }
@@ -90,6 +92,20 @@ extension NoriStore {
         }
     }
 
+    func cancelInteractionFollowUpTasks() {
+        for task in interactionFollowUpTasks.values {
+            task.cancel()
+        }
+        interactionFollowUpTasks.removeAll()
+    }
+
+    func waitForInteractionFollowUpCompletion() async {
+        let tasks = Array(interactionFollowUpTasks.values)
+        for task in tasks {
+            await task.value
+        }
+    }
+
     @discardableResult
     public func resolveInteraction(_ interaction: Interaction, answer: InteractionAnswer) async -> InteractionSubmitOutcome {
         let generation = sessionGeneration
@@ -102,28 +118,46 @@ extension NoriStore {
                 requestID: requestID
             )
             guard generation == sessionGeneration else { return .failed("Cancelled") }
+            var wasPending = interaction.status == .pending
             if let idx = interactions.firstIndex(where: { $0.id == interaction.id }) {
+                wasPending = interactions[idx].status == .pending
                 interactionsRefreshID &+= 1
                 settledInteractionsRefreshID = interactionsRefreshID
                 interactions[idx] = receipt.resource
             }
-            async let workAndInteractionsTask: Void = refreshWorkAndInteractions()
-            async let summaryTask: Void = refreshSummary()
+            if wasPending,
+               receipt.resource.status != .pending,
+               let currentNeedsYou = assistantSummary?.needsYou,
+               currentNeedsYou > 0 {
+                assistantSummary?.needsYou = currentNeedsYou - 1
+            }
+
             let shouldRefreshPermissions: Bool
             if case .approve(_, let rememberRule) = answer, rememberRule {
                 shouldRefreshPermissions = true
             } else {
                 shouldRefreshPermissions = false
             }
-            let activeTransport = transport
-            async let permissionsTask: [PermissionRule]? = shouldRefreshPermissions
-                ? (try? await activeTransport.fetchPermissions())
-                : nil
 
-            _ = await (workAndInteractionsTask, summaryTask)
-            let freshPermissions = await permissionsTask
-            guard generation == sessionGeneration else { return .resolved(receipt.resource) }
-            if let freshPermissions { self.permissions = freshPermissions }
+            let followUpID = UUID()
+            let followUpTask = Task { @MainActor [weak self] in
+                defer {
+                    self?.interactionFollowUpTasks.removeValue(forKey: followUpID)
+                }
+                guard let self, generation == self.sessionGeneration, !Task.isCancelled else { return }
+                let activeTransport = self.transport
+                async let workAndInteractionsTask: Void = self.refreshWorkAndInteractions()
+                async let summaryTask: Void = self.refreshSummary()
+                async let permissionsTask: [PermissionRule]? = shouldRefreshPermissions
+                    ? (try? await activeTransport.fetchPermissions())
+                    : nil
+
+                _ = await (workAndInteractionsTask, summaryTask)
+                let freshPermissions = await permissionsTask
+                guard generation == self.sessionGeneration, !Task.isCancelled else { return }
+                if let freshPermissions { self.permissions = freshPermissions }
+            }
+            interactionFollowUpTasks[followUpID] = followUpTask
 
             switch answer {
             case .approve(_, let rememberRule):
@@ -265,12 +299,14 @@ extension NoriStore {
         }
     }
 
-    public func refreshAutomations() async {
+    public func refreshAutomations(force: Bool = true) async {
+        guard !isRefreshFresh(.automations, force: force) else { return }
         let generation = sessionGeneration
         do {
             let autos = try await transport.fetchAutomations()
             guard generation == sessionGeneration else { return }
             self.automations = autos
+            markRefreshed(.automations)
         } catch {
             guard generation == sessionGeneration else { return }
             _ = await handleAuthFailureIfNeeded(error)

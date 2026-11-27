@@ -14,11 +14,59 @@ type Resource = {
   inflight?: Promise<void>;
   refetch: boolean;
   timer?: ReturnType<typeof setInterval>;
+  fetchedAt: number;
+  idleSince?: number;
 };
 
-export function createResourceCache() {
+export type ResourceCacheOptions = {
+  maxEntries?: number;
+  ttlMs?: number;
+  staleTimeMs?: number;
+  now?: () => number;
+};
+
+const DEFAULT_MAX_ENTRIES = 100;
+const DEFAULT_IDLE_TTL_MS = 5 * 60_000;
+const DEFAULT_STALE_TIME_MS = 10_000;
+
+export function createResourceCache({
+  maxEntries = DEFAULT_MAX_ENTRIES,
+  ttlMs = DEFAULT_IDLE_TTL_MS,
+  staleTimeMs = DEFAULT_STALE_TIME_MS,
+  now = () => Date.now(),
+}: ResourceCacheOptions = {}) {
   const resources = new Map<string, Resource>();
   let serial = 0;
+  let activeSubscriptions = 0;
+
+  function touch(path: string, resource: Resource) {
+    resources.delete(path);
+    resources.set(path, resource);
+  }
+
+  function isExpiredIdle(resource: Resource) {
+    return resource.subscriptions.size === 0 && resource.idleSince !== undefined && now() - resource.idleSince > ttlMs;
+  }
+
+  function evictIdle() {
+    if (resources.size <= maxEntries) return;
+    for (const [key, entry] of resources) {
+      if (resources.size <= maxEntries) break;
+      if (entry.subscriptions.size === 0) resources.delete(key);
+    }
+  }
+
+  function attachListeners() {
+    window.addEventListener("focus", refreshVisible);
+    window.addEventListener("online", refreshVisible);
+    document.addEventListener("visibilitychange", refreshVisible);
+  }
+
+  function detachListeners() {
+    window.removeEventListener("focus", refreshVisible);
+    window.removeEventListener("online", refreshVisible);
+    document.removeEventListener("visibilitychange", refreshVisible);
+  }
 
   function update(resource: Resource, snapshot: Snapshot) {
     resource.snapshot = snapshot;
@@ -32,6 +80,7 @@ export function createResourceCache() {
     const revision = versioned && data && typeof data === "object" && "revision" in data && typeof data.revision === "number"
       ? data.revision : -1;
     if (current && (revision >= 0 ? revision < current.revision || (revision === current.revision && request < current.serial) : request < current.serial)) return;
+    resource.fetchedAt = now();
     update(resource, { data, serial: request, revision, loading: !!resource.inflight });
   }
 
@@ -66,19 +115,25 @@ export function createResourceCache() {
   }
 
   function invalidate(...prefixes: string[]) {
-    for (const path of resources.keys()) {
-      if (prefixes.some((prefix) => path.startsWith(prefix))) void load(path, true);
+    for (const [path, resource] of resources) {
+      if (prefixes.some((prefix) => path.startsWith(prefix))) {
+        if (resource.subscriptions.size > 0) void load(path, true);
+        else resource.fetchedAt = 0;
+      }
     }
   }
 
   function refreshVisible() {
     if (document.visibilityState === "visible") {
-      for (const path of resources.keys()) void load(path);
+      for (const [path, resource] of resources) {
+        if (resource.subscriptions.size > 0) void load(path);
+      }
     }
   }
 
   function schedule(path: string, resource: Resource) {
     clearInterval(resource.timer);
+    resource.timer = undefined;
     const poll = Math.min(...[...resource.subscriptions].map((item) => item.poll).filter((ms) => ms > 0));
     if (Number.isFinite(poll)) {
       resource.timer = setInterval(() => {
@@ -88,14 +143,19 @@ export function createResourceCache() {
   }
 
   function subscribe(path: string, listener: () => void, poll: number, versioned: boolean) {
-    if (resources.size === 0) {
-      window.addEventListener("focus", refreshVisible);
-      window.addEventListener("online", refreshVisible);
-      document.addEventListener("visibilitychange", refreshVisible);
+    if (activeSubscriptions === 0) attachListeners();
+    activeSubscriptions++;
+
+    let existing = resources.get(path);
+    if (existing && isExpiredIdle(existing)) {
+      resources.delete(path);
+      existing = undefined;
     }
-    const existing = resources.get(path);
-    const resource: Resource = existing ?? { subscriptions: new Set(), refetch: false, versioned };
+
+    const wasActive = !!existing && existing.subscriptions.size > 0;
+    const resource: Resource = existing ?? { subscriptions: new Set(), refetch: false, versioned, fetchedAt: 0 };
     if (existing) {
+      resource.idleSince = undefined;
       resource.versioned = resource.versioned || versioned;
       if (
         resource.versioned &&
@@ -111,26 +171,90 @@ export function createResourceCache() {
     }
     const subscription = { listener, poll };
     resource.subscriptions.add(subscription);
-    resources.set(path, resource);
+    touch(path, resource);
     schedule(path, resource);
-    if (!existing) void load(path);
+
+    if (!existing) {
+      void load(path);
+    } else if (!wasActive) {
+      const stale = resource.fetchedAt === 0 || now() - resource.fetchedAt > staleTimeMs || !!resource.snapshot?.error;
+      if (stale) void load(path);
+    }
+
     return () => {
-      resource.subscriptions.delete(subscription);
-      if (resource.subscriptions.size) schedule(path, resource);
-      else {
+      if (!resource.subscriptions.delete(subscription)) return;
+      activeSubscriptions = Math.max(0, activeSubscriptions - 1);
+      if (resource.subscriptions.size) {
+        schedule(path, resource);
+      } else {
         clearInterval(resource.timer);
+        resource.timer = undefined;
         resource.controller?.abort();
-        resources.delete(path);
+        resource.controller = undefined;
+        resource.inflight = undefined;
+        resource.refetch = false;
+        if (resources.get(path) === resource) {
+          if (resource.snapshot && resource.snapshot.data !== undefined) {
+            if (resource.snapshot.loading) {
+              resource.snapshot = { ...resource.snapshot, loading: false };
+            }
+            resource.idleSince = now();
+            touch(path, resource);
+            evictIdle();
+          } else {
+            resources.delete(path);
+          }
+        }
       }
-      if (resources.size === 0) {
-        window.removeEventListener("focus", refreshVisible);
-        window.removeEventListener("online", refreshVisible);
-        document.removeEventListener("visibilitychange", refreshVisible);
-      }
+      if (activeSubscriptions === 0) detachListeners();
     };
   }
 
-  return { subscribe, load, store, invalidate, snapshot: (path: string) => resources.get(path)?.snapshot };
+  function clear() {
+    for (const resource of resources.values()) {
+      clearInterval(resource.timer);
+      resource.timer = undefined;
+      resource.controller?.abort();
+      resource.controller = undefined;
+      resource.inflight = undefined;
+      resource.refetch = false;
+      resource.subscriptions.clear();
+    }
+    resources.clear();
+    if (activeSubscriptions > 0) {
+      activeSubscriptions = 0;
+      detachListeners();
+    }
+  }
+
+  function seed(path: string, data: unknown, versioned = false) {
+    let resource = resources.get(path);
+    if (!resource) {
+      resource = { subscriptions: new Set(), refetch: false, versioned, fetchedAt: 0, idleSince: now() };
+      resources.set(path, resource);
+    }
+    store(path, data, undefined, versioned);
+    if (resource.subscriptions.size === 0) {
+      resource.idleSince = now();
+      touch(path, resource);
+      evictIdle();
+    }
+  }
+
+  function isFresh(path: string): boolean {
+    const resource = resources.get(path);
+    if (!resource || isExpiredIdle(resource)) return false;
+    if (!resource.snapshot || resource.snapshot.data === undefined || resource.snapshot.error) return false;
+    return resource.fetchedAt > 0 && now() - resource.fetchedAt <= staleTimeMs;
+  }
+
+  function snapshot(path: string): Snapshot | undefined {
+    const resource = resources.get(path);
+    if (!resource || isExpiredIdle(resource)) return undefined;
+    return resource.snapshot;
+  }
+
+  return { subscribe, load, store, seed, isFresh, invalidate, clear, snapshot };
 }
 
 export const ResourceCacheContext = createContext(createResourceCache());

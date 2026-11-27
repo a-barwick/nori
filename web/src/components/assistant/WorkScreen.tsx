@@ -1,7 +1,8 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Check, ChevronRight, Clock, X } from "lucide-react";
 import { NoriMark } from "@/components/mark/NoriMark";
@@ -14,9 +15,16 @@ import { useAction, useResource, useResourceInvalidation } from "@/lib/assistant
 import type { Automation, Interaction, WorkItem, WorkStep } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
 import { InteractionCard } from "./InteractionCard";
-import { LibraryContent } from "./LibraryScreen";
-import { RoutinesContent } from "./RoutinesScreen";
 import { Failure, Loading, Notice, Screen, Section, UnderlineTabs, type Tone } from "./ui";
+
+const LibraryContent = dynamic(
+  () => import("./LibraryScreen").then((mod) => mod.LibraryContent),
+  { loading: () => <Loading /> },
+);
+const RoutinesContent = dynamic(
+  () => import("./RoutinesScreen").then((mod) => mod.RoutinesContent),
+  { loading: () => <Loading /> },
+);
 
 export {
   groupOperations,
@@ -185,7 +193,6 @@ export function buildUnifiedTaskEntries({
 
 export function WorkScreen() {
   const params = useSearchParams();
-  const router = useRouter();
   const { has } = useAssistant();
   const work = useWork();
   const pending = usePendingInteractions();
@@ -193,9 +200,12 @@ export function WorkScreen() {
     poll: 30_000,
   });
 
-  const tab = parseWorkTab(params.get("tab"));
+  const urlTab = parseWorkTab(params.get("tab"));
+  const [optimisticTab, setOptimisticTab] = useState<{ from: WorkTab; value: WorkTab } | null>(null);
+  const tab = optimisticTab && optimisticTab.from === urlTab ? optimisticTab.value : urlTab;
   const selectTab = (next: WorkTab) => {
-    router.replace(next === "tasks" ? "/work" : `/work?tab=${next}`, { scroll: false });
+    setOptimisticTab({ from: urlTab, value: next });
+    window.history.replaceState(null, "", next === "tasks" ? "/work" : `/work?tab=${next}`);
   };
 
   const { actionableInteractions, entries } = useMemo(

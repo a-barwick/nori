@@ -5,17 +5,27 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { Button } from "@/components/ui/primitives";
 
-export function ScreenError({ error, retry }: { error: Error & { digest?: string }; retry: () => void }) {
+export function ScreenError({
+  error,
+  reset,
+  retry,
+}: {
+  error: Error & { digest?: string };
+  reset?: () => void;
+  retry?: () => void;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   useEffect(() => { Sentry.captureException(error); }, [error]);
+
+  const recover = () => (reset ?? retry)?.();
 
   const openChat = () => {
     if (pathname === "/") {
       window.location.reload();
     } else {
       router.push("/");
-      retry();
+      recover();
     }
   };
 
@@ -25,7 +35,7 @@ export function ScreenError({ error, retry }: { error: Error & { digest?: string
         <h1 className="text-row font-semibold">This screen didn&apos;t load</h1>
         <p className="mt-1 text-body text-ink-2">Your work is safe. Try again, or open another screen.</p>
         <div className="mt-4 flex justify-center gap-2">
-          <Button variant="primary" onClick={() => retry()}>Try again</Button>
+          <Button variant="primary" onClick={recover}>Try again</Button>
           <Button variant="neutral" onClick={openChat}>Open chat</Button>
         </div>
       </div>

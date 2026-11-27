@@ -58,14 +58,10 @@ public struct MoreHubView: View {
             .padding(.bottom, 96)
         }
         .refreshable {
-            async let summaryTask: Void = store.refreshSummary()
-            async let appsTask: Void = store.refreshApps()
-            async let memoryTask: Void = store.refreshMemory()
-            async let permsPrefsTask: Void = store.refreshPermissionsAndPreferences()
-            async let modelKeysTask: Void = store.refreshModelKeys()
+            async let moreTask: Void = store.refreshForTab(.more, force: true)
             async let modelSettingsTask: Void = { _ = try? await store.refreshModelSettings() }()
             async let homeConnectorsTask: Void = { _ = try? await store.refreshHomeConnectors() }()
-            _ = await (summaryTask, appsTask, memoryTask, permsPrefsTask, modelKeysTask, modelSettingsTask, homeConnectorsTask)
+            _ = await (moreTask, modelSettingsTask, homeConnectorsTask)
         }
         .background(NoriColors.canvas.ignoresSafeArea())
         .navigationTitle("More")

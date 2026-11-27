@@ -114,7 +114,7 @@ func (a *Assistant) automationAction(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Assistant) occurrences(w http.ResponseWriter, r *http.Request) {
-	if _, err := a.Scheduler.Get(r.Context(), r.PathValue("id")); err != nil {
+	if err := a.Scheduler.Exists(r.Context(), r.PathValue("id")); err != nil {
 		writeAPIError(w, err, "", nil)
 		return
 	}

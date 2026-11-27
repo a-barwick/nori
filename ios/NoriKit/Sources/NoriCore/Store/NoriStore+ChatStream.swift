@@ -3,15 +3,20 @@ import Foundation
 extension NoriStore {
     public func pauseForBackground() {
         stopEventStream()
+        streamingFlushTask?.cancel()
+        streamingFlushTask = nil
+        pendingStreamingText = nil
+        cancelStreamRefreshTasks()
         chatContextTask?.cancel()
         chatContextTask = nil
+        cancelInteractionFollowUpTasks()
     }
 
     public func resumeFromBackground() async {
         guard authState.isSignedIn else { return }
-        async let summaryTask: Void = refreshSummary()
-        async let sessionTask: Void = refreshSession()
-        async let workTask: Void = refreshWorkAndInteractions()
+        async let summaryTask: Void = refreshSummary(force: true)
+        async let sessionTask: Void = refreshSession(force: true)
+        async let workTask: Void = refreshWorkAndInteractions(force: true)
         async let onboardingTask: Void = refreshOnboardingStatus()
         _ = await (summaryTask, sessionTask, workTask, onboardingTask)
         if authState.isSignedIn, !Task.isCancelled {
@@ -19,19 +24,22 @@ extension NoriStore {
         }
     }
 
-    public func refreshSummary() async {
+    public func refreshSummary(force: Bool = true) async {
+        guard !isRefreshFresh(.summary, force: force) else { return }
         let generation = sessionGeneration
         do {
             let latest = try await transport.fetchAssistantSummary()
             guard generation == sessionGeneration, !Task.isCancelled else { return }
             assistantSummary = latest
+            markRefreshed(.summary)
         } catch {
             guard generation == sessionGeneration, !Task.isCancelled else { return }
             _ = await handleAuthFailureIfNeeded(error)
         }
     }
 
-    public func refreshSession() async {
+    public func refreshSession(force: Bool = true) async {
+        guard !isRefreshFresh(.session, force: force) else { return }
         let generation = sessionGeneration
         do {
             let freshSession = try await transport.fetchSession(before: nil)
@@ -97,6 +105,7 @@ extension NoriStore {
         if snapshot.didLoadWorkItems {
             markWorkChanged()
             workItems = snapshot.workItems
+            markRefreshed(.workAndInteractions)
         }
         if snapshot.didLoadInteractions {
             interactionsRefreshID &+= 1
@@ -110,8 +119,12 @@ extension NoriStore {
         if snapshot.didLoadConnections {
             self.connections = snapshot.connections
         }
+        if snapshot.didLoadMCPServers && snapshot.didLoadConnections {
+            markRefreshed(.apps)
+        }
         if snapshot.didLoadLibraryItems {
             self.libraryItems = snapshot.libraryItems
+            markRefreshed(.library)
         }
         if snapshot.didLoadCoreMemories {
             self.coreMemories = snapshot.coreMemories
@@ -123,14 +136,22 @@ extension NoriStore {
         if snapshot.didLoadWorkingMemory {
             workingMemory = snapshot.workingMemory
         }
+        if snapshot.didLoadCoreMemories && snapshot.didLoadMemoryLogs && snapshot.didLoadWorkingMemory {
+            markRefreshed(.memory)
+        }
         if snapshot.didLoadAutomations {
             self.automations = snapshot.automations
+            markRefreshed(.automations)
         }
         if snapshot.didLoadPermissions {
             self.permissions = snapshot.permissions
         }
+        if snapshot.didLoadPermissions && snapshot.didLoadPreferences {
+            markRefreshed(.permissionsAndPreferences)
+        }
         if snapshot.didLoadModelKeys {
             self.modelKeys = snapshot.modelKeys
+            markRefreshed(.modelKeys)
         }
         if hasLoadedPreferences && hasLoadedSession {
             hasLoadedSnapshot = true
@@ -141,6 +162,7 @@ extension NoriStore {
     func applySession(_ snapshot: Session) {
         session = snapshot
         hasLoadedSession = true
+        markRefreshed(.session)
         isThinking = snapshot.conversation?.processing == true
         finishObservedReplies(in: snapshot.messages)
     }
@@ -199,17 +221,21 @@ extension NoriStore {
         }
     }
 
-    func startChatSession() {
-        startEventStream()
+    func startChatContextTasks() {
         chatContextTask?.cancel()
         chatContextTask = Task { [weak self] in
             guard let self, !Task.isCancelled else { return }
             async let capabilitiesTask: Void = self.refreshCapabilities()
-            async let summaryTask: Void = self.refreshSummary()
+            async let summaryTask: Void = self.refreshSummary(force: true)
             async let interactionsTask: Void = self.refreshInteractions()
             async let onboardingTask: Void = self.refreshOnboardingStatus()
             _ = await (capabilitiesTask, summaryTask, interactionsTask, onboardingTask)
         }
+    }
+
+    func startChatSession() {
+        startEventStream()
+        startChatContextTasks()
     }
 
     private func refreshCapabilities() async {
@@ -238,8 +264,12 @@ extension NoriStore {
                     guard let self, !Task.isCancelled, self.sessionGeneration == generation else { break }
                     await self.handleStreamEvent(event)
                 }
+                if let self, !Task.isCancelled, self.sessionGeneration == generation {
+                    self.flushPendingStreamingAssistant()
+                }
             } catch {
                 guard let self, !Task.isCancelled, self.sessionGeneration == generation else { return }
+                self.flushPendingStreamingAssistant()
                 if await self.handleAuthFailureIfNeeded(error) { return }
                 guard self.sessionGeneration == generation else { return }
                 self.connectionState = .reconnecting
@@ -250,6 +280,77 @@ extension NoriStore {
     public func stopEventStream() {
         eventTask?.cancel()
         eventTask = nil
+    }
+
+    private func clearStreamingAssistant() {
+        streamingFlushTask?.cancel()
+        streamingFlushTask = nil
+        pendingStreamingText = nil
+        streamingAssistantText = nil
+        streamingTurnID = nil
+        isStreamingAssistant = false
+    }
+
+    private func flushPendingStreamingAssistant() {
+        streamingFlushTask?.cancel()
+        streamingFlushTask = nil
+        guard let pending = pendingStreamingText else { return }
+        pendingStreamingText = nil
+        streamingAssistantText = pending
+        isStreamingAssistant = !pending.isEmpty
+    }
+
+    private func scheduleStreamingAssistantText(_ text: String) {
+        if streamingAssistantText == nil {
+            streamingFlushTask?.cancel()
+            streamingFlushTask = nil
+            pendingStreamingText = nil
+            streamingAssistantText = text
+            isStreamingAssistant = !text.isEmpty
+            return
+        }
+        pendingStreamingText = text
+        isStreamingAssistant = !text.isEmpty
+        guard streamingFlushTask == nil else { return }
+        let generation = sessionGeneration
+        let interval = streamingFlushInterval
+        streamingFlushTask = Task { [weak self] in
+            try? await Task.sleep(for: interval)
+            guard let self, !Task.isCancelled, self.sessionGeneration == generation else { return }
+            self.streamingFlushTask = nil
+            if let pending = self.pendingStreamingText {
+                self.pendingStreamingText = nil
+                self.streamingAssistantText = pending
+                self.isStreamingAssistant = !pending.isEmpty
+            }
+        }
+    }
+
+    private func scheduleStreamRefresh(
+        _ domain: StreamRefreshDomain,
+        operation: @escaping @MainActor (NoriStore) async -> Void
+    ) {
+        if streamRefreshTasks[domain] != nil {
+            streamRefreshNeedsRerun.insert(domain)
+            return
+        }
+        let generation = sessionGeneration
+        streamRefreshTasks[domain] = Task { [weak self] in
+            defer {
+                if let self, self.sessionGeneration == generation {
+                    self.streamRefreshTasks.removeValue(forKey: domain)
+                    self.streamRefreshNeedsRerun.remove(domain)
+                }
+            }
+            while let self, !Task.isCancelled, self.sessionGeneration == generation {
+                self.streamRefreshNeedsRerun.remove(domain)
+                await operation(self)
+                guard !Task.isCancelled, self.sessionGeneration == generation else { break }
+                if !self.streamRefreshNeedsRerun.contains(domain) {
+                    break
+                }
+            }
+        }
     }
 
     static func shouldAcceptRunUpdate(existing: Run, incoming: Run) -> Bool {
@@ -291,10 +392,12 @@ extension NoriStore {
         connectionState = .connected
         if case .reset(let pos) = event {
             session.position = pos
-            await refreshAll()
-            guard generation == sessionGeneration else { return }
-            if session.position == nil {
-                session.position = pos
+            scheduleStreamRefresh(.reset) { store in
+                await store.refreshAll()
+                guard generation == store.sessionGeneration else { return }
+                if store.session.position == nil {
+                    store.session.position = pos
+                }
             }
             return
         }
@@ -313,8 +416,7 @@ extension NoriStore {
             if message.role == .assistant && !message.isSuperseded {
                 isThinking = false
                 if streamingTurnID == nil || message.turnID == nil || streamingTurnID == message.turnID {
-                    streamingAssistantText = nil
-                    streamingTurnID = nil
+                    clearStreamingAssistant()
                 }
                 NoriLogger.store.info("reply received", attributes: message.turnID.map { ["nori.turn.id": $0] } ?? [:], breadcrumb: true)
                 finishObservedReplies(in: [message])
@@ -322,23 +424,25 @@ extension NoriStore {
         case .assistantDelta(let turnID, let text):
             if text.isEmpty {
                 if streamingTurnID == nil || streamingTurnID == turnID {
-                    streamingAssistantText = nil
-                    streamingTurnID = nil
+                    clearStreamingAssistant()
                 }
             } else if !session.messages.contains(where: { $0.role == .assistant && !$0.isSuperseded && $0.turnID == turnID }) {
                 streamingTurnID = turnID
-                streamingAssistantText = text
+                scheduleStreamingAssistantText(text)
             }
         case .task(_, let run):
             mergeRun(run)
-            await refreshWorkAndInteractions()
-            guard generation == sessionGeneration else { return }
-            if !Task.isCancelled, run.status == .failed {
+            if run.status == .failed {
                 reportFailedTaskIfNeeded(taskID: run.id)
+            }
+            scheduleStreamRefresh(.workAndInteractions) { store in
+                await store.refreshWorkAndInteractions(force: true)
             }
         case .result(_, let result):
             mergeResult(result)
-            await refreshLibrary()
+            scheduleStreamRefresh(.library) { store in
+                await store.refreshLibrary(force: true)
+            }
         case .readPosition(_, let pos):
             session.readPosition = pos
         case .conversation(_, let presence), .presence(let presence):
@@ -349,12 +453,13 @@ extension NoriStore {
                 session.conversation = conv
                 isThinking = conv.processing || conv.pending
                 if !isThinking {
-                    streamingAssistantText = nil
-                    streamingTurnID = nil
+                    clearStreamingAssistant()
                 }
             }
         case .memory:
-            await refreshMemory()
+            scheduleStreamRefresh(.memory) { store in
+                await store.refreshMemory(force: true)
+            }
         case .unknown:
             break
         }

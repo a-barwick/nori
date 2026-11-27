@@ -457,19 +457,43 @@ func (s *Service) Act(ctx context.Context, id, requestID string, expected int64,
 	return state.MutationReceipt{}, state.ErrInvalidResource
 }
 
+func (s *Service) definitionsForServer(ctx context.Context, serverID string) (map[string]definitionDoc, error) {
+	defs := map[string]definitionDoc{}
+	after := ""
+	for {
+		page, next, err := s.Store.Resources(ctx, CollectionDefinitions, map[string]string{"server_id": serverID}, after, 200)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range page {
+			var doc definitionDoc
+			if r.Decode(&doc) == nil {
+				defs[r.ID] = doc
+			}
+		}
+		if next == "" {
+			return defs, nil
+		}
+		after = next
+	}
+}
+
 func (s *Service) Tools(ctx context.Context, id string) ([]Tool, error) {
 	server, _, err := s.server(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	out := []Tool{}
+	if len(server.Tools) == 0 {
+		return out, nil
+	}
+	defs, err := s.definitionsForServer(ctx, server.ID)
+	if err != nil {
+		return nil, err
+	}
 	for name, key := range server.Tools {
-		r, err := s.Store.Resource(ctx, CollectionDefinitions, key)
-		if err != nil {
-			continue
-		}
-		var doc definitionDoc
-		if r.Decode(&doc) != nil {
+		doc, ok := defs[key]
+		if !ok {
 			continue
 		}
 		exposure := string(doc.Definition.Exposure)

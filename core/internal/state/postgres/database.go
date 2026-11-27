@@ -422,16 +422,33 @@ func (t *transaction) ensureTx(ctx context.Context, shard string) error {
 		}
 		return err
 	}
-	if _, err := tx.Exec(ctx, "SET LOCAL enable_seqscan = off"); err != nil {
-		_ = tx.Rollback(context.WithoutCancel(ctx))
-		if t.unlockShard != nil {
-			t.unlockShard()
-			t.unlockShard = nil
-		}
-		return err
-	}
 	if ownerID := users.ID(ctx); ownerID != "" {
-		if _, err := tx.Exec(ctx, "SELECT set_config('app.current_owner', $1, true)", ownerID); err != nil {
+		var batch pgx.Batch
+		batch.Queue("SET LOCAL enable_seqscan = off")
+		batch.Queue("SELECT set_config('app.current_owner', $1, true)", ownerID)
+		br := tx.SendBatch(ctx, &batch)
+		_, err1 := br.Exec()
+		_, err2 := br.Exec()
+		closeErr := br.Close()
+		var batchErr error
+		switch {
+		case err1 != nil:
+			batchErr = err1
+		case err2 != nil:
+			batchErr = err2
+		case closeErr != nil:
+			batchErr = closeErr
+		}
+		if batchErr != nil {
+			_ = tx.Rollback(context.WithoutCancel(ctx))
+			if t.unlockShard != nil {
+				t.unlockShard()
+				t.unlockShard = nil
+			}
+			return batchErr
+		}
+	} else {
+		if _, err := tx.Exec(ctx, "SET LOCAL enable_seqscan = off"); err != nil {
 			_ = tx.Rollback(context.WithoutCancel(ctx))
 			if t.unlockShard != nil {
 				t.unlockShard()
@@ -478,12 +495,39 @@ func get(ctx context.Context, q executor, path string) (docstore.Record, error) 
 	return docstore.Record{Path: path, Fields: data}, e
 }
 func (b *backend) Get(ctx context.Context, path string) (docstore.Record, error) {
-	if users.ID(ctx) != "" {
+	if ownerID := users.ID(ctx); ownerID != "" {
+		collection, id, e := split(path)
+		if e != nil {
+			return docstore.Record{}, e
+		}
 		var rec docstore.Record
-		err := b.readCommitted(ctx, true, func(q executor) error {
-			var err error
-			rec, err = get(ctx, q, path)
-			return err
+		err := b.readCommittedRaw(ctx, true, func(tx pgx.Tx) error {
+			var batch pgx.Batch
+			batch.Queue("SELECT set_config('app.current_owner', $1, true)", ownerID)
+			batch.Queue("SELECT data FROM nori_records WHERE shard=$1 AND collection=$2 AND id=$3", recordShard(collection), collection, id)
+			br := tx.SendBatch(ctx, &batch)
+			if _, err := br.Exec(); err != nil {
+				_ = br.Close()
+				return err
+			}
+			var raw []byte
+			err := br.QueryRow().Scan(&raw)
+			closeErr := br.Close()
+			if errors.Is(err, pgx.ErrNoRows) {
+				return docstore.ErrNotFound
+			}
+			if err != nil {
+				return err
+			}
+			if closeErr != nil {
+				return closeErr
+			}
+			data, err := decode(raw)
+			if err != nil {
+				return err
+			}
+			rec = docstore.Record{Path: path, Fields: data}
+			return nil
 		})
 		return rec, err
 	}
@@ -498,12 +542,32 @@ func (t *transaction) Get(ctx context.Context, path string) (docstore.Record, er
 	return get(ctx, t.q, path)
 }
 func (b *backend) Query(ctx context.Context, s docstore.QuerySpec) ([]docstore.Record, error) {
-	if users.ID(ctx) != "" {
+	if ownerID := users.ID(ctx); ownerID != "" {
+		sql, args, multi, err := buildQuery(s)
+		if err != nil {
+			return nil, err
+		}
 		var recs []docstore.Record
-		err := b.readCommitted(ctx, true, func(q executor) error {
-			var err error
-			recs, err = query(ctx, q, s)
-			return err
+		err = b.readCommittedRaw(ctx, true, func(tx pgx.Tx) error {
+			var batch pgx.Batch
+			batch.Queue("SELECT set_config('app.current_owner', $1, true)", ownerID)
+			batch.Queue(sql, args...)
+			br := tx.SendBatch(ctx, &batch)
+			if _, err := br.Exec(); err != nil {
+				_ = br.Close()
+				return err
+			}
+			rows, err := br.Query()
+			if err != nil {
+				_ = br.Close()
+				return err
+			}
+			recs, err = scanQueryRows(rows, s, multi)
+			closeErr := br.Close()
+			if err != nil {
+				return err
+			}
+			return closeErr
 		})
 		return recs, err
 	}

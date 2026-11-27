@@ -1,10 +1,13 @@
 "use client";
 
+import { memo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy } from "lucide-react";
 import { useCopyToClipboard } from "@/lib/browser";
 import { cn } from "@/lib/utils";
+
+const REMARK_PLUGINS = [remarkGfm];
 
 function CodeBlock({ children, text }: { children: React.ReactNode; text: string }) {
   const { copied, copy } = useCopyToClipboard();
@@ -51,6 +54,9 @@ const bubble = (onAccent: boolean): Components => ({
   pre: ({ children }) => <pre className="my-2 font-mono text-code whitespace-pre-wrap">{children}</pre>,
 });
 
+const BUBBLE_ON_ACCENT: Components = bubble(true);
+const BUBBLE_DEFAULT: Components = bubble(false);
+
 const page: Components = {
   p: ({ children }) => <p className="my-3 first:mt-0">{children}</p>,
   h1: ({ children }) => <h2 className="mt-6 mb-2 text-h-page font-medium text-ink first:mt-0">{children}</h2>,
@@ -85,7 +91,7 @@ const page: Components = {
   pre: ({ children }) => <CodeBlock text={textOf(children)}>{children}</CodeBlock>,
 };
 
-export function Markdown({
+export const Markdown = memo(function Markdown({
   children,
   variant = "bubble",
   onAccent = false,
@@ -98,9 +104,12 @@ export function Markdown({
 }) {
   return (
     <div className={cn("[overflow-wrap:anywhere]", variant === "page" ? "text-read text-ink" : "text-body", className)}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={variant === "page" ? page : bubble(onAccent)}>
+      <ReactMarkdown
+        remarkPlugins={REMARK_PLUGINS}
+        components={variant === "page" ? page : onAccent ? BUBBLE_ON_ACCENT : BUBBLE_DEFAULT}
+      >
         {children}
       </ReactMarkdown>
     </div>
   );
-}
+});

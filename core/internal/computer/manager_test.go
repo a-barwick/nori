@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -391,5 +393,114 @@ func TestManagerEnsureCachingAndStandbySleepWakeSemantics(t *testing.T) {
 	}
 	if stStaleSleep.Status != computer.StatusSleeping {
 		t.Fatalf("status right after Sleep with stale running read = %q, want sleeping", stStaleSleep.Status)
+	}
+}
+
+type countingStatusProvider struct {
+	*fake.Provider
+	statusCalls atomic.Int64
+	blockCh     chan struct{}
+	enteredCh   chan struct{}
+}
+
+func (p *countingStatusProvider) Status(ctx context.Context, providerID string) (computer.InstanceStatus, error) {
+	p.statusCalls.Add(1)
+	if p.enteredCh != nil {
+		select {
+		case p.enteredCh <- struct{}{}:
+		default:
+		}
+	}
+	if p.blockCh != nil {
+		<-p.blockCh
+	}
+	return p.Provider.Status(ctx, providerID)
+}
+
+func TestManagerStatusCacheAndInvalidation(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	fp := fake.New()
+	fp.Now = func() time.Time { return now }
+	prov := &countingStatusProvider{Provider: fp}
+	store := computer.NewMemoryStore()
+	store.Now = func() time.Time { return now }
+
+	mgr := computer.NewManager(prov, store, computer.Config{})
+	mgr.Now = func() time.Time { return now }
+
+	if _, err := mgr.Ensure(ctx, "u1"); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	prov.statusCalls.Store(0)
+
+	// Repeated Status() calls within 5s TTL must hit provider.Status only once.
+	for i := 0; i < 5; i++ {
+		st, err := mgr.Status(ctx, "u1")
+		if err != nil {
+			t.Fatalf("Status #%d: %v", i, err)
+		}
+		if st.Status != computer.StatusReady {
+			t.Fatalf("Status #%d = %q, want ready", i, st.Status)
+		}
+	}
+	if got := prov.statusCalls.Load(); got != 1 {
+		t.Fatalf("provider.Status calls within TTL = %d, want 1", got)
+	}
+
+	// Advancing past the 5s TTL must trigger a fresh provider.Status call.
+	now = now.Add(6 * time.Second)
+	if _, err := mgr.Status(ctx, "u1"); err != nil {
+		t.Fatalf("Status after TTL: %v", err)
+	}
+	if got := prov.statusCalls.Load(); got != 2 {
+		t.Fatalf("provider.Status calls after TTL = %d, want 2", got)
+	}
+
+	// Sleep invalidates the cache immediately so the next Status hits provider.Status.
+	if err := mgr.Sleep(ctx, "u1"); err != nil {
+		t.Fatalf("Sleep: %v", err)
+	}
+	if _, err := mgr.Status(ctx, "u1"); err != nil {
+		t.Fatalf("Status after Sleep: %v", err)
+	}
+	if got := prov.statusCalls.Load(); got != 3 {
+		t.Fatalf("provider.Status calls after Sleep = %d, want 3", got)
+	}
+
+	// Wake invalidates the cache and refreshes Status.
+	if _, err := mgr.Wake(ctx, "u1"); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if got := prov.statusCalls.Load(); got != 4 {
+		t.Fatalf("provider.Status calls after Wake = %d, want 4", got)
+	}
+
+	// Concurrent Status calls after TTL expiry deduplicate into a single provider.Status call.
+	now = now.Add(6 * time.Second)
+	prov.blockCh = make(chan struct{})
+	prov.enteredCh = make(chan struct{}, 1)
+	var wg sync.WaitGroup
+	errs := make([]error, 4)
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			_, errs[idx] = mgr.Status(ctx, "u1")
+		}(i)
+	}
+	<-prov.enteredCh
+	time.Sleep(10 * time.Millisecond)
+	close(prov.blockCh)
+	wg.Wait()
+	prov.blockCh = nil
+	prov.enteredCh = nil
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent Status #%d: %v", i, err)
+		}
+	}
+	if got := prov.statusCalls.Load(); got != 5 {
+		t.Fatalf("provider.Status calls after 4 concurrent misses = %d, want 5", got)
 	}
 }

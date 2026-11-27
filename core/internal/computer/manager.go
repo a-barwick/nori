@@ -81,6 +81,7 @@ type SessionEvent struct {
 
 const (
 	ensureCacheTTL      = 2 * time.Minute
+	statusCacheTTL      = 5 * time.Second
 	eventualStatusGrace = 30 * time.Second
 )
 
@@ -88,6 +89,18 @@ type ensuredComputer struct {
 	providerID   string
 	bootstrapVer string
 	at           time.Time
+}
+
+type cachedInstanceStatus struct {
+	providerID string
+	live       InstanceStatus
+	at         time.Time
+}
+
+type inflightStatus struct {
+	done chan struct{}
+	live InstanceStatus
+	err  error
 }
 
 // Manager coordinates lifecycle, policy, cost attribution, sessions, file links,
@@ -98,22 +111,28 @@ type Manager struct {
 	cfg      Config
 	Now      func() time.Time
 
-	mu        sync.Mutex
-	locks     map[string]*sync.Mutex
-	ensured   map[string]ensuredComputer
-	listeners map[string]map[uint64]func(SessionEvent)
-	nextSubID uint64
+	mu             sync.Mutex
+	locks          map[string]*sync.Mutex
+	ensured        map[string]ensuredComputer
+	statusCache    map[string]cachedInstanceStatus
+	statusInflight map[string]*inflightStatus
+	statusGen      map[string]uint64
+	listeners      map[string]map[uint64]func(SessionEvent)
+	nextSubID      uint64
 }
 
 // NewManager creates a Manager backed by provider and store.
 func NewManager(provider Provider, store Store, cfg Config) *Manager {
 	return &Manager{
-		provider:  provider,
-		store:     store,
-		cfg:       cfg.withDefaults(),
-		locks:     map[string]*sync.Mutex{},
-		ensured:   map[string]ensuredComputer{},
-		listeners: map[string]map[uint64]func(SessionEvent){},
+		provider:       provider,
+		store:          store,
+		cfg:            cfg.withDefaults(),
+		locks:          map[string]*sync.Mutex{},
+		ensured:        map[string]ensuredComputer{},
+		statusCache:    map[string]cachedInstanceStatus{},
+		statusInflight: map[string]*inflightStatus{},
+		statusGen:      map[string]uint64{},
+		listeners:      map[string]map[uint64]func(SessionEvent){},
 	}
 }
 
@@ -258,6 +277,60 @@ func (m *Manager) invalidateEnsure(userID string) {
 	delete(m.ensured, userID)
 }
 
+func (m *Manager) invalidateStatus(userID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.statusCache, userID)
+	if m.statusGen == nil {
+		m.statusGen = map[string]uint64{}
+	}
+	m.statusGen[userID]++
+}
+
+func (m *Manager) cachedInstanceStatus(ctx context.Context, userID, providerID string) (InstanceStatus, error) {
+	now := m.now()
+	m.mu.Lock()
+	if entry, ok := m.statusCache[userID]; ok && entry.providerID == providerID && now.Sub(entry.at) < statusCacheTTL {
+		m.mu.Unlock()
+		return entry.live, nil
+	}
+	if in, ok := m.statusInflight[userID]; ok {
+		m.mu.Unlock()
+		select {
+		case <-in.done:
+			return in.live, in.err
+		case <-ctx.Done():
+			return InstanceStatus{}, ctx.Err()
+		}
+	}
+	if m.statusInflight == nil {
+		m.statusInflight = map[string]*inflightStatus{}
+	}
+	in := &inflightStatus{done: make(chan struct{})}
+	gen := m.statusGen[userID]
+	m.statusInflight[userID] = in
+	m.mu.Unlock()
+
+	live, err := m.provider.Status(ctx, providerID)
+
+	m.mu.Lock()
+	in.live, in.err = live, err
+	delete(m.statusInflight, userID)
+	if err == nil && m.statusGen[userID] == gen {
+		if m.statusCache == nil {
+			m.statusCache = map[string]cachedInstanceStatus{}
+		}
+		m.statusCache[userID] = cachedInstanceStatus{
+			providerID: providerID,
+			live:       live,
+			at:         m.now(),
+		}
+	}
+	close(in.done)
+	m.mu.Unlock()
+	return live, err
+}
+
 func shouldInvalidateEnsureOnErr(err error) bool {
 	if err == nil {
 		return false
@@ -297,7 +370,7 @@ func (m *Manager) Status(ctx context.Context, userID string) (StatusView, error)
 		return view, nil
 	}
 	if rec.Status != StatusDeleting && rec.ProviderID != "" {
-		if live, lErr := m.provider.Status(ctx, rec.ProviderID); lErr == nil {
+		if live, lErr := m.cachedInstanceStatus(ctx, userID, rec.ProviderID); lErr == nil {
 			if live.Status != "" {
 				recentTransition := !rec.UpdatedAt.IsZero() && m.now().Sub(rec.UpdatedAt) < eventualStatusGrace
 				switch {
@@ -432,6 +505,7 @@ func (m *Manager) Ensure(ctx context.Context, userID string) (ComputerRecord, er
 		return ComputerRecord{}, err
 	}
 	m.markEnsured(userID, updated.ProviderID, updated.BootstrapVersion)
+	m.invalidateStatus(userID)
 	return updated, nil
 }
 
@@ -703,9 +777,11 @@ func (m *Manager) applyPurgedTombstones(ctx context.Context, userID, providerID 
 // Wake ensures the user's computer is running and ready.
 func (m *Manager) Wake(ctx context.Context, userID string) (StatusView, error) {
 	m.invalidateEnsure(userID)
+	m.invalidateStatus(userID)
 	if _, err := m.Ensure(ctx, userID); err != nil {
 		return StatusView{}, err
 	}
+	m.invalidateStatus(userID)
 	return m.Status(ctx, userID)
 }
 
@@ -715,6 +791,7 @@ func (m *Manager) Sleep(ctx context.Context, userID string) error {
 		return ErrDisabled
 	}
 	m.invalidateEnsure(userID)
+	m.invalidateStatus(userID)
 	rec, err := m.store.GetComputer(ctx, userID)
 	if errors.Is(err, ErrNotFound) {
 		return ErrNotProvisioned
@@ -730,6 +807,7 @@ func (m *Manager) Sleep(ctx context.Context, userID string) error {
 	if err := m.provider.Sleep(ctx, rec.ProviderID); err != nil {
 		return err
 	}
+	m.invalidateStatus(userID)
 	return m.store.UpdateComputerStatus(ctx, userID, StatusSleeping, nil)
 }
 
@@ -767,7 +845,11 @@ func (m *Manager) Checkpoint(ctx context.Context, userID, label string) (string,
 	if err != nil {
 		return "", err
 	}
-	return m.provider.Checkpoint(ctx, rec.ProviderID, label)
+	id, err := m.provider.Checkpoint(ctx, rec.ProviderID, label)
+	if err == nil {
+		m.invalidateStatus(userID)
+	}
+	return id, err
 }
 
 // Restore rolls the user's computer back to a checkpoint ID (or baseline if empty).
@@ -797,6 +879,7 @@ func (m *Manager) Restore(ctx context.Context, userID, checkpointID string) erro
 		return errors.New("no checkpoint available to restore")
 	}
 	m.invalidateEnsure(userID)
+	m.invalidateStatus(userID)
 	m.notifyUserSessionsRevoked(ctx, userID)
 	_ = m.store.RevokeUserSessions(ctx, userID, m.now())
 	_ = m.store.UpdateComputerStatus(ctx, userID, StatusResetting, nil)
@@ -810,6 +893,7 @@ func (m *Manager) Restore(ctx context.Context, userID, checkpointID string) erro
 	}
 	// Re-apply purged-file tombstones so restoring an older checkpoint cannot resurrect forgotten/deleted files.
 	m.applyPurgedTombstones(ctx, userID, rec.ProviderID)
+	m.invalidateStatus(userID)
 	now := m.now()
 	return m.store.UpdateComputerStatus(ctx, userID, StatusReady, &now)
 }
@@ -840,6 +924,7 @@ func (m *Manager) Reset(ctx context.Context, userID string) (StatusView, error) 
 	lock := m.userLock(userID)
 	lock.Lock()
 	m.invalidateEnsure(userID)
+	m.invalidateStatus(userID)
 	_ = m.store.RevokeUserSessions(ctx, userID, m.now())
 	_ = m.store.UpdateComputerStatus(ctx, userID, StatusResetting, nil)
 	if err := m.provider.Destroy(ctx, rec.ProviderID); err != nil && !errors.Is(err, ErrNotFound) {
@@ -1011,6 +1096,7 @@ func (m *Manager) DestroyForAccountDelete(ctx context.Context, userID string) er
 	lock.Lock()
 	defer lock.Unlock()
 	m.invalidateEnsure(userID)
+	m.invalidateStatus(userID)
 
 	if err := m.store.MarkComputerDeleting(ctx, userID); err != nil {
 		return err
@@ -1031,6 +1117,7 @@ func (m *Manager) DestroyForAccountDelete(ctx context.Context, userID string) er
 			return err
 		}
 	}
+	m.invalidateStatus(userID)
 	return m.store.MarkComputerDeleted(ctx, userID)
 }
 

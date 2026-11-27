@@ -381,12 +381,13 @@ struct RoutingAndCodableTests {
         if case .resolved = outcome {} else {
             Issue.record("Expected resolved outcome")
         }
+        #expect(store.pendingInteractions.isEmpty)
+        await store.waitForInteractionFollowUpCompletion()
 
         let captured = await mock.recordedAnswers
         #expect(captured == [.approve(actionDigest: "sha256:xyz", rememberRule: true)])
         #expect(await mock.fetchPermissionsCallCount >= 1)
         #expect(await mock.fetchFullSnapshotCallCount == 0)
-        #expect(store.pendingInteractions.isEmpty)
         #expect(store.permissions.count == 1)
         #expect(store.permissions.first?.id == "rule-remembered")
     }

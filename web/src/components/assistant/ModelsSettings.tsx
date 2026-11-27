@@ -14,6 +14,7 @@ import {
   type ModelSettings,
 } from "@/lib/assistant/api";
 import { announce } from "@/lib/assistant/announce";
+import { hasSelectedHomeChat } from "@/lib/assistant/modelSetup";
 import { useResource, useResourceInvalidation } from "@/lib/assistant/useResource";
 import type { ModelSelection } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -21,6 +22,8 @@ import { ApiKeysSettings } from "./ApiKeysSettings";
 import { ProviderBrandIcon } from "./BrandIcons";
 import { HomeConnectorSettings } from "./HomeConnectorSettings";
 import { Empty, Failure, inputClass, Loading, Notice, Row, Rows, Section, Switch } from "./ui";
+
+export { hasSelectedHomeChat };
 
 type PickerLane = "chat" | "task";
 
@@ -351,17 +354,6 @@ function ModelPickerView({
         )}
       </div>
     </div>
-  );
-}
-
-export function hasSelectedHomeChat(data?: ModelSettings): boolean {
-  return (
-    !!data?.selection.chat_profile_id &&
-    (data.selection.home_only === true ||
-      data.selection.chat_profile_id.startsWith("home-") ||
-      data.model_profiles?.profiles.some(
-        (profile) => profile.id === data.selection.chat_profile_id && profile.backend === "home",
-      ))
   );
 }
 

@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Check, Copy, FileText, RefreshCw } from "lucide-react";
 import { InteractionCard, type OnInteractionResolved } from "@/components/assistant/InteractionCard";
 import { DebugBlock } from "@/components/dev/DebugBlock";
 import { NoriMark } from "@/components/mark/NoriMark";
 import { Button } from "@/components/ui/primitives";
+import { useStreamingDeltaOptional } from "@/lib/assistant/context";
 import type { InlineInteractionEntry } from "@/lib/assistant/interactions";
 import { useCopyToClipboard } from "@/lib/browser";
 import { clock } from "@/lib/time";
@@ -224,7 +225,7 @@ function latestNoriMessageId(units: Unit[]): string | undefined {
   return undefined;
 }
 
-function UnitView({
+const UnitView = memo(function UnitView({
   unit,
   activeNoriMessageId,
   justSentIds,
@@ -299,6 +300,37 @@ function UnitView({
         </div>
       );
   }
+});
+
+function StreamingFooter({
+  streamingTextProp,
+  status,
+  thinking,
+  onStatusDetails,
+}: {
+  streamingTextProp?: string;
+  status?: string;
+  thinking?: boolean;
+  onStatusDetails?: () => void;
+}) {
+  const delta = useStreamingDeltaOptional();
+  const streamingText = streamingTextProp ?? delta?.text;
+  if (streamingText) {
+    return (
+      <div className="nori-message mt-4 flex max-w-[min(680px,100%)] items-start" data-streaming-reply>
+        <span className="mt-2.5 mr-3 w-7 shrink-0" data-active-avatar="true">
+          <NoriMark size={26} state="thinking" />
+        </span>
+        <div className="min-w-0 flex-1 bg-bubble px-0 py-1.5 text-ink">
+          <Markdown>{streamingText}</Markdown>
+        </div>
+      </div>
+    );
+  }
+  if (status) {
+    return <WorkLine label={status} thinking={thinking} onDetails={onStatusDetails} />;
+  }
+  return null;
 }
 
 export function Thread({
@@ -568,17 +600,12 @@ export function Thread({
               unit={u}
             />
           ))}
-          {streamingText && (
-            <div className="nori-message mt-4 flex max-w-[min(680px,100%)] items-start" data-streaming-reply>
-              <span className="mt-2.5 mr-3 w-7 shrink-0" data-active-avatar="true">
-                <NoriMark size={26} state="thinking" />
-              </span>
-              <div className="min-w-0 flex-1 bg-bubble px-0 py-1.5 text-ink">
-                <Markdown>{streamingText}</Markdown>
-              </div>
-            </div>
-          )}
-          {status && !streamingText && <WorkLine label={status} thinking={thinking} onDetails={onStatusDetails} />}
+          <StreamingFooter
+            streamingTextProp={streamingText}
+            status={status}
+            thinking={thinking}
+            onStatusDetails={onStatusDetails}
+          />
         </div>
         <div className="sr-only">{announcement}</div>
       </div>

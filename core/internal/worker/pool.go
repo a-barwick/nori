@@ -7,12 +7,14 @@ import (
 	"hash/fnv"
 	"log/slog"
 	"os"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	"nori/internal/app"
+	"nori/internal/observability"
 	"nori/internal/scheduler"
 	"nori/internal/state"
 	"nori/internal/state/docstore"
@@ -518,16 +520,17 @@ func (p *Pool) waitNext(ctx context.Context, wakeCh <-chan struct{}, tickCh <-ch
 }
 
 type claimLoopSpec[T any] struct {
-	lane         string
-	claimErrMsg  string
-	concurrency  int
-	wakeCh       <-chan struct{}
-	active       *atomic.Int64
-	limitPerUser bool
-	userID       func(T) string
-	claim        func(context.Context) (T, bool, error)
-	deferClaim   func(context.Context, T)
-	handle       func(context.Context, T)
+	lane           string
+	claimErrMsg    string
+	concurrency    int
+	wakeCh         <-chan struct{}
+	active         *atomic.Int64
+	limitPerUser   bool
+	userID         func(T) string
+	claim          func(context.Context) (T, bool, error)
+	deferClaim     func(context.Context, T)
+	releaseOnPanic func(context.Context, T)
+	handle         func(context.Context, T)
 }
 
 func runClaimLoop[T any](p *Pool, claimCtx, workCtx context.Context, workWG *sync.WaitGroup, spec claimLoopSpec[T]) {
@@ -565,8 +568,10 @@ func runClaimLoop[T any](p *Pool, claimCtx, workCtx context.Context, workWG *syn
 			continue
 		}
 		uid := ""
-		if spec.limitPerUser {
+		if spec.userID != nil {
 			uid = spec.userID(item)
+		}
+		if spec.limitPerUser {
 			if !p.tryAcquireUser(uid) {
 				<-sem
 				rctx, cancel := context.WithTimeout(context.WithoutCancel(claimCtx), p.opts.CancelGrace)
@@ -584,6 +589,27 @@ func runClaimLoop[T any](p *Pool, claimCtx, workCtx context.Context, workWG *syn
 			}
 			defer func() { <-sem }()
 			defer spec.active.Add(-1)
+			defer func() {
+				if r := recover(); r != nil {
+					slog.ErrorContext(workCtx, "worker handler panicked",
+						"owner", p.owner,
+						"lane", spec.lane,
+						"user_id", uid,
+						"panic", fmt.Sprint(r),
+						"stack", string(debug.Stack()),
+					)
+					panicCtx := workCtx
+					if uid != "" {
+						panicCtx = users.WithID(panicCtx, uid)
+					}
+					observability.RecordErrorCategory(panicCtx, "worker.panic", fmt.Errorf("worker %s handler panicked: %v", spec.lane, r))
+					if spec.releaseOnPanic != nil {
+						rctx, cancel := context.WithTimeout(context.WithoutCancel(workCtx), p.opts.CancelGrace)
+						spec.releaseOnPanic(rctx, item)
+						cancel()
+					}
+				}
+			}()
 			spec.handle(workCtx, item)
 		}(item, uid)
 	}
@@ -607,6 +633,11 @@ func (p *Pool) runTaskLoop(claimCtx, workCtx context.Context, workWG *sync.WaitG
 		deferClaim: func(rctx context.Context, claim docstore.TaskLease) {
 			if relErr := p.leases.ReleaseTask(rctx, claim.UserID, claim.RunID, p.owner, claim.WakeSeq, p.now().Add(p.perUserDeferDelay())); relErr != nil {
 				slog.WarnContext(claimCtx, "worker release deferred task failed", "owner", p.owner, "lane", "task", "user_id", claim.UserID, "run_id", claim.RunID, "err", relErr)
+			}
+		},
+		releaseOnPanic: func(rctx context.Context, claim docstore.TaskLease) {
+			if relErr := p.leases.ReleaseTask(rctx, claim.UserID, claim.RunID, p.owner, claim.WakeSeq, p.now().Add(p.opts.Backoff)); relErr != nil {
+				slog.WarnContext(rctx, "worker release panicked task failed", "owner", p.owner, "lane", "task", "user_id", claim.UserID, "run_id", claim.RunID, "err", relErr)
 			}
 		},
 		handle: p.handleTask,
@@ -669,11 +700,17 @@ func (p *Pool) runConversationLoop(claimCtx, workCtx context.Context, workWG *sy
 		concurrency: p.opts.ConversationConcurrency,
 		wakeCh:      p.convWakeCh,
 		active:      &p.convActive,
+		userID:      func(uw docstore.UserWake) string { return uw.UserID },
 		claim: func(ctx context.Context) (docstore.UserWake, bool, error) {
 			if p.userID != "" {
 				return p.scopedLeases.ClaimUserWakeForUser(ctx, p.userID, docstore.LaneConversation, p.owner, state.ConversationLease)
 			}
 			return p.leases.ClaimUserWake(ctx, docstore.LaneConversation, p.owner, state.ConversationLease)
+		},
+		releaseOnPanic: func(rctx context.Context, uw docstore.UserWake) {
+			if relErr := p.leases.ReleaseUserWake(rctx, uw.UserID, docstore.LaneConversation, p.owner, uw.WakeSeq, p.now().Add(p.opts.Backoff)); relErr != nil {
+				slog.WarnContext(rctx, "worker release panicked user wake failed", "owner", p.owner, "lane", docstore.LaneConversation, "user_id", uw.UserID, "err", relErr)
+			}
 		},
 		handle: p.handleConversation,
 	})
@@ -740,6 +777,7 @@ func (p *Pool) handleConversation(workCtx context.Context, uw docstore.UserWake)
 	defer release()
 
 	turnCtx, stopRenew := p.startUserWakeRenewer(workCtx, uw.UserID, docstore.LaneConversation, state.ConversationLease)
+	defer stopRenew()
 	var runErr error
 	if p.opts.RunConversation != nil {
 		runErr = p.opts.RunConversation(turnCtx, userApp)
@@ -817,6 +855,11 @@ func (p *Pool) runSchedulerLoop(claimCtx, workCtx context.Context, workWG *sync.
 				slog.WarnContext(claimCtx, "worker release deferred user wake failed", "owner", p.owner, "lane", docstore.LaneScheduler, "user_id", uw.UserID, "err", relErr)
 			}
 		},
+		releaseOnPanic: func(rctx context.Context, uw docstore.UserWake) {
+			if relErr := p.leases.ReleaseUserWake(rctx, uw.UserID, docstore.LaneScheduler, p.owner, uw.WakeSeq, p.now().Add(p.opts.Backoff)); relErr != nil {
+				slog.WarnContext(rctx, "worker release panicked user wake failed", "owner", p.owner, "lane", docstore.LaneScheduler, "user_id", uw.UserID, "err", relErr)
+			}
+		},
 		handle: p.handleScheduler,
 	})
 }
@@ -843,6 +886,7 @@ func (p *Pool) handleScheduler(workCtx context.Context, uw docstore.UserWake) {
 	defer release()
 
 	turnCtx, stopRenew := p.startUserWakeRenewer(workCtx, uw.UserID, docstore.LaneScheduler, state.SchedulerLease)
+	defer stopRenew()
 	var nextDue *time.Time
 	var runErr error
 	if p.opts.RunScheduler != nil {

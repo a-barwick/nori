@@ -151,4 +151,80 @@ struct NoriDesignTests {
         #expect(NoriBrandKind.forApp(name: "Google Calendar") == .googleCalendar)
         #expect(NoriBrandKind.forApp(name: "Home Notes") == .customApp)
     }
+
+    @Test("NoriDateFormatting.parse matches ISO8601DateFormatter across standard, fractional, offset, leap, and date-only inputs")
+    func dateFormattingParseParity() {
+        let isoFractional = ISO8601DateFormatter()
+        isoFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let isoStandard = ISO8601DateFormatter()
+        isoStandard.formatOptions = [.withInternetDateTime]
+
+        let samples: [String] = [
+            "1970-01-01T00:00:00Z",
+            "2000-02-29T12:34:56Z",
+            "2024-02-29T23:59:59.999Z",
+            "2026-11-27T10:15:30Z",
+            "2026-11-27T10:15:30.250Z",
+            "2026-11-27T10:15:30+02:00",
+            "2026-11-27T10:15:30-08:00",
+            "2026-11-27T10:15:30.5+05:30",
+            "  2026-11-27T10:15:30.123Z \n"
+        ]
+
+        for sample in samples {
+            let trimmed = sample.trimmingCharacters(in: .whitespacesAndNewlines)
+            let expected = isoFractional.date(from: trimmed) ?? isoStandard.date(from: trimmed)
+            let actual = NoriDateFormatting.parse(sample)
+            #expect(actual != nil, "Failed to parse \(sample)")
+            if let expected, let actual {
+                #expect(abs(actual.timeIntervalSince1970 - expected.timeIntervalSince1970) < 0.001)
+            }
+        }
+
+        // High-precision fractional seconds (microseconds / nanoseconds) and compact offsets
+        let micro = NoriDateFormatting.parse("2026-11-27T10:15:30.123456Z")
+        let milli = NoriDateFormatting.parse("2026-11-27T10:15:30.123Z")
+        #expect(micro != nil && milli != nil)
+        if let micro, let milli {
+            #expect(abs((micro.timeIntervalSince1970 - milli.timeIntervalSince1970) - 0.000456) < 0.00001)
+        }
+
+        let compactOffset = NoriDateFormatting.parse("2026-11-27T10:15:30-0800")
+        let colonOffset = NoriDateFormatting.parse("2026-11-27T10:15:30-08:00")
+        #expect(compactOffset != nil && compactOffset == colonOffset)
+
+        // Date-only parses in local calendar/timezone
+        let dateOnly = NoriDateFormatting.parse("2026-11-27")
+        #expect(dateOnly != nil)
+        if let dateOnly {
+            let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: dateOnly)
+            #expect(comps.year == 2026 && comps.month == 11 && comps.day == 27 && comps.hour == 0 && comps.minute == 0)
+        }
+
+        // Invalid inputs return nil
+        #expect(NoriDateFormatting.parse("") == nil)
+        #expect(NoriDateFormatting.parse("   ") == nil)
+        #expect(NoriDateFormatting.parse("not-a-date") == nil)
+        #expect(NoriDateFormatting.parse("2026-13-01T10:00:00Z") == nil)
+        #expect(NoriDateFormatting.parse("2026-11-27T10:00:00") == nil)
+    }
+
+    @Test("NoriDateFormatting display helpers format relative, shortDateTime, reminderDateTime, and duration consistently")
+    func dateFormattingDisplayHelpers() {
+        let now = NoriDateFormatting.parse("2026-11-27T15:00:00Z")!
+        #expect(NoriDateFormatting.relative("2026-11-27T14:59:40Z", now: now) == "Just now")
+        #expect(NoriDateFormatting.relative("2026-11-27T14:45:00Z", now: now) == "15m ago")
+        #expect(NoriDateFormatting.relative("2026-11-27T12:00:00Z", now: now) == "3h ago")
+        #expect(NoriDateFormatting.relative("2026-11-27T15:10:00Z", now: now) == "in 10m")
+        #expect(NoriDateFormatting.duration(from: "2026-11-27T14:00:00Z", to: "2026-11-27T15:30:00Z") == "1h 30m")
+        #expect(NoriDateFormatting.expiryCountdown("2026-11-27T14:59:00Z", now: now) == "Expired")
+        #expect(NoriDateFormatting.expiryCountdown("2026-11-27T15:15:00Z", now: now) == "Expires in 15m")
+
+        let sameDayShort = NoriDateFormatting.shortDateTime("2026-11-27T14:30:00Z", now: now)
+        #expect(!sameDayShort.isEmpty)
+        let sameDayReminder = NoriDateFormatting.reminderDateTime("2026-11-27T14:30:00Z", now: now)
+        #expect(sameDayReminder.hasPrefix("Today at "))
+        let otherYear = NoriDateFormatting.shortDate("2025-05-10T12:00:00Z", now: now)
+        #expect(otherYear.contains("2025"))
+    }
 }

@@ -110,7 +110,8 @@ enum ChatThreadUnit: Identifiable {
                 continue
             }
 
-            if let msgDate = NoriDateFormatting.parse(msg.createdAt) {
+            if interactionCursor < datedInteractions.count,
+               let msgDate = NoriDateFormatting.parse(msg.createdAt) {
                 while interactionCursor < datedInteractions.count && datedInteractions[interactionCursor].date < msgDate {
                     flushBuffer()
                     result.append(.interaction(datedInteractions[interactionCursor].interaction))

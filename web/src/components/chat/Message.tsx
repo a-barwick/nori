@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { Check, Copy } from "lucide-react";
 import { useCopyToClipboard } from "@/lib/browser";
 import { corners, type GroupUnit, type Pos } from "@/lib/units";
@@ -13,7 +13,7 @@ import { Parts } from "./Parts";
 const LONG_PRESS_MS = 450;
 const MOVE_CANCEL_PX = 8;
 
-export function BubbleUnit({
+export const BubbleUnit = memo(function BubbleUnit({
   unit,
   pos,
   sender,
@@ -139,4 +139,4 @@ export function BubbleUnit({
       )}
     </div>
   );
-}
+});

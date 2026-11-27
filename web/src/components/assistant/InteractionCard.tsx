@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { AlertTriangle, Ban, Check, ChevronDown, ChevronUp, Clock, KeyRound, Monitor, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
@@ -34,21 +35,18 @@ import { MAX_MESSAGE_BYTES } from "@/lib/submission";
 import { useHydrated } from "@/lib/hooks";
 import "@/lib/desktop";
 import { cn } from "@/lib/utils";
-import { startSignIn } from "./AppsScreen";
-import { ComputerDesktopDrawer } from "./ComputerDesktopDrawer";
+import { safeAuthorizeURL, startSignIn } from "@/lib/assistant/signIn";
 import { inputClass, Notice, Pill } from "./ui";
+
+export { safeAuthorizeURL };
+
+const ComputerDesktopDrawer = dynamic(
+  () => import("./ComputerDesktopDrawer").then((mod) => mod.ComputerDesktopDrawer),
+  { ssr: false },
+);
 
 type Value = InteractionResponse["value"];
 export type OnInteractionResolved = (resolved: Interaction, meta?: { rememberRule?: boolean }) => void;
-
-export function safeAuthorizeURL(url: string) {
-  if (url.startsWith("/") && !url.startsWith("//") && !url.startsWith("/\\") && !url.includes("\\")) return url;
-  try {
-    return new URL(url).protocol === "https:" ? url : undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 function useRespond(interaction: Interaction, onResolved?: OnInteractionResolved) {
   const { runtime } = useAssistant();
@@ -379,15 +377,17 @@ function ComputerTakeover({
           {state.pending === "cancel" ? "Cancelling…" : "Cancel"}
         </Button>
       </div>
-      <ComputerDesktopDrawer
-        open={drawerOpen}
-        onOpenChange={setDrawerOpen}
-        initialMode="control"
-        taskId={interaction.task_id}
-        interactionId={interaction.id}
-        prompt={interaction.prompt}
-        onDoneContinue={() => state.respond({ kind: "resume" }, "resume")}
-      />
+      {drawerOpen && (
+        <ComputerDesktopDrawer
+          open={drawerOpen}
+          onOpenChange={setDrawerOpen}
+          initialMode="control"
+          taskId={interaction.task_id}
+          interactionId={interaction.id}
+          prompt={interaction.prompt}
+          onDoneContinue={() => state.respond({ kind: "resume" }, "resume")}
+        />
+      )}
     </div>
   );
 }

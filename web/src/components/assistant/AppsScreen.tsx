@@ -15,12 +15,12 @@ import type {
   MCPServer,
   MCPServerTool as MCPTool,
 } from "@/lib/contracts/assistant";
+import { safeAuthorizeURL, startSignIn } from "@/lib/assistant/signIn";
 import { useHydrated } from "@/lib/hooks";
 import "@/lib/desktop";
 import { cn } from "@/lib/utils";
 import { AppBrandIcon } from "./BrandIcons";
 import { GoogleConnection } from "./GoogleConnection";
-import { safeAuthorizeURL } from "./InteractionCard";
 import {
   Empty,
   Failure,
@@ -70,25 +70,7 @@ export function connectionState(connection: Connection): { tone: Tone; label: st
   return HEALTH[healthOf(connection) ?? "ready"] ?? { tone: "neutral", label: connection.status };
 }
 
-export async function startSignIn(
-  connection: Pick<Connection, "id" | "revision">,
-  action: "connect" | "repair",
-  returnTo: string,
-  capabilities?: string[],
-) {
-  if (window.noriDesktop) {
-    await window.noriDesktop.openInBrowser();
-    return;
-  }
-  const receipt = (await mutate<Connection>(`/connections/${encodeURIComponent(connection.id)}/actions`, {
-    request_id: newRequestID(),
-    expected_revision: connection.revision,
-    value: { action, return_to: returnTo, ...(capabilities?.length ? { capabilities } : {}) },
-  })) as { auth?: AuthAttempt };
-  const url = receipt.auth && safeAuthorizeURL(receipt.auth.authorize_url);
-  if (!url) throw new Error("Nori didn’t return a sign-in link. Try again.");
-  window.location.assign(url);
-}
+export { startSignIn };
 
 const RETURN_PARAMS = ["result", "connection"] as const;
 

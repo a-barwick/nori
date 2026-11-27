@@ -10,6 +10,7 @@ import {
   COMMAND_ACCEPTANCE_UNKNOWN,
   commandApplied,
   mergeById,
+  mergeMessages,
   mergeReadPosition,
   mergeRuns,
   NO_RUNTIME_ERROR,
@@ -98,6 +99,21 @@ export function useEventStream({
     let failures = 0;
     let stopped = false;
     const completedTurns = new Set<string>();
+    let pendingDelta: { turn_id: string; text: string } | null = null;
+    let deltaRafId: number | null = null;
+
+    const cancelPendingDelta = () => {
+      pendingDelta = null;
+      if (deltaRafId !== null && typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(deltaRafId);
+        deltaRafId = null;
+      }
+    };
+
+    const clearStreamingDelta = (turnId?: string) => {
+      cancelPendingDelta();
+      setStreamingDelta((current) => (!current || !turnId || current.turn_id === turnId ? null : current));
+    };
 
     const applyPresence = (presence: Presence) => {
       const { conversation } = presence;
@@ -106,7 +122,10 @@ export function useEventStream({
       setSession((current) => current && { ...current, conversation, paused: presence.paused });
       updatePending((current) => current.filter((item) => !conversation.input_ids.includes(item.id)));
       const now = conversation.pending || conversation.processing;
-      if (!now) setStreamingDelta(null);
+      if (!now) {
+        cancelPendingDelta();
+        setStreamingDelta(null);
+      }
       if (wasConversationBusy.current && !now) void refresh(controller.signal).catch(() => undefined);
       wasConversationBusy.current = now;
     };
@@ -177,14 +196,18 @@ export function useEventStream({
           (current) =>
             current && {
               ...current,
-              messages: mergeById(current.messages, [message]).sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)),
+              messages: mergeMessages(current.messages, [message]),
             },
         );
         if (message.role === "assistant") {
           if (message.turn_id && message.status !== "superseded") {
             completedTurns.add(message.turn_id);
+            if (completedTurns.size > 200) {
+              const oldest = completedTurns.values().next().value;
+              if (oldest !== undefined) completedTurns.delete(oldest);
+            }
           }
-          setStreamingDelta((current) => (!current || !message.turn_id || current.turn_id === message.turn_id ? null : current));
+          clearStreamingDelta(message.turn_id);
         }
         updatePending((current) => current.filter((item) => message.id !== `${item.id}-user`));
       });
@@ -192,11 +215,25 @@ export function useEventStream({
       listen<{ turn_id: string; text: string }>("assistant_delta", (delta) => {
         if (!delta || typeof delta.text !== "string") return;
         if (delta.text.length === 0) {
-          setStreamingDelta((current) => (!current || !delta.turn_id || current.turn_id === delta.turn_id ? null : current));
+          clearStreamingDelta(delta.turn_id);
           return;
         }
         if (delta.turn_id && completedTurns.has(delta.turn_id)) return;
-        setStreamingDelta(delta);
+        if (typeof requestAnimationFrame !== "function") {
+          setStreamingDelta(delta);
+          return;
+        }
+        pendingDelta = delta;
+        if (deltaRafId === null) {
+          deltaRafId = requestAnimationFrame(() => {
+            deltaRafId = null;
+            const next = pendingDelta;
+            pendingDelta = null;
+            if (!stopped && next && (!next.turn_id || !completedTurns.has(next.turn_id))) {
+              setStreamingDelta(next);
+            }
+          });
+        }
       });
 
       listen<{ run: Run }>("task", ({ run }) => {
@@ -287,19 +324,24 @@ export function useEventStream({
       });
 
       stream.onerror = () => {
-        if (stream !== source || stopped || stream.readyState !== EventSource.CLOSED) return;
+        if (stream !== source || stopped) return;
+        source = undefined;
+        stream.close();
         failures++;
         if (failures >= 3) {
           setStreamError(STREAM_RECONNECTING);
           setStreamReconnecting(true);
         }
-        timer = setTimeout(open, Math.min(30_000, 1000 * 2 ** failures));
+        const cap = Math.min(30_000, 1000 * 2 ** failures);
+        const delay = Math.floor(Math.random() * cap);
+        timer = setTimeout(open, delay);
       };
     }
 
     open();
     return () => {
       stopped = true;
+      cancelPendingDelta();
       controller.abort();
       source?.close();
       clearTimeout(timer);

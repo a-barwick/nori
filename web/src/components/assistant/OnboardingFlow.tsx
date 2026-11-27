@@ -17,7 +17,8 @@ import { useResource, useResourceInvalidation } from "@/lib/assistant/useResourc
 import type { MemoryFact, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
 import type { MarkState } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { hasSelectedHomeChat } from "./ModelsSettings";
+import { hasSelectedHomeChat } from "@/lib/assistant/modelSetup";
+export { shouldShowOnboarding } from "@/lib/assistant/onboarding";
 import {
   AboutYouStep,
   AppearanceStep,
@@ -64,23 +65,6 @@ export function buildOnboardingMemoryFacts(input: {
     facts.push({ section: "Context", text: `Currently working on: ${workingOn}` });
   }
   return facts;
-}
-
-export function shouldShowOnboarding(params: {
-  forceReplay: boolean;
-  preferences?: Preferences;
-  preferencesLoaded: boolean;
-  messageCount: number;
-  sessionLoaded: boolean;
-  localCompleted: boolean;
-}): boolean {
-  if (params.forceReplay) return true;
-  if (params.localCompleted) return false;
-  if (!params.preferencesLoaded || !params.sessionLoaded) return false;
-  if (params.preferences?.onboarding_completed_at) return false;
-  if (params.preferences?.data_reset_at) return true;
-  if (params.messageCount > 0) return false;
-  return true;
 }
 
 export function OnboardingFlow({

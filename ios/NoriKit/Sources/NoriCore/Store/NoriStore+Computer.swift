@@ -2,12 +2,14 @@ import Foundation
 
 extension NoriStore {
     @discardableResult
-    public func refreshComputerStatus() async -> ComputerStatus? {
+    public func refreshComputerStatus(force: Bool = true) async -> ComputerStatus? {
+        guard !isRefreshFresh(.computerStatus, force: force) else { return computerStatus }
         let generation = sessionGeneration
         do {
             let status = try await transport.fetchComputerStatus()
             guard generation == sessionGeneration, !Task.isCancelled else { return nil }
             computerStatus = status
+            markRefreshed(.computerStatus)
             return status
         } catch {
             guard generation == sessionGeneration, !Task.isCancelled else { return nil }

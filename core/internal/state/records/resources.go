@@ -125,6 +125,44 @@ func (d *Database) Resources(ctx context.Context, collection string, filter map[
 	return out, "", nil
 }
 
+func (d *Database) ResourcesByIDs(ctx context.Context, collection string, ids []string) ([]state.Resource, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]struct{}, len(ids))
+	unique := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !state.ValidResourceID(id) {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	if len(unique) == 0 {
+		return nil, nil
+	}
+	out := make([]state.Resource, 0, len(unique))
+	const chunkSize = 200
+	for start := 0; start < len(unique); start += chunkSize {
+		end := min(start+chunkSize, len(unique))
+		docs, err := d.resources(collection).Where(docstore.DocumentID, "in", unique[start:end]).Documents(ctx).GetAll()
+		if err != nil {
+			return nil, err
+		}
+		for _, doc := range docs {
+			r, err := toResource(collection, doc)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
 func (d *Database) Receipt(ctx context.Context, requestID string) (state.MutationReceipt, error) {
 	if !state.ValidResourceID(requestID) {
 		return state.MutationReceipt{}, state.ErrNotFound

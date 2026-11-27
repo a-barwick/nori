@@ -10,18 +10,13 @@ import {
   type ModelKeysResponse,
 } from "@/lib/assistant/api";
 import { announce } from "@/lib/assistant/announce";
+import { byokPromptLabel, needsByokSetup } from "@/lib/assistant/modelSetup";
 import { useResource, useResourceInvalidation } from "@/lib/assistant/useResource";
 import { cn } from "@/lib/utils";
 import { ProviderBrandIcon } from "./BrandIcons";
 import { Confirm, Empty, Failure, Field, inputClass, Loading, Notice, Row, Rows, Section } from "./ui";
 
-export function needsByokSetup(data?: ModelKeysResponse, hasHomeChat = false): boolean {
-  return !!data?.byok_required && !hasHomeChat && !data.providers.some((provider) => provider.configured);
-}
-
-export function byokPromptLabel(data?: ModelKeysResponse): string {
-  return data?.providers.length === 1 ? data.providers[0].label : "model provider";
-}
+export { byokPromptLabel, needsByokSetup };
 
 export function ApiKeysSettings({
   onKeySaved,

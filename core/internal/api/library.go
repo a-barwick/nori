@@ -780,23 +780,48 @@ func clipRunes(text string, limit int) string {
 }
 
 func (a *Assistant) withOrigins(ctx context.Context, items []libraryItem) {
-	runs := map[string]*state.Run{}
+	if len(items) == 0 {
+		return
+	}
+	seen := make(map[string]struct{}, len(items))
+	unique := make([]string, 0, len(items))
 	for i := range items {
 		id := items[i].TaskID
 		if id == "" {
 			continue
 		}
-		run, seen := runs[id]
-		if !seen {
-			if r, err := a.Store.GetRun(ctx, id); err == nil {
-				run = &r
-			}
-			runs[id] = run
-		}
-		if run == nil {
+		if _, ok := seen[id]; ok {
 			continue
 		}
-		origin := originOf(*run)
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	if len(unique) == 0 {
+		return
+	}
+	runs := make(map[string]state.Run, len(unique))
+	if len(unique) > 1 {
+		if batch, ok := a.Store.(interface {
+			GetRuns(context.Context, []string) (map[string]state.Run, error)
+		}); ok {
+			if loaded, err := batch.GetRuns(ctx, unique); err == nil {
+				runs = loaded
+			}
+		}
+	}
+	if len(runs) == 0 {
+		for _, id := range unique {
+			if r, err := a.Store.GetRun(ctx, id); err == nil {
+				runs[id] = r
+			}
+		}
+	}
+	for i := range items {
+		run, ok := runs[items[i].TaskID]
+		if !ok {
+			continue
+		}
+		origin := originOf(run)
 		items[i].ConversationID, items[i].AutomationID = origin.ConversationID, origin.AutomationID
 	}
 }

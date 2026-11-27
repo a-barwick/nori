@@ -936,6 +936,69 @@ struct AuthAndLiveTransportTests {
         #expect(resolveCount.value == 1)
     }
 
+    @Test("IOS-11: LiveNoriTransport caches resolvedUserID per account, clears on sign-out, and re-resolves on 404")
+    func liveTransportCachesAndInvalidatesResolvedUserID() async throws {
+        let suiteName = "nori.test.userIDCache.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer {
+            StubURLProtocol.setHandler(nil)
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let resolveCount = LockedCounter()
+        let currentValidUserID = LockedDict<String, String>()
+        currentValidUserID.set("id", value: "usr-v1")
+
+        let urlSession = StubURLProtocol.makeSession()
+        StubURLProtocol.setHandler { req in
+            let url = req.url!
+            let path = url.path
+            if path == "/api/users/resolve" {
+                resolveCount.increment()
+                let id = currentValidUserID.get("id") ?? "usr-v1"
+                return (httpResponse(url: url, statusCode: 200), Data("{\"id\":\"\(id)\"}".utf8))
+            }
+            let expectedID = currentValidUserID.get("id") ?? "usr-v1"
+            if path.contains("/users/\(expectedID)/v1/assistant/summary") {
+                let body = #"{"revision":1,"needs_you":0,"working":0,"apps_attention":0,"inbox_unread":0}"#
+                return (httpResponse(url: url, statusCode: 200), Data(body.utf8))
+            }
+            return (httpResponse(url: url, statusCode: 404), Data("{\"error\":\"not found\"}".utf8))
+        }
+
+        let provider = makeProvider(session: urlSession)
+        await provider.saveSession(AuthSession(
+            idToken: makeFakeJWT(email: "cache-user@example.com"),
+            refreshToken: "refresh-ok",
+            expiresAt: Date().addingTimeInterval(3600),
+            email: "cache-user@example.com"
+        ))
+
+        let baseURL = URL(string: "https://cache-test.nori.local")!
+
+        // 1. First transport resolves via /api/users/resolve and persists to UserDefaults.
+        let transport1 = LiveNoriTransport(baseURL: baseURL, authProvider: provider, urlSession: urlSession, userDefaultsSuiteName: suiteName)
+        _ = try await transport1.fetchAssistantSummary()
+        #expect(resolveCount.value == 1)
+
+        // 2. Fresh transport instance (simulating cold launch) uses cached userID with 0 /api/users/resolve calls.
+        let transport2 = LiveNoriTransport(baseURL: baseURL, authProvider: provider, urlSession: urlSession, userDefaultsSuiteName: suiteName)
+        _ = try await transport2.fetchAssistantSummary()
+        #expect(resolveCount.value == 1)
+
+        // 3. Stale cached userID returns 404 -> invalidates cache, re-resolves to usr-v2, and retries successfully.
+        currentValidUserID.set("id", value: "usr-v2")
+        let transport3 = LiveNoriTransport(baseURL: baseURL, authProvider: provider, urlSession: urlSession, userDefaultsSuiteName: suiteName)
+        _ = try await transport3.fetchAssistantSummary()
+        #expect(resolveCount.value == 2)
+
+        // 4. Clearing identity removes the persisted userID so next transport resolves again.
+        await transport3.clearCachedIdentity(email: "cache-user@example.com")
+        let transport4 = LiveNoriTransport(baseURL: baseURL, authProvider: provider, urlSession: urlSession, userDefaultsSuiteName: suiteName)
+        _ = try await transport4.fetchAssistantSummary()
+        #expect(resolveCount.value == 3)
+    }
+
     @Test("LiveNoriTransport.fetchFullSnapshot records per-domain partial errors instead of wiping failed domains")
     func liveSnapshotPreservesPartialErrorMetadata() async throws {
         let urlSession = StubURLProtocol.makeSession()
@@ -1156,6 +1219,7 @@ struct MemoryReceiptsAndStoreTests {
         store.startEventStream()
 
         await store.waitForEventStreamCompletion()
+        await store.waitForBackgroundRefreshes()
         #expect(store.shouldShowOnboarding)
         #expect(store.messages.isEmpty)
         #expect(store.authState == .signedIn(email: email))
@@ -1304,17 +1368,18 @@ struct MemoryReceiptsAndStoreTests {
         await mock.waitForSuspendedSession()
         #expect(store.isLoading)
         #expect(await mock.fetchFullSnapshotCallCount == 0)
-        #expect(await mock.fetchSummaryCallCount == 0)
         await mock.finishSuspendedSession(Session(messages: [
             Message(id: "welcome", role: .assistant, text: "Welcome back", createdAt: "2026-11-24T10:00:00Z"),
         ], position: 42))
         await bootstrap.value
+        await store.waitForChatContextCompletion()
 
         var cursors = mock.streamOpens.makeAsyncIterator()
         #expect(await cursors.next() == 42)
         #expect(store.messages.map(\.id) == ["welcome"])
         #expect(!store.isLoading)
         #expect(await mock.fetchSessionCallCount == 1)
+        #expect(await mock.fetchSummaryCallCount == 1)
         #expect(await mock.fetchFullSnapshotCallCount == 0)
         #expect(await mock.fetchWorkItemsCallCount == 0)
         #expect(await mock.fetchMCPServersCallCount == 0)
@@ -1890,6 +1955,83 @@ struct MemoryReceiptsAndStoreTests {
         let cancelled = await store.cancelAutomation(automationID: "auto_1234")
         #expect(cancelled == true)
         #expect(store.automations.first(where: { $0.id == "auto_1234" })?.status == .cancelled)
+    }
+
+    @Test("IOS-1: Streaming assistant deltas publish first token immediately, coalesce rapid updates, and flush on completion or message")
+    @MainActor
+    func streamingAssistantDeltaCoalescing() async {
+        let mock = MockNoriTransport()
+        let store = NoriStore(transport: mock, authProvider: AuthTokenProvider(tokenStore: InMemoryTokenStore()))
+        store.authState = .signedIn(email: "stream@example.com")
+        store.streamingFlushInterval = .milliseconds(40)
+
+        await store.handleStreamEvent(.assistantDelta(turnID: "turn-1", text: "Hello"))
+        #expect(store.streamingAssistantText == "Hello")
+        #expect(store.isStreamingAssistant == true)
+
+        await store.handleStreamEvent(.assistantDelta(turnID: "turn-1", text: "Hello world"))
+        await store.handleStreamEvent(.assistantDelta(turnID: "turn-1", text: "Hello world!"))
+        // Coalesced inside the 40ms window: still shows first token until flush fires.
+        #expect(store.streamingAssistantText == "Hello")
+
+        try? await Task.sleep(for: .milliseconds(70))
+        #expect(store.streamingAssistantText == "Hello world!")
+
+        // Final assistant message clears streaming immediately.
+        await store.handleStreamEvent(.message(seq: 1, message: Message(
+            id: "msg-1",
+            turnID: "turn-1",
+            role: .assistant,
+            text: "Hello world!",
+            createdAt: "2026-11-27T10:00:00Z"
+        )))
+        #expect(store.streamingAssistantText == nil)
+        #expect(store.isStreamingAssistant == false)
+    }
+
+    @Test("IOS-3: SSE .task event dispatches background refresh without blocking subsequent stream events")
+    @MainActor
+    func sseTaskEventDoesNotBlockConsumerLoop() async {
+        let mock = MockNoriTransport()
+        let store = NoriStore(transport: mock, authProvider: AuthTokenProvider(tokenStore: InMemoryTokenStore()))
+        store.authState = .signedIn(email: "sse@example.com")
+
+        let run = Run(id: "run-async", status: .running, progress: "Working", startedAt: "2026-11-27T10:00:00Z")
+        let reply = Message(id: "msg-after-task", turnID: "t-1", role: .assistant, text: "Done", createdAt: "2026-11-27T10:00:01Z")
+        await mock.setStreamEvents([
+            .task(seq: 1, run: run),
+            .task(seq: 2, run: run),
+            .message(seq: 3, message: reply)
+        ], terminalError: nil)
+
+        store.startEventStream()
+        await store.waitForEventStreamCompletion()
+        #expect(store.messages.contains(where: { $0.id == "msg-after-task" }))
+        #expect(store.runs.contains(where: { $0.id == "run-async" }))
+
+        await store.waitForBackgroundRefreshes()
+        #expect(await mock.fetchWorkItemsCallCount >= 1)
+    }
+
+    @Test("IOS-9: refreshForTab(.more) scopes to hub-visible data and respects TTL unless forced")
+    @MainActor
+    func moreTabRefreshScopeAndTTL() async {
+        let mock = MockNoriTransport()
+        let store = NoriStore(transport: mock, authProvider: AuthTokenProvider(tokenStore: InMemoryTokenStore()))
+        store.authState = .signedIn(email: "tabs@example.com")
+
+        await store.refreshForTab(.more, force: false)
+        #expect(await mock.fetchSummaryCallCount == 1)
+        #expect(await mock.fetchMCPServersCallCount == 0)
+        #expect(await mock.fetchConnectionsCallCount == 0)
+
+        // Second immediate switch within 20s TTL makes zero additional requests.
+        await store.refreshForTab(.more, force: false)
+        #expect(await mock.fetchSummaryCallCount == 1)
+
+        // Forced pull-to-refresh bypasses TTL.
+        await store.refreshForTab(.more, force: true)
+        #expect(await mock.fetchSummaryCallCount == 2)
     }
 }
 

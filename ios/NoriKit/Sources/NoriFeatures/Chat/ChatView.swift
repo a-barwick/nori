@@ -155,7 +155,7 @@ public struct ChatView: View {
     private var threadArea: some View {
         let units = threadUnits
         let latestNoriID = latestNoriMessageID(in: units)
-        let isStreaming = !(store.streamingAssistantText ?? "").isEmpty
+        let isStreaming = store.isStreamingAssistant
         let primaryPendingInThread: Interaction? = units.compactMap { unit in
             if case .interaction(let item) = unit { return item }
             return nil
@@ -177,34 +177,17 @@ public struct ChatView: View {
                             }
                         }
 
-                        if let streaming = store.streamingAssistantText, !streaming.isEmpty {
-                            HStack(alignment: .top, spacing: 10) {
-                                NoriMark(size: 26, state: .thinking)
-                                    .matchedGeometryEffect(id: "active-nori-avatar", in: noriAvatarNamespace)
-                                    .padding(.top, 2)
-                                MarkdownBlocksView(markdown: streaming, bodyFont: NoriTypography.body, compact: true)
-                                    .padding(.vertical, 4)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                        StreamingAssistantRow(
+                            store: store,
+                            avatarNamespace: noriAvatarNamespace,
+                            shouldShowInlineWorkLine: shouldShowInlineWorkLine,
+                            workLineLabel: workLineLabel,
+                            isNearBottom: isNearBottom,
+                            onOpenActivity: onOpenActivity,
+                            onScrollToBottom: {
+                                proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
                             }
-                            .padding(.top, 4)
-                            .padding(.bottom, 10)
-                            .id("streaming-reply-anchor")
-                        } else if shouldShowInlineWorkLine {
-                            if store.isThinking {
-                                NoriThinkingIndicator(avatarNamespace: noriAvatarNamespace)
-                                    .padding(.top, 4)
-                                    .padding(.bottom, 10)
-                                    .id("work-line-anchor")
-                            } else {
-                                InlineWorkLine(
-                                    label: workLineLabel,
-                                    onDetails: onOpenActivity
-                                )
-                                .padding(.top, 6)
-                                .padding(.bottom, 10)
-                                .id("work-line-anchor")
-                            }
-                        }
+                        )
 
                         Color.clear
                             .frame(height: 8)
@@ -256,10 +239,6 @@ public struct ChatView: View {
                     withAnimation(.easeOut(duration: 0.22)) {
                         proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
                     }
-                }
-                .onChange(of: store.streamingAssistantText) { _, newText in
-                    guard let newText, !newText.isEmpty, isNearBottom else { return }
-                    proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
                 }
                 .onChange(of: scrollToBottomTrigger) { _, _ in
                     withAnimation(.easeOut(duration: 0.22)) {
@@ -508,6 +487,62 @@ public struct ChatView: View {
         let generator = UIImpactFeedbackGenerator(style: .light)
         generator.impactOccurred()
         #endif
+    }
+}
+
+private struct StreamingAssistantRow: View {
+    let store: NoriStore
+    let avatarNamespace: Namespace.ID
+    let shouldShowInlineWorkLine: Bool
+    let workLineLabel: String
+    let isNearBottom: Bool
+    let onOpenActivity: () -> Void
+    let onScrollToBottom: () -> Void
+
+    @State private var lastScrollAt: ContinuousClock.Instant?
+
+    private static let scrollThrottleInterval: Duration = .milliseconds(80)
+
+    var body: some View {
+        Group {
+            if let streaming = store.streamingAssistantText, !streaming.isEmpty {
+                HStack(alignment: .top, spacing: 10) {
+                    NoriMark(size: 26, state: .thinking)
+                        .matchedGeometryEffect(id: "active-nori-avatar", in: avatarNamespace)
+                        .padding(.top, 2)
+                    MarkdownBlocksView(markdown: streaming, bodyFont: NoriTypography.body, compact: true)
+                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.top, 4)
+                .padding(.bottom, 10)
+                .id("streaming-reply-anchor")
+            } else if shouldShowInlineWorkLine {
+                if store.isThinking {
+                    NoriThinkingIndicator(avatarNamespace: avatarNamespace)
+                        .padding(.top, 4)
+                        .padding(.bottom, 10)
+                        .id("work-line-anchor")
+                } else {
+                    InlineWorkLine(
+                        label: workLineLabel,
+                        onDetails: onOpenActivity
+                    )
+                    .padding(.top, 6)
+                    .padding(.bottom, 10)
+                    .id("work-line-anchor")
+                }
+            }
+        }
+        .onChange(of: store.streamingAssistantText) { _, newText in
+            guard let newText, !newText.isEmpty, isNearBottom else { return }
+            let now = ContinuousClock.now
+            if let last = lastScrollAt, last.duration(to: now) < Self.scrollThrottleInterval {
+                return
+            }
+            lastScrollAt = now
+            onScrollToBottom()
+        }
     }
 }
 

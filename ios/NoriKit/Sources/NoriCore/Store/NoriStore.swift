@@ -133,6 +133,7 @@ public final class NoriStore {
 
     public var isLoading: Bool = false
     public var isThinking: Bool = false
+    public var isStreamingAssistant: Bool = false
     public var streamingAssistantText: String?
     public var streamingTurnID: String?
     public var pendingComposerDraft: String?
@@ -160,11 +161,39 @@ public final class NoriStore {
     let devLocalEmail: String?
     let liveTransport: LiveNoriTransport?
     var transport: any NoriTransport
+    enum StreamRefreshDomain: Hashable {
+        case reset
+        case workAndInteractions
+        case library
+        case memory
+    }
+
+    public enum RefreshDomain: Hashable, Sendable {
+        case session
+        case summary
+        case workAndInteractions
+        case library
+        case automations
+        case apps
+        case memory
+        case permissionsAndPreferences
+        case modelKeys
+        case computerStatus
+    }
+
     var sessionGeneration: UInt64 = 0
     var eventTask: Task<Void, Never>?
     var chatContextTask: Task<Void, Never>?
     var oauthCallbackTask: Task<Void, Never>?
     var postResetTask: Task<Void, Never>?
+    var interactionFollowUpTasks: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored var streamRefreshTasks: [StreamRefreshDomain: Task<Void, Never>] = [:]
+    @ObservationIgnored var streamRefreshNeedsRerun: Set<StreamRefreshDomain> = []
+    @ObservationIgnored var pendingStreamingText: String?
+    @ObservationIgnored var streamingFlushTask: Task<Void, Never>?
+    @ObservationIgnored var streamingFlushInterval: Duration = .milliseconds(40)
+    @ObservationIgnored var lastRefreshedAt: [RefreshDomain: ContinuousClock.Instant] = [:]
+    @ObservationIgnored var tabRefreshTTL: Duration = .seconds(20)
     var interactionsRefreshID: UInt64 = 0
     var settledInteractionsRefreshID: UInt64 = 0
     var workRefreshID: UInt64 = 0
@@ -337,14 +366,62 @@ public final class NoriStore {
         libraryBodyCache[itemID]
     }
 
+    func isRefreshFresh(_ domain: RefreshDomain, force: Bool) -> Bool {
+        guard !force, let last = lastRefreshedAt[domain] else { return false }
+        return last.duration(to: .now) < tabRefreshTTL
+    }
+
+    func markRefreshed(_ domain: RefreshDomain) {
+        lastRefreshedAt[domain] = .now
+    }
+
+    public func refreshForTab(_ tab: NoriTab, force: Bool = false) async {
+        guard authState.isSignedIn else { return }
+        switch tab {
+        case .chat:
+            async let sessionTask: Void = refreshSession(force: force)
+            async let summaryTask: Void = refreshSummary(force: force)
+            _ = await (sessionTask, summaryTask)
+        case .work:
+            async let workTask: Void = refreshWorkAndInteractions(force: force)
+            async let libraryTask: Void = refreshLibrary(force: force)
+            async let automationsTask: Void = refreshAutomations(force: force)
+            _ = await (workTask, libraryTask, automationsTask)
+        case .more:
+            let computerEnabled = isComputerEnabled
+            async let summaryTask: Void = refreshSummary(force: force)
+            async let modelKeysTask: Void = refreshModelKeys(force: force)
+            async let computerTask: Void = {
+                if computerEnabled {
+                    _ = await self.refreshComputerStatus(force: force)
+                }
+            }()
+            _ = await (summaryTask, modelKeysTask, computerTask)
+        }
+    }
+
+    func cancelStreamRefreshTasks() {
+        streamRefreshNeedsRerun.removeAll()
+        for task in streamRefreshTasks.values {
+            task.cancel()
+        }
+        streamRefreshTasks.removeAll()
+    }
+
     func clearUserState(preserveIdentity: Bool = false) {
         stopEventStream()
+        streamingFlushTask?.cancel()
+        streamingFlushTask = nil
+        pendingStreamingText = nil
+        cancelStreamRefreshTasks()
+        lastRefreshedAt.removeAll()
         chatContextTask?.cancel()
         chatContextTask = nil
         oauthCallbackTask?.cancel()
         oauthCallbackTask = nil
         postResetTask?.cancel()
         postResetTask = nil
+        cancelInteractionFollowUpTasks()
         toastTask?.cancel()
         toastTask = nil
         for turnID in Array(submitSpans.keys) {
@@ -392,6 +469,7 @@ public final class NoriStore {
         modelKeys = ModelKeysResponse()
         isThinking = false
         isLoading = false
+        isStreamingAssistant = false
         pendingComposerDraft = nil
         pendingDeepLink = nil
         lastError = nil
@@ -410,9 +488,10 @@ public final class NoriStore {
         resetRecoveryHasClearedData = false
     }
 
-    func clearTransportIdentity() async {
+    func clearTransportIdentity(email: String? = nil) async {
+        let resolvedEmail = email ?? authState.email
         if let liveTransport {
-            await liveTransport.clearCachedIdentity()
+            await liveTransport.clearCachedIdentity(email: resolvedEmail)
         } else {
             NoriTelemetryRuntime.shared.setUser(id: nil)
         }
@@ -500,5 +579,14 @@ public final class NoriStore {
 
     func waitForOAuthCallbackCompletion() async {
         await oauthCallbackTask?.value
+    }
+
+    func waitForBackgroundRefreshes() async {
+        while !streamRefreshTasks.isEmpty {
+            let tasks = Array(streamRefreshTasks.values)
+            for task in tasks {
+                await task.value
+            }
+        }
     }
 }
