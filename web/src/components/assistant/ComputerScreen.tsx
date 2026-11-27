@@ -71,7 +71,7 @@ export function ComputerScreen() {
   }
 
   return (
-    <Screen title="Computer" back="/more" backLabel="More">
+    <Screen title="Computer" back="/work" backLabel="Work">
       {status.loading && !data ? (
         <Loading label="Loading computer status…" />
       ) : data && !data.enabled ? (

@@ -12,7 +12,7 @@ import {
 } from "@/lib/appearance";
 import { AssistantProvider } from "@/lib/assistant/context";
 import type { Automation, WorkItem } from "@/lib/contracts/assistant";
-import { buildUnifiedTaskEntries, parseWorkTab, statusPill } from "./WorkScreen";
+import { buildUnifiedTaskEntries, parseWorkTab, statusPill, WORK_HUB_SECTION_LIMIT } from "./WorkScreen";
 import { THINKING_WORDS } from "@/lib/thinkingWords";
 import { buildUnits } from "@/lib/units";
 import { isChatInlineInteraction } from "@/lib/assistant/interactions";
@@ -200,6 +200,7 @@ describe("Web UI simplification pass & design system parity", () => {
   });
 
   test("buildUnifiedTaskEntries orders active, queued, and one-off scheduled tasks without archived runs", () => {
+    assert.equal(WORK_HUB_SECTION_LIMIT, 3);
     assert.equal(parseWorkTab(null), "tasks");
     assert.equal(parseWorkTab("artifacts"), "artifacts");
     assert.equal(parseWorkTab("routines"), "automations");

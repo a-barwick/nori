@@ -97,10 +97,11 @@ Never pair `bg-ink` with `text-surface` for selected pills, tabs, or tooltips (i
 - Top-level tab hubs (`Work`, `More`) omit redundant visible page titles via `<Screen hideHeaderTitle>` while keeping an `<h1 className="sr-only">` for keyboard/screen-reader focus management.
 
 ### Single-Column Full-Width Hub Stacks
-- **Work → Artifacts | Automations | Tasks:** Three underline tabs in order (`Artifacts`, `Automations`, `Tasks`, defaulting to `Tasks`).
-- **Work → Tasks:** `Action needed` approval cards above a single unified list of open tasks (active tasks with circular progress rings and inline-expandable read-only steps, queued tasks, and one-off scheduled tasks), with inline `Cancel` / `Keep` confirmation and no archived task history. Shows a slim single-row `All clear` bar when idle.
-- **Work → Automations:** Recurring routines, monitors, and event-relative automations with quick Run / Pause controls.
-- **Work → Artifacts:** Starts directly with Search + Kind filter chips + clean chronological list (no oversized hero banner pulling the newest item out of flow).
+- **Work (`/work`, Hybrid Hub):** Surfaces `Action needed` approval cards (capped at 3 with a bottom `See all >` bar → `/work/action-needed`) and `In progress` running tasks (capped at 3 with a bottom `See all >` bar → `/work/tasks`), followed by a `More`-style **Workspace** grouped list (`Tasks` → `/work/tasks`, `Automations` → `/routines`, `Artifacts` → `/library`, and `Computer` → `/computer` when enabled).
+- **Work → Tasks (`/work/tasks`):** Full list of open tasks (active tasks with circular progress rings and inline-expandable read-only steps, queued tasks, and one-off scheduled tasks), with inline `Cancel` / `Keep` confirmation and no archived task history. Shows a slim single-row `All clear` bar when idle.
+- **Work → Automations (`/routines`):** Recurring routines, monitors, and event-relative automations with quick Run / Pause controls.
+- **Work → Artifacts (`/library`):** Starts directly with Search + Kind filter chips + clean chronological list (no oversized hero banner pulling the newest item out of flow).
+- **Work → Computer (`/computer`):** Personal Computer status, `Open Desktop` drawer, sleep/wake controls, and checkpoints.
 - **More:** Flat grouped rows with zero navigation sublabels under **Nori** (`Apps`, `Memory`, `Permissions`), **Settings** (`Models`, `Usage & Budgets`, `Preferences`, `Appearance`), and **Account** (`Account`, housing `Action History`, `Diagnostics`, `Legal`, `Reset data`, `Delete account`, and `Sign out`). Pills appear only for exceptions (`1 attention`, `Required`, `Reconnecting`, `Offline`).
 - **More Subpages:**
   - **Apps (`/apps`):** Real Google Calendar, Google Drive, Gmail, Linear, and Notion icons (`AppBrandIcon`), direct switches for Google services, collapsed `Sign-in options` when adding a custom app, and plain on/off `Actions` switches on app detail screens.

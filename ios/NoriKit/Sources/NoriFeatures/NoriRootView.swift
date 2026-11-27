@@ -17,10 +17,8 @@ public struct NoriRootView: View {
 
     @State private var selectedTab: NoriTab = .chat
     @State private var chatScrollToBottomTrigger: Int = 0
-    @State private var workTabFilter: WorkTabFilter = .tasks
-    @State private var workPath: [String] = []
+    @State private var workPath: [WorkRoute] = []
     @State private var didApplyInitialWorkTab = false
-    @State private var selectedWorkTabExplicitly = false
     @State private var morePath: [MoreRoute] = []
 
     @State private var presentedDocument: DocumentPresentation?
@@ -103,7 +101,6 @@ public struct NoriRootView: View {
                 resumeTask?.cancel()
                 resumeTask = nil
                 didApplyInitialWorkTab = false
-                selectedWorkTabExplicitly = false
             } else if selectedTab != .chat {
                 scheduleRefresh(for: selectedTab)
             }
@@ -138,9 +135,7 @@ public struct NoriRootView: View {
         selectedTab = .chat
         workPath = []
         morePath = []
-        workTabFilter = .tasks
         didApplyInitialWorkTab = false
-        selectedWorkTabExplicitly = false
         presentedDocument = nil
     }
 
@@ -192,27 +187,41 @@ public struct NoriRootView: View {
                 NavigationStack(path: $workPath) {
                     WorkView(
                         store: store,
-                        selectedTab: Binding(
-                            get: { workTabFilter },
-                            set: { selection in
-                                selectedWorkTabExplicitly = true
-                                workTabFilter = selection
-                            }
-                        ),
                         isLoadingOverview: !didApplyInitialWorkTab,
                         onOpenDocument: openDocument,
                         onOpenTask: openWorkTask,
                         onStartInChat: startInChat,
                         onOpenModels: openModels
                     )
-                    .navigationDestination(for: String.self) { taskID in
-                        WorkDetailView(
-                            store: store,
-                            taskID: taskID,
-                            onOpenDocument: openDocument,
-                            onStartInChat: startInChat,
-                            onOpenModels: openModels
-                        )
+                    .navigationDestination(for: WorkRoute.self) { route in
+                        switch route {
+                        case .actionNeeded:
+                            WorkActionNeededView(
+                                store: store,
+                                onOpenTask: openWorkTask
+                            )
+                        case .tasks:
+                            WorkTasksView(
+                                store: store,
+                                isLoadingOverview: !didApplyInitialWorkTab,
+                                onOpenTask: openWorkTask,
+                                onStartInChat: startInChat
+                            )
+                        case .automations:
+                            RoutinesView(store: store)
+                        case .artifacts:
+                            LibraryView(store: store, onOpenDocument: openDocument)
+                        case .computer:
+                            ComputerView(store: store)
+                        case .taskDetail(let taskID):
+                            WorkDetailView(
+                                store: store,
+                                taskID: taskID,
+                                onOpenDocument: openDocument,
+                                onStartInChat: startInChat,
+                                onOpenModels: openModels
+                            )
+                        }
                     }
                 }
                 .tabItem {
@@ -229,8 +238,6 @@ public struct NoriRootView: View {
                                 AppsView(store: store)
                             case .mcpDetail(let serverID):
                                 MCPDetailView(store: store, serverID: serverID)
-                            case .computer:
-                                ComputerView(store: store)
                             case .memory:
                                 MemoryView(store: store)
                             case .permissions:
@@ -287,8 +294,6 @@ public struct NoriRootView: View {
     private func jumpToNeedsYou() {
         presentedDocument = nil
         workPath = []
-        selectedWorkTabExplicitly = true
-        workTabFilter = .tasks
         selectedTab = .work
     }
 
@@ -301,7 +306,7 @@ public struct NoriRootView: View {
     private func openWorkTask(_ taskID: String) {
         presentedDocument = nil
         selectedTab = .work
-        workPath = [taskID]
+        workPath = [.taskDetail(taskID)]
     }
 
     private func startInChat(draft: String) {
@@ -320,8 +325,6 @@ public struct NoriRootView: View {
             selectedTab = tab
             if tab == .work {
                 workPath = []
-                selectedWorkTabExplicitly = true
-                workTabFilter = .tasks
             } else if tab == .more {
                 morePath = []
             }
@@ -336,15 +339,13 @@ public struct NoriRootView: View {
         case .library:
             presentedDocument = nil
             selectedTab = .work
-            workPath = []
-            workTabFilter = .artifacts
+            workPath = [.artifacts]
         case .document(let itemID):
             presentedDocument = DocumentPresentation(id: itemID)
         case .routines:
             presentedDocument = nil
             selectedTab = .work
-            workPath = []
-            workTabFilter = .automations
+            workPath = [.automations]
         case .settings:
             presentedDocument = nil
             selectedTab = .more

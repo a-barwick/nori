@@ -200,7 +200,7 @@ export function RoutinesContent() {
 
 export function RoutinesScreen() {
   return (
-    <Screen title="Automations" back="/work?tab=automations" backLabel="Work">
+    <Screen title="Automations" back="/work" backLabel="Work">
       <RoutinesContent />
     </Screen>
   );
