@@ -21,6 +21,8 @@ type CapabilityState struct {
 	Title        string
 	Account      string
 	Availability string
+	OnFailure    string
+	Verify       string
 	Ready        bool
 }
 

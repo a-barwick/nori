@@ -79,6 +79,14 @@ type SessionEvent struct {
 	Revoked bool
 }
 
+const ensureCacheTTL = 2 * time.Minute
+
+type ensuredComputer struct {
+	providerID   string
+	bootstrapVer string
+	at           time.Time
+}
+
 // Manager coordinates lifecycle, policy, cost attribution, sessions, file links,
 // and account-deletion teardown across any computer.Provider implementation.
 type Manager struct {
@@ -89,6 +97,7 @@ type Manager struct {
 
 	mu        sync.Mutex
 	locks     map[string]*sync.Mutex
+	ensured   map[string]ensuredComputer
 	listeners map[string]map[uint64]func(SessionEvent)
 	nextSubID uint64
 }
@@ -100,6 +109,7 @@ func NewManager(provider Provider, store Store, cfg Config) *Manager {
 		store:     store,
 		cfg:       cfg.withDefaults(),
 		locks:     map[string]*sync.Mutex{},
+		ensured:   map[string]ensuredComputer{},
 		listeners: map[string]map[uint64]func(SessionEvent){},
 	}
 }
@@ -216,6 +226,45 @@ func (m *Manager) userLock(userID string) *sync.Mutex {
 	return l
 }
 
+func (m *Manager) isRecentlyEnsured(userID, providerID, bootstrapVer string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry, ok := m.ensured[userID]
+	if !ok || entry.providerID != providerID || entry.bootstrapVer != bootstrapVer {
+		return false
+	}
+	return m.now().Sub(entry.at) < ensureCacheTTL
+}
+
+func (m *Manager) markEnsured(userID, providerID, bootstrapVer string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ensured == nil {
+		m.ensured = map[string]ensuredComputer{}
+	}
+	m.ensured[userID] = ensuredComputer{
+		providerID:   providerID,
+		bootstrapVer: bootstrapVer,
+		at:           m.now(),
+	}
+}
+
+func (m *Manager) invalidateEnsure(userID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.ensured, userID)
+}
+
+func shouldInvalidateEnsureOnErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return !errors.Is(err, ErrNotFound) &&
+		!errors.Is(err, ErrFileTooLarge) &&
+		!errors.Is(err, ErrPathTraversal) &&
+		!errors.Is(err, ErrTimeout)
+}
+
 // Status returns the current state of the user's computer without provisioning one.
 func (m *Manager) Status(ctx context.Context, userID string) (StatusView, error) {
 	if !m.Enabled() {
@@ -247,7 +296,11 @@ func (m *Manager) Status(ctx context.Context, userID string) (StatusView, error)
 	if rec.Status != StatusDeleting && rec.ProviderID != "" {
 		if live, lErr := m.provider.Status(ctx, rec.ProviderID); lErr == nil {
 			if live.Status != "" {
-				view.Status = live.Status
+				if live.Standby && rec.Status == StatusSleeping {
+					view.Status = StatusSleeping
+				} else {
+					view.Status = live.Status
+				}
 			}
 			view.DiskUsedBytes = live.DiskUsedBytes
 			if live.DiskMaxBytes > 0 {
@@ -283,6 +336,12 @@ func (m *Manager) Ensure(ctx context.Context, userID string) (ComputerRecord, er
 		return ComputerRecord{}, ErrDeleting
 	}
 
+	if err == nil && rec.Status == StatusReady && rec.Provider == m.provider.Name() && rec.ProviderID != "" &&
+		rec.BootstrapVersion == m.cfg.BootstrapVer && m.isRecentlyEnsured(userID, rec.ProviderID, rec.BootstrapVersion) {
+		m.applyPurgedTombstones(ctx, userID, rec.ProviderID)
+		return rec, nil
+	}
+
 	now := m.now()
 	if errors.Is(err, ErrNotFound) || rec.Status == StatusDeleted {
 		candidateID := "cmp_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:16]
@@ -304,29 +363,32 @@ func (m *Manager) Ensure(ctx context.Context, userID string) (ComputerRecord, er
 	computerID := rec.ComputerID
 
 	spec := Spec{
-		UserID:        userID,
-		ComputerID:    computerID,
-		DisplayWidth:  m.cfg.DisplayWidth,
-		DisplayHeight: m.cfg.DisplayHeight,
-		MemoryLimitMB: m.cfg.MemoryLimitMB,
-		MaxDiskGB:     m.cfg.MaxDiskGB,
+		UserID:                  userID,
+		ComputerID:              computerID,
+		DisplayWidth:            m.cfg.DisplayWidth,
+		DisplayHeight:           m.cfg.DisplayHeight,
+		MemoryLimitMB:           m.cfg.MemoryLimitMB,
+		MaxDiskGB:               m.cfg.MaxDiskGB,
+		CurrentBootstrapVersion: rec.BootstrapVersion,
 	}
 
 	inst, err := m.provider.Ensure(ctx, spec)
 	if err != nil {
+		m.invalidateEnsure(userID)
 		_ = m.store.UpdateComputerStatus(ctx, userID, StatusError, nil)
 		return ComputerRecord{}, err
 	}
 
 	// Enforce baseline SSRF egress block on every ensure/provision.
 	if err := m.provider.SetNetworkPolicy(ctx, inst.ProviderID, DefaultNetworkPolicy()); err != nil {
+		m.invalidateEnsure(userID)
 		_ = m.store.UpdateComputerStatus(ctx, userID, StatusError, nil)
 		return ComputerRecord{}, fmt.Errorf("apply computer network policy: %w", err)
 	}
 
 	// Start the RSS memory watchdog even on shell-only workloads (best effort).
 	_, _ = m.provider.Exec(ctx, inst.ProviderID, ExecRequest{
-		Command: `if [ -x /home/nori/.nori/bin/nori-watchdog ] && ! pgrep -f "nori-watchdog" >/dev/null 2>&1; then mkdir -p /home/nori/.nori/logs; nohup /home/nori/.nori/bin/nori-watchdog >/home/nori/.nori/logs/watchdog.log 2>&1 </dev/null & fi`,
+		Command: `if [ -x /home/nori/.nori/bin/nori-watchdog ] && ! pgrep -f "[n]ori-watchdog" >/dev/null 2>&1; then mkdir -p /home/nori/.nori/logs; nohup /home/nori/.nori/bin/nori-watchdog >/home/nori/.nori/logs/watchdog.log 2>&1 </dev/null & fi`,
 		WorkDir: DefaultWorkDir,
 		Timeout: 10 * time.Second,
 	})
@@ -360,6 +422,7 @@ func (m *Manager) Ensure(ctx context.Context, userID string) (ComputerRecord, er
 	if err := m.store.UpsertComputer(ctx, updated); err != nil {
 		return ComputerRecord{}, err
 	}
+	m.markEnsured(userID, updated.ProviderID, updated.BootstrapVersion)
 	return updated, nil
 }
 
@@ -400,6 +463,9 @@ func (m *Manager) execInternal(ctx context.Context, userID string, req ExecReque
 	req.Env = sanitizeEnv(req.Env)
 
 	res, err := m.provider.Exec(ctx, rec.ProviderID, req)
+	if shouldInvalidateEnsureOnErr(err) {
+		m.invalidateEnsure(userID)
+	}
 	now := m.now()
 	_ = m.store.UpdateComputerStatus(ctx, userID, StatusReady, &now)
 	res.Stdout, res.StdoutTruncated, res.StdoutBytes = TruncateOutput(res.Stdout)
@@ -434,6 +500,9 @@ func (m *Manager) readFileWithCap(ctx context.Context, userID, filePath string, 
 		return nil, err
 	}
 	data, err := m.provider.ReadFile(ctx, rec.ProviderID, clean, maxBytes)
+	if shouldInvalidateEnsureOnErr(err) {
+		m.invalidateEnsure(userID)
+	}
 	now := m.now()
 	_ = m.store.UpdateComputerStatus(ctx, userID, StatusReady, &now)
 	return data, err
@@ -459,6 +528,9 @@ func (m *Manager) WriteFile(ctx context.Context, userID, filePath string, data [
 		mode = 0o644
 	}
 	if err := m.provider.WriteFile(ctx, rec.ProviderID, clean, data, mode); err != nil {
+		if shouldInvalidateEnsureOnErr(err) {
+			m.invalidateEnsure(userID)
+		}
 		return err
 	}
 	now := m.now()
@@ -477,6 +549,9 @@ func (m *Manager) ListFiles(ctx context.Context, userID, dir string) ([]FileEntr
 		return nil, err
 	}
 	entries, err := m.provider.ListFiles(ctx, rec.ProviderID, clean)
+	if shouldInvalidateEnsureOnErr(err) {
+		m.invalidateEnsure(userID)
+	}
 	now := m.now()
 	_ = m.store.UpdateComputerStatus(ctx, userID, StatusReady, &now)
 	return entries, err
@@ -499,6 +574,9 @@ func (m *Manager) DeletePath(ctx context.Context, userID, targetPath string) err
 		return err
 	}
 	if err := m.provider.DeletePath(ctx, rec.ProviderID, clean); err != nil {
+		if shouldInvalidateEnsureOnErr(err) {
+			m.invalidateEnsure(userID)
+		}
 		return err
 	}
 	_ = m.store.DeleteFileLink(ctx, userID, clean)
@@ -615,6 +693,7 @@ func (m *Manager) applyPurgedTombstones(ctx context.Context, userID, providerID 
 
 // Wake ensures the user's computer is running and ready.
 func (m *Manager) Wake(ctx context.Context, userID string) (StatusView, error) {
+	m.invalidateEnsure(userID)
 	if _, err := m.Ensure(ctx, userID); err != nil {
 		return StatusView{}, err
 	}
@@ -626,6 +705,7 @@ func (m *Manager) Sleep(ctx context.Context, userID string) error {
 	if !m.Enabled() {
 		return ErrDisabled
 	}
+	m.invalidateEnsure(userID)
 	rec, err := m.store.GetComputer(ctx, userID)
 	if errors.Is(err, ErrNotFound) {
 		return ErrNotProvisioned
@@ -707,6 +787,7 @@ func (m *Manager) Restore(ctx context.Context, userID, checkpointID string) erro
 	if target == "" {
 		return errors.New("no checkpoint available to restore")
 	}
+	m.invalidateEnsure(userID)
 	m.notifyUserSessionsRevoked(ctx, userID)
 	_ = m.store.RevokeUserSessions(ctx, userID, m.now())
 	_ = m.store.UpdateComputerStatus(ctx, userID, StatusResetting, nil)
@@ -749,6 +830,7 @@ func (m *Manager) Reset(ctx context.Context, userID string) (StatusView, error) 
 	// Fallback when provider has no baseline checkpoint: destroy and re-provision cleanly.
 	lock := m.userLock(userID)
 	lock.Lock()
+	m.invalidateEnsure(userID)
 	_ = m.store.RevokeUserSessions(ctx, userID, m.now())
 	_ = m.store.UpdateComputerStatus(ctx, userID, StatusResetting, nil)
 	if err := m.provider.Destroy(ctx, rec.ProviderID); err != nil && !errors.Is(err, ErrNotFound) {
@@ -919,6 +1001,7 @@ func (m *Manager) DestroyForAccountDelete(ctx context.Context, userID string) er
 	lock := m.userLock(userID)
 	lock.Lock()
 	defer lock.Unlock()
+	m.invalidateEnsure(userID)
 
 	if err := m.store.MarkComputerDeleting(ctx, userID); err != nil {
 		return err

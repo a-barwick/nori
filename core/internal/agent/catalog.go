@@ -61,16 +61,31 @@ func (s *Service) catalog(dynamic []extensions.CapabilityState, snapshot *extens
 		{Name: memoryCapability, Tools: tools[memoryCapability], Account: prompts.Runtime("catalog-memory-read-account", nil), Availability: prompts.Runtime("capability-available", nil), OnFailure: prompts.Runtime("catalog-memory-read-onfailure", nil), Verify: prompts.Runtime("catalog-memory-read-verify", nil), Default: true},
 	}
 	byCapability := map[string][]string{}
+	directOnly := map[string]bool{}
 	for _, d := range snapshot.Definitions() {
 		if !d.Builtin() && d.Exposure != extensions.ExposureDisabled && d.Exposure != extensions.ExposureProgrammatic {
 			byCapability[d.Capability] = append(byCapability[d.Capability], d.ModelName)
+			if _, seen := directOnly[d.Capability]; !seen {
+				directOnly[d.Capability] = d.Exposure == extensions.ExposureDirect
+			} else if d.Exposure != extensions.ExposureDirect {
+				directOnly[d.Capability] = false
+			}
 		}
 	}
 	for _, state := range dynamic {
+		onFailure := state.OnFailure
+		if onFailure == "" {
+			onFailure = "Report the account's state and the repair step Apps shows; do not switch accounts."
+		}
+		verify := state.Verify
+		if verify == "" {
+			verify = "Read back the provider's record before reporting a change as done."
+		}
 		catalog = append(catalog, Capability{
 			Name: state.Title, Tools: byCapability[state.Capability], Account: state.Account, Availability: state.Availability,
-			OnFailure: "Report the account's state and the repair step Apps shows; do not switch accounts.",
-			Verify:    "Read back the provider's record before reporting a change as done.",
+			OnFailure: onFailure,
+			Verify:    verify,
+			Default:   directOnly[state.Capability],
 		})
 	}
 	return catalog

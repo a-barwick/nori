@@ -190,12 +190,13 @@ func TestSpritesProviderEnsurePolicyDesktopAndDestroy(t *testing.T) {
 
 func TestSpritesProviderStatusOnlyReadsManagementMetadata(t *testing.T) {
 	for _, tt := range []struct {
-		state string
-		want  computer.Status
+		state   string
+		want    computer.Status
+		standby bool
 	}{
-		{state: "running", want: computer.StatusReady},
-		{state: "warm", want: computer.StatusSleeping},
-		{state: "cold", want: computer.StatusSleeping},
+		{state: "running", want: computer.StatusReady, standby: false},
+		{state: "warm", want: computer.StatusReady, standby: true},
+		{state: "cold", want: computer.StatusSleeping, standby: false},
 	} {
 		t.Run(tt.state, func(t *testing.T) {
 			now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
@@ -226,7 +227,7 @@ func TestSpritesProviderStatusOnlyReadsManagementMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.Status != tt.want || got.DiskUsedBytes != -1 || got.DiskMaxBytes != 10<<30 {
+			if got.Status != tt.want || got.Standby != tt.standby || got.DiskUsedBytes != -1 || got.DiskMaxBytes != 10<<30 {
 				t.Fatalf("unexpected status: %+v", got)
 			}
 			if got.LastActiveAt == nil || !got.LastActiveAt.Equal(now) {

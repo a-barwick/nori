@@ -61,17 +61,24 @@ export async function handleDesktopWSUpgrade(
   socket.pause();
   const headers = incomingToHeaders(req.headers);
   if (!sameOrigin({ headers })) {
+    console.warn("[computer-ws] rejected cross-origin upgrade", {
+      sessionId: parsed.sessionId,
+      origin: headers.get("origin") ?? "",
+      host: headers.get("x-forwarded-host") ?? headers.get("host") ?? "",
+    });
     rejectSocket(socket, 403, "Forbidden");
     return true;
   }
   const mode = runtimeMode(headers);
   const target = runtimeTarget(mode);
   if (target instanceof Response) {
+    console.warn("[computer-ws] runtime target unavailable", { sessionId: parsed.sessionId, status: target.status });
     rejectSocket(socket, target.status, "Service Unavailable");
     return true;
   }
   const user = await resolveUser(headers, target);
   if ("status" in user) {
+    console.warn("[computer-ws] user auth failed", { sessionId: parsed.sessionId, status: user.status, code: user.code ?? "" });
     rejectSocket(socket, user.status, "Unauthorized");
     return true;
   }
@@ -79,7 +86,11 @@ export async function handleDesktopWSUpgrade(
   let authHeaders: Record<string, string>;
   try {
     authHeaders = await runtimeHeaders(mode);
-  } catch {
+  } catch (err) {
+    console.error("[computer-ws] service auth header generation failed", {
+      sessionId: parsed.sessionId,
+      error: err instanceof Error ? err.message : String(err),
+    });
     rejectSocket(socket, 503, "Service Unavailable");
     return true;
   }
@@ -98,7 +109,12 @@ export async function handleDesktopWSUpgrade(
 
   let connected = false;
   upstreamSocket.setTimeout(15_000, () => upstreamSocket.destroy(new Error("Runtime connection timed out")));
-  upstreamSocket.on("error", () => {
+  upstreamSocket.on("error", (err) => {
+    console.warn("[computer-ws] upstream socket error", {
+      sessionId: parsed.sessionId,
+      connected,
+      error: err instanceof Error ? err.message : String(err),
+    });
     if (connected) socket.destroy();
     else rejectSocket(socket, 502, "Bad Gateway");
   });

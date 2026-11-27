@@ -53,16 +53,45 @@ export function generateCspNonce(): string {
   return btoa(binary);
 }
 
-export function buildAppCsp(nonce: string, options?: { isDev?: boolean }): string {
+const SAFE_CSP_HOST_RE = /^[a-z0-9.\-:\[\]]+$/i;
+
+function safeCspHosts(hosts: readonly (string | null | undefined)[] | undefined): string[] {
+  if (!hosts) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of hosts) {
+    if (!raw) continue;
+    const first = raw.split(",")[0]?.trim() ?? "";
+    if (!first || !SAFE_CSP_HOST_RE.test(first)) continue;
+    const lower = first.toLowerCase();
+    if (seen.has(lower)) continue;
+    seen.add(lower);
+    out.push(first);
+  }
+  return out;
+}
+
+export function buildAppCsp(
+  nonce: string,
+  options?: { isDev?: boolean; host?: string | null; hosts?: readonly (string | null | undefined)[] },
+): string {
   const scriptSources = ["'self'", `'nonce-${nonce}'`];
   if (options?.isDev) scriptSources.push("'unsafe-eval'");
+  const connectSources = ["'self'"];
+  const hosts = safeCspHosts([...(options?.hosts ?? []), options?.host]);
+  for (const host of hosts) {
+    connectSources.push(`wss://${host}`);
+    if (options?.isDev || isLoopbackHost(host)) {
+      connectSources.push(`ws://${host}`);
+    }
+  }
   return [
     "default-src 'self'",
     `script-src ${scriptSources.join(" ")}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self'",
-    "connect-src 'self'",
+    `connect-src ${connectSources.join(" ")}`,
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",

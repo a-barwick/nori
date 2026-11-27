@@ -387,7 +387,10 @@ func (u *userRouter) dispatchUser(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 	defer release()
-	if r.URL.Path == "/v1/events" || r.URL.Path == "/v1/conversations/assistant/events" {
+	if r.URL.Path == "/v1/events" ||
+		r.URL.Path == "/v1/conversations/assistant/events" ||
+		r.URL.Path == "/v1/computer" ||
+		strings.HasPrefix(r.URL.Path, "/v1/computer/") {
 		done()
 		done = func() {}
 		ctx = requestCtx

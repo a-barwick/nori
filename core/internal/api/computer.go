@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -152,7 +153,7 @@ func (c *ComputerAPI) status(w http.ResponseWriter, r *http.Request) {
 	}
 	view, err := c.Manager.Status(r.Context(), c.UserID)
 	if err != nil {
-		writeComputerError(w, err)
+		writeComputerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, formatComputerStatus(view, true))
@@ -160,12 +161,12 @@ func (c *ComputerAPI) status(w http.ResponseWriter, r *http.Request) {
 
 func (c *ComputerAPI) wake(w http.ResponseWriter, r *http.Request) {
 	if c == nil || c.Manager == nil || !c.Manager.Enabled() {
-		writeComputerError(w, computer.ErrDisabled)
+		writeComputerError(w, r, computer.ErrDisabled)
 		return
 	}
 	view, err := c.Manager.Wake(r.Context(), c.UserID)
 	if err != nil {
-		writeComputerError(w, err)
+		writeComputerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, formatComputerStatus(view, true))
@@ -173,11 +174,11 @@ func (c *ComputerAPI) wake(w http.ResponseWriter, r *http.Request) {
 
 func (c *ComputerAPI) sleep(w http.ResponseWriter, r *http.Request) {
 	if c == nil || c.Manager == nil || !c.Manager.Enabled() {
-		writeComputerError(w, computer.ErrDisabled)
+		writeComputerError(w, r, computer.ErrDisabled)
 		return
 	}
 	if err := c.Manager.Sleep(r.Context(), c.UserID); err != nil {
-		writeComputerError(w, err)
+		writeComputerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -185,12 +186,12 @@ func (c *ComputerAPI) sleep(w http.ResponseWriter, r *http.Request) {
 
 func (c *ComputerAPI) reset(w http.ResponseWriter, r *http.Request) {
 	if c == nil || c.Manager == nil || !c.Manager.Enabled() {
-		writeComputerError(w, computer.ErrDisabled)
+		writeComputerError(w, r, computer.ErrDisabled)
 		return
 	}
 	view, err := c.Manager.Reset(r.Context(), c.UserID)
 	if err != nil {
-		writeComputerError(w, err)
+		writeComputerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, formatComputerStatus(view, true))
@@ -198,12 +199,12 @@ func (c *ComputerAPI) reset(w http.ResponseWriter, r *http.Request) {
 
 func (c *ComputerAPI) listCheckpoints(w http.ResponseWriter, r *http.Request) {
 	if c == nil || c.Manager == nil || !c.Manager.Enabled() {
-		writeComputerError(w, computer.ErrDisabled)
+		writeComputerError(w, r, computer.ErrDisabled)
 		return
 	}
 	checkpoints, err := c.Manager.ListCheckpoints(r.Context(), c.UserID)
 	if err != nil {
-		writeComputerError(w, err)
+		writeComputerError(w, r, err)
 		return
 	}
 	if checkpoints == nil {
@@ -214,7 +215,7 @@ func (c *ComputerAPI) listCheckpoints(w http.ResponseWriter, r *http.Request) {
 
 func (c *ComputerAPI) createCheckpoint(w http.ResponseWriter, r *http.Request) {
 	if c == nil || c.Manager == nil || !c.Manager.Enabled() {
-		writeComputerError(w, computer.ErrDisabled)
+		writeComputerError(w, r, computer.ErrDisabled)
 		return
 	}
 	var req createCheckpointRequest
@@ -225,7 +226,7 @@ func (c *ComputerAPI) createCheckpoint(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := c.Manager.Checkpoint(r.Context(), c.UserID, strings.TrimSpace(req.Label))
 	if err != nil {
-		writeComputerError(w, err)
+		writeComputerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, computer.CheckpointInfo{
@@ -237,7 +238,7 @@ func (c *ComputerAPI) createCheckpoint(w http.ResponseWriter, r *http.Request) {
 
 func (c *ComputerAPI) restore(w http.ResponseWriter, r *http.Request) {
 	if c == nil || c.Manager == nil || !c.Manager.Enabled() {
-		writeComputerError(w, computer.ErrDisabled)
+		writeComputerError(w, r, computer.ErrDisabled)
 		return
 	}
 	var req restoreComputerRequest
@@ -247,12 +248,12 @@ func (c *ComputerAPI) restore(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := c.Manager.Restore(r.Context(), c.UserID, strings.TrimSpace(req.CheckpointID)); err != nil {
-		writeComputerError(w, err)
+		writeComputerError(w, r, err)
 		return
 	}
 	view, err := c.Manager.Status(r.Context(), c.UserID)
 	if err != nil {
-		writeComputerError(w, err)
+		writeComputerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, formatComputerStatus(view, true))
@@ -260,7 +261,7 @@ func (c *ComputerAPI) restore(w http.ResponseWriter, r *http.Request) {
 
 func (c *ComputerAPI) createSession(w http.ResponseWriter, r *http.Request) {
 	if c == nil || c.Manager == nil || !c.Manager.Enabled() {
-		writeComputerError(w, computer.ErrDisabled)
+		writeComputerError(w, r, computer.ErrDisabled)
 		return
 	}
 	var req createComputerSessionRequest
@@ -275,7 +276,7 @@ func (c *ComputerAPI) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	created, err := c.Manager.CreateSession(r.Context(), c.UserID, mode, strings.TrimSpace(req.TaskID), strings.TrimSpace(req.InteractionID))
 	if err != nil {
-		writeComputerError(w, err)
+		writeComputerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, createComputerSessionResponse{
@@ -292,7 +293,7 @@ func (c *ComputerAPI) createSession(w http.ResponseWriter, r *http.Request) {
 
 func (c *ComputerAPI) updateSession(w http.ResponseWriter, r *http.Request) {
 	if c == nil || c.Manager == nil || !c.Manager.Enabled() {
-		writeComputerError(w, computer.ErrDisabled)
+		writeComputerError(w, r, computer.ErrDisabled)
 		return
 	}
 	var req updateComputerSessionRequest
@@ -301,7 +302,7 @@ func (c *ComputerAPI) updateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	sess, err := c.Manager.SetSessionMode(r.Context(), c.UserID, r.PathValue("id"), computer.SessionMode(strings.TrimSpace(req.Mode)))
 	if err != nil {
-		writeComputerError(w, err)
+		writeComputerError(w, r, err)
 		return
 	}
 	last := sess.LastActivityAt
@@ -319,11 +320,11 @@ func (c *ComputerAPI) updateSession(w http.ResponseWriter, r *http.Request) {
 
 func (c *ComputerAPI) endSession(w http.ResponseWriter, r *http.Request) {
 	if c == nil || c.Manager == nil || !c.Manager.Enabled() {
-		writeComputerError(w, computer.ErrDisabled)
+		writeComputerError(w, r, computer.ErrDisabled)
 		return
 	}
 	if err := c.Manager.EndSession(r.Context(), c.UserID, r.PathValue("id")); err != nil && !errors.Is(err, computer.ErrNotFound) {
-		writeComputerError(w, err)
+		writeComputerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -331,7 +332,7 @@ func (c *ComputerAPI) endSession(w http.ResponseWriter, r *http.Request) {
 
 func (c *ComputerAPI) proxyDesktopWS(w http.ResponseWriter, r *http.Request) {
 	if c == nil || c.Manager == nil || !c.Manager.Enabled() {
-		writeComputerError(w, computer.ErrDisabled)
+		writeComputerError(w, r, computer.ErrDisabled)
 		return
 	}
 	sessionID := r.PathValue("id")
@@ -341,12 +342,12 @@ func (c *ComputerAPI) proxyDesktopWS(w http.ResponseWriter, r *http.Request) {
 	}
 	sess, err := c.Manager.ValidateSession(r.Context(), c.UserID, sessionID, rawToken)
 	if err != nil {
-		writeComputerError(w, err)
+		writeComputerError(w, r, err)
 		return
 	}
 	target, err := c.Manager.DesktopTarget(r.Context(), c.UserID)
 	if err != nil {
-		writeComputerError(w, err)
+		writeComputerError(w, r, err)
 		return
 	}
 
@@ -357,6 +358,7 @@ func (c *ComputerAPI) proxyDesktopWS(w http.ResponseWriter, r *http.Request) {
 	})
 	dialCancel()
 	if err != nil {
+		slog.WarnContext(r.Context(), "computer desktop upstream websocket dial failed", "session_id", sessionID, "err", err)
 		writeJSON(w, http.StatusBadGateway, apiError{Error: "Could not connect to your computer desktop.", Code: "computer_desktop_unavailable", Retryable: true})
 		return
 	}
@@ -368,6 +370,7 @@ func (c *ComputerAPI) proxyDesktopWS(w http.ResponseWriter, r *http.Request) {
 		InsecureSkipVerify: true, // Protected by Nori auth + short-lived user-bound session token.
 	})
 	if err != nil {
+		slog.WarnContext(r.Context(), "computer desktop client websocket accept failed", "session_id", sessionID, "err", err)
 		return
 	}
 	defer clientConn.Close(websocket.StatusNormalClosure, "")
@@ -587,7 +590,7 @@ func FilterRFBClientMessage(mode computer.SessionMode, payload []byte) ([]byte, 
 	return out, dropped
 }
 
-func writeComputerError(w http.ResponseWriter, err error) {
+func writeComputerError(w http.ResponseWriter, r *http.Request, err error) {
 	status, code, msg, retry := 502, "computer_error", "Could not complete computer action.", true
 	switch {
 	case errors.Is(err, computer.ErrDisabled):
@@ -604,6 +607,15 @@ func writeComputerError(w http.ResponseWriter, err error) {
 		status, code, msg, retry = http.StatusUnauthorized, "session_expired", "Desktop session has expired. Open Desktop again to reconnect.", false
 	case errors.Is(err, computer.ErrSessionRevoked):
 		status, code, msg, retry = http.StatusUnauthorized, "session_revoked", "Desktop session has ended.", false
+	}
+	if status >= 500 && !errors.Is(err, computer.ErrDisabled) {
+		ctx := context.Background()
+		method, path := "", ""
+		if r != nil {
+			ctx = r.Context()
+			method, path = r.Method, r.URL.Path
+		}
+		slog.WarnContext(ctx, "computer api request failed", "method", method, "path", path, "status", status, "code", code, "err", err)
 	}
 	writeJSON(w, status, apiError{Error: msg, Code: code, Retryable: retry})
 }

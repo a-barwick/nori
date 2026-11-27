@@ -272,3 +272,84 @@ func TestManagerUserControlLeasePurgeTombstonesAndProviderMismatch(t *testing.T)
 		t.Fatalf("expected ErrProviderMismatch on wrong-provider teardown, got %v", err)
 	}
 }
+
+type countingStandbyProvider struct {
+	*fake.Provider
+	ensureCalls int
+	standby     bool
+}
+
+func (p *countingStandbyProvider) Ensure(ctx context.Context, spec computer.Spec) (computer.Instance, error) {
+	p.ensureCalls++
+	return p.Provider.Ensure(ctx, spec)
+}
+
+func (p *countingStandbyProvider) Status(ctx context.Context, providerID string) (computer.InstanceStatus, error) {
+	st, err := p.Provider.Status(ctx, providerID)
+	if err != nil {
+		return st, err
+	}
+	if p.standby {
+		st.Status = computer.StatusReady
+		st.Standby = true
+	}
+	return st, nil
+}
+
+func TestManagerEnsureCachingAndStandbySleepWakeSemantics(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	prov := &countingStandbyProvider{Provider: fake.New(), standby: true}
+	prov.Now = func() time.Time { return now }
+	store := computer.NewMemoryStore()
+	store.Now = func() time.Time { return now }
+	mgr := computer.NewManager(prov, store, computer.Config{})
+	mgr.Now = func() time.Time { return now }
+
+	// Consecutive tool operations reuse cached ensure within TTL instead of re-ensuring every call.
+	if err := mgr.WriteFile(ctx, "u1", "a.txt", []byte("one"), 0o644); err != nil {
+		t.Fatalf("WriteFile 1: %v", err)
+	}
+	if err := mgr.WriteFile(ctx, "u1", "b.txt", []byte("two"), 0o644); err != nil {
+		t.Fatalf("WriteFile 2: %v", err)
+	}
+	if _, err := mgr.Exec(ctx, "u1", computer.ExecRequest{Command: "echo hi"}); err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	if prov.ensureCalls != 1 {
+		t.Fatalf("ensureCalls = %d, want 1 across consecutive operations", prov.ensureCalls)
+	}
+
+	// Standby provider reports Ready while active (Wake -> Ready, not Sleeping).
+	st, err := mgr.Wake(ctx, "u1")
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if st.Status != computer.StatusReady {
+		t.Fatalf("status after Wake = %q, want ready", st.Status)
+	}
+	if prov.ensureCalls != 2 {
+		t.Fatalf("expected Wake to invalidate cache and re-ensure (ensureCalls=%d, want 2)", prov.ensureCalls)
+	}
+
+	// Explicit Sleep keeps status Sleeping even while Fly Sprites briefly reports warm standby.
+	if err := mgr.Sleep(ctx, "u1"); err != nil {
+		t.Fatalf("Sleep: %v", err)
+	}
+	stAfterSleep, err := mgr.Status(ctx, "u1")
+	if err != nil {
+		t.Fatalf("Status after Sleep: %v", err)
+	}
+	if stAfterSleep.Status != computer.StatusSleeping {
+		t.Fatalf("status after Sleep = %q, want sleeping", stAfterSleep.Status)
+	}
+
+	// Subsequent Wake transitions cleanly back to Ready.
+	stAfterRewake, err := mgr.Wake(ctx, "u1")
+	if err != nil {
+		t.Fatalf("second Wake: %v", err)
+	}
+	if stAfterRewake.Status != computer.StatusReady {
+		t.Fatalf("status after second Wake = %q, want ready", stAfterRewake.Status)
+	}
+}

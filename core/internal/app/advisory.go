@@ -21,20 +21,33 @@ func buildCapabilitySummary(services *platform.AssistantServices, cfg settings.S
 		if strings.TrimSpace(cfg.ExaSearchKey) != "" || supportsTaskNativeSearch(ctx, models) {
 			webSearch = "available"
 		}
-		summary := &conversation.CapabilitySummary{
-			WebSearch: webSearch,
-			UploadedFiles: []string{
+		computerEnabled := cfg.Computer.Enabled()
+		uploadedFiles := []string{
+			"images (PNG, JPEG, WebP)",
+			"text, Markdown, CSV, and ICS files (uploaded PDFs are not supported yet)",
+		}
+		builtIn := []string{
+			"one-time reminders",
+			"recurring automations and monitors",
+			"saved artifacts",
+			"memory",
+		}
+		personalComputer := ""
+		if computerEnabled {
+			personalComputer = "available (persistent Linux computer at /home/nori with shell, files, document/PDF/spreadsheet tools, and a persistent headed browser; manage or open desktop in More → Computer)"
+			uploadedFiles = []string{
 				"images (PNG, JPEG, WebP)",
-				"text, Markdown, CSV, and ICS files (uploaded PDFs are not supported yet)",
-			},
-			BuiltIn: []string{
-				"one-time reminders",
-				"recurring automations and monitors",
-				"saved artifacts",
-				"memory",
-			},
-			ConnectedApps: []conversation.ConnectedAppSummary{},
-			MCPServers:    []conversation.MCPServerSummary{},
+				"text, Markdown, CSV, ICS, and PDF files (PDFs and binary files can be staged and processed on your personal computer)",
+			}
+			builtIn = append(builtIn, "personal computer (shell, files, document/data tools, persistent headed browser)")
+		}
+		summary := &conversation.CapabilitySummary{
+			WebSearch:        webSearch,
+			PersonalComputer: personalComputer,
+			UploadedFiles:    uploadedFiles,
+			BuiltIn:          builtIn,
+			ConnectedApps:    []conversation.ConnectedAppSummary{},
+			MCPServers:       []conversation.MCPServerSummary{},
 		}
 		if services != nil && services.Connections != nil {
 			if list, err := services.Connections.List(ctx); err == nil {

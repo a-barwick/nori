@@ -72,6 +72,14 @@ describe("securityHeaders helpers and Next.js header rules", () => {
     assert.ok(prodCsp.includes("base-uri 'self'"));
     assert.ok(prodCsp.includes("form-action 'self'"));
     assert.ok(prodCsp.includes("object-src 'none'"));
+
+    const hostedProdCsp = buildAppCsp("abc123", { isDev: false, hosts: ["app.noribot.chat", "evil.test; script-src *"] });
+    assert.ok(hostedProdCsp.includes("connect-src 'self' wss://app.noribot.chat;"));
+    assert.ok(!hostedProdCsp.includes("ws://app.noribot.chat"));
+    assert.ok(!hostedProdCsp.includes("evil.test"));
+
+    const loopbackCsp = buildAppCsp("abc123", { isDev: false, host: "127.0.0.1:3210" });
+    assert.ok(loopbackCsp.includes("connect-src 'self' wss://127.0.0.1:3210 ws://127.0.0.1:3210;"));
   });
 
   test("next.config.ts securityHeaders applies baseline headers globally and preserves download sandbox CSP", async () => {

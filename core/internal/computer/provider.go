@@ -7,6 +7,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"nori/internal/computer/vmscripts"
 )
 
 const (
@@ -26,7 +28,7 @@ const (
 	HomeDir                = "/home/nori"
 	DefaultWorkDir         = "/home/nori/workspace"
 	DefaultUploadsDir      = "/home/nori/workspace/uploads"
-	DefaultBootstrapVer    = "v1"
+	DefaultBootstrapVer    = vmscripts.Version
 	DefaultDesktopPort     = 8080
 	DefaultChromiumCDPPort = 9222
 )
@@ -70,12 +72,13 @@ const (
 
 // Spec defines the desired configuration for a user's persistent computer.
 type Spec struct {
-	UserID        string
-	ComputerID    string
-	DisplayWidth  int // default 1280
-	DisplayHeight int // default 800
-	MemoryLimitMB int // soft watchdog limit, default 3072
-	MaxDiskGB     int // default 10
+	UserID                  string
+	ComputerID              string
+	DisplayWidth            int    // default 1280
+	DisplayHeight           int    // default 800
+	MemoryLimitMB           int    // soft watchdog limit, default 3072
+	MaxDiskGB               int    // default 10
+	CurrentBootstrapVersion string // last recorded bootstrap version for fast-path ensure
 }
 
 // Instance represents a provisioned VM/container managed by a Provider.
@@ -89,6 +92,7 @@ type Instance struct {
 // InstanceStatus reports live provider state and storage metadata.
 type InstanceStatus struct {
 	Status        Status           `json:"status"`
+	Standby       bool             `json:"-"` // warm/standby state (e.g., Fly Sprites "warm")
 	DiskUsedBytes int64            `json:"disk_used_bytes,omitempty"`
 	DiskMaxBytes  int64            `json:"disk_max_bytes,omitempty"`
 	Checkpoints   []CheckpointInfo `json:"checkpoints,omitempty"`

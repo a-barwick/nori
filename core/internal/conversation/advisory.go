@@ -20,9 +20,10 @@ type MCPServerSummary struct {
 }
 
 type CapabilitySummary struct {
-	WebSearch     string                `json:"web_search"`
-	UploadedFiles []string              `json:"uploaded_files"`
-	BuiltIn       []string              `json:"built_in"`
-	ConnectedApps []ConnectedAppSummary `json:"connected_apps"`
-	MCPServers    []MCPServerSummary    `json:"mcp_servers"`
+	WebSearch        string                `json:"web_search"`
+	PersonalComputer string                `json:"personal_computer,omitempty"`
+	UploadedFiles    []string              `json:"uploaded_files"`
+	BuiltIn          []string              `json:"built_in"`
+	ConnectedApps    []ConnectedAppSummary `json:"connected_apps"`
+	MCPServers       []MCPServerSummary    `json:"mcp_servers"`
 }

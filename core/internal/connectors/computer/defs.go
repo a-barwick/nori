@@ -168,6 +168,9 @@ func (s Source) Inventory(_ context.Context) (extensions.Inventory, error) {
 				Title:        CapabilityTitle,
 				Account:      "user's persistent Linux computer (/home/nori)",
 				Availability: "available",
+				OnFailure:    "Report the command or browser error plainly; call computer_request_takeover if a site needs login, 2FA, or a CAPTCHA.",
+				Verify:       "Check command exit status, written workspace files, or browser snapshot before reporting work as done.",
+				Ready:        true,
 			},
 		},
 	}, nil

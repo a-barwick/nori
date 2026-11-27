@@ -48,3 +48,25 @@ func TestBuildModelSummary_BYOKAndHome(t *testing.T) {
 		t.Fatalf("unexpected home model summary: %+v", home)
 	}
 }
+
+func TestBuildCapabilitySummary_PersonalComputer(t *testing.T) {
+	disabled := buildCapabilitySummary(nil, settings.Settings{}, appModels{})(context.Background())
+	if disabled.PersonalComputer != "" {
+		t.Fatalf("expected empty PersonalComputer when disabled, got %q", disabled.PersonalComputer)
+	}
+	if !slices.ContainsFunc(disabled.UploadedFiles, func(s string) bool {
+		return s == "text, Markdown, CSV, and ICS files (uploaded PDFs are not supported yet)"
+	}) {
+		t.Fatalf("expected disabled UploadedFiles to report PDFs unsupported, got %v", disabled.UploadedFiles)
+	}
+
+	enabled := buildCapabilitySummary(nil, settings.Settings{Computer: settings.Computer{Provider: "sprites"}}, appModels{})(context.Background())
+	if enabled.PersonalComputer == "" {
+		t.Fatalf("expected PersonalComputer summary when enabled")
+	}
+	if !slices.ContainsFunc(enabled.UploadedFiles, func(s string) bool {
+		return s != "" && slices.Contains([]string{s}, "text, Markdown, CSV, ICS, and PDF files (PDFs and binary files can be staged and processed on your personal computer)")
+	}) {
+		t.Fatalf("expected enabled UploadedFiles to include PDF support, got %v", enabled.UploadedFiles)
+	}
+}

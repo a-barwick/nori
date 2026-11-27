@@ -163,15 +163,35 @@ func (p *Provider) Ensure(ctx context.Context, spec computer.Spec) (computer.Ins
 		sp = p.spriteHandle(name)
 	}
 
-	// Enforce private URL auth and baseline SSRF egress policy BEFORE running bootstrap.
-	if err := p.client.UpdateURLSettings(ctx, name, &sdk.URLSettings{Auth: "sprite"}); err != nil {
-		return computer.Instance{}, fmt.Errorf("configure private URL auth on sprite %s: %w", name, err)
-	}
-	if err := p.SetNetworkPolicy(ctx, name, computer.DefaultNetworkPolicy()); err != nil {
-		return computer.Instance{}, fmt.Errorf("apply baseline network policy on sprite %s: %w", name, err)
+	// Enforce private URL auth BEFORE running bootstrap.
+	if created || sp.URLSettings == nil || !strings.EqualFold(strings.TrimSpace(sp.URLSettings.Auth), "sprite") {
+		if err := p.client.UpdateURLSettings(ctx, name, &sdk.URLSettings{Auth: "sprite"}); err != nil {
+			return computer.Instance{}, fmt.Errorf("configure private URL auth on sprite %s: %w", name, err)
+		}
 	}
 
-	if !p.cfg.SkipBootstrap {
+	needsBootstrap := !p.cfg.SkipBootstrap && created
+	if !p.cfg.SkipBootstrap && !created {
+		if spec.CurrentBootstrapVersion != vmscripts.Version {
+			needsBootstrap = true
+		} else {
+			checkCmd := fmt.Sprintf(`[ -f /home/nori/.nori/bootstrap-%s.done ] && [ -x /home/nori/.nori/bin/nori-desktop-start ] && [ -x /home/nori/.nori/bin/nori-browser ] && [ -x /home/nori/.nori/bin/nori-watchdog ]`, vmscripts.Version)
+			res, checkErr := p.exec(ctx, name, computer.ExecRequest{
+				Command: checkCmd,
+				WorkDir: computer.HomeDir,
+				Timeout: 15 * time.Second,
+			})
+			if checkErr != nil || res.ExitCode != 0 {
+				needsBootstrap = true
+			}
+		}
+	}
+	if created || needsBootstrap {
+		if err := p.SetNetworkPolicy(ctx, name, computer.DefaultNetworkPolicy()); err != nil {
+			return computer.Instance{}, fmt.Errorf("apply baseline network policy on sprite %s: %w", name, err)
+		}
+	}
+	if needsBootstrap {
 		if err := p.installScriptsAndBootstrap(ctx, name, spec); err != nil {
 			return computer.Instance{}, err
 		}
@@ -242,8 +262,10 @@ func (p *Provider) Status(ctx context.Context, providerID string) (computer.Inst
 	}
 	// Status is polled by the clients. Keep it on the management API so
 	// polling does not extend the Sprite's active lifetime.
+	status, standby := mapSpriteStatus(sp.Status)
 	out := computer.InstanceStatus{
-		Status:        mapSpriteStatus(sp.Status),
+		Status:        status,
+		Standby:       standby,
 		DiskUsedBytes: -1, // Fly metadata omits used storage.
 		DiskMaxBytes:  int64(p.cfg.StorageGB) << 30,
 		LastActiveAt:  sp.LastRunningAt,
@@ -274,23 +296,27 @@ func (p *Provider) ListCheckpoints(ctx context.Context, providerID string) ([]co
 	return out, nil
 }
 
-func mapSpriteStatus(raw string) computer.Status {
+func mapSpriteStatus(raw string) (computer.Status, bool) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "running", "active", "ready":
-		return computer.StatusReady
-	case "warm", "cold", "sleeping", "stopped", "suspended":
-		return computer.StatusSleeping
+		return computer.StatusReady, false
+	case "warm":
+		// Fly Sprites transitions to "warm" milliseconds after an exec ends while
+		// remaining immediately ready. Mark Standby so an explicit Sleep stays asleep.
+		return computer.StatusReady, true
+	case "cold", "sleeping", "stopped", "suspended":
+		return computer.StatusSleeping, false
 	case "creating", "starting", "provisioning":
-		return computer.StatusProvisioning
+		return computer.StatusProvisioning, false
 	case "destroying", "deleting":
-		return computer.StatusDeleting
+		return computer.StatusDeleting, false
 	case "destroyed", "deleted":
-		return computer.StatusDeleted
+		return computer.StatusDeleted, false
 	default:
 		if raw == "" {
-			return computer.StatusSleeping
+			return computer.StatusSleeping, false
 		}
-		return computer.StatusReady
+		return computer.StatusReady, false
 	}
 }
 
@@ -305,21 +331,21 @@ func (p *Provider) exec(ctx context.Context, providerID string, req computer.Exe
 	execCtx, cancel := context.WithTimeout(ctx, req.Timeout)
 	defer cancel()
 
-	const noriPathPrefix = `export PATH="/home/nori/.nori/bin:/home/nori/.local/bin:/home/nori/.local/venv/bin:$PATH"; `
+	const noriEnvPrefix = `export HOME="/home/nori" PATH="/home/nori/.nori/bin:/home/nori/.local/bin:/home/nori/.local/venv/bin:${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"; `
 	sp := p.spriteHandle(providerID)
-	command := noriPathPrefix + req.Command
+	command := noriEnvPrefix + req.Command
 	jobID := ""
 	if req.Background {
 		jobID = "job_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
 		logPath := fmt.Sprintf("/home/nori/.nori/logs/%s.log", jobID)
 		pidPath := fmt.Sprintf("/home/nori/.nori/logs/%s.pid", jobID)
 		exitPath := fmt.Sprintf("/home/nori/.nori/logs/%s.exit", jobID)
-		wrapped := fmt.Sprintf(`(%s); echo $? > %s`, noriPathPrefix+req.Command, shellQuote(exitPath))
-		command = fmt.Sprintf(`%smkdir -p /home/nori/.nori/logs && nohup bash -lc %s >%s 2>&1 </dev/null & pid=$!; echo "$pid" > %s; echo "$pid"`,
-			noriPathPrefix, shellQuote(wrapped), shellQuote(logPath), shellQuote(pidPath))
+		wrapped := fmt.Sprintf(`(%s); echo $? > %s`, noriEnvPrefix+req.Command, shellQuote(exitPath))
+		command = fmt.Sprintf(`%smkdir -p /home/nori/.nori/logs && nohup bash -c %s >%s 2>&1 </dev/null & pid=$!; echo "$pid" > %s; echo "$pid"`,
+			noriEnvPrefix, shellQuote(wrapped), shellQuote(logPath), shellQuote(pidPath))
 	}
 
-	cmd := sp.CommandContext(execCtx, "bash", "-lc", command)
+	cmd := sp.CommandContext(execCtx, "bash", "-c", command)
 	if req.WorkDir != "" {
 		cmd.Dir = req.WorkDir
 	}
@@ -610,7 +636,7 @@ func (p *Provider) Sleep(ctx context.Context, providerID string) error {
 	// Sprites auto-sleep when no active exec or HTTP/WS services hold the machine awake.
 	// Closing Chromium via CDP commits session cookies cleanly before stopping desktop daemons.
 	_, err := p.Exec(ctx, providerID, computer.ExecRequest{
-		Command: "nori-browser close >/dev/null 2>&1 || true; sleep 1; pkill -x websockify >/dev/null 2>&1 || true; pkill -x x11vnc >/dev/null 2>&1 || true",
+		Command: `nori-browser close >/dev/null 2>&1 || true; sleep 1; pkill -f "[w]ebsockify" >/dev/null 2>&1 || true; pkill -x x11vnc >/dev/null 2>&1 || true; pkill -f "[d]esktop-gate" >/dev/null 2>&1 || true; pkill -x fluxbox >/dev/null 2>&1 || true; pkill -x Xvfb >/dev/null 2>&1 || true; pkill -f "[n]ori-watchdog" >/dev/null 2>&1 || true`,
 		WorkDir: computer.HomeDir,
 		Timeout: 15 * time.Second,
 	})
