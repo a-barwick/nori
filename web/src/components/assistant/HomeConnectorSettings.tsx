@@ -14,7 +14,7 @@ import { useAssistantConfig } from "@/lib/assistant/context";
 import { useResource, useResourceInvalidation } from "@/lib/assistant/useResource";
 import { useHydrated } from "@/lib/hooks";
 import type { DesktopBridge, DesktopHomeStatus } from "@/lib/desktop";
-import { DesktopHomeSharing } from "./DesktopHomeSharing";
+import { DesktopHomeSharing, findDesktopDevice, readSavedDesktopDeviceID } from "./DesktopHomeSharing";
 import { Confirm, Failure, Field, inputClass, Notice, Pill, Section } from "./ui";
 
 const statusLabels: Record<HomeConnector["status"], string> = {
@@ -69,7 +69,9 @@ export function HomeConnectorSettings() {
             <Button size="sm" onClick={() => setPairingOpen(true)}>Enter code</Button>
           </div>
         </div>
-        {!desktopStatus?.paired && connectors.data.devices.map((device) => <HomeDevice key={device.id} device={device} />)}
+        {desktop
+          ? <DesktopFilteredHomeDevices devices={connectors.data.devices} desktopStatus={desktopStatus} />
+          : connectors.data.devices.map((device) => <HomeDevice key={device.id} device={device} />)}
         </>}
       </div>
       <Dialog.Root open={downloadOpen} onOpenChange={setDownloadOpen}>
@@ -89,12 +91,24 @@ export function HomeConnectorSettings() {
           <Dialog.Content className="anim-pop fixed top-1/2 left-1/2 z-50 w-[min(440px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 space-y-4 rounded-sheet border border-card-border bg-sheet p-6 shadow-pop">
             <Dialog.Title className="text-section font-semibold text-ink">Pair a computer</Dialog.Title>
             <Dialog.Description className="text-meta text-ink-2">Enter the code shown by Nori Connector.</Dialog.Description>
-            <HomePairingForm onComplete={() => setPairingOpen(false)} />
+            <HomePairingForm onComplete={() => setPairingOpen(false)} onClose={() => setPairingOpen(false)} />
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
     </Section>
   );
+}
+
+function DesktopFilteredHomeDevices({ devices, desktopStatus }: {
+  devices: HomeConnector[];
+  desktopStatus?: DesktopHomeStatus;
+}) {
+  const { scope } = useAssistantConfig();
+  const hydrated = useHydrated();
+  const savedDeviceId = hydrated ? readSavedDesktopDeviceID(scope) : undefined;
+  const desktopDevice = findDesktopDevice(devices, desktopStatus, savedDeviceId);
+  const visibleDevices = desktopDevice ? devices.filter((device) => device.id !== desktopDevice.id) : devices;
+  return <>{visibleDevices.map((device) => <HomeDevice key={device.id} device={device} />)}</>;
 }
 
 function DesktopHomeSettings(props: {
@@ -128,6 +142,12 @@ function DownloadLinks({ downloads }: { downloads?: HomeConnectors["downloads"] 
   </div>;
 }
 
+function formatModelSummary(models: HomeConnector["models"]): string {
+  const names = models.map((model) => model.name);
+  if (names.length <= 6) return names.join(" · ");
+  return `${names.slice(0, 6).join(" · ")} · +${names.length - 6} more`;
+}
+
 function HomeDevice({ device }: { device: HomeConnector }) {
   const invalidate = useResourceInvalidation();
   const [pending, setPending] = useState(false);
@@ -159,19 +179,21 @@ function HomeDevice({ device }: { device: HomeConnector }) {
         <span className="block text-row font-semibold">{device.name}</span>
         {device.last_seen_at && device.status !== "online" && <span className="text-meta text-ink-2">Last seen {relative(device.last_seen_at)}</span>}
       </span>
-      <Pill tone={device.status === "online" ? "ok" : "danger"}>{statusLabels[device.status] ?? "Unavailable"}</Pill>
+      {device.status !== "online" && (
+        <Pill tone={device.status === "ollama_unavailable" ? "warning" : "danger"}>{statusLabels[device.status] ?? "Unavailable"}</Pill>
+      )}
     </div>
-    {device.models?.length > 0 && <p className="text-meta text-ink-2">{device.models.map((model) => model.name).join(" · ")}</p>}
+    {device.models?.length > 0 && <p className="text-meta text-ink-2">{formatModelSummary(device.models)}</p>}
     {error && <Notice tone="danger">{error}</Notice>}
     {message && <p className="text-meta text-ink-2" role="status">{message}</p>}
     <div className="flex flex-wrap gap-2">
       <Button size="sm" disabled={pending || device.status !== "online"} onClick={() => void test()}>Test connection</Button>
-      <Confirm title={"Disconnect " + device.name + "?"} body="Choose another model for any route using this computer." confirm="Disconnect" danger onConfirm={() => void revoke()} trigger={<Button size="sm" variant="danger" disabled={pending}>Disconnect</Button>} />
+      <Confirm title={"Disconnect " + device.name + "?"} body="Choose another model for Chat or Work before disconnecting." confirm="Disconnect" danger onConfirm={() => void revoke()} trigger={<Button size="sm" variant="danger" disabled={pending}>Disconnect</Button>} />
     </div>
   </div>;
 }
 
-export function HomePairingForm({ initialCode = "", onComplete }: { initialCode?: string; onComplete?: () => void }) {
+export function HomePairingForm({ initialCode = "", onComplete, onClose }: { initialCode?: string; onComplete?: () => void; onClose?: () => void }) {
   const invalidate = useResourceInvalidation();
   const [code, setCode] = useState(initialCode);
   const [pairing, setPairing] = useState<HomePairing>();
@@ -207,7 +229,10 @@ export function HomePairingForm({ initialCode = "", onComplete }: { initialCode?
       </div>
     </> : <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void lookup(); }}>
       <Field label="Device code"><input className={inputClass} autoComplete="off" autoCapitalize="characters" spellCheck={false} value={code} onChange={(event) => setCode(event.target.value)} maxLength={32} required /></Field>
-      <Button size="sm" type="submit" variant="primary" disabled={pending || !code.trim()}>{pending ? "Checking…" : "Continue"}</Button>
+      <div className="flex flex-wrap justify-end gap-2">
+        {onClose && <Button size="sm" variant="quiet" disabled={pending} onClick={onClose}>Close</Button>}
+        <Button size="sm" type="submit" variant="primary" disabled={pending || !code.trim()}>{pending ? "Checking…" : "Continue"}</Button>
+      </div>
     </form>}
     {error && <Notice tone="danger">{error}</Notice>}
   </div>;

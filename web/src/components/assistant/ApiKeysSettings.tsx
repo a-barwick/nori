@@ -152,26 +152,26 @@ export function ApiKeysContent({
   };
 
   return (
-    <div className="space-y-4">
-      {requiresKey && (
-        <Notice tone="warning">
-          Add your {primaryLabel} API key below to start chatting and running tasks with Nori.
+    <Section title="API Keys">
+      <div className="space-y-3">
+        {requiresKey && (
+          <Notice tone="warning">
+            Add your {primaryLabel} API key below to start chatting and running tasks with Nori.
+          </Notice>
+        )}
+
+        {!!error && <Failure error={error} onRetry={onRetry} />}
+
+        <Notice tone="neutral">
+          <span className="inline-flex items-center gap-2">
+            <Lock size={14} className="shrink-0" aria-hidden />
+            <span>API keys are encrypted at rest and never displayed again after saving.</span>
+          </span>
         </Notice>
-      )}
 
-      {!!error && <Failure error={error} onRetry={onRetry} />}
-
-      <Notice tone="neutral">
-        <span className="inline-flex items-center gap-2">
-          <Lock size={14} className="shrink-0" aria-hidden />
-          <span>API keys are encrypted at rest and never displayed again after saving.</span>
-        </span>
-      </Notice>
-
-      {data.providers.length === 0 ? (
-        <Empty>No model key providers are available.</Empty>
-      ) : (
-        <Section title="API Keys">
+        {data.providers.length === 0 ? (
+          <Empty>No model key providers are available.</Empty>
+        ) : (
           <ul
             aria-label="Model providers"
             className="divide-y divide-hairline overflow-hidden rounded-card border border-card-border bg-surface"
@@ -198,20 +198,22 @@ export function ApiKeysContent({
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-row font-semibold text-ink">{provider.label}</span>
-                        <Pill tone={provider.configured ? "ok" : "neutral"}>
-                          {provider.configured ? "Configured" : "Not configured"}
-                        </Pill>
+                        {!provider.configured && <Pill tone="neutral">Not set</Pill>}
                       </div>
-                      {provider.configured && (provider.last4 || provider.updated_at) && <p className="mt-0.5 text-meta text-ink-2">
-                          <>
-                            {provider.last4 && (
-                              <>
+                      {provider.configured && (
+                        <p className="mt-0.5 text-meta text-ink-2">
+                          {provider.last4 || provider.updated_at ? (
+                            <>
+                              {provider.last4 && (
                                 <span className="font-mono text-mono-data text-ink">••••{provider.last4}</span>
-                              </>
-                            )}
-                            {provider.updated_at && <span>{provider.last4 && " · "}Updated {relative(provider.updated_at)}</span>}
-                          </>
-                      </p>}
+                              )}
+                              {provider.updated_at && <span>{provider.last4 && " · "}Updated {relative(provider.updated_at)}</span>}
+                            </>
+                          ) : (
+                            "Configured"
+                          )}
+                        </p>
+                      )}
                     </div>
 
                     {!isEditing && (
@@ -304,8 +306,8 @@ export function ApiKeysContent({
               );
             })}
           </ul>
-        </Section>
-      )}
-    </div>
+        )}
+      </div>
+    </Section>
   );
 }

@@ -36,6 +36,21 @@ export function formatByteBudget(usedBytes: number, budgetBytes = DEFAULT_CORE_B
   return `${formatKB(usedBytes)} / ${formatKB(limit)} KB`;
 }
 
+export function formatLogDate(date: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date.trim());
+  if (!match) return date;
+  const parsed = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  if (!Number.isFinite(parsed.getTime())) return date;
+  const sameYear = parsed.getUTCFullYear() === new Date().getUTCFullYear();
+  return parsed.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+    timeZone: "UTC",
+  });
+}
+
 export function formatWatermark(iso: string | undefined, emptyLabel: string, now?: number, timeZone?: string): string {
   if (!iso) return emptyLabel;
   return `${when(iso, timeZone)} (${relative(iso, now)})`;
@@ -140,7 +155,7 @@ export function validateMemoryText(
   const bytes = utf8Bytes(trimmed);
   if (!trimmed) return { ok: false, reason: "Enter something to remember.", bytes };
   if (bytes > MAX_MEMORY_TEXT_BYTES) {
-    return { ok: false, reason: `Keep memory within ${MAX_MEMORY_TEXT_BYTES.toLocaleString()} UTF-8 bytes.`, bytes };
+    return { ok: false, reason: `Keep memory within ${MAX_MEMORY_TEXT_BYTES.toLocaleString()} characters.`, bytes };
   }
   return { ok: true, text: trimmed, bytes };
 }

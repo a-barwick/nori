@@ -122,9 +122,20 @@ export function ApiCosts() {
 
   return <>
     <Tabs<Range> label="Date range" value={range} onChange={setRange} items={RANGES} />
-    {report.error ? <Failure error={report.error} onRetry={() => void report.reload()} />
-      : !data ? <Loading label="Loading API costs…" />
-      : <CostDetails report={data} selectedModel={activeModel} setSelectedModel={setModel} settings={settings.data} />}
+    {!data ? (
+      report.error ? <Failure error={report.error} onRetry={() => void report.reload()} /> : <Loading label="Loading API costs…" />
+    ) : (
+      <>
+        {report.error && (
+          <div className="mb-3">
+            <Notice tone="warning" action={<Button size="sm" variant="neutral" onClick={() => void report.reload()}>Try again</Button>}>
+              Couldn’t refresh API costs right now. Showing last loaded figures.
+            </Notice>
+          </div>
+        )}
+        <CostDetails report={data} selectedModel={activeModel} setSelectedModel={setModel} settings={settings.data} />
+      </>
+    )}
   </>;
 }
 
@@ -252,7 +263,7 @@ function CostChart({ report, selectedModel }: { report: CostReport; selectedMode
               aria-pressed={index === active} tabIndex={index === active ? 0 : -1}
               onClick={() => select(index)} onKeyDown={(event) => handleKeys(event, index)}
               className={cn("relative flex h-full min-w-0 items-end justify-center rounded-t focus-visible:outline-2 focus-visible:outline-accent-signal", index === active && "bg-accent-text/5")}>
-              <span className={cn("w-[65%] max-w-16 rounded-t-sm", index === active ? "bg-accent-text" : "bg-accent-text/30")}
+              <span className={cn("w-[65%] max-w-16 rounded-t-sm", value.cost_usd > 0 && "min-h-[2px]", index === active ? "bg-accent-text" : "bg-accent-text/30")}
                 style={{ height: `${Math.max(0, value.cost_usd / max * 100)}%` }} />
               {value.unpriced_calls > 0 && <span aria-hidden className="absolute -bottom-2.5 size-1.5 rounded-full bg-warning" />}
             </button>;

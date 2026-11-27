@@ -20,6 +20,41 @@ type LocalModel = { name: string; capabilities?: string[] };
 const MAX_BACKGROUND_POLLS = 40;
 const MAX_ROUTE_POLLS = 20;
 
+type DesktopHomeStatusWithID = DesktopHomeStatus & {
+  device_id?: string;
+  deviceId?: string;
+};
+
+export function desktopDeviceIDKey(scope: string): string {
+  return `nori.desktop.home-device-id:${scope}`;
+}
+
+export function readSavedDesktopDeviceID(scope: string): string | undefined {
+  try {
+    return localStorage.getItem(desktopDeviceIDKey(scope)) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function findDesktopDevice(
+  devices: HomeConnector[],
+  status?: DesktopHomeStatus,
+  savedDeviceId?: string,
+): HomeConnector | undefined {
+  if (!status?.paired || !devices.length) return undefined;
+  const extended = status as DesktopHomeStatusWithID;
+  const statusId = extended.device_id ?? extended.deviceId;
+  if (statusId) {
+    return devices.find((device) => device.id === statusId);
+  }
+  if (savedDeviceId) {
+    const matched = devices.find((device) => device.id === savedDeviceId);
+    if (matched) return matched;
+  }
+  return devices.length === 1 ? devices[0] : undefined;
+}
+
 function readSavedSetupModel(key: string): string {
   try {
     return localStorage.getItem(key) ?? "";
@@ -39,11 +74,22 @@ export function DesktopHomeSharing({ desktop, status, onStatus, devices, availab
   const hydrated = useHydrated();
   const invalidate = useResourceInvalidation();
   const setupKey = `nori.desktop.home-setup:${scope}`;
+  const deviceKey = desktopDeviceIDKey(scope);
   const [stage, setStage] = useState<Stage>();
   const [models, setModels] = useState<LocalModel[]>([]);
   const [model, setModel] = useState("");
   const [pendingModelOverride, setPendingModelOverride] = useState<string>();
+  const [savedDeviceIdOverride, setSavedDeviceIdOverride] = useState<string>();
   const pendingModel = pendingModelOverride ?? (hydrated ? readSavedSetupModel(setupKey) : "");
+  const savedDeviceId = savedDeviceIdOverride ?? (hydrated ? readSavedDesktopDeviceID(scope) : undefined);
+
+  const rememberDeviceId = useCallback((id: string) => {
+    setSavedDeviceIdOverride(id || undefined);
+    try {
+      if (id) localStorage.setItem(deviceKey, id);
+      else localStorage.removeItem(deviceKey);
+    } catch { /* Setup can still continue in this window. */ }
+  }, [deviceKey]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -108,9 +154,9 @@ export function DesktopHomeSharing({ desktop, status, onStatus, devices, availab
           getJSON<HomeConnectors>("/settings/home-connectors", controller.signal),
         ]);
         if (controller.signal.aborted) return;
-        const device = connectors.devices[0];
+        const device = findDesktopDevice(connectors.devices, status, savedDeviceId);
         const profile = settings.model_profiles?.profiles.find((item) =>
-          item.backend === "home" && item.home_device_id === device?.id && item.model === model,
+          item.backend === "home" && (!device || item.home_device_id === device.id) && item.model === model,
         );
         setRouteData({ model, profile });
         if (!profile && attempts < MAX_ROUTE_POLLS) {
@@ -125,7 +171,7 @@ export function DesktopHomeSharing({ desktop, status, onStatus, devices, availab
       controller.abort();
       if (timer !== undefined) clearTimeout(timer);
     };
-  }, [model, routeAttempt, stage]);
+  }, [model, routeAttempt, savedDeviceId, stage, status]);
 
   const openSetup = async () => {
     setError(""); setMessage("");
@@ -161,11 +207,15 @@ export function DesktopHomeSharing({ desktop, status, onStatus, devices, availab
     if (!model || pending) return;
     setPending(true); setError("");
     let paired = false;
+    const priorIds = new Set(devices.map((item) => item.id));
     try {
       const pairing = await desktop.beginPairing();
       await approveHomePairing(pairing.user_code);
       await desktop.finishPairing();
       paired = true;
+      const latestConnectors = await getJSON<HomeConnectors>("/settings/home-connectors").catch(() => undefined);
+      const added = latestConnectors?.devices.find((item) => !priorIds.has(item.id));
+      if (added) rememberDeviceId(added.id);
       setStage("routes");
       void refresh().catch(() => undefined);
       invalidate("/settings/home-connectors", "/settings/models", "/capabilities");
@@ -205,9 +255,9 @@ export function DesktopHomeSharing({ desktop, status, onStatus, devices, availab
         getJSON<ModelSettings>("/settings/models"),
         getJSON<HomeConnectors>("/settings/home-connectors"),
       ]);
-      const device = connectors.devices[0];
+      const device = findDesktopDevice(connectors.devices, status, savedDeviceId);
       const profile = settings.model_profiles?.profiles.find((item) =>
-        item.backend === "home" && item.home_device_id === device?.id && item.model === model,
+        item.backend === "home" && (!device || item.home_device_id === device.id) && item.model === model,
       );
       if (!profile || (chat && !profile.lanes.includes("chat")) || (work && !profile.lanes.includes("task"))) {
         throw new Error("The selected model is still connecting. Try again shortly.");
@@ -239,6 +289,7 @@ export function DesktopHomeSharing({ desktop, status, onStatus, devices, availab
     try {
       const result = await desktop.disconnectHome();
       rememberModel("");
+      rememberDeviceId("");
       await refresh();
       setMessage(result.revocationPending
         ? "Sharing is off. Nori will finish disconnecting when the network is available."
@@ -249,7 +300,7 @@ export function DesktopHomeSharing({ desktop, status, onStatus, devices, availab
     } finally { setPending(false); }
   };
 
-  const device = status?.paired ? devices[0] : undefined;
+  const device = findDesktopDevice(devices, status, savedDeviceId);
   const availability = status?.revocationPending ? "Disconnecting"
     : status?.background === "approval_required" ? "Background approval needed"
     : status?.background !== "enabled" ? "Off"
@@ -257,6 +308,13 @@ export function DesktopHomeSharing({ desktop, status, onStatus, devices, availab
         : status.state === "online" && device?.status === "online" ? "Available"
           : status.state === "connecting" ? "Connecting"
           : "Offline";
+  const availabilityTone = availability === "Offline"
+    ? "danger" as const
+    : availability === "Ollama unavailable" || availability === "Background approval needed"
+      ? "warning" as const
+      : availability === "Connecting"
+        ? "working" as const
+        : "neutral" as const;
   const profile = routeData?.model === model ? routeData.profile : undefined;
   const canChat = !!profile?.lanes.includes("chat");
   const canWork = !!profile?.lanes.includes("task");
@@ -276,13 +334,13 @@ export function DesktopHomeSharing({ desktop, status, onStatus, devices, availab
       <div className="flex flex-wrap items-center gap-3">
         <span className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-accent-subtle text-accent-text"><Monitor size={18} aria-hidden /></span>
         <span className="min-w-0 flex-1 text-row font-semibold">Use this Mac as a Home AI Server</span>
-        {status?.paired && <Pill tone={availability === "Available" ? "ok" : "neutral"}>{availability}</Pill>}
+        {status?.paired && availability !== "Available" && <Pill tone={availabilityTone}>{availability}</Pill>}
       </div>
       {(status?.paired || (pendingModel && status && status.background !== "off")) && !status?.revocationPending ? <div className="flex flex-wrap gap-2">
         {pendingModel && <Button size="sm" onClick={() => void openSetup()}>Continue setup</Button>}
         {!pendingModel && status?.background !== "enabled" && <Button size="sm" onClick={() => { setStage("background"); }}>Enable background access</Button>}
         {device && <Button size="sm" disabled={pending || availability !== "Available"} onClick={() => void testConnection()}>Test connection</Button>}
-        <Confirm title="Turn off sharing on this Mac?" body="Choose another model for any route using this Mac." confirm="Turn off sharing" danger
+        <Confirm title="Turn off sharing on this Mac?" body="Choose another model for Chat or Work before turning off sharing." confirm="Turn off sharing" danger
           onConfirm={() => void disconnect()} trigger={<Button size="sm" variant="danger" disabled={pending}>Turn off sharing</Button>} />
       </div> : <Button size="sm" variant="primary" disabled={pending || !status || !available || status.revocationPending} onClick={() => void openSetup()}>{pendingModel ? "Continue setup" : "Set up"}</Button>}
       {status?.revocationPending && <p className="text-meta text-ink-2" role="status">Sharing is off. Nori will finish disconnecting when the network is available.</p>}

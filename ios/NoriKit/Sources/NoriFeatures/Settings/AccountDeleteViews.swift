@@ -128,6 +128,9 @@ public struct AccountDeleteRecoveryView: View {
                         .foregroundStyle(NoriColors.ink2)
 
                     TextField(expectedEmail.isEmpty ? "Account email" : expectedEmail, text: $confirmationText)
+                        .textFieldStyle(.plain)
+                        .foregroundStyle(NoriColors.ink)
+                        .tint(NoriColors.accent)
                         #if os(iOS)
                         .textInputAutocapitalization(.never)
                         .keyboardType(.emailAddress)
@@ -136,6 +139,10 @@ public struct AccountDeleteRecoveryView: View {
                         .padding(.horizontal, 12)
                         .frame(height: 44)
                         .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+                                .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
+                        )
                         .disabled(store.isDeletingAccount)
 
                     if let errorMessage, !errorMessage.isEmpty {
@@ -163,6 +170,12 @@ public struct AccountDeleteRecoveryView: View {
                     }
                     .buttonStyle(NoriButtonStyle(.danger, fullWidth: true))
                     .disabled(!confirmationMatches || store.isDeletingAccount)
+
+                    Button("Sign out") {
+                        Task { await store.signOut() }
+                    }
+                    .buttonStyle(NoriButtonStyle(.quiet, fullWidth: true))
+                    .disabled(store.isDeletingAccount)
                 }
                 .padding(20)
             }

@@ -3,6 +3,7 @@ import NoriDesign
 
 public struct AppearanceSettingsView: View {
     @AppStorage(NoriAppearance.storageKey) private var appearanceRawValue: String = NoriAppearance.system.rawValue
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var appearancePickerNamespace
 
     public init() {}
@@ -44,15 +45,19 @@ public struct AppearanceSettingsView: View {
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                                .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                                .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
                         )
 
                         HStack(spacing: 4) {
                             ForEach(NoriAppearance.allCases) { option in
                                 let isSelected = appearance == option
                                 Button {
-                                    withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                                    if reduceMotion {
                                         appearanceRawValue = option.rawValue
+                                    } else {
+                                        withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                                            appearanceRawValue = option.rawValue
+                                        }
                                     }
                                 } label: {
                                     HStack(spacing: 5) {
@@ -61,16 +66,16 @@ public struct AppearanceSettingsView: View {
                                         Text(option.displayLabel)
                                             .font(.system(size: 13, weight: .semibold))
                                     }
-                                    .foregroundStyle(isSelected ? NoriColors.ink : NoriColors.ink2)
+                                    .foregroundStyle(isSelected ? NoriColors.chipSelectedFg : NoriColors.ink2)
                                     .frame(maxWidth: .infinity)
                                     .frame(height: 34)
                                     .background {
                                         if isSelected {
                                             Capsule()
-                                                .fill(NoriColors.selected)
+                                                .fill(NoriColors.chipSelectedBg)
                                                 .overlay(
                                                     Capsule()
-                                                        .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
+                                                        .strokeBorder(NoriColors.chipSelectedBorder, lineWidth: 1)
                                                 )
                                                 .matchedGeometryEffect(id: "noriAppearanceSelection", in: appearancePickerNamespace)
                                         }

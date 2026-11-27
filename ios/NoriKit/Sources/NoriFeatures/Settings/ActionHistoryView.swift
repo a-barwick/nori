@@ -6,6 +6,7 @@ public struct ActionHistoryView: View {
     @Bindable private var store: NoriStore
     @State private var selectedConnectionID: String?
     @State private var operations: [OperationProjection] = []
+    @State private var hasLoaded = false
     @State private var isLoading = false
     @State private var loadError: String?
 
@@ -14,7 +15,7 @@ public struct ActionHistoryView: View {
     }
 
     private var displayedOperations: [OperationProjection] {
-        if selectedConnectionID == nil && operations.isEmpty && !store.operations.isEmpty {
+        if !hasLoaded && selectedConnectionID == nil && operations.isEmpty && !store.operations.isEmpty {
             return store.operations
         }
         return operations
@@ -50,7 +51,7 @@ public struct ActionHistoryView: View {
                     NoriEmptyState(
                         title: "No actions yet",
                         message: selectedConnectionID == nil
-                            ? "External actions Nori takes across your connected apps appear here with their outcome and authority."
+                            ? "External actions Nori takes across your connected apps appear here."
                             : "No actions have been recorded for this account yet."
                     )
                 } else {
@@ -147,10 +148,12 @@ public struct ActionHistoryView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                if let receipt = op.receiptURL, let url = URL(string: receipt) {
+                if let receipt = op.receiptURL,
+                   let url = URL(string: receipt),
+                   url.scheme?.lowercased() == "https" {
                     Link(destination: url) {
                         HStack(spacing: 4) {
-                            Text("View receipt")
+                            Text("Open")
                             Image(systemName: "arrow.up.right")
                                 .font(.caption2.weight(.semibold))
                         }
@@ -173,11 +176,11 @@ public struct ActionHistoryView: View {
 
     private func metadataParts(for op: OperationProjection) -> [String] {
         var parts: [String] = []
-        if let account = op.accountSummary, !account.isEmpty {
+        if selectedConnectionID == nil, let account = op.accountSummary, !account.isEmpty {
             parts.append(account)
         }
         if let authority = op.displayAuthorityLabel, !authority.isEmpty {
-            parts.append("Because \(authority)")
+            parts.append(authority)
         }
         if let taskTitle = op.taskTitle, !taskTitle.isEmpty {
             parts.append(taskTitle)
@@ -194,6 +197,7 @@ public struct ActionHistoryView: View {
         defer { isLoading = false }
         do {
             operations = try await store.refreshOperations(connectionID: selectedConnectionID)
+            hasLoaded = true
         } catch is CancellationError {
             return
         } catch {

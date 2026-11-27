@@ -77,7 +77,7 @@ public struct APICostsView: View {
             .padding(.bottom, 96)
         }
         .background(NoriColors.canvas)
-        .navigationTitle("API costs")
+        .navigationTitle("API Costs")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
@@ -211,7 +211,7 @@ public struct APICostsView: View {
             NoriNotice(
                 title: unknownMessage(amount),
                 tone: .warning,
-                systemImage: "circle.fill"
+                systemImage: "info.circle"
             )
         }
 
@@ -272,20 +272,20 @@ public struct APICostsView: View {
 
         return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 6) {
-                GeometryReader { geometry in
-                    ForEach(ticks, id: \.self) { tick in
+                VStack(alignment: .trailing, spacing: 0) {
+                    ForEach(ticks.reversed(), id: \.self) { tick in
                         Text(axisCost(step * Double(tick)))
                             .font(.system(size: 10))
                             .foregroundStyle(NoriColors.ink3)
                             .monospacedDigit()
-                            .frame(width: geometry.size.width, alignment: .trailing)
-                            .position(
-                                x: geometry.size.width / 2,
-                                y: min(geometry.size.height - 6, max(6, geometry.size.height * (1 - Double(tick) / 3)))
-                            )
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                        if tick > 0 {
+                            Spacer(minLength: 0)
+                        }
                     }
                 }
-                .frame(width: 43, height: 140)
+                .frame(height: 140, alignment: .bottomTrailing)
 
                 GeometryReader { geometry in
                     ZStack(alignment: .bottom) {
@@ -333,8 +333,13 @@ public struct APICostsView: View {
                 .frame(height: 140)
             }
 
-            HStack(spacing: 0) {
-                Color.clear.frame(width: 49, height: 1)
+            HStack(spacing: 6) {
+                Text(axisCost(limit))
+                    .font(.system(size: 10))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .hidden()
                 HStack {
                     ForEach(axisIndices(buckets.count), id: \.self) { offset in
                         if offset > 0 { Spacer(minLength: 0) }
@@ -369,7 +374,7 @@ public struct APICostsView: View {
                             .font(.system(size: 12))
                             .foregroundStyle(NoriColors.warning)
                     }
-                    if selectedAmount.pendingCalls > 0 {
+                    if selectedAmount.pendingCalls > 0 && periodCost(selectedAmount) != "In progress" {
                         Text("\(callCount(selectedAmount.pendingCalls)) in progress")
                             .font(.system(size: 12))
                             .foregroundStyle(NoriColors.ink2)

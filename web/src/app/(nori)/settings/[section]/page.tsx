@@ -1,5 +1,7 @@
+import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { SettingsScreen, type SettingsSection } from "@/components/assistant/SettingsScreen";
+import { resolveUser } from "@/lib/runtime/auth";
 
 const SECTIONS = ["permissions", "preferences", "api-costs", "appearance", "models", "reset", "account", "history", "diagnostics"];
 
@@ -22,5 +24,10 @@ export default async function Page({
     redirect(query.size ? `/memory?${query.toString()}` : "/memory");
   }
   if (!SECTIONS.includes(section)) notFound();
-  return <SettingsScreen section={section as SettingsSection} />;
+  let userEmail: string | undefined;
+  if (section === "account") {
+    const user = await resolveUser(await headers());
+    if ("identity" in user) userEmail = user.identity.email;
+  }
+  return <SettingsScreen section={section as SettingsSection} userEmail={userEmail} />;
 }

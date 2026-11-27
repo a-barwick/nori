@@ -87,7 +87,15 @@ export function GoogleConnection() {
       {result === "drive_files_selected" && <Notice tone="ok">Your selected files are ready to use in Nori.</Notice>}
       {result === "cancelled" && <Notice tone="neutral">Google sign-in was cancelled.</Notice>}
       {result === "failed" && <Notice tone="danger">Google couldn’t finish the request. Try again.</Notice>}
-      {connection?.account?.label && <div className="mb-3 flex flex-wrap items-center gap-2 text-meta text-ink-2"><span>{connection.account.label}</span><Pill tone={connectionState(connection).tone}>{connectionState(connection).label}</Pill></div>}
+      {connection?.account?.label && (() => {
+        const state = connectionState(connection);
+        return (
+          <div className="mb-3 flex flex-wrap items-center gap-2 text-meta text-ink-2">
+            <span>{connection.account.label}</span>
+            {state.tone !== "ok" && <Pill tone={state.tone}>{state.label}</Pill>}
+          </div>
+        );
+      })()}
       <fieldset disabled={!!action.pending || !canSignIn} className="space-y-2">
         <legend className="sr-only">Google services</legend>
         {services.map((service) => {

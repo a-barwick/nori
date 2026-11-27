@@ -42,6 +42,8 @@ export function ModelsSettings() {
     }
   };
 
+  const hasPairedHomeDevice = !!(home.data?.enabled && home.data.devices.length > 0);
+
   return (
     <div className="space-y-6">
       <Section title="Models and reasoning">
@@ -61,14 +63,12 @@ export function ModelsSettings() {
               data={models.data}
               selection={draft?.selection ?? models.data.selection ?? {}}
               disabled={saving}
+              canSave={!!draft && !saving && draft.revision === models.data.revision}
+              saving={saving}
               homeEnabled={!!home.data?.enabled}
+              onSave={() => void saveSelection()}
               onChange={(next) => setDraft((current) => ({ selection: next, revision: current?.revision ?? models.data!.revision }))}
             />
-            <div className="mt-3">
-              <Button size="sm" variant="primary" disabled={!draft || saving || draft.revision !== models.data.revision} onClick={() => void saveSelection()}>
-                {saving ? "Saving…" : "Save models"}
-              </Button>
-            </div>
           </>
         )}
       </Section>
@@ -81,7 +81,7 @@ export function ModelsSettings() {
       )}
 
       <HomeConnectorSettings />
-      <ApiKeysSettings hasHomeChat={hasSelectedHomeChat(models.data) || !!home.data?.enabled} onKeySaved={(provider) => setSavedProvider({ id: provider.provider, label: provider.label })} />
+      <ApiKeysSettings hasHomeChat={hasSelectedHomeChat(models.data) || hasPairedHomeDevice} onKeySaved={(provider) => setSavedProvider({ id: provider.provider, label: provider.label })} />
     </div>
   );
 }
@@ -90,11 +90,14 @@ export function hasSelectedHomeChat(data?: ModelSettings): boolean {
   return !!data?.selection.chat_profile_id && (data.selection.home_only === true || data.selection.chat_profile_id.startsWith("home-") || data.model_profiles?.profiles.some((profile) => profile.id === data.selection.chat_profile_id && profile.backend === "home"));
 }
 
-function ModelSelectors({ data, selection, disabled, homeEnabled, onChange }: {
+function ModelSelectors({ data, selection, disabled, canSave, saving, homeEnabled, onSave, onChange }: {
   data: ModelSettings;
   selection: ModelSelection;
   disabled: boolean;
+  canSave: boolean;
+  saving: boolean;
   homeEnabled: boolean;
+  onSave: () => void;
   onChange: (next: ModelSelection) => void;
 }) {
   const profiles = data.model_profiles?.profiles ?? [];
@@ -102,31 +105,40 @@ function ModelSelectors({ data, selection, disabled, homeEnabled, onChange }: {
     return <Empty>Add an API key or connect a home computer to choose models.</Empty>;
   }
 
+  const homeWorkInvalid = !!selection.home_only && !!selection.task_profile_id && profiles.find((profile) => profile.id === selection.task_profile_id)?.backend !== "home";
+
   return (
-    <div className="grid gap-4 rounded-card border border-card-border bg-surface p-4 sm:grid-cols-2">
-      <LaneSelector
-        label="Chat"
-        profiles={profiles.filter((profile) => profile.lanes.includes("chat"))}
-        selectedId={selection.chat_profile_id}
-        reasoning={selection.chat_reasoning}
-        homeOnly={!!selection.home_only}
-        disabled={disabled}
-        onChange={(id, effort) => onChange({ ...selection, chat_profile_id: id, chat_reasoning: effort })}
-      />
-      {(homeEnabled || selection.home_only) && <label className="flex items-start gap-3 sm:col-span-2">
+    <div className="space-y-4 rounded-card border border-card-border bg-surface p-4">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <LaneSelector
+          label="Chat"
+          profiles={profiles.filter((profile) => profile.lanes.includes("chat"))}
+          selectedId={selection.chat_profile_id}
+          reasoning={selection.chat_reasoning}
+          homeOnly={!!selection.home_only}
+          disabled={disabled}
+          onChange={(id, effort) => onChange({ ...selection, chat_profile_id: id, chat_reasoning: effort })}
+        />
+        <LaneSelector
+          label="Work"
+          profiles={profiles.filter((profile) => profile.lanes.includes("task"))}
+          selectedId={selection.task_profile_id}
+          reasoning={selection.task_reasoning}
+          homeOnly={!!selection.home_only}
+          disabled={disabled}
+          onChange={(id, effort) => onChange({ ...selection, task_profile_id: id, task_reasoning: effort })}
+        />
+      </div>
+      {(homeEnabled || selection.home_only) && <label className="flex items-start gap-3 border-t border-hairline pt-4">
         <input type="checkbox" className="mt-1 accent-[var(--accent)]" checked={!!selection.home_only} disabled={disabled || (!selection.home_only && profiles.find((profile) => profile.id === selection.chat_profile_id)?.backend !== "home")} onChange={(event) => onChange({ ...selection, home_only: event.target.checked })} />
         <span><span className="block text-row font-semibold">Use home models only</span><span className="text-meta text-ink-2">Model requests use your home computer. Nori still stores your conversations.</span></span>
       </label>}
-      {selection.home_only && selection.task_profile_id && profiles.find((profile) => profile.id === selection.task_profile_id)?.backend !== "home" && <div className="sm:col-span-2"><Notice tone="warning">Choose a home Work model or clear the Work model before saving.</Notice></div>}
-      <LaneSelector
-        label="Work"
-        profiles={profiles.filter((profile) => profile.lanes.includes("task"))}
-        selectedId={selection.task_profile_id}
-        reasoning={selection.task_reasoning}
-        homeOnly={!!selection.home_only}
-        disabled={disabled}
-        onChange={(id, effort) => onChange({ ...selection, task_profile_id: id, task_reasoning: effort })}
-      />
+      {homeWorkInvalid && <Notice tone="warning">Choose a home Work model or clear the Work model before saving.</Notice>}
+      <div>
+        <Button size="sm" variant="primary" disabled={!canSave || homeWorkInvalid} onClick={onSave}>
+          {saving ? "Saving…" : "Save models"}
+        </Button>
+      </div>
     </div>
   );
 }

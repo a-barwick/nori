@@ -13,6 +13,7 @@ import { MemorySearchControls, useMemorySearch } from "../MemorySearchControls";
 import { Confirm, Empty, Failure, Loading, Notice, Pill, Row, Rows, Section } from "../ui";
 import { MemoryFactForm, useVersionedMemoryMutation } from "./MemoryFactForm";
 import {
+  formatLogDate,
   memoryHitHref,
   messageJumpHref,
   provenanceInfo,
@@ -40,6 +41,7 @@ export function DailyLogsTab({
   onJump: (href: string) => void;
 }) {
   const mutation = useVersionedMemoryMutation();
+  const [promotedKeys, setPromotedKeys] = useState<Set<string>>(() => new Set());
   const [reviewingKey, setReviewingKey] = useState<string>();
   const [promoteText, setPromoteText] = useState("");
   const [promoteSection, setPromoteSection] = useState("");
@@ -94,10 +96,13 @@ export function DailyLogsTab({
       ...(promotePinned ? { pinned: true } : {}),
     };
     const result = await runLogAction(`promote:${log.date}:${entry.id}`, log, entry, value, "Promoted to Core Memory.");
-    if (result) setReviewingKey(undefined);
+    if (result) {
+      setPromotedKeys((prev) => new Set(prev).add(`${log.date}:${entry.id}`));
+      setReviewingKey(undefined);
+    }
   };
 
-  const quickPromote = (log: MemoryLog, entry: MemoryLogEntry) => {
+  const quickPromote = async (log: MemoryLog, entry: MemoryLogEntry) => {
     if (requiresReauthorForPromote(entry.provenance)) {
       openPromoteReview(log.date, entry);
       return;
@@ -107,7 +112,10 @@ export function DailyLogsTab({
       ...(entry.about ? { about: entry.about } : {}),
       ...(entry.section ? { section: entry.section } : {}),
     };
-    void runLogAction(`promote:${log.date}:${entry.id}`, log, entry, value, "Promoted to Core Memory.");
+    const result = await runLogAction(`promote:${log.date}:${entry.id}`, log, entry, value, "Promoted to Core Memory.");
+    if (result) {
+      setPromotedKeys((prev) => new Set(prev).add(`${log.date}:${entry.id}`));
+    }
   };
 
   const forgetEntry = (log: MemoryLog, entry: MemoryLogEntry) =>
@@ -144,7 +152,7 @@ export function DailyLogsTab({
                     detail={[
                       hit.section,
                       hit.about ? `About ${hit.about}` : "",
-                      hit.log_date ?? "",
+                      hit.log_date ? formatLogDate(hit.log_date) : "",
                       relative(hit.updated_at ?? hit.created_at),
                     ]
                       .filter(Boolean)
@@ -182,14 +190,15 @@ export function DailyLogsTab({
             items.map((log) => (
               <Section
                 key={log.date}
-                title={log.date}
+                title={formatLogDate(log.date)}
                 actions={<span className="text-caption text-ink-3">{plural(log.entries.length, "entry", "entries")}</span>}
               >
                 <div id={`log-date-${log.date}`}>
                   {log.entries.length ? (
-                    <Rows label={`Entries for ${log.date}`}>
+                    <Rows label={`Entries for ${formatLogDate(log.date)}`}>
                       {log.entries.map((entry) => {
                         const key = `${log.date}:${entry.id}`;
+                        const isPromoted = Boolean((entry as MemoryLogEntry & { promoted?: boolean }).promoted) || promotedKeys.has(key);
                         const prov = provenanceInfo(entry.provenance);
                         const needsReview = requiresReauthorForPromote(entry.provenance);
                         const reviewing = reviewingKey === key;
@@ -205,15 +214,9 @@ export function DailyLogsTab({
                             className={cn("px-4 py-3.5", selected && "bg-accent-subtle/40 ring-1 ring-inset ring-accent")}
                           >
                             <div className="space-y-2">
-                              <div className="flex flex-wrap items-start justify-between gap-2">
-                                <p className="min-w-0 flex-1 whitespace-pre-wrap text-body text-ink [overflow-wrap:anywhere]">
-                                  {entry.text}
-                                </p>
-                                <div className="flex flex-wrap items-center gap-1.5">
-                                  <Pill tone={prov.tone}>{prov.label}</Pill>
-                                  {entry.section && <Pill>{entry.section}</Pill>}
-                                </div>
-                              </div>
+                              <p className="whitespace-pre-wrap text-body text-ink [overflow-wrap:anywhere]">
+                                {entry.text}
+                              </p>
 
                               {entry.source_text && (
                                 <blockquote className="border-l-2 border-hairline-strong pl-2.5 text-caption text-ink-2 [overflow-wrap:anywhere]">
@@ -223,6 +226,9 @@ export function DailyLogsTab({
 
                               <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
                                 <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-caption text-ink-3">
+                                  {isPromoted && <span className="font-semibold text-ok">In Core</span>}
+                                  {entry.section && <span>{entry.section}</span>}
+                                  <span>{prov.label}</span>
                                   {entry.about && <span>About {entry.about}</span>}
                                   <span>{relative(entry.created_at)}</span>
                                   {jumpToChat && (
@@ -243,14 +249,16 @@ export function DailyLogsTab({
                                 </span>
 
                                 <div className="flex flex-wrap items-center gap-1">
-                                  <Button
-                                    size="sm"
-                                    variant="quiet"
-                                    disabled={!!busyThis}
-                                    onClick={() => quickPromote(log, entry)}
-                                  >
-                                    {needsReview ? "Review & promote" : "Promote to Core"}
-                                  </Button>
+                                  {!isPromoted && (
+                                    <Button
+                                      size="sm"
+                                      variant="quiet"
+                                      disabled={!!busyThis}
+                                      onClick={() => void quickPromote(log, entry)}
+                                    >
+                                      {needsReview ? "Review & promote" : "Promote to Core"}
+                                    </Button>
+                                  )}
                                   <Confirm
                                     danger
                                     title="Forget this log entry?"
@@ -268,13 +276,13 @@ export function DailyLogsTab({
 
                               {reviewing && (
                                 <MemoryFactForm
-                                  className="mt-3 rounded-tile border border-hairline-strong bg-fill-1/40 p-3.5"
+                                  className="mt-3 border-t border-hairline pt-3.5"
                                   banner={
                                     <Notice tone="warning">
-                                      Task outcomes never enter Core Memory automatically. Review or re-author the text below to save it as an explicit memory.
+                                      Task outcomes require your confirmation before joining Core Memory. Review or edit the text below to save it.
                                     </Notice>
                                   }
-                                  heading="Re-authored Core Memory text"
+                                  heading="Core Memory text"
                                   text={promoteText}
                                   onTextChange={setPromoteText}
                                   textAriaLabel="Promote text to Core Memory"
@@ -312,7 +320,7 @@ export function DailyLogsTab({
                       })}
                     </Rows>
                   ) : (
-                    <Empty>No entries left for {log.date}.</Empty>
+                    <Empty>No entries left for {formatLogDate(log.date)}.</Empty>
                   )}
                 </div>
               </Section>

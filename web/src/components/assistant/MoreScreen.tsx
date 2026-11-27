@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Activity, BarChart3, Brain, History, KeyRound, LayoutGrid, Monitor, Moon, RotateCcw, ShieldCheck, SlidersHorizontal, Sun, UserCircle } from "lucide-react";
+import { Activity, BarChart3, Brain, History, LayoutGrid, Monitor, Moon, RotateCcw, ShieldCheck, SlidersHorizontal, Sparkles, Sun, UserCircle } from "lucide-react";
 import { appearanceLabel, useAppearance, type NoriAppearance } from "@/lib/appearance";
 import type { ModelKeysResponse, ModelSettings } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
@@ -22,7 +22,7 @@ const APPEARANCE_ICON: Record<NoriAppearance, typeof Monitor> = {
   dark: Moon,
 };
 
-export function MoreScreen() {
+export function MoreScreen({ userEmail }: { userEmail?: string } = {}) {
   const { has, runtime, localMode } = useAssistant();
   const summary = useSummary();
   const [appearance] = useAppearance();
@@ -41,7 +41,6 @@ export function MoreScreen() {
   const connectedCount =
     mcpItems.filter((s) => s.observed.status === "connected").length +
     connItems.filter((c) => c.status === "connected").length;
-  const totalApps = mcpItems.length + connItems.length;
   const appsAttention = summary.apps_attention ?? 0;
 
   const coreFacts = memory.data?.items ?? [];
@@ -88,7 +87,7 @@ export function MoreScreen() {
               </span>
             }
             title="Apps & MCP"
-            detail={totalApps > 0 ? `${connectedCount} connected` : undefined}
+            detail={connectedCount > 0 ? `${connectedCount} connected` : undefined}
             trailing={appsAttention > 0 ? <Pill tone="warning">{appsAttention} attention</Pill> : undefined}
           />
           <Row
@@ -133,7 +132,7 @@ export function MoreScreen() {
                 <BarChart3 size={18} strokeWidth={1.85} aria-hidden />
               </span>
             }
-            title="API costs"
+            title="API Costs"
           />
           <Row
             href="/settings/appearance"
@@ -149,17 +148,17 @@ export function MoreScreen() {
             href="/settings/models"
             leading={
               <span className="grid size-9 place-items-center rounded-[10px] bg-fill-1 text-ink-2">
-                <KeyRound size={18} strokeWidth={1.85} aria-hidden />
+                <Sparkles size={18} strokeWidth={1.85} aria-hidden />
               </span>
             }
             title="Models"
-            detail={configuredKeysCount > 0 ? plural(configuredKeysCount, "configured") : undefined}
+            detail={configuredKeysCount > 0 ? `${configuredKeysCount} configured` : undefined}
             trailing={requiresByok ? <Pill tone="warning">Required</Pill> : undefined}
           />
           <Row
             href="/settings/reset"
             leading={<span className="grid size-9 place-items-center rounded-[10px] bg-danger-bg text-danger"><RotateCcw size={18} strokeWidth={1.85} aria-hidden /></span>}
-            title="Reset data"
+            title="Reset Data"
           />
         </Rows>
       </Section>
@@ -174,8 +173,7 @@ export function MoreScreen() {
               </span>
             }
             title="Account"
-            detail={localMode ? "Local" : undefined}
-            trailing={degradedPill ? <Pill tone={degradedPill.tone}>{degradedPill.label}</Pill> : undefined}
+            detail={userEmail || (localMode ? "Local" : undefined)}
           />
           <Row
             href="/settings/history"
@@ -194,7 +192,7 @@ export function MoreScreen() {
               </span>
             }
             title="Diagnostics"
-            detail={degradedPill ? degradedPill.label : undefined}
+            trailing={degradedPill ? <Pill tone={degradedPill.tone}>{degradedPill.label}</Pill> : undefined}
           />
         </Rows>
       </Section>

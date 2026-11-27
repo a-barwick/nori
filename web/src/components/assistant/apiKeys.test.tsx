@@ -164,7 +164,7 @@ describe("BYOK API Keys client and Settings UI", () => {
       <ApiKeysContent data={requiredUnconfiguredData} onProviderUpdated={() => {}} />,
     );
     assert.match(requiredHtml, /Add your Vercel AI Gateway API key below/);
-    assert.match(requiredHtml, /Not configured/);
+    assert.match(requiredHtml, /Not set/);
     assert.match(requiredHtml, /Add key/);
 
     const editingHtml = renderToStaticMarkup(

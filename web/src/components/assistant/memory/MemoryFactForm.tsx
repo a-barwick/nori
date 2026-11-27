@@ -38,8 +38,8 @@ export function ByteCounter({ text }: { text: string }) {
   const bytes = utf8Bytes(text.trim());
   const over = bytes > MAX_MEMORY_TEXT_BYTES;
   return (
-    <span className={cn("font-mono text-caption", over ? "text-danger" : "text-ink-3")}>
-      {bytes.toLocaleString()} / {MAX_MEMORY_TEXT_BYTES.toLocaleString()} B
+    <span className={cn("font-mono text-caption tabular-nums", over ? "text-danger" : "text-ink-3")}>
+      {bytes.toLocaleString()} / {MAX_MEMORY_TEXT_BYTES.toLocaleString()}
     </span>
   );
 }

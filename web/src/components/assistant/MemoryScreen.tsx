@@ -7,8 +7,8 @@ import { ArrowDownToLine, ArrowUpRight, Pencil, Pin, PinOff, Plus, Search } from
 import { Button } from "@/components/ui/primitives";
 import { mutate, newRequestID } from "@/lib/assistant/api";
 import { useAssistantConfig } from "@/lib/assistant/context";
-import { plural, relative } from "@/lib/assistant/format";
-import { useResource, useResourceInvalidation } from "@/lib/assistant/useResource";
+import { relative } from "@/lib/assistant/format";
+import { useResource } from "@/lib/assistant/useResource";
 import type { MemoryAction, MemoryFact, MemoryLog, WorkingMemory } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
 import { DailyLogsTab } from "./memory/DailyLogsTab";
@@ -36,7 +36,6 @@ import {
   Notice,
   NotYet,
   Pill,
-  RefreshButton,
   Rows,
   Screen,
   UnderlineTabs,
@@ -66,7 +65,6 @@ export {
 type List<T> = { items: T[] };
 
 export function MemoryScreen() {
-  const invalidate = useResourceInvalidation();
   const { has } = useAssistantConfig();
   const params = useSearchParams();
   const router = useRouter();
@@ -117,33 +115,21 @@ export function MemoryScreen() {
     );
   }
 
-  const refreshAll = () => {
-    invalidate("/memory");
-  };
-
   const openAdd = () => {
     setAdding(true);
     if (tab !== "core") selectTab("core");
   };
-
-  const summaryLine = coreItems.length
-    ? `${plural(coreItems.length, "core memory", "core memories")} · ${formatByteBudget(budget.used, budget.budget)} used.`
-    : "What Nori remembers across chats, daily logs, and your active session.";
 
   return (
     <Screen
       title="Memory"
       back="/more"
       backLabel="More"
-      line={summaryLine}
       actions={
-        <>
-          <Button variant="primary" size="sm" onClick={openAdd}>
-            <Plus size={15} aria-hidden />
-            Add memory
-          </Button>
-          <RefreshButton onClick={refreshAll} busy={core.refreshing || logs.refreshing || working.refreshing} />
-        </>
+        <Button variant="primary" size="sm" onClick={openAdd}>
+          <Plus size={15} aria-hidden />
+          Add memory
+        </Button>
       }
       tabs={
         <UnderlineTabs
@@ -312,16 +298,15 @@ function CoreMemoryTab({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-card border border-hairline bg-surface p-4">
+      <div className="rounded-card border border-card-border bg-surface p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <span className="text-meta font-medium text-ink">Core budget</span>
             <Pill tone={budget.tone}>{formatByteBudget(budget.used, budget.budget)}</Pill>
           </div>
-          <span className="text-caption text-ink-3">
-            {plural(items.length, "fact")}
-            {pinnedCount ? ` · ${pinnedCount} pinned` : ""}
-          </span>
+          {pinnedCount > 0 && (
+            <span className="text-caption text-ink-3">{pinnedCount} pinned</span>
+          )}
         </div>
         <div
           className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-fill-1"
@@ -334,13 +319,13 @@ function CoreMemoryTab({
           <div className={cn("h-full rounded-full transition-[width]", barColor)} style={{ width: `${Math.round(budget.ratio * 100)}%` }} />
         </div>
         <p className="mt-2 text-caption text-ink-3">
-          Always loaded into chat context. Pinned items stay in Core; unpinned overflow moves to Daily Logs automatically.
+          Loaded into every chat. Pinned items stay in Core; older unpinned items move to Daily Logs when full.
         </p>
       </div>
 
       {adding && (
         <MemoryFactForm
-          className="rounded-card border border-hairline-strong bg-surface p-4"
+          className="rounded-card border border-card-border bg-surface p-4"
           heading="Add memory"
           headingAs="h2"
           text={newText}
@@ -354,7 +339,7 @@ function CoreMemoryTab({
           onAboutChange={setNewAbout}
           pinned={newPinned}
           onPinnedChange={setNewPinned}
-          pinnedLabel="Pin this memory (never auto-demoted during consolidation)"
+          pinnedLabel="Pin in Core Memory"
           validationError={newText.trim().length > 0 && !createValidation.ok ? createValidation.reason : undefined}
           submitLabel="Save memory"
           submittingLabel="Saving…"
@@ -424,11 +409,7 @@ function CoreMemoryTab({
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <p className="min-w-0 flex-1 whitespace-pre-wrap text-body text-ink [overflow-wrap:anywhere]">{fact.text}</p>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {fact.pinned && <Pill tone="accent">Pinned</Pill>}
-                        <Pill tone={prov.tone}>{prov.label}</Pill>
-                        {fact.section && <Pill>{fact.section}</Pill>}
-                      </div>
+                      {fact.pinned && <Pill tone="accent">Pinned</Pill>}
                     </div>
 
                     {fact.source_text && (
@@ -439,6 +420,8 @@ function CoreMemoryTab({
 
                     <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
                       <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-caption text-ink-3">
+                        {fact.section && <span>{fact.section}</span>}
+                        <span>{prov.label}</span>
                         {fact.about && <span>About {fact.about}</span>}
                         <span>Saved {relative(fact.created_at)}</span>
                         {fact.updated_at && fact.updated_at !== fact.created_at && (
@@ -483,7 +466,7 @@ function CoreMemoryTab({
                           onClick={() => void factAction(fact, "demote")}
                         >
                           <ArrowDownToLine size={14} aria-hidden />
-                          Demote to log
+                          Move to log
                         </Button>
                         <Confirm
                           danger

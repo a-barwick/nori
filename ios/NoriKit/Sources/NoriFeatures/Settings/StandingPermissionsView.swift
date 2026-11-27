@@ -2,29 +2,60 @@ import SwiftUI
 import NoriCore
 import NoriDesign
 
+private enum PermissionEffectFilter: Hashable, CaseIterable {
+    case all
+    case deny
+    case ask
+    case allow
+
+    var label: String {
+        switch self {
+        case .all: return "All"
+        case .deny: return "Never allow"
+        case .ask: return "Ask first"
+        case .allow: return "Allow automatically"
+        }
+    }
+
+    var effect: PermissionRule.RuleEffect? {
+        switch self {
+        case .all: return nil
+        case .deny: return .deny
+        case .ask: return .ask
+        case .allow: return .allow
+        }
+    }
+}
+
 public struct StandingPermissionsView: View {
     @Bindable private var store: NoriStore
     @State private var showingAddPermissionRule = false
     @State private var rulePendingRemoval: PermissionRule?
+    @State private var selectedFilter: PermissionEffectFilter = .all
+    @State private var isLoading = false
+    @State private var hasLoaded = false
+    @State private var loadError: String?
 
     public init(store: NoriStore) {
         self.store = store
     }
 
+    private var filteredRules: [PermissionRule] {
+        guard let effect = selectedFilter.effect else { return store.permissions }
+        return store.permissions.filter { $0.effect == effect }
+    }
+
     private var orderedPermissionGroups: [(effect: PermissionRule.RuleEffect, rules: [PermissionRule])] {
         let precedence: [PermissionRule.RuleEffect] = [.deny, .ask, .allow]
         return precedence.compactMap { effect in
-            let matched = store.permissions.filter { $0.effect == effect }
+            let matched = filteredRules.filter { $0.effect == effect }
             return matched.isEmpty ? nil : (effect, matched)
         }
     }
 
-    private func pillTone(for effect: PermissionRule.RuleEffect) -> NoriTone {
-        switch effect {
-        case .deny: return .danger
-        case .ask: return .warning
-        case .allow: return .ok
-        }
+    private func count(for filter: PermissionEffectFilter) -> Int {
+        guard let effect = filter.effect else { return store.permissions.count }
+        return store.permissions.filter { $0.effect == effect }.count
     }
 
     public var body: some View {
@@ -37,35 +68,58 @@ public struct StandingPermissionsView: View {
                     systemImage: "shield.lefthalf.filled"
                 )
 
-                if store.permissions.isEmpty {
+                if let loadError {
+                    NoriNotice(title: "Could not load permissions", detail: loadError, tone: .danger) {
+                        Button("Retry") {
+                            Task { await loadPermissions() }
+                        }
+                        .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                    }
+                }
+
+                if isLoading && !hasLoaded && store.permissions.isEmpty {
                     NoriCard {
-                        Text("No custom rules yet. Nori asks before each change or external send.")
-                            .font(NoriTypography.meta)
-                            .foregroundStyle(NoriColors.ink2)
+                        HStack(spacing: 10) {
+                            ProgressView().tint(NoriColors.accent)
+                            Text("Loading standing permissions…")
+                                .font(NoriTypography.meta)
+                                .foregroundStyle(NoriColors.ink2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } else if store.permissions.isEmpty {
+                    NoriEmptyState(
+                        title: "No standing permissions",
+                        message: "Nori asks before each change or send."
+                    ) {
+                        Button("Add rule") {
+                            showingAddPermissionRule = true
+                        }
+                        .buttonStyle(NoriButtonStyle(.primary, compact: true))
                     }
                 } else {
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(orderedPermissionGroups, id: \.effect) { group in
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(group.effect.displayLabel)
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(NoriColors.ink3)
-                                    .padding(.leading, 4)
+                    effectFilterBar
 
-                                NoriRows {
-                                    ForEach(Array(group.rules.enumerated()), id: \.element.id) { index, rule in
-                                        let isLast = index == group.rules.count - 1
-                                        NoriRow(
-                                            title: rule.summary ?? rule.title ?? "Permission rule",
-                                            detail: permissionDetail(for: rule),
-                                            showDivider: !isLast,
-                                            wrapTitle: true
-                                        ) {
-                                            HStack(spacing: 6) {
-                                                NoriPill(
-                                                    rule.effect.badgeLabel,
-                                                    tone: pillTone(for: rule.effect)
-                                                )
+                    if orderedPermissionGroups.isEmpty {
+                        NoriEmptyState(
+                            title: "No \(selectedFilter.label.lowercased()) rules",
+                            message: "Choose another filter or add a new rule."
+                        )
+                    } else {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(orderedPermissionGroups, id: \.effect) { group in
+                                VStack(alignment: .leading, spacing: 0) {
+                                    NoriSectionHeader(group.effect.displayLabel)
+
+                                    NoriRows {
+                                        ForEach(Array(group.rules.enumerated()), id: \.element.id) { index, rule in
+                                            let isLast = index == group.rules.count - 1
+                                            NoriRow(
+                                                title: rule.summary ?? rule.title ?? "Permission rule",
+                                                detail: permissionDetail(for: rule),
+                                                showDivider: !isLast,
+                                                wrapTitle: true
+                                            ) {
                                                 Button {
                                                     rulePendingRemoval = rule
                                                 } label: {
@@ -90,8 +144,11 @@ public struct StandingPermissionsView: View {
             .padding(.top, 12)
             .padding(.bottom, 96)
         }
+        .task {
+            await loadPermissions()
+        }
         .refreshable {
-            await store.refreshPermissionsAndPreferences()
+            await loadPermissions()
         }
         .background(NoriColors.canvas)
         .navigationTitle("Standing Permissions")
@@ -110,7 +167,7 @@ public struct StandingPermissionsView: View {
         }
         .sheet(isPresented: $showingAddPermissionRule) {
             AddPermissionRuleSheet(store: store)
-                .presentationDetents([.large])
+                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
                 .presentationBackground(NoriColors.sheetBackground)
                 .presentationCornerRadius(NoriRadius.sheet)
@@ -135,6 +192,75 @@ public struct StandingPermissionsView: View {
         }
     }
 
+    private var effectFilterBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(PermissionEffectFilter.allCases, id: \.self) { filter in
+                    let isSelected = selectedFilter == filter
+                    let itemCount = count(for: filter)
+                    Button {
+                        selectedFilter = filter
+                    } label: {
+                        HStack(spacing: 5) {
+                            Text(filter.label)
+                            if itemCount > 0 {
+                                Text("\(itemCount)")
+                                    .foregroundStyle(isSelected ? NoriColors.chipSelectedFg.opacity(0.8) : NoriColors.ink3)
+                            }
+                        }
+                        .font(NoriTypography.caption)
+                        .foregroundStyle(isSelected ? NoriColors.chipSelectedFg : NoriColors.ink2)
+                        .padding(.horizontal, 12)
+                        .frame(height: 30)
+                        .background(
+                            isSelected ? NoriColors.chipSelectedBg : NoriColors.fill1,
+                            in: Capsule()
+                        )
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(
+                                    isSelected ? NoriColors.chipSelectedBorder : NoriColors.cardBorder,
+                                    lineWidth: 1
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func loadPermissions() async {
+        isLoading = true
+        loadError = nil
+        defer { isLoading = false }
+        do {
+            try await store.refreshPermissionsThrowing()
+            hasLoaded = true
+        } catch is CancellationError {
+            return
+        } catch {
+            loadError = error.localizedDescription
+        }
+    }
+
+    private func resolveConnectionLabel(_ id: String) -> String {
+        if id == "*" {
+            return "All tools & MCP servers"
+        }
+        if let conn = store.connections.first(where: { $0.id == id }) {
+            let label = [conn.title, conn.account?.label]
+                .compactMap { $0 }
+                .filter { !$0.isEmpty }
+                .joined(separator: " · ")
+            return label.isEmpty ? conn.title : label
+        }
+        if let server = store.mcpServers.first(where: { $0.id == id }) {
+            return server.name
+        }
+        return "Connected app"
+    }
+
     private func permissionDetail(for rule: PermissionRule) -> String {
         var parts: [String] = []
         if !rule.actionClasses.isEmpty {
@@ -143,7 +269,8 @@ public struct StandingPermissionsView: View {
         if rule.connectionIDs.contains("*") {
             parts.append("All tools & MCP servers")
         } else if !rule.connectionIDs.isEmpty {
-            parts.append(rule.connectionIDs.joined(separator: ", "))
+            let resolved = rule.connectionIDs.map(resolveConnectionLabel)
+            parts.append(resolved.joined(separator: ", "))
         }
         if rule.automationID != nil {
             parts.append("Routine")
@@ -162,11 +289,13 @@ private struct AddPermissionRuleSheet: View {
     @Bindable var store: NoriStore
     @Environment(\.dismiss) private var dismiss
 
-    @State private var effect: PermissionRule.RuleEffect = .ask
+    @State private var effect: PermissionRule.RuleEffect = .allow
     @State private var targetConnectionID: String = "*"
-    @State private var toolIDInput: String = "*"
-    @State private var selectedClasses: Set<Effect> = [.sensitiveSend]
+    @State private var toolIDInput: String = ""
+    @State private var selectedClasses: Set<Effect> = [.reversibleWrite]
     @State private var recipientsInput: String = ""
+    @State private var hasExpiry: Bool = false
+    @State private var expiryDate: Date = Calendar.current.date(byAdding: .day, value: 30, to: Date()) ?? Date()
     @State private var isSaving: Bool = false
 
     private let selectableEffects: [Effect] = [.read, .reversibleWrite, .sensitiveSend, .unknown]
@@ -178,7 +307,7 @@ private struct AddPermissionRuleSheet: View {
                 .compactMap { $0 }
                 .filter { !$0.isEmpty }
                 .joined(separator: " · ")
-            options.append((conn.id, label.isEmpty ? conn.id : label))
+            options.append((conn.id, label.isEmpty ? conn.title : label))
         }
         for server in store.mcpServers {
             options.append((server.id, "\(server.name) (MCP)"))
@@ -214,27 +343,33 @@ private struct AddPermissionRuleSheet: View {
     }
 
     private var targetDisplayName: String {
-        targetOptions.first(where: { $0.id == targetConnectionID })?.label ?? targetConnectionID
+        targetOptions.first(where: { $0.id == targetConnectionID })?.label ?? "this account"
+    }
+
+    private func actionPhrase(for actionClass: Effect) -> String {
+        switch actionClass {
+        case .read: return "read"
+        case .reversibleWrite: return "make undoable changes"
+        case .sensitiveSend: return "send"
+        case .unknown: return "use tools with custom actions"
+        case .control: return "run control actions"
+        }
     }
 
     private var previewText: String {
-        let prefix: String
+        let actions = orderedClasses.map(actionPhrase).joined(separator: " or ")
+        let actionPart = actions.isEmpty ? "act" : actions
+        let recipientClause = selectedClasses.contains(.sensitiveSend) && !parsedRecipients.isEmpty
+            ? " to \(parsedRecipients.joined(separator: ", "))"
+            : ""
         switch effect {
-        case .allow: prefix = "Nori will allow automatically:"
-        case .ask: prefix = "Nori will always ask first before:"
-        case .deny: prefix = "Nori will never allow:"
+        case .allow:
+            return "Nori will automatically \(actionPart) with \(targetDisplayName)\(recipientClause)."
+        case .ask:
+            return "Nori will always ask first before it can \(actionPart) with \(targetDisplayName)\(recipientClause)."
+        case .deny:
+            return "Nori will never \(actionPart) with \(targetDisplayName)\(recipientClause)."
         }
-        let actions = orderedClasses.map { $0.displayLabel.lowercased() }.joined(separator: ", ")
-        let tools = parsedToolIDs == ["*"] ? "any tool" : parsedToolIDs.joined(separator: ", ")
-        var summary = "\(prefix) \(actions.isEmpty ? "selected actions" : actions) using \(tools) on \(targetDisplayName)"
-        if selectedClasses.contains(.sensitiveSend) {
-            if !parsedRecipients.isEmpty {
-                summary += " to \(parsedRecipients.joined(separator: ", "))"
-            } else if effect != .allow {
-                summary += " to anyone"
-            }
-        }
-        return summary + "."
     }
 
     private func effectTone(_ value: PermissionRule.RuleEffect) -> NoriTone {
@@ -249,13 +384,6 @@ private struct AddPermissionRuleSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    NoriNotice(
-                        title: "Rule precedence",
-                        detail: "Never allow beats everything; Ask first always overrides Allow automatically.",
-                        tone: .neutral,
-                        systemImage: "shield.lefthalf.filled"
-                    )
-
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Rule behavior")
                             .font(NoriTypography.metaSemibold)
@@ -281,19 +409,18 @@ private struct AddPermissionRuleSheet: View {
                                                 .foregroundStyle(NoriColors.ink2)
                                         }
                                         .frame(maxWidth: .infinity, alignment: .leading)
-                                        NoriPill(option.badgeLabel, tone: tone)
                                     }
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 10)
                                     .background(
-                                        isSelected ? tone.background : NoriColors.surface,
+                                        isSelected ? tone.background : NoriColors.elevated,
                                         in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
                                     )
                                     .overlay(
                                         RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
                                             .strokeBorder(
-                                                isSelected ? tone.foreground : NoriColors.cardBorder,
-                                                lineWidth: isSelected ? 1.5 : 1
+                                                isSelected ? tone.border : NoriColors.cardBorder,
+                                                lineWidth: 1
                                             )
                                     )
                                     .contentShape(Rectangle())
@@ -317,29 +444,11 @@ private struct AddPermissionRuleSheet: View {
                         .tint(NoriColors.accent)
                         .padding(.horizontal, 12)
                         .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
-                        .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
-                    }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Tool ID (use * for all)")
-                            .font(NoriTypography.metaSemibold)
-                            .foregroundStyle(NoriColors.ink)
-                        TextField("* or gmail.send", text: $toolIDInput)
-                            .textFieldStyle(.plain)
-                            .font(NoriTypography.mono)
-                            .foregroundStyle(NoriColors.ink)
-                            .tint(NoriColors.accent)
-                            .autocorrectionDisabled()
-                            #if os(iOS)
-                            .textInputAutocapitalization(.never)
-                            #endif
-                            .padding(.horizontal, 12)
-                            .frame(height: 40)
-                            .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                        .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Action classes")
+                        Text("Actions")
                             .font(NoriTypography.metaSemibold)
                             .foregroundStyle(NoriColors.ink)
 
@@ -357,21 +466,21 @@ private struct AddPermissionRuleSheet: View {
                                     HStack(spacing: 6) {
                                         Image(systemName: isSelected ? "checkmark.square.fill" : "square")
                                             .font(.system(size: 13.5, weight: .semibold))
-                                            .foregroundStyle(isSelected ? NoriColors.accent : NoriColors.ink3)
+                                            .foregroundStyle(isSelected ? NoriColors.chipSelectedFg : NoriColors.ink3)
                                         Text(actionClass.displayLabel)
                                             .font(.system(size: 12.5, weight: .medium))
-                                            .foregroundStyle(NoriColors.ink)
+                                            .foregroundStyle(isSelected ? NoriColors.chipSelectedFg : NoriColors.ink)
                                             .lineLimit(1)
                                     }
                                     .padding(.horizontal, 10)
                                     .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
                                     .background(
-                                        isSelected ? NoriColors.selected : NoriColors.elevated,
+                                        isSelected ? NoriColors.chipSelectedBg : NoriColors.elevated,
                                         in: RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous)
                                     )
                                     .overlay(
                                         RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous)
-                                            .strokeBorder(isSelected ? NoriColors.accent : NoriColors.cardBorder, lineWidth: 1)
+                                            .strokeBorder(isSelected ? NoriColors.chipSelectedBorder : NoriColors.cardBorder, lineWidth: 1)
                                     )
                                 }
                                 .buttonStyle(.plain)
@@ -379,23 +488,65 @@ private struct AddPermissionRuleSheet: View {
                         }
                     }
 
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Specific tool (optional)")
+                            .font(NoriTypography.metaSemibold)
+                            .foregroundStyle(NoriColors.ink)
+                        TextField("Any tool, or mcp/server_id/tool_name", text: $toolIDInput)
+                            .textFieldStyle(.plain)
+                            .font(NoriTypography.mono)
+                            .foregroundStyle(NoriColors.ink)
+                            .tint(NoriColors.accent)
+                            .autocorrectionDisabled()
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never)
+                            #endif
+                            .padding(.horizontal, 12)
+                            .frame(height: 40)
+                            .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                    }
+
                     if selectedClasses.contains(.sensitiveSend) {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(effect == .allow ? "Recipients (required, or * for anyone)" : "Recipients (leave blank for anyone)")
+                            Text(effect == .allow ? "Only to" : "Only to (optional)")
                                 .font(NoriTypography.metaSemibold)
                                 .foregroundStyle(NoriColors.ink)
-                            TextField("sam@example.com, team@acme.com", text: $recipientsInput)
-                                .textFieldStyle(.plain)
+                            TextField(
+                                effect == .allow ? "sam@example.com, team@acme.com" : "Any recipient, or sam@example.com",
+                                text: $recipientsInput
+                            )
+                            .textFieldStyle(.plain)
+                            .foregroundStyle(NoriColors.ink)
+                            .tint(NoriColors.accent)
+                            .autocorrectionDisabled()
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.emailAddress)
+                            #endif
+                            .padding(.horizontal, 12)
+                            .frame(height: 40)
+                            .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle(isOn: $hasExpiry) {
+                            Text("Expires on a date")
+                                .font(NoriTypography.metaSemibold)
                                 .foregroundStyle(NoriColors.ink)
-                                .tint(NoriColors.accent)
-                                .autocorrectionDisabled()
-                                #if os(iOS)
-                                .textInputAutocapitalization(.never)
-                                .keyboardType(.emailAddress)
-                                #endif
-                                .padding(.horizontal, 12)
-                                .frame(height: 40)
-                                .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                        }
+                        .tint(NoriColors.brandPrimary)
+
+                        if hasExpiry {
+                            DatePicker(
+                                "Until",
+                                selection: $expiryDate,
+                                in: Date()...,
+                                displayedComponents: .date
+                            )
+                            .datePickerStyle(.compact)
+                            .tint(NoriColors.accent)
+                            .foregroundStyle(NoriColors.ink)
                         }
                     }
 
@@ -430,8 +581,10 @@ private struct AddPermissionRuleSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                         .foregroundStyle(NoriColors.ink2)
+                        .disabled(isSaving)
                 }
             }
+            .interactiveDismissDisabled(isSaving)
         }
     }
 
@@ -443,21 +596,34 @@ private struct AddPermissionRuleSheet: View {
         }
     }
 
+    private func endOfDayISO(_ date: Date) -> String {
+        var components = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        components.hour = 23
+        components.minute = 59
+        components.second = 59
+        let target = Calendar.current.date(from: components) ?? date
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.string(from: target)
+    }
+
     private func save() {
         isSaving = true
         let recipients: [String]?
         if selectedClasses.contains(.sensitiveSend) {
-            recipients = parsedRecipients.isEmpty ? ["*"] : parsedRecipients
+            recipients = parsedRecipients.isEmpty ? nil : parsedRecipients
         } else {
             recipients = nil
         }
+        let expiresAt = hasExpiry ? endOfDayISO(expiryDate) : nil
         let rule = PermissionRuleEditable(
             effect: effect,
             toolIDs: parsedToolIDs,
             connectionIDs: [targetConnectionID],
             resourceIDs: ["*"],
             actionClasses: orderedClasses,
-            recipients: recipients
+            recipients: recipients,
+            expiresAt: expiresAt
         )
         Task {
             let saved = await store.createPermissionRule(rule)
