@@ -14,4 +14,4 @@ var BrowserJS string
 //go:embed nori-watchdog
 var WatchdogSH string
 
-const Version = "v3"
+const Version = "v4"

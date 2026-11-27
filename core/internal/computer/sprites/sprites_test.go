@@ -282,6 +282,11 @@ func TestSpritesProviderExecAndBootstrapCanonicalHomeAndNPMPrefix(t *testing.T) 
 				mu.Lock()
 				return
 			}
+			// Drain the SDK's initial stdin-EOF frame before closing so sprites-go's
+			// wsAdapter.writeLoop finishes writing before readLoop closes the conn.
+			readCtx, readCancel := context.WithTimeout(r.Context(), 100*time.Millisecond)
+			_, _, _ = conn.Read(readCtx)
+			readCancel()
 			_ = conn.Write(r.Context(), websocket.MessageBinary, []byte{3, 0})
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 			mu.Lock()
