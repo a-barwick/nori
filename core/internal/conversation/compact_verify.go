@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"nori/internal/proactivity"
 	"nori/internal/state"
 	"nori/internal/state/docstore"
 )
@@ -37,10 +38,16 @@ func verifyFlushCoreUpserts(
 		if !ok || strings.TrimSpace(sourceText) == "" {
 			continue
 		}
+		if proactivity.IsUntrustedProactiveData(text) || proactivity.IsUntrustedProactiveData(quote) || proactivity.IsUntrustedProactiveData(sourceText) {
+			continue
+		}
 		if quote != "" && !strings.Contains(sourceText, quote) {
 			continue
 		}
 		if text == "" || len(text) > state.MaxMemoryText || !utf8.ValidString(text) {
+			continue
+		}
+		if proactivity.IsUntrustedProactiveData(text) || proactivity.IsUntrustedProactiveData(quote) {
 			continue
 		}
 		if !utf8.ValidString(about) || !utf8.ValidString(section) {
@@ -111,6 +118,9 @@ func verifyFlushLogEntries(
 		if text == "" || len(text) > state.MaxMemoryText || !utf8.ValidString(text) {
 			continue
 		}
+		if proactivity.IsUntrustedProactiveData(text) || proactivity.IsUntrustedProactiveData(quote) {
+			continue
+		}
 		if !utf8.ValidString(about) || !utf8.ValidString(section) {
 			continue
 		}
@@ -165,7 +175,7 @@ func extractiveFallbackEntries(batch []state.ConversationTurn, nowUTC time.Time)
 			if !in.IsUser() {
 				continue
 			}
-			text := strings.TrimSpace(in.Text)
+			text := strings.TrimSpace(proactivity.StripUntrustedProactiveData(in.Text))
 			if text == "" || !utf8.ValidString(text) {
 				continue
 			}
@@ -213,26 +223,43 @@ func compactionTurn(t state.ConversationTurn) (map[string]any, map[string]string
 	users := map[string]string{}
 	runs := map[string]bool{}
 	messages := []map[string]string{}
+	lowPriorityBrief := proactivity.IsBriefTurn(t)
 	for _, in := range t.Inputs {
 		switch {
 		case in.IsUser():
-			users[in.ID] = in.Text
-			messages = append(messages, map[string]string{"from": "user", "input_id": in.ID, "text": in.Text})
+			clean := proactivity.StripUntrustedProactiveData(in.Text)
+			if strings.TrimSpace(clean) == "" {
+				continue
+			}
+			users[in.ID] = clean
+			messages = append(messages, map[string]string{"from": "user", "input_id": in.ID, "text": clean})
 		case in.Event != nil:
+			if proactivity.IsProactiveEvent(in.Event) {
+				// Exclude tainted proactive brief/watch content from memory
+				// extraction and AutoDream: do not expose its run_id or text.
+				continue
+			}
 			if in.Event.RunID != "" {
 				runs[in.Event.RunID] = true
 			}
-			text := in.Event.Text
+			text := proactivity.StripUntrustedProactiveData(in.Event.Text)
 			if len(text) > 600 {
 				text = docstore.ClipUTF8(text, 600)
 			}
 			messages = append(messages, map[string]string{"from": "task " + in.Event.RunID, "run_id": in.Event.RunID, "event": in.Event.Kind, "text": strings.ToValidUTF8(text, "")})
 		}
 	}
-	if reply := publishedReply(t); reply != "" {
-		messages = append(messages, map[string]string{"from": "Nori", "text": reply})
+	if !lowPriorityBrief {
+		if reply := proactivity.StripUntrustedProactiveData(publishedReply(t)); reply != "" {
+			messages = append(messages, map[string]string{"from": "Nori", "text": reply})
+		}
 	}
-	return map[string]any{"started_at": t.StartedAt, "messages": messages}, users, runs
+	view := map[string]any{"started_at": t.StartedAt, "messages": messages}
+	if lowPriorityBrief {
+		view["priority"] = "low"
+		view["kind"] = "brief"
+	}
+	return view, users, runs
 }
 
 func publishedReply(t state.ConversationTurn) string {

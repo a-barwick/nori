@@ -37,9 +37,12 @@ locals {
     NORI_SERVICE_TOKEN_KEY = "nori-service-token-key:latest"
   }
 
-  # Core and Worker also serve the Google connection and Home AI.
+  # Core and Worker also serve the Google connection, Home AI, and APNs push.
   feature_env = merge(
     {
+      NORI_APNS_BUNDLE_ID                = "com.nori.ios"
+      NORI_APNS_KEY_ID                   = lookup(local.private, "apns_key_id", "")
+      NORI_APNS_TEAM_ID                  = lookup(local.private, "apns_team_id", "")
       NORI_COMPUTER_MAX_DISK_GB          = "10"
       NORI_COMPUTER_MEMORY_WATCHDOG_MB   = "3072"
       NORI_COMPUTER_PROVIDER             = local.computer_provider
@@ -59,6 +62,7 @@ locals {
   )
   feature_secrets = merge(
     {
+      NORI_APNS_PRIVATE_KEY               = "nori-apns-private-key:latest"
       NORI_GOOGLE_WORKSPACE_CLIENT_SECRET = "nori-google-workspace-beta-client-secret:1"
       NORI_HOME_AI_KEY                    = "nori-home-ai-key:1"
     },

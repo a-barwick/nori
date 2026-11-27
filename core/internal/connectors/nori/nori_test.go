@@ -170,4 +170,45 @@ func TestAutomationCreatePrepareAndExecute(t *testing.T) {
 			t.Fatalf("summary = %q, leaked internal copy or raw UTC", prepared.Summary)
 		}
 	})
+
+	t.Run("automation_origin_cannot_create_or_change_automations", func(t *testing.T) {
+		createCall := invoke.Call{
+			RunID:       "run-auto-1",
+			Revision:    1,
+			OperationID: "op-auto-create",
+			Origin:      invoke.OriginAutomation,
+			Exec:        exec,
+			Args: map[string]any{
+				"title":       "Self-spawning routine",
+				"instruction": "Loop forever",
+				"trigger":     map[string]any{"kind": "once", "at": "2026-11-25T20:00:00Z"},
+			},
+		}
+		if _, err := adapter.Prepare(ctx, createCall); err == nil || !strings.Contains(err.Error(), invoke.ErrToolForbiddenForOrigin.Error()) {
+			t.Fatalf("Prepare automation_create from automation origin = %v, want ErrToolForbiddenForOrigin", err)
+		}
+		res := adapter.Execute(ctx, createCall, invoke.Prepared{})
+		if res.Outcome != "failed" || res.Err == nil || !strings.Contains(res.Err.Error(), invoke.ErrToolForbiddenForOrigin.Error()) {
+			t.Fatalf("Execute automation_create from automation origin = (%s, %v), want failed with ErrToolForbiddenForOrigin", res.Outcome, res.Err)
+		}
+
+		var changeExec extensions.Exec
+		for _, d := range nori.Definitions {
+			if d.ModelName == "automation_change" {
+				changeExec = d.Exec()
+				break
+			}
+		}
+		changeCall := invoke.Call{
+			RunID:       "run-auto-2",
+			Revision:    1,
+			OperationID: "op-auto-change",
+			Origin:      invoke.OriginAutomation,
+			Exec:        changeExec,
+			Args:        map[string]any{"automation_id": "auto_1", "action": "pause"},
+		}
+		if _, err := adapter.Prepare(ctx, changeCall); err == nil || !strings.Contains(err.Error(), invoke.ErrToolForbiddenForOrigin.Error()) {
+			t.Fatalf("Prepare automation_change from automation origin = %v, want ErrToolForbiddenForOrigin", err)
+		}
+	})
 }

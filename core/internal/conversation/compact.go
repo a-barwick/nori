@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"nori/internal/agent"
+	"nori/internal/proactivity"
 	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/state/docstore"
@@ -305,13 +306,17 @@ func (r *Runner) advanceHotWindow(ctx context.Context) error {
 			break
 		}
 		inputBytes += len(data)
-		for _, in := range t.Inputs {
-			if in.IsUser() && strings.TrimSpace(in.Text) != "" {
-				next.Excerpts = append(next.Excerpts, sourceExcerpt(state.UserMessageID(in.ID), "user", in.Text, t.StartedAt))
+		if !proactivity.IsBriefTurn(t) {
+			for _, in := range t.Inputs {
+				if in.IsUser() {
+					if clean := proactivity.StripUntrustedProactiveData(in.Text); strings.TrimSpace(clean) != "" {
+						next.Excerpts = append(next.Excerpts, sourceExcerpt(state.UserMessageID(in.ID), "user", clean, t.StartedAt))
+					}
+				}
 			}
-		}
-		if reply := publishedReply(t); reply != "" {
-			next.Excerpts = append(next.Excerpts, sourceExcerpt(state.AssistantMessageID(t.ID), "assistant", reply, t.StartedAt))
+			if reply := proactivity.StripUntrustedProactiveData(publishedReply(t)); reply != "" {
+				next.Excerpts = append(next.Excerpts, sourceExcerpt(state.AssistantMessageID(t.ID), "assistant", reply, t.StartedAt))
+			}
 		}
 		through, count = t.StartedAt, count+1
 	}

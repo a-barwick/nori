@@ -98,6 +98,9 @@ func decode(args map[string]any, value any) error {
 }
 
 func (a Adapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Prepared, error) {
+	if invoke.IsForbiddenForOrigin(call.Origin, call.Exec.Tool.ID, "", call.Exec.Binding.Target) {
+		return invoke.Prepared{}, fmt.Errorf("%w: %s cannot run from an automation", invoke.ErrToolForbiddenForOrigin, call.Exec.Binding.Target)
+	}
 	_, operation, _ := strings.Cut(call.Exec.Binding.Target, "/")
 	data, _ := json.Marshal(call.Args)
 	sum := sha256.Sum256(data)
@@ -236,6 +239,9 @@ func savedResult(created scheduler.Automation, zone string) invoke.Result {
 func (a Adapter) Execute(ctx context.Context, call invoke.Call, _ invoke.Prepared) invoke.Result {
 	failed := func(err error) invoke.Result {
 		return invoke.Result{Outcome: "failed", Err: err}
+	}
+	if invoke.IsForbiddenForOrigin(call.Origin, call.Exec.Tool.ID, "", call.Exec.Binding.Target) {
+		return failed(fmt.Errorf("%w: %s cannot run from an automation", invoke.ErrToolForbiddenForOrigin, call.Exec.Binding.Target))
 	}
 	switch call.Exec.Binding.Target {
 	case "nori.automations/create":

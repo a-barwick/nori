@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"nori/internal/observability"
+	"nori/internal/proactivity"
 	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/users"
@@ -81,6 +82,7 @@ type Runner struct {
 	Profile          users.Profile
 	Capabilities     func(context.Context) *CapabilitySummary
 	ModelInfo        func(context.Context, *state.ModelSelection) *ModelSummary
+	DiscoveryHint    func(ctx context.Context, userMessage string) *proactivity.DiscoveryHint
 	model            ReplyModel
 	ModelForTurn     func(*state.ModelSelection) ReplyModel
 	AccountModel     func(context.Context, *state.ModelSelection) ReplyModel

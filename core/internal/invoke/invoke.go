@@ -16,11 +16,17 @@ import (
 	"nori/internal/state"
 )
 
+const (
+	OriginUser       = "user"
+	OriginAutomation = "automation"
+)
+
 type Call struct {
 	RunID        string
 	Revision     int64
 	OperationID  string
 	Attempt      int
+	Origin       string
 	Exec         extensions.Exec
 	Args         map[string]any
 	Grant        *connections.Grant
@@ -81,6 +87,76 @@ func (r *Registry) Register(kind extensions.Adapter, prefix string, adapter Adap
 	r.adapters[key(kind, prefix)] = adapter
 }
 
+var ErrToolForbiddenForOrigin = errors.New("tool is not permitted for this run origin")
+
+// IsForbiddenForOrigin reports whether a tool must be stripped from unattended
+// automation-origin runs (automation_create, automation_change, and any
+// permission-rule write tool).
+func IsForbiddenForOrigin(origin, toolID, modelName, target string) bool {
+	if origin != OriginAutomation {
+		return false
+	}
+	name := strings.ToLower(strings.TrimSpace(modelName))
+	id := strings.ToLower(strings.TrimSpace(toolID))
+	tgt := strings.ToLower(strings.TrimSpace(target))
+
+	switch name {
+	case "automation_create", "automation_change":
+		return true
+	}
+	switch tgt {
+	case "nori.automations/create", "nori.automations/act":
+		return true
+	}
+	switch id {
+	case "nori/assistant/automation-create", "nori/assistant/automation-change":
+		return true
+	}
+	if isPermissionRuleWriteTool(id, name, tgt) {
+		return true
+	}
+	return false
+}
+
+func isPermissionRuleWriteTool(id, name, target string) bool {
+	isPerm := strings.Contains(name, "permission") ||
+		strings.HasPrefix(target, "nori.permissions/") ||
+		strings.HasPrefix(id, "nori/permissions/") ||
+		strings.HasPrefix(id, "nori/assistant/permission")
+	if !isPerm {
+		return false
+	}
+	// Allow explicit read/list permission inspection tools; block all writes/changes/deletes/revokes.
+	for _, readSuffix := range []string{"_list", "_get", "_read", "/list", "/get", "/read", "-list", "-get", "-read"} {
+		if strings.HasSuffix(name, readSuffix) || strings.HasSuffix(target, readSuffix) || strings.HasSuffix(id, readSuffix) {
+			return false
+		}
+	}
+	return true
+}
+
+// FilterDefinitionsForOrigin strips tools that are forbidden for the given run
+// origin (e.g. automation_create, automation_change, and permission-rule write
+// tools for automation-origin runs).
+func FilterDefinitionsForOrigin(origin string, defs []extensions.Definition) []extensions.Definition {
+	if origin != OriginAutomation || len(defs) == 0 {
+		return defs
+	}
+	out := make([]extensions.Definition, 0, len(defs))
+	for _, d := range defs {
+		if IsForbiddenForOrigin(origin, d.Ref.ID, d.ModelName, d.Binding.Target) {
+			continue
+		}
+		if d.Policy.Effect != extensions.EffectRead &&
+			(strings.Contains(strings.ToLower(d.ModelName), "permission") ||
+				strings.HasPrefix(strings.ToLower(d.Binding.Target), "nori.permissions/")) {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
 func (r *Registry) Lookup(binding extensions.Binding) (Adapter, bool) {
 	if r == nil {
 		return nil, false
@@ -91,6 +167,19 @@ func (r *Registry) Lookup(binding extensions.Binding) (Adapter, bool) {
 	}
 	adapter, ok := r.adapters[key(binding.Adapter, "")]
 	return adapter, ok
+}
+
+// LookupForOrigin resolves an adapter while enforcing origin-based tool limits.
+// It returns ErrToolForbiddenForOrigin if the tool is stripped for origin.
+func (r *Registry) LookupForOrigin(binding extensions.Binding, origin, toolID, modelName string) (Adapter, error) {
+	if IsForbiddenForOrigin(origin, toolID, modelName, binding.Target) {
+		return nil, fmt.Errorf("%w: %s", ErrToolForbiddenForOrigin, binding.Target)
+	}
+	adapter, ok := r.Lookup(binding)
+	if !ok {
+		return nil, nil
+	}
+	return adapter, nil
 }
 
 var ErrInvalidArguments = errors.New("invalid arguments")
