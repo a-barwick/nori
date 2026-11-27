@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { Calendar, Download, FileText, Image as ImageIcon, Link2, Mail, Pencil, Search } from "lucide-react";
+import { Calendar, Check, Copy, Download, FileText, Image as ImageIcon, Link2, Mail, Pencil, Search } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { fetchLibraryText, mutate, newRequestID } from "@/lib/assistant/api";
 import { useAssistantConfig } from "@/lib/assistant/context";
@@ -55,7 +55,8 @@ function KindIcon({ item }: { item: Pick<LibraryItem, "kind" | "media_type"> }) 
 
 function ArtifactRow({ item }: { item: LibraryItem }) {
   const excerpt = item.excerpt ?? (item.preview_text ? plainText(item.preview_text) : "");
-  const meta = `${provenanceLabel(item)} · ${relative(item.created_at)}`;
+  const disconnected = item.provenance.connection_status && item.provenance.connection_status !== "connected";
+  const meta = [disconnected ? "Account disconnected" : "", relative(item.created_at)].filter(Boolean).join(" · ");
   return (
     <Row
       href={`/library/${encodeURIComponent(item.id)}`}
@@ -64,10 +65,9 @@ function ArtifactRow({ item }: { item: LibraryItem }) {
       detail={
         <>
           {excerpt && <span className="line-clamp-2">{excerpt}</span>}
-          <span className={cn("block text-caption text-ink-3", excerpt && "mt-1")}>{meta}</span>
+          {meta && <span className={cn("block text-caption text-ink-3", excerpt && "mt-1")}>{meta}</span>}
         </>
       }
-      trailing={item.version > 1 ? <Pill>v{item.version}</Pill> : undefined}
     />
   );
 }
@@ -284,6 +284,7 @@ export function LibraryDetailScreen({ id }: { id: string }) {
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState("");
   const [revision, setRevision] = useState("");
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (!item || item.data || !["answer", "report", "document"].includes(item.kind)) return;
@@ -316,7 +317,7 @@ export function LibraryDetailScreen({ id }: { id: string }) {
               </Link>
             }
           >
-            This isn’t in your Library. It may have been deleted.
+            This isn’t in your Artifacts. It may have been deleted.
           </Empty>
         )}
       </Screen>
@@ -359,6 +360,20 @@ export function LibraryDetailScreen({ id }: { id: string }) {
       ? item.url
       : undefined;
 
+  const copyableText =
+    text ??
+    (item.kind === "link" && fileURL ? fileURL : undefined) ??
+    (item.data_kind === "mail_draft" && item.data ? `${item.data.subject}\n\n${item.data.body_text}` : undefined) ??
+    (item.data_kind === "mail_message" && item.data ? `${item.data.subject}\n\n${item.data.content.text}` : undefined);
+
+  const handleCopy = () => {
+    if (!copyableText || typeof navigator === "undefined" || !navigator.clipboard) return;
+    void navigator.clipboard.writeText(copyableText).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    });
+  };
+
   return (
     <Screen
       title={item.title}
@@ -383,6 +398,12 @@ export function LibraryDetailScreen({ id }: { id: string }) {
       )}
       <LibraryPreview item={item} text={text} />
       <div className="mt-4 flex flex-wrap gap-2">
+        {copyableText && (
+          <Button onClick={handleCopy}>
+            {copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
+            {copied ? "Copied" : "Copy"}
+          </Button>
+        )}
         {fileURL && item.kind !== "link" && (
           <a
             href={fileURL}
@@ -463,7 +484,7 @@ export function LibraryDetailScreen({ id }: { id: string }) {
               placeholder="Add prices in euros, shorten the summary…"
             />
             <Button type="submit" variant="primary" disabled={!revision.trim() || !!action.pending}>
-              {action.pending === "revise" ? "Starting…" : "Make a new version"}
+              {action.pending === "revise" ? "Revising…" : "Revise"}
             </Button>
           </form>
         </Section>

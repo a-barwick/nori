@@ -7,7 +7,6 @@ struct InteractionApprovalBody: View {
     let compact: Bool
     let isSubmitting: Bool
     let submittingAction: String?
-    @Binding var rememberSimilarRule: Bool
     @Binding var isQuotedBodyExpanded: Bool
     let onApprove: (Bool) -> Void
     let onDecline: () -> Void
@@ -66,37 +65,16 @@ struct InteractionApprovalBody: View {
         let parsed = parseApprovalSummary(payload)
         let warning = payload.displayWarning
         let hasRecipients = payload.toolID != "google/mail/mail-send" && !(payload.recipients?.isEmpty ?? true)
-        let showEffectRow = !payload.isInternalNoriSchedule
-        let hasMetadataRows = hasRecipients || payload.hasAccountLabel || showEffectRow
+        let hasMetadataRows = hasRecipients || payload.hasAccountLabel
         let canRememberRule = payload.approvalOnce != true
 
         VStack(alignment: .leading, spacing: 10) {
             if let head = parsed.head, !head.isEmpty {
-                if payload.isScheduleCreation, let newline = head.firstIndex(of: "\n") {
-                    let firstLine = String(head[..<newline]).trimmingCharacters(in: .whitespacesAndNewlines)
-                    let restLines = String(head[head.index(after: newline)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-                    VStack(alignment: .leading, spacing: 4) {
-                        if !firstLine.isEmpty {
-                            Text(firstLine)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(NoriColors.ink)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        if !restLines.isEmpty {
-                            Text(restLines)
-                                .font(.system(size: 13))
-                                .foregroundStyle(NoriColors.ink2)
-                                .lineSpacing(2.5)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                } else {
-                    Text(head)
-                        .font(.system(size: 13.5, weight: .medium))
-                        .foregroundStyle(NoriColors.ink)
-                        .lineSpacing(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                Text(head)
+                    .font(.system(size: 13.5, weight: .medium))
+                    .foregroundStyle(NoriColors.ink)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if let quotedBody = parsed.quotedBody, !quotedBody.isEmpty {
@@ -189,18 +167,6 @@ struct InteractionApprovalBody: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
-
-                    if showEffectRow {
-                        GridRow {
-                            Text("Effect")
-                                .font(.system(size: 12.5))
-                                .foregroundStyle(NoriColors.ink3)
-                            NoriPill(
-                                payload.effect.displayLabel,
-                                tone: isSensitiveSend ? .warning : .neutral
-                            )
-                        }
-                    }
                 }
             }
 
@@ -225,13 +191,9 @@ struct InteractionApprovalBody: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     Button {
-                        onApprove(canRememberRule && rememberSimilarRule)
+                        onApprove(false)
                     } label: {
-                        Text(
-                            submittingAction == "approve_always"
-                                ? "Saving rule…"
-                                : (submittingAction == "approve_once" ? "Approving…" : "Approve")
-                        )
+                        Text(submittingAction == "approve_once" ? "Allowing…" : "Allow once")
                     }
                     .buttonStyle(NoriButtonStyle(.primary, fullWidth: true, compact: compact))
                     .disabled(isSubmitting)
@@ -239,30 +201,20 @@ struct InteractionApprovalBody: View {
                     Button {
                         onDecline()
                     } label: {
-                        Text(submittingAction == "decline" ? "Declining…" : "Decline")
+                        Text(submittingAction == "decline" ? "Denying…" : "Deny")
                     }
-                    .buttonStyle(NoriButtonStyle(.neutral, fullWidth: true, compact: compact))
+                    .buttonStyle(NoriButtonStyle(.danger, fullWidth: true, compact: compact))
                     .disabled(isSubmitting)
                 }
 
                 if canRememberRule {
                     Button {
-                        rememberSimilarRule.toggle()
+                        onApprove(true)
                     } label: {
-                        HStack(spacing: 8) {
-                            InteractionSelectionIndicator(isSelected: rememberSimilarRule, isMulti: true)
-                            Text("Always allow similar")
-                                .font(.system(size: 12.5, weight: .medium))
-                                .foregroundStyle(rememberSimilarRule ? NoriColors.ink : NoriColors.ink2)
-                            Spacer(minLength: 0)
-                        }
-                        .padding(.vertical, 3)
-                        .contentShape(Rectangle())
+                        Text(submittingAction == "approve_always" ? "Saving rule…" : "Always allow")
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(NoriButtonStyle(.neutral, fullWidth: true, compact: compact))
                     .disabled(isSubmitting)
-                    .accessibilityLabel("Always allow similar")
-                    .accessibilityValue(rememberSimilarRule ? "Selected" : "Not selected")
                 }
             }
             .padding(.top, 4)

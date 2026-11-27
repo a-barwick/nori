@@ -22,7 +22,7 @@ struct InteractionSignInBody: View {
         let connection = !isMCP
             ? store.connections.first(where: { $0.id == payload.connectionID || $0.integrationID == payload.integrationID })
             : nil
-        let displayTitle = server?.name ?? connection?.title ?? payload.integrationID.capitalized
+        let displayTitle = server?.name ?? connection?.title ?? Interaction.humanizedIntegrationName(payload.integrationID)
         let safeURL = payload.authorizeURL.flatMap { Self.safeAuthorizeURL($0) }
         let blockedUnsafeURL = payload.integrationID != "google" && payload.authorizeURL != nil && safeURL == nil
 
@@ -185,7 +185,7 @@ struct InteractionSignInBody: View {
                 }
                 targetURL = attemptURL
             } else {
-                errorMessage = "Sign-in link expired. Reconnect from More → Apps & MCP to resume this task."
+                errorMessage = "Sign-in link expired. Reconnect from More → Apps to resume this task."
                 return
             }
 

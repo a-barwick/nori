@@ -5,6 +5,7 @@ import NoriDesign
 public struct RoutinesView: View {
     @Bindable private var store: NoriStore
     @State private var busyID: String?
+    @State private var selectedRoutineID: String?
 
     public init(store: NoriStore) {
         self.store = store
@@ -12,13 +13,13 @@ public struct RoutinesView: View {
 
     private var activeAutomations: [Automation] {
         let nonCancelled = store.automations.filter { $0.status != .cancelled }
-        let enabled = nonCancelled.filter { $0.status == .enabled }
-        let paused = nonCancelled.filter { $0.status != .enabled }
-        return enabled + paused
+        let enabled = nonCancelled.filter { $0.status == .enabled && !$0.isSpentOneTime }
+        let other = nonCancelled.filter { $0.status != .enabled || $0.isSpentOneTime }
+        return enabled + other
     }
 
     private var nextEnabledAutomation: Automation? {
-        let enabled = activeAutomations.filter { $0.status == .enabled }
+        let enabled = activeAutomations.filter { $0.status == .enabled && !$0.isSpentOneTime }
         return enabled.min { lhs, rhs in
             let lDate = lhs.nextAt.flatMap { NoriDateFormatting.parse($0) }
             let rDate = rhs.nextAt.flatMap { NoriDateFormatting.parse($0) }
@@ -36,13 +37,13 @@ public struct RoutinesView: View {
         if let next = nextEnabledAutomation {
             let when: String = {
                 if let nextAt = next.nextAt, !nextAt.isEmpty {
-                    return NoriDateFormatting.shortDateTime(nextAt)
+                    return NoriDateFormatting.relative(nextAt)
                 }
-                return triggerSummary(for: next.trigger)
+                return next.trigger.summaryLabel
             }()
             return "Next up: \(next.title), \(when)."
         }
-        return "All routines are currently paused."
+        return "All routines are paused."
     }
 
     public var body: some View {
@@ -73,49 +74,79 @@ public struct RoutinesView: View {
             .padding(.bottom, 96)
         }
         .background(NoriColors.canvas)
+        .navigationDestination(item: $selectedRoutineID) { routineID in
+            RoutineDetailView(store: store, automationID: routineID)
+        }
         .refreshable {
             await store.refreshRoutinesAndGoals()
         }
     }
 
+    private func statusBadge(for automation: Automation) -> (label: String, tone: NoriTone)? {
+        if automation.lastRunFailed {
+            return ("Last run failed", .danger)
+        }
+        if automation.isSpentOneTime {
+            return ("Done", .neutral)
+        }
+        if automation.isSnoozed {
+            return ("Snoozed", .neutral)
+        }
+        if automation.status != .enabled {
+            return (automation.status.displayLabel, .neutral)
+        }
+        return nil
+    }
 
     private func routineRow(_ automation: Automation, showDivider: Bool) -> some View {
-        let isEnabled = automation.status == .enabled
+        let isEnabled = automation.status == .enabled && !automation.isSpentOneTime
         let isBusy = busyID == automation.id
+        let badge = statusBadge(for: automation)
 
         return VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 8) {
-                    Text(automation.title)
-                        .font(NoriTypography.rowTitle)
-                        .foregroundStyle(isEnabled ? NoriColors.ink : NoriColors.ink2)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    selectedRoutineID = automation.id
+                } label: {
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(automation.title)
+                            .font(NoriTypography.rowTitle)
+                            .foregroundStyle(isEnabled ? NoriColors.ink : NoriColors.ink2)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
 
-                    NoriPill(
-                        isEnabled ? "Scheduled" : automation.status.displayLabel,
-                        tone: isEnabled ? .scheduled : .neutral
-                    )
-                }
-
-                HStack(alignment: .center, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(triggerSummary(for: automation.trigger))
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(NoriColors.ink2)
-                            .lineLimit(1)
-
-                        if isEnabled,
-                           automation.trigger.at == nil,
-                           let nextAt = automation.nextAt, !nextAt.isEmpty {
-                            Text("Next \(NoriDateFormatting.shortDateTime(nextAt))")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(NoriColors.scheduled)
-                                .lineLimit(1)
+                        if let badge {
+                            NoriPill(badge.label, tone: badge.tone)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                HStack(alignment: .center, spacing: 10) {
+                    Button {
+                        selectedRoutineID = automation.id
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(automation.trigger.summaryLabel)
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(NoriColors.ink2)
+                                .lineLimit(1)
+
+                            if isEnabled,
+                               automation.trigger.at == nil,
+                               let nextAt = automation.nextAt, !nextAt.isEmpty {
+                                Text("Next \(NoriDateFormatting.relative(nextAt))")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(NoriColors.accent)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
 
                     HStack(spacing: 6) {
                         Button {
@@ -135,42 +166,40 @@ public struct RoutinesView: View {
                                         .font(.system(size: 9.5, weight: .semibold))
                                 }
                                 Text("Run")
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(.system(size: 12.5, weight: .semibold))
                             }
-                            .foregroundStyle(NoriColors.accent)
-                            .padding(.horizontal, 10)
-                            .frame(height: 28)
-                            .background(NoriColors.accentSubtle, in: Capsule())
-                            .overlay(
-                                Capsule()
-                                    .strokeBorder(NoriColors.accentBorder, lineWidth: 1)
-                            )
+                            .foregroundStyle(isBusy ? NoriColors.disabled : NoriColors.accent)
+                            .padding(.horizontal, 12)
+                            .frame(minHeight: 34)
+                            .background(isBusy ? NoriColors.disabledBg : NoriColors.selected, in: Capsule())
                         }
                         .buttonStyle(.plain)
                         .disabled(isBusy)
                         .accessibilityLabel("Run \(automation.title) now")
 
-                        Button {
-                            busyID = automation.id
-                            Task {
-                                await store.toggleAutomation(automationID: automation.id)
-                                busyID = nil
+                        if !automation.isSpentOneTime {
+                            Button {
+                                busyID = automation.id
+                                Task {
+                                    await store.toggleAutomation(automationID: automation.id)
+                                    busyID = nil
+                                }
+                            } label: {
+                                Text(isEnabled ? "Pause" : "Resume")
+                                    .font(.system(size: 12.5, weight: .medium))
+                                    .foregroundStyle(isBusy ? NoriColors.disabled : (isEnabled ? NoriColors.ink2 : NoriColors.ink))
+                                    .padding(.horizontal, 12)
+                                    .frame(minHeight: 34)
+                                    .background(isBusy ? NoriColors.disabledBg : NoriColors.elevated, in: Capsule())
+                                    .overlay(
+                                        Capsule()
+                                            .strokeBorder(isBusy ? .clear : NoriColors.cardBorder, lineWidth: 1)
+                                    )
                             }
-                        } label: {
-                            Text(isEnabled ? "Pause" : "Resume")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(isEnabled ? NoriColors.ink2 : NoriColors.ink)
-                                .padding(.horizontal, 9)
-                                .frame(height: 28)
-                                .background(NoriColors.fill1, in: Capsule())
-                                .overlay(
-                                    Capsule()
-                                        .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
-                                )
+                            .buttonStyle(.plain)
+                            .disabled(isBusy)
+                            .accessibilityLabel("\(isEnabled ? "Pause" : "Resume") \(automation.title)")
                         }
-                        .buttonStyle(.plain)
-                        .disabled(isBusy)
-                        .accessibilityLabel("\(isEnabled ? "Pause" : "Resume") \(automation.title)")
                     }
                 }
             }
@@ -184,16 +213,5 @@ public struct RoutinesView: View {
                     .padding(.leading, 13)
             }
         }
-    }
-
-
-    private func triggerSummary(for trigger: AutomationTrigger) -> String {
-        if let rrule = trigger.rrule, !rrule.isEmpty {
-            return rrule
-        }
-        if let at = trigger.at, !at.isEmpty {
-            return "Once · \(NoriDateFormatting.shortDateTime(at))"
-        }
-        return trigger.summaryLabel
     }
 }

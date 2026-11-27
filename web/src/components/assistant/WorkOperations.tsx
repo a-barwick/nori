@@ -25,14 +25,6 @@ const CLEARED: Record<string, { tone: Tone; label: string }> = {
   contained: { tone: "warning", label: "Plugin failed safely" },
 };
 
-const AUTHORITY: Record<string, string> = {
-  user_request: "you asked",
-  permission_rule: "a permission rule",
-  automation: "a routine",
-  approval: "your approval",
-  internal: "Nori",
-};
-
 const RECOVERY: Record<string, string> = {
   reconciling: "checking with the provider",
   needs_review: "pending review",
@@ -49,7 +41,8 @@ const BUILTIN: Record<string, string> = {
   screenshot_inspect: "Looked at a screenshot",
 };
 
-const stepName = (name: string) => BUILTIN[name] ?? name.charAt(0).toUpperCase() + name.slice(1).replace(/_/g, " ");
+export const stepName = (name: string) =>
+  BUILTIN[name] ?? name.charAt(0).toUpperCase() + name.slice(1).replace(/_/g, " ");
 
 export const shownOperations = <T extends { name: string }>(operations: T[]) =>
   operations.filter((operation) => operation.name !== "capability_load");
@@ -64,7 +57,7 @@ export function operationOutcomePill(
   operation: Pick<OperationProjection, "effect_class" | "outcome" | "cleared">,
 ): { tone: Tone; label: string } | undefined {
   if (operation.cleared && CLEARED[operation.cleared]) return CLEARED[operation.cleared];
-  if (operation.effect_class === "read" && operation.outcome === "confirmed") return undefined;
+  if (operation.outcome === "confirmed") return undefined;
   return OUTCOME[operation.outcome] ?? { tone: "neutral", label: operation.outcome };
 }
 
@@ -95,11 +88,9 @@ export function groupOperations(operations: OperationRowItem[]): OperationDispla
 }
 
 function operationDetail(operation: OperationRowItem): string {
-  const showAuthority =
-    operation.authority_source && !(operation.name === "web_search" && operation.authority_source === "internal");
+  const isException = operation.outcome !== "confirmed" || !!operation.recovery || !!operation.cleared;
   return [
-    operation.account_summary,
-    showAuthority && AUTHORITY[operation.authority_source!] && `because ${AUTHORITY[operation.authority_source!]}`,
+    isException && operation.account_summary,
     operation.recovery && RECOVERY[operation.recovery],
     operation.created_at && relative(operation.created_at),
   ]

@@ -336,6 +336,26 @@ public struct OperationProjection: Sendable, Codable, Hashable, Identifiable {
         return false
     }
 
+    private static let builtinStepNames: [String: String] = [
+        "web_search": "Searched the web",
+        "upload_open": "Opened an attached file",
+        "shell": "Ran a command",
+        "job_start": "Started a long-running command",
+        "browser_navigate": "Opened a web page",
+        "browser_screenshot": "Took a screenshot",
+        "screenshot_inspect": "Looked at a screenshot"
+    ]
+
+    public static func humanizeStepName(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Action" }
+        if let mapped = builtinStepNames[trimmed] {
+            return mapped
+        }
+        let spaced = trimmed.replacingOccurrences(of: "_", with: " ")
+        return spaced.prefix(1).uppercased() + spaced.dropFirst()
+    }
+
     public var displaySummary: String {
         if let summary = actionSummary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
             return summary
@@ -346,7 +366,7 @@ public struct OperationProjection: Sendable, Codable, Hashable, Identifiable {
         if isWebSearch {
             return "Searched the web"
         }
-        return name
+        return Self.humanizeStepName(name)
     }
 
     public var displayAuthorityLabel: String? {
@@ -379,10 +399,7 @@ public struct OperationProjection: Sendable, Codable, Hashable, Identifiable {
         }
         switch outcome {
         case .confirmed:
-            if effectClass == .read {
-                return nil
-            }
-            return OperationBadge(label: "Confirmed", tone: .ok)
+            return nil
         case .pending: return OperationBadge(label: "Waiting", tone: .neutral)
         case .uncertain: return OperationBadge(label: "Unconfirmed", tone: .warning)
         case .failed: return OperationBadge(label: "Failed", tone: .danger)

@@ -6,12 +6,16 @@ public enum LibraryFilterKind: String, CaseIterable, Hashable, Sendable {
     case all
     case documents
     case files
+    case events
+    case messages
 
     public var label: String {
         switch self {
         case .all: return "All"
         case .documents: return "Docs"
         case .files: return "Files"
+        case .events: return "Events"
+        case .messages: return "Mail"
         }
     }
 }
@@ -21,6 +25,7 @@ public struct LibraryView: View {
     private let onOpenDocument: (NoriCore.LibraryItem) -> Void
 
     @State private var selectedKind: LibraryFilterKind = .all
+    @State private var searchQuery: String = ""
 
     public init(
         store: NoriStore,
@@ -30,14 +35,19 @@ public struct LibraryView: View {
         self.onOpenDocument = onOpenDocument
     }
 
-    private var hasMultipleKinds: Bool {
-        let groups = Set(store.libraryItems.map(\.kind.filterGroup))
-        return groups.count > 1
+    private var trimmedQuery: String {
+        searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var filteredSavedItems: [NoriCore.LibraryItem] {
-        store.libraryItems.filter { item in
-            matchesFilter(item, kind: selectedKind)
+        let query = trimmedQuery.lowercased()
+        return store.libraryItems.filter { item in
+            guard matchesFilter(item, kind: selectedKind) else { return false }
+            guard !query.isEmpty else { return true }
+            let haystack = [item.title, item.name ?? "", item.excerpt ?? "", item.previewText ?? ""]
+                .joined(separator: " ")
+                .lowercased()
+            return haystack.contains(query)
         }
     }
 
@@ -68,46 +78,43 @@ public struct LibraryView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
+                searchBar
+                filterChipsBar
+
                 if store.libraryItems.isEmpty {
                     NoriEmptyState(
                         title: "Nothing saved yet",
                         message: "Documents Nori creates and files you share appear here."
                     )
+                } else if groupedCollections.isEmpty {
+                    NoriEmptyState(
+                        title: trimmedQuery.isEmpty ? "No matching \(selectedKind.label.lowercased())" : "No matching artifacts",
+                        message: trimmedQuery.isEmpty
+                            ? "Try switching the filter to view all saved artifacts."
+                            : "Nothing saved matches “\(trimmedQuery)”."
+                    )
                 } else {
-                    if hasMultipleKinds {
-                        filterChipsBar
-                    }
-
-                    if groupedCollections.isEmpty {
-                        NoriEmptyState(
-                            title: "No matching \(selectedKind.label.lowercased())",
-                            message: "Try switching the filter to view all saved artifacts."
-                        )
-                    } else {
-                        ForEach(Array(groupedCollections.enumerated()), id: \.offset) { _, group in
-                            VStack(alignment: .leading, spacing: 0) {
-                                NoriSectionHeader(group.name ?? "Saved")
-                                NoriRows {
-                                    ForEach(Array(group.items.enumerated()), id: \.element.id) { idx, item in
-                                        let isLast = idx == group.items.count - 1
-                                        Button {
-                                            onOpenDocument(item)
-                                        } label: {
-                                            NoriRow(
-                                                title: item.title,
-                                                detail: rowDetail(for: item),
-                                                systemImage: iconName(for: item),
-                                                iconTone: iconTone(for: item),
-                                                showChevron: true,
-                                                showDivider: !isLast
-                                            ) {
-                                                if item.version > 1 {
-                                                    NoriPill("v\(item.version)", tone: .neutral)
-                                                }
-                                            }
-                                        }
-                                        .buttonStyle(.plain)
+                    ForEach(Array(groupedCollections.enumerated()), id: \.offset) { _, group in
+                        VStack(alignment: .leading, spacing: 0) {
+                            if let name = group.name {
+                                NoriSectionHeader(name)
+                            }
+                            NoriRows {
+                                ForEach(Array(group.items.enumerated()), id: \.element.id) { idx, item in
+                                    let isLast = idx == group.items.count - 1
+                                    Button {
+                                        onOpenDocument(item)
+                                    } label: {
+                                        NoriRow(
+                                            title: item.title,
+                                            detail: rowDetail(for: item),
+                                            systemImage: iconName(for: item),
+                                            iconTone: iconTone(for: item),
+                                            showChevron: true,
+                                            showDivider: !isLast
+                                        )
                                     }
+                                    .buttonStyle(.plain)
                                 }
                             }
                         }
@@ -124,41 +131,72 @@ public struct LibraryView: View {
         }
     }
 
+    private var searchBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(NoriColors.ink3)
 
-    private var filterChipsBar: some View {
-        HStack(spacing: 6) {
-            ForEach(LibraryFilterKind.allCases, id: \.self) { kind in
-                let isSelected = selectedKind == kind
+            TextField("Filter artifacts & saved files…", text: $searchQuery)
+                .font(.system(size: 14.5))
+                .foregroundStyle(NoriColors.ink)
+                .tint(NoriColors.accent)
+                .textFieldStyle(.plain)
+
+            if !searchQuery.isEmpty {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        selectedKind = kind
-                    }
+                    searchQuery = ""
                 } label: {
-                    Text(kind.label)
-                        .font(.system(size: 12.5, weight: isSelected ? .semibold : .medium))
-                        .foregroundStyle(isSelected ? NoriColors.chipSelectedFg : NoriColors.ink2)
-                        .padding(.horizontal, 11)
-                        .frame(height: 28)
-                        .background(
-                            isSelected ? NoriColors.chipSelectedBg : NoriColors.elevated,
-                            in: Capsule()
-                        )
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(
-                                    isSelected ? NoriColors.chipSelectedBorder : NoriColors.hairline,
-                                    lineWidth: 1
-                                )
-                        )
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 15))
+                        .foregroundStyle(NoriColors.ink3)
                 }
                 .buttonStyle(.plain)
-                .accessibilityAddTraits(isSelected ? .isSelected : [])
+                .accessibilityLabel("Clear search")
             }
-            Spacer(minLength: 0)
         }
-        .padding(.top, 2)
+        .padding(.horizontal, 12)
+        .frame(height: 40)
+        .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+                .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
+        )
     }
 
+    private var filterChipsBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(LibraryFilterKind.allCases, id: \.self) { kind in
+                    let isSelected = selectedKind == kind
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.16)) {
+                            selectedKind = kind
+                        }
+                    } label: {
+                        Text(kind.label)
+                            .font(.system(size: 12.5, weight: isSelected ? .semibold : .medium))
+                            .foregroundStyle(isSelected ? NoriColors.chipSelectedFg : NoriColors.ink2)
+                            .padding(.horizontal, 12)
+                            .frame(height: 30)
+                            .background(
+                                isSelected ? NoriColors.chipSelectedBg : NoriColors.elevated,
+                                in: Capsule()
+                            )
+                            .overlay(
+                                Capsule()
+                                    .strokeBorder(
+                                        isSelected ? NoriColors.chipSelectedBorder : NoriColors.cardBorder,
+                                        lineWidth: 1
+                                    )
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
+                }
+            }
+        }
+    }
 
     private func matchesFilter(_ item: NoriCore.LibraryItem, kind: LibraryFilterKind) -> Bool {
         switch kind {
@@ -168,17 +206,26 @@ public struct LibraryView: View {
             return item.kind.filterGroup == "documents"
         case .files:
             return item.kind.filterGroup == "files"
+        case .events:
+            return item.kind.filterGroup == "events"
+        case .messages:
+            return item.kind.filterGroup == "messages"
         }
     }
 
-    private func rowDetail(for item: NoriCore.LibraryItem) -> String {
-        let meta: String = item.createdAt.isEmpty
-            ? item.provenance.content.displayLabel
-            : "\(item.provenance.content.displayLabel) · \(NoriDateFormatting.relative(item.createdAt))"
-        if let excerpt = item.excerpt?.trimmingCharacters(in: .whitespacesAndNewlines), !excerpt.isEmpty {
-            return "\(excerpt)\n\(meta)"
+    private func rowDetail(for item: NoriCore.LibraryItem) -> String? {
+        var metaParts: [String] = []
+        if let status = item.provenance.connectionStatus, status != .connected {
+            metaParts.append("Account disconnected")
         }
-        return meta
+        if !item.createdAt.isEmpty {
+            metaParts.append(NoriDateFormatting.relative(item.createdAt))
+        }
+        let meta = metaParts.joined(separator: " · ")
+        if let excerpt = item.excerpt?.trimmingCharacters(in: .whitespacesAndNewlines), !excerpt.isEmpty {
+            return meta.isEmpty ? excerpt : "\(excerpt)\n\(meta)"
+        }
+        return meta.isEmpty ? nil : meta
     }
 
     private func iconName(for item: NoriCore.LibraryItem) -> String {
@@ -196,7 +243,7 @@ public struct LibraryView: View {
 
     private func iconTone(for item: NoriCore.LibraryItem) -> NoriTone {
         switch item.kind {
-        case .document, .report, .answer: return .accent
+        case .document, .report, .answer, .link: return .accent
         case .event: return .ok
         default: return .neutral
         }

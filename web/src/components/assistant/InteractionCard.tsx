@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, Check, KeyRound, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Ban, Check, ChevronDown, ChevronUp, Clock, KeyRound, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { APIError, mutate, newRequestID } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
-import { EFFECT_LABEL, relative } from "@/lib/assistant/format";
+import { relative } from "@/lib/assistant/format";
 import {
   buildApprovalResponse,
   formatCompactExpiry,
@@ -102,12 +102,36 @@ function routineSummaryParts(summary: string | undefined) {
   return { title: lines[0], detail: lines.slice(1).join(" · ") };
 }
 
+const KNOWN_INTEGRATIONS: Record<string, string> = {
+  google: "Google",
+  gmail: "Gmail",
+  github: "GitHub",
+  gitlab: "GitLab",
+  slack: "Slack",
+  linear: "Linear",
+  notion: "Notion",
+  microsoft: "Microsoft",
+  outlook: "Outlook",
+  icloud: "iCloud",
+};
+
+function humanizeIntegrationID(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "app";
+  const lower = trimmed.toLowerCase();
+  if (KNOWN_INTEGRATIONS[lower]) return KNOWN_INTEGRATIONS[lower];
+  return trimmed
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((part) => KNOWN_INTEGRATIONS[part.toLowerCase()] ?? part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function heading(interaction: Interaction) {
   if (interaction.kind === "sign_in") {
     const payload = interaction.payload as Partial<SignInPayload>;
     if (payload.integration_id && payload.integration_id !== "mcp") {
-      const name = payload.integration_id.charAt(0).toUpperCase() + payload.integration_id.slice(1);
-      return `Connect ${name}`;
+      return `Connect ${humanizeIntegrationID(payload.integration_id)}`;
     }
     return "Connect app";
   }
@@ -180,9 +204,9 @@ export function InteractionCard({
         ) : null}
       </div>
 
-      <div className={cn(resolved ? "mt-2" : "mt-1.5")}>
+      <div className={cn(resolved ? "mt-2 empty:hidden" : "mt-1.5")}>
         {resolved ? (
-          <Resolved interaction={shown} rememberedRule={effectiveRememberedRule} />
+          <Resolved interaction={shown} rememberedRule={effectiveRememberedRule} pillLabel={statusPill?.label} />
         ) : (
           <Body
             interaction={shown}
@@ -196,7 +220,15 @@ export function InteractionCard({
   );
 }
 
-function Resolved({ interaction, rememberedRule }: { interaction: Interaction; rememberedRule?: boolean }) {
+function Resolved({
+  interaction,
+  rememberedRule,
+  pillLabel,
+}: {
+  interaction: Interaction;
+  rememberedRule?: boolean;
+  pillLabel?: string;
+}) {
   const r = interaction.resolution;
   if (interaction.status === "superseded") {
     return (
@@ -205,15 +237,29 @@ function Resolved({ interaction, rememberedRule }: { interaction: Interaction; r
       </p>
     );
   }
-  if (!r) return null;
-  const text = resolvedSummaryText(interaction, rememberedRule);
+  const isExpired = interaction.status === "expired" || r?.kind === "expired";
+  const isDeclined = r?.kind === "decline";
+  if (!r && !isExpired) return null;
+
+  const rawText = r ? resolvedSummaryText(interaction, rememberedRule) : "Expired";
+  const duplicatesPill = !!pillLabel && rawText.trim().toLowerCase() === pillLabel.trim().toLowerCase();
+  const detailText = duplicatesPill ? "" : rawText;
+  const timeText = r?.at ? relative(r.at) : interaction.resolved_at ? relative(interaction.resolved_at) : "";
+  const combined = [detailText, timeText].filter(Boolean).join(" · ");
+  if (!combined) return null;
+
+  const icon = isExpired ? (
+    <Clock size={14} className="shrink-0 text-ink-3" aria-hidden />
+  ) : isDeclined ? (
+    <Ban size={14} className="shrink-0 text-ink-3" aria-hidden />
+  ) : (
+    <Check size={14} className="shrink-0 text-ok" aria-hidden />
+  );
+
   return (
     <p className="flex items-center gap-1.5 text-meta text-ink-2">
-      <Check size={14} className="text-ok" aria-hidden />
-      <span>
-        {text}
-        {r.at ? ` · ${relative(r.at)}` : ""}
-      </span>
+      {icon}
+      <span>{combined}</span>
     </p>
   );
 }
@@ -316,7 +362,7 @@ function Question({ payload, state }: { payload: QuestionPayload; state: State }
               key={option.id}
               className={cn(
                 "flex min-h-11 cursor-pointer items-center gap-3 rounded-tile border px-3 py-2 text-row font-medium transition-colors",
-                picked.includes(option.id) ? "border-accent bg-accent-subtle text-ink" : "border-hairline hover:bg-fill-1",
+                picked.includes(option.id) ? "border-accent bg-accent-subtle text-ink" : "border-card-border bg-fill-1 hover:bg-fill-2",
               )}
             >
               <input
@@ -383,6 +429,7 @@ function Approval({
   state: State;
   inline?: boolean;
 }) {
+  const [quotedExpanded, setQuotedExpanded] = useState(false);
   const busy = !!state.pending;
   const digest = interaction.action_digest!;
   const buttonSize = inline ? "sm" : "md";
@@ -422,14 +469,19 @@ function Approval({
   const cut = send ? payload.summary.indexOf("\n") : -1;
   const summaryHeading = cut >= 0 ? payload.summary.slice(0, cut) : payload.summary;
   const message = cut >= 0 ? payload.summary.slice(cut + 1) : "";
+  const canClampQuoted =
+    !payload.approval_once &&
+    cut >= 0 &&
+    (message.split("\n").length > 4 || message.length > 160);
   const rawWarning = payload.warning?.trim();
   const internalSchedule = isInternalScheduleApproval(payload);
   const warning = internalSchedule && rawWarning
     ? rawWarning.replace(/^This modifies external records\.?\s*/i, "").trim()
     : rawWarning;
   const accountLabel = payload.account?.label?.trim();
-  const showMeta = !internalSchedule || !!accountLabel || !!payload.recipients?.length;
   const summaryHasRecipients = payload.tool_id === "google/mail/mail-send";
+  const showRecipients = !summaryHasRecipients && !!payload.recipients?.length;
+  const showMeta = showRecipients || !!accountLabel;
 
   return (
     <div>
@@ -438,13 +490,28 @@ function Approval({
       </p>
       {cut >= 0 && (
         <>
-          <blockquote
-            aria-label="Message to be sent"
-            className="mt-2 rounded-tile bg-fill-1 px-3 py-2 text-[13.5px] leading-relaxed whitespace-pre-wrap text-ink [overflow-wrap:anywhere]"
-          >
-            {message || "(No message text)"}
-          </blockquote>
-          {message.trimEnd().endsWith("…") && (
+          <div className="mt-2 rounded-tile bg-fill-1 px-3 py-2">
+            <blockquote
+              aria-label="Message to be sent"
+              className={cn(
+                "text-[13.5px] leading-relaxed whitespace-pre-wrap text-ink [overflow-wrap:anywhere]",
+                canClampQuoted && !quotedExpanded && "line-clamp-4",
+              )}
+            >
+              {message || "(No message text)"}
+            </blockquote>
+            {canClampQuoted && (
+              <button
+                type="button"
+                onClick={() => setQuotedExpanded((open) => !open)}
+                className="mt-1.5 inline-flex items-center gap-1 text-caption font-semibold text-accent-text hover:underline"
+              >
+                {quotedExpanded ? "Show less" : "Show more"}
+                {quotedExpanded ? <ChevronUp size={12} aria-hidden /> : <ChevronDown size={12} aria-hidden />}
+              </button>
+            )}
+          </div>
+          {!payload.approval_once && message.trimEnd().endsWith("…") && (
             <p className="mt-1 text-caption text-ink-2">Only the start of the message is shown here. The rest is sent too.</p>
           )}
         </>
@@ -462,10 +529,10 @@ function Approval({
       )}
       {showMeta && (
         <dl className="mt-3 grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-1.5 text-meta">
-          {send && !summaryHasRecipients && !!payload.recipients?.length && (
+          {send && showRecipients && (
             <>
               <dt className="text-ink-2">To</dt>
-              <dd className="font-medium text-ink [overflow-wrap:anywhere]">{payload.recipients.join(", ")}</dd>
+              <dd className="font-medium text-ink [overflow-wrap:anywhere]">{payload.recipients!.join(", ")}</dd>
             </>
           )}
           {!!accountLabel && (
@@ -474,16 +541,12 @@ function Approval({
               <dd className="font-medium text-ink">{accountLabel}</dd>
             </>
           )}
-          {!send && !!payload.recipients?.length && (
+          {!send && showRecipients && (
             <>
               <dt className="text-ink-2">To</dt>
-              <dd className="font-medium text-ink [overflow-wrap:anywhere]">{payload.recipients.join(", ")}</dd>
+              <dd className="font-medium text-ink [overflow-wrap:anywhere]">{payload.recipients!.join(", ")}</dd>
             </>
           )}
-          <dt className="text-ink-2">Effect</dt>
-          <dd>
-            <Pill tone={payload.effect === "sensitive_send" ? "warning" : "neutral"}>{EFFECT_LABEL[payload.effect]}</Pill>
-          </dd>
         </dl>
       )}
       {!!payload.material_effects?.length && (
@@ -542,6 +605,9 @@ function AccountChoice({ payload, state }: { payload: AccountSelectionPayload; s
     !!address(connection) && eligible.filter((entry) => address(entry.connection) === address(connection)).length > 1;
   return (
     <div className="space-y-2">
+      {payload.purpose && (
+        <p className="text-meta text-ink-2">{payload.purpose}</p>
+      )}
       {eligible.map(({ id, connection }) => (
         <button
           key={id}
@@ -550,7 +616,7 @@ function AccountChoice({ payload, state }: { payload: AccountSelectionPayload; s
           onClick={() =>
             void state.respond({ kind: "choose_account", connection_id: id, remember_as_default: remember }, id)
           }
-          className="flex min-h-12 w-full items-center gap-3 rounded-tile border border-hairline px-3 py-2 text-left transition-colors hover:bg-fill-1 disabled:opacity-60"
+          className="flex min-h-12 w-full items-center gap-3 rounded-tile border border-card-border bg-fill-1 px-3 py-2 text-left transition-colors hover:bg-fill-2 disabled:cursor-not-allowed disabled:bg-disabled-bg disabled:text-disabled"
         >
           <span className="min-w-0 flex-1">
             <span className="block text-row font-medium [overflow-wrap:anywhere]">
@@ -666,7 +732,7 @@ function SignIn({ interaction, payload, state }: { interaction: Interaction; pay
     }
   };
   const blocked = !desktop && !browserContinuation && !!payload.authorize_url && !url;
-  const title = mcp ? server.data?.name ?? "MCP server" : integration.data?.title ?? payload.integration_id;
+  const title = mcp ? server.data?.name ?? "this app" : integration.data?.title ?? humanizeIntegrationID(payload.integration_id);
   const wanted = askedFor(payload.requested_scopes, integration.data).filter(Boolean);
   const purposeLine = desktop
     ? "Continue sign-in in your browser."

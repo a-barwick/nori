@@ -61,10 +61,36 @@ public enum InteractionStatusPresentation {
 }
 
 extension Interaction {
+    static func humanizedIntegrationName(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "app" }
+        let known: [String: String] = [
+            "google": "Google",
+            "gmail": "Gmail",
+            "github": "GitHub",
+            "gitlab": "GitLab",
+            "slack": "Slack",
+            "linear": "Linear",
+            "notion": "Notion",
+            "microsoft": "Microsoft",
+            "outlook": "Outlook",
+            "icloud": "iCloud"
+        ]
+        let lower = trimmed.lowercased()
+        if let mapped = known[lower] { return mapped }
+        return trimmed
+            .components(separatedBy: CharacterSet(charactersIn: "_-"))
+            .filter { !$0.isEmpty }
+            .map { part in
+                known[part.lowercased()] ?? part.prefix(1).uppercased() + part.dropFirst()
+            }
+            .joined(separator: " ")
+    }
+
     var displayHeading: String {
         if kind == .signIn, case .signIn(let payload) = payload {
             if payload.integrationID != "mcp", !payload.integrationID.isEmpty {
-                return "Connect \(payload.integrationID.capitalized)"
+                return "Connect \(Self.humanizedIntegrationName(payload.integrationID))"
             }
             return "Connect app"
         }
@@ -88,7 +114,7 @@ extension Interaction {
                 }
             }
         }
-        return prompt.isEmpty ? "Needs your input" : prompt
+        return prompt.isEmpty ? "Input requested" : prompt
     }
 }
 
@@ -108,13 +134,11 @@ public struct InteractionCardView: View {
     @State private var errorMessage: String?
     @State private var conflictState: InteractionConflictState?
 
-    @State private var rememberSimilarRule: Bool = false
     @State private var isQuotedBodyExpanded: Bool = false
 
     @State private var selectedOptionIDs: Set<String> = []
     @State private var textAnswer: String = ""
     @State private var dateAnswer: Date = Date()
-    @State private var didSeedInitialChoice: Bool = false
 
     @State private var rememberAccountAsDefault: Bool = false
     @State private var didSeedAccountDefault: Bool = false
@@ -156,14 +180,29 @@ public struct InteractionCardView: View {
                 }
             }
 
-            Group {
-                if isResolved {
-                    resolvedBody
-                } else {
-                    pendingBody
-                }
+            if isResolved {
+                resolvedBody(pillLabel: pill.label)
+            } else {
+                pendingBody
+                    .padding(.top, 6)
             }
-            .padding(.top, isResolved ? 8 : 6)
+
+            if let onOpenTask, let taskID = interaction.taskID, !taskID.isEmpty, !compact {
+                Button {
+                    onOpenTask(taskID)
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(interaction.taskTitle?.isEmpty == false ? interaction.taskTitle! : "Open task")
+                            .lineLimit(1)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(NoriColors.accent)
+                    .padding(.top, 8)
+                }
+                .buttonStyle(.plain)
+            }
 
             if let conflictState {
                 NoriNotice(
@@ -213,23 +252,25 @@ public struct InteractionCardView: View {
     }
 
     @ViewBuilder
-    private var resolvedBody: some View {
+    private func resolvedBody(pillLabel: String) -> some View {
         if interaction.status == .superseded {
             Text(interaction.supersededBy != nil
                  ? "A newer version replaced this. It’s in Action needed."
                  : "A newer version replaced this.")
                 .font(.system(size: 13))
                 .foregroundStyle(NoriColors.ink2)
-        } else {
+                .padding(.top, 8)
+        } else if let line = resolvedDetailLine(pillLabel: pillLabel) {
             let icon = resolvedIcon
             HStack(spacing: 6) {
                 Image(systemName: icon.name)
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(icon.color)
-                Text(resolvedSummaryText)
+                Text(line)
                     .font(.system(size: 13))
                     .foregroundStyle(NoriColors.ink2)
             }
+            .padding(.top, 8)
         }
     }
 
@@ -243,9 +284,12 @@ public struct InteractionCardView: View {
         return ("checkmark", NoriColors.ok)
     }
 
-    private var resolvedSummaryText: String {
+    private func resolvedDetailLine(pillLabel: String) -> String? {
         guard let res = interaction.resolution else {
-            return interaction.status == .expired ? "Expired" : "Resolved"
+            if let resolvedAt = interaction.resolvedAt, !resolvedAt.isEmpty {
+                return NoriDateFormatting.shortDateTime(resolvedAt)
+            }
+            return nil
         }
         let base: String
         switch res.kind {
@@ -270,10 +314,11 @@ public struct InteractionCardView: View {
                 base = "Answered"
             }
         }
-        if !res.at.isEmpty {
-            return "\(base) · \(NoriDateFormatting.shortDateTime(res.at))"
-        }
-        return base
+        let duplicatesPill = base.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            == pillLabel.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let timeText = res.at.isEmpty ? nil : NoriDateFormatting.shortDateTime(res.at)
+        let parts = [duplicatesPill ? nil : base, timeText].compactMap { $0 }.filter { !$0.isEmpty }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     @ViewBuilder
@@ -285,7 +330,6 @@ public struct InteractionCardView: View {
                 compact: compact,
                 isSubmitting: isSubmitting,
                 submittingAction: submittingAction,
-                rememberSimilarRule: $rememberSimilarRule,
                 isQuotedBodyExpanded: $isQuotedBodyExpanded,
                 onApprove: { rememberRule in submitApprove(rememberRule: rememberRule) },
                 onDecline: { submitDecline() }
@@ -340,9 +384,7 @@ public struct InteractionCardView: View {
     private func resetLocalState() {
         selectedOptionIDs = []
         textAnswer = ""
-        rememberSimilarRule = false
         isQuotedBodyExpanded = false
-        didSeedInitialChoice = false
         didSeedAccountDefault = false
         errorMessage = nil
         conflictState = nil
@@ -350,12 +392,6 @@ public struct InteractionCardView: View {
     }
 
     private func seedInitialSelectionsIfNeeded() {
-        if !didSeedInitialChoice, case .question(let payload) = interaction.payload {
-            didSeedInitialChoice = true
-            if payload.input == .choice, let first = payload.options?.first, selectedOptionIDs.isEmpty {
-                selectedOptionIDs = [first.id]
-            }
-        }
         if !didSeedAccountDefault, case .accountSelection(let payload) = interaction.payload {
             didSeedAccountDefault = true
             rememberAccountAsDefault = payload.rememberAsDefault ?? false

@@ -59,9 +59,10 @@ public enum LibraryItemKind: String, Sendable, Codable, Hashable, CaseIterable {
 
     public var filterGroup: String {
         switch self {
-        case .document, .report, .answer: return "documents"
-        case .file, .screenshot, .link: return "files"
-        case .event, .message: return "events"
+        case .document, .report, .answer, .link: return "documents"
+        case .file, .screenshot: return "files"
+        case .event: return "events"
+        case .message: return "messages"
         }
     }
 }

@@ -12,7 +12,7 @@ export function LibraryPreview({ item, text }: { item: LibraryItem; text?: strin
   if (item.data_kind === "calendar_event" && item.data) {
     const event = item.data;
     return (
-      <article className="rounded-card border border-hairline bg-surface p-4">
+      <article className="rounded-card border border-card-border bg-surface p-4">
         <p className="text-section font-semibold">{event.title}</p>
         <p className="mt-1 text-body text-ink-2">
           {eventTime(event.time)}
@@ -45,7 +45,7 @@ export function LibraryPreview({ item, text }: { item: LibraryItem; text?: strin
   if (item.data_kind === "mail_draft" && item.data) {
     const draft = item.data;
     return (
-      <article className="rounded-card border border-hairline bg-surface p-4 text-body">
+      <article className="rounded-card border border-card-border bg-surface p-4 text-body">
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-meta">
           <dt className="text-ink-3">From</dt>
           <dd>{draft.sender.email}</dd>
@@ -61,7 +61,7 @@ export function LibraryPreview({ item, text }: { item: LibraryItem; text?: strin
         <p className="mt-3 font-semibold">{draft.subject}</p>
         <p className="mt-2 whitespace-pre-wrap">{draft.body_text}</p>
         <p className="mt-3">
-          <Pill tone={draft.state === "sent" ? "ok" : "neutral"}>{draft.state === "sent" ? "Sent" : "Draft, not sent"}</Pill>
+          <Pill tone={draft.state === "sent" ? "ok" : "neutral"}>{draft.state === "sent" ? "Sent" : "Draft"}</Pill>
         </p>
       </article>
     );
@@ -69,7 +69,7 @@ export function LibraryPreview({ item, text }: { item: LibraryItem; text?: strin
   if (item.data_kind === "mail_message" && item.data) {
     const message = item.data;
     return (
-      <article className="rounded-card border border-hairline bg-surface p-4 text-body">
+      <article className="rounded-card border border-card-border bg-surface p-4 text-body">
         <p className="text-meta text-ink-2">
           {message.from.name ?? message.from.email} · {when(message.received_at)}
         </p>
@@ -81,13 +81,13 @@ export function LibraryPreview({ item, text }: { item: LibraryItem; text?: strin
   }
   if (item.data_kind === "availability" && item.data) {
     return (
-      <article className="rounded-card border border-hairline bg-surface p-4">
+      <article className="rounded-card border border-card-border bg-surface p-4">
         <ul className="space-y-1 text-body">
           {item.data.slots.map((slot) => (
             <li key={slot.start} className="flex justify-between gap-3">
               <span>{when(slot.start)}</span>
               <Pill tone={slot.status === "free" ? "ok" : slot.status === "unknown" ? "warning" : "neutral"}>
-                {slot.status === "unknown" ? "Unknown" : slot.status}
+                {slot.status.charAt(0).toUpperCase() + slot.status.slice(1)}
               </Pill>
             </li>
           ))}
@@ -117,9 +117,9 @@ function FilePreview({ url, mediaType, name }: { url: string; mediaType?: string
   if (file?.error !== undefined) return <Notice tone="danger">This file is no longer available.</Notice>;
   if (!file?.url) return <Loading label="Loading preview…" />;
   return mediaType === "application/pdf" ? (
-    <iframe src={file.url} title={name} className="h-[70vh] w-full rounded-card border border-hairline" />
+    <iframe src={file.url} title={name} className="h-[70vh] w-full rounded-card border border-card-border" />
   ) : (
     // eslint-disable-next-line @next/next/no-img-element
-    <img src={file.url} alt={name} className="max-h-[70vh] max-w-full rounded-card border border-hairline object-contain" />
+    <img src={file.url} alt={name} className="max-h-[70vh] max-w-full rounded-card border border-card-border object-contain" />
   );
 }

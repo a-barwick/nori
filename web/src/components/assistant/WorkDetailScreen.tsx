@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Square } from "lucide-react";
+import { Check, Copy, MessageSquare, Square } from "lucide-react";
 import { Markdown } from "@/components/chat/Markdown";
 import { Button } from "@/components/ui/primitives";
 import { APIError, mutate, newRequestID } from "@/lib/assistant/api";
@@ -15,9 +15,9 @@ import type { LibraryItem, WorkItem } from "@/lib/contracts/assistant";
 import { MAX_MESSAGE_BYTES, messageTooLong } from "@/lib/submission";
 import { cn } from "@/lib/utils";
 import { InteractionCard } from "./InteractionCard";
-import { OperationRows, shownOperations } from "./WorkOperations";
+import { OperationRows, shownOperations, stepName } from "./WorkOperations";
 import { statusPill } from "./WorkScreen";
-import { Empty, Failure, Field, inputBase, inputClass, Loading, Notice, Pill, RefreshButton, Row, Rows, Screen, Section } from "./ui";
+import { Empty, Failure, Field, inputBase, inputClass, Loading, Notice, Pill, Row, Rows, Screen, Section } from "./ui";
 
 const SPENDING_LIMIT = /spending limit/i;
 const MAX_TRANSIENT_RETRIES = 3;
@@ -54,7 +54,7 @@ function Continue({ item }: { item: WorkItem }) {
   return (
     <Section title="Continue">
       <form
-        className="flex flex-wrap items-end gap-3 rounded-card border border-hairline bg-surface p-4"
+        className="flex flex-wrap items-end gap-3 rounded-card border border-card-border bg-surface p-4"
         onSubmit={(event) => {
           event.preventDefault();
           void go();
@@ -97,8 +97,11 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
     { poll: 0 },
   );
   const saved = (results.data?.items ?? []).filter((result) => item?.result_ids.includes(result.id));
+  const router = useRouter();
   const commands = runtime.taskCommands.filter((command) => command.command.run_id === taskID);
   const [draft, setDraft] = useState("");
+  const [copiedResult, setCopiedResult] = useState(false);
+  const [copiedTaskID, setCopiedTaskID] = useState(false);
   const [retryState, setRetryState] = useState<{ taskID: string; count: number }>({ taskID, count: 0 });
   const retries = retryState.taskID === taskID ? retryState.count : 0;
   const settling = !item && isRetryableWorkDetailError(error) && retries < MAX_TRANSIENT_RETRIES;
@@ -144,24 +147,52 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
   const running = item.status === "running" && !item.cancel_requested;
   const stopping = commands.some((command) => command.command.kind === "stop") || item.cancel_requested;
   const pendingInteractions = detail.interactions.filter((interaction) => interaction.status === "pending");
-  const toolNames = new Set(detail.operations.map((operation) => operation.name));
-  const activity = (detail.events ?? []).filter((event) => !toolNames.has(event.text) && event.text !== "capability_load");
+  const actionablePending = pendingInteractions.filter((interaction) => interaction.kind !== "question");
+  const waitingInChat =
+    item.status === "running" &&
+    !item.cancel_requested &&
+    (item.bucket === "needs_you" || pendingInteractions.some((interaction) => interaction.kind === "question")) &&
+    actionablePending.length === 0;
+  const visibleOperations = shownOperations(detail.operations);
+  const coveredLabels = new Set(
+    detail.operations.flatMap((operation) => [
+      operation.name.trim().toLowerCase(),
+      stepName(operation.name).trim().toLowerCase(),
+      ...(operation.action_summary ? [operation.action_summary.trim().toLowerCase()] : []),
+    ]),
+  );
+  const extraSteps = (detail.events ?? []).filter((event) => {
+    const normalized = event.text.trim().toLowerCase();
+    return normalized !== "" && normalized !== "capability_load" && !coveredLabels.has(normalized);
+  });
+  const hasSteps = visibleOperations.length > 0 || extraSteps.length > 0;
   const tooLong = messageTooLong(draft.trim());
   const sending = commands.some((command) => command.command.kind === "steer" && !command.error);
+  const needsModelKey =
+    item.error?.code === "model_key_required" ||
+    item.error?.code === "missing_api_key" ||
+    item.error?.message?.includes("More → Models");
   const line =
-    item.status === "running" && item.cancel_requested
-      ? "Stopping."
-      : item.status === "running"
-        ? pendingInteractions.length
-          ? undefined
-          : item.progress || "Working on it."
-        : item.status === "completed"
-          ? item.operations.uncertain
-            ? "Finished, but one action isn’t confirmed yet."
-            : "Done."
-          : item.status === "failed"
-            ? item.error?.message || "This task failed."
-            : "Stopped.";
+    item.status === "running" && !item.cancel_requested && !pendingInteractions.length && item.progress
+      ? item.progress
+      : item.status === "completed" && item.operations.uncertain
+        ? "Finished, but one action isn’t confirmed yet."
+        : item.status === "failed" && item.error?.message
+          ? item.error.message
+          : undefined;
+
+  const copyText = (value: string, setFlag: (v: boolean) => void) => {
+    if (typeof navigator === "undefined" || !navigator.clipboard) return;
+    void navigator.clipboard.writeText(value).then(() => {
+      setFlag(true);
+      setTimeout(() => setFlag(false), 1800);
+    });
+  };
+
+  const followUpInChat = () => {
+    runtime.setDraft(`Follow up on "${item.title}": `);
+    router.push("/?compose=1");
+  };
 
   return (
     <Screen
@@ -169,13 +200,19 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
       back="/work"
       backLabel="Work"
       line={line}
-      actions={
-        <>
-          <Pill tone={pill.tone}>{pill.label}</Pill>
-          <RefreshButton onClick={() => void reload()} />
-        </>
-      }
+      actions={<Pill tone={pill.tone}>{pill.label}</Pill>}
     >
+      {needsModelKey && (
+        <div className="mb-4">
+          <Link
+            href="/settings/models"
+            className="inline-flex h-8 items-center rounded-full bg-fill-1 px-3.5 text-meta font-semibold text-ink transition-colors hover:bg-fill-2"
+          >
+            Open Models
+          </Link>
+        </div>
+      )}
+
       {signInResult && (
         <div className="mb-5">
           <Notice tone={signInResult === "connected" ? "ok" : signInResult === "cancelled" ? "neutral" : "danger"}>
@@ -198,6 +235,18 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
         </Section>
       )}
 
+      {waitingInChat && (
+        <div className="mt-4">
+          <Link
+            href={`/?compose=1&reply_title=${encodeURIComponent(item.title)}`}
+            className="inline-flex h-9 items-center gap-1.5 rounded-full bg-accent px-4 text-row-title font-medium text-on-accent transition-colors hover:bg-accent-hover"
+          >
+            <MessageSquare size={14} aria-hidden />
+            Reply in Chat
+          </Link>
+        </div>
+      )}
+
       {item.operations.uncertain > 0 && (
         <div className="mt-5">
           <Notice tone="warning">
@@ -209,7 +258,7 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
       {running && (
         <Section title="Steer this task">
           <form
-            className="space-y-2.5 rounded-card border border-hairline bg-surface p-4"
+            className="space-y-2.5 rounded-card border border-card-border bg-surface p-4"
             onSubmit={(event) => {
               event.preventDefault();
               const text = draft.trim();
@@ -235,9 +284,9 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
               <Button type="submit" variant="primary" disabled={!draft.trim() || tooLong || sending}>
                 {sending ? "Sending…" : "Send update"}
               </Button>
-              <Button disabled={stopping} onClick={() => void runtime.commandTask(taskID, "stop")}>
+              <Button variant="danger" disabled={stopping} onClick={() => void runtime.commandTask(taskID, "stop")}>
                 <Square size={12} fill="currentColor" aria-hidden />
-                {stopping ? "Stopping…" : "Stop task"}
+                {stopping ? "Stopping…" : "Stop"}
               </Button>
             </div>
           </form>
@@ -276,10 +325,25 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
 
       {detail.result && (
         <Section title={item.status === "failed" ? "Partial answer" : "Result"}>
-          <div className="rounded-card border border-hairline bg-surface p-4 text-body [overflow-wrap:anywhere]">
+          <div className="rounded-card border border-card-border bg-surface p-4 text-body [overflow-wrap:anywhere]">
             <Markdown variant="page">{detail.result}</Markdown>
           </div>
         </Section>
+      )}
+
+      {item.status !== "running" && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {detail.result && (
+            <Button variant="neutral" size="sm" onClick={() => copyText(detail.result!, setCopiedResult)}>
+              {copiedResult ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
+              {copiedResult ? "Copied" : "Copy"}
+            </Button>
+          )}
+          <Button variant="tonal" size="sm" onClick={followUpInChat}>
+            <MessageSquare size={14} aria-hidden />
+            Follow up in Chat
+          </Button>
+        </div>
       )}
 
       {saved.length > 0 && (
@@ -308,107 +372,124 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
         </Section>
       )}
 
-      {shownOperations(detail.operations).length > 0 && (
-        <Section title="Actions audit">
-          <OperationRows operations={shownOperations(detail.operations)} />
+      {hasSteps && (
+        <Section title="Steps">
+          <div className="space-y-3">
+            {visibleOperations.length > 0 && <OperationRows operations={visibleOperations} />}
+            {extraSteps.length > 0 && (
+              <Rows label="Task milestones">
+                {extraSteps.map((event, index) => (
+                  <Row
+                    key={`${event.created_at}-${index}`}
+                    title={event.text}
+                    detail={event.created_at ? when(event.created_at) : undefined}
+                    wrapTitle
+                  />
+                ))}
+              </Rows>
+            )}
+          </div>
         </Section>
       )}
 
-      {activity.length > 0 && (
-        <Section title="Activity timeline">
-          <ol className="space-y-3 border-l border-hairline pl-4">
-            {activity.map((event, index) => (
-              <li key={`${event.created_at}-${index}`} className="relative">
-                <span
-                  aria-hidden
-                  className="absolute top-1.5 -left-[21px] size-2.5 rounded-full border-2 border-surface bg-hairline-strong"
-                />
-                <p className="text-caption text-ink-3">{when(event.created_at)}</p>
-                <p className="text-body text-ink [overflow-wrap:anywhere]">{event.text}</p>
-              </li>
-            ))}
-          </ol>
-        </Section>
-      )}
-
-      <div className="mt-7 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-tile border border-hairline bg-fill-1 px-3.5 py-2.5 text-caption text-ink-2">
-        <span>Started {when(item.started_at)}</span>
-        {item.finished_at && (
-          <>
-            <span>·</span>
-            <span>Finished {when(item.finished_at)}</span>
-          </>
-        )}
-        <span>·</span>
-        <span>
-          From{" "}
-          {item.origin.kind === "automation" && item.origin.automation_id ? (
-            <Link className="font-medium text-accent-text hover:underline" href={`/routines/${encodeURIComponent(item.origin.automation_id)}`}>
-              Routine
-            </Link>
-          ) : item.origin.kind === "goal" && item.origin.goal_id ? (
-            <Link className="font-medium text-accent-text hover:underline" href={`/goals/${encodeURIComponent(item.origin.goal_id)}`}>
-              Goal
-            </Link>
-          ) : item.origin.kind === "external" ? (
-            "Another app"
-          ) : (
-            <Link className="font-medium text-accent-text hover:underline" href="/">
-              Chat
-            </Link>
-          )}
-        </span>
-        <span>·</span>
-        <span>
-          Spend{" "}
-          <code className="font-mono text-ink">
-            {item.cost.status === "known"
-              ? money(item.cost.amount_usd)
-              : item.cost.status === "unknown"
-                ? item.cost.amount_usd
-                  ? `At least ${money(item.cost.amount_usd)}`
-                  : "Unknown"
-                : "None"}
-          </code>
-          {item.cost.budget_usd ? ` / ${money(item.cost.budget_usd)}` : ""}
-        </span>
-        {continuedBy.length > 0 && (
-          <>
-            <span>·</span>
-            {continuedBy.map((other) => (
-              <Link
-                key={other.task_id}
-                className="font-medium text-accent-text hover:underline"
-                href={`/work/${encodeURIComponent(other.task_id)}`}
-              >
-                Continued by later task
+      <Section title="Details">
+        <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-6 gap-y-2 text-meta">
+          <dt className="text-ink-3">Origin</dt>
+          <dd className="text-ink">
+            {item.origin.kind === "automation" && item.origin.automation_id ? (
+              <Link className="font-medium text-accent-text hover:underline" href={`/routines/${encodeURIComponent(item.origin.automation_id)}`}>
+                Routine
               </Link>
-            ))}
-          </>
-        )}
-        {item.origin.continues_task_id && (
-          <>
-            <span>·</span>
-            <Link
-              className="font-medium text-accent-text hover:underline"
-              href={`/work/${encodeURIComponent(item.origin.continues_task_id)}`}
+            ) : item.origin.kind === "goal" && item.origin.goal_id ? (
+              <Link className="font-medium text-accent-text hover:underline" href={`/goals/${encodeURIComponent(item.origin.goal_id)}`}>
+                Goal
+              </Link>
+            ) : item.origin.kind === "external" ? (
+              "Another app"
+            ) : (
+              <Link className="font-medium text-accent-text hover:underline" href="/">
+                Chat
+              </Link>
+            )}
+          </dd>
+          <dt className="text-ink-3">Started</dt>
+          <dd className="text-ink">{when(item.started_at)}</dd>
+          {item.finished_at && (
+            <>
+              <dt className="text-ink-3">Finished</dt>
+              <dd className="text-ink">{when(item.finished_at)}</dd>
+            </>
+          )}
+          <dt className="text-ink-3">Cost</dt>
+          <dd className="text-ink">
+            <code className="font-mono">
+              {item.cost.status === "known"
+                ? money(item.cost.amount_usd)
+                : item.cost.status === "unknown"
+                  ? item.cost.amount_usd
+                    ? `At least ${money(item.cost.amount_usd)}`
+                    : "Unknown"
+                  : "None"}
+            </code>
+            {item.cost.budget_usd ? ` / ${money(item.cost.budget_usd)}` : ""}
+          </dd>
+          {item.origin.continues_task_id && (
+            <>
+              <dt className="text-ink-3">Continues</dt>
+              <dd>
+                <Link
+                  className="font-medium text-accent-text hover:underline"
+                  href={`/work/${encodeURIComponent(item.origin.continues_task_id)}`}
+                >
+                  Earlier task
+                </Link>
+              </dd>
+            </>
+          )}
+          {continuedBy.length > 0 && (
+            <>
+              <dt className="text-ink-3">Continued by</dt>
+              <dd className="flex flex-wrap gap-2">
+                {continuedBy.map((other) => (
+                  <Link
+                    key={other.task_id}
+                    className="font-medium text-accent-text hover:underline"
+                    href={`/work/${encodeURIComponent(other.task_id)}`}
+                  >
+                    {other.title || "Later task"}
+                  </Link>
+                ))}
+              </dd>
+            </>
+          )}
+          {item.parent_task_id && (
+            <>
+              <dt className="text-ink-3">Parent</dt>
+              <dd>
+                <Link
+                  className="font-medium text-accent-text hover:underline"
+                  href={`/work/${encodeURIComponent(item.parent_task_id)}`}
+                >
+                  Parent task
+                </Link>
+              </dd>
+            </>
+          )}
+          <dt className="text-ink-3">Task ID</dt>
+          <dd className="flex min-w-0 items-center gap-2">
+            <code className="truncate font-mono text-caption text-ink-2">{item.task_id}</code>
+            <button
+              type="button"
+              onClick={() => copyText(item.task_id, setCopiedTaskID)}
+              className="inline-flex shrink-0 items-center gap-1 text-caption font-medium text-accent-text hover:underline"
+              aria-label={`Copy Task ID ${item.task_id}`}
             >
-              Continues earlier task
-            </Link>
-          </>
-        )}
-        {item.parent_task_id && (
-          <>
-            <span>·</span>
-            <Link
-              className="font-medium text-accent-text hover:underline"
-              href={`/work/${encodeURIComponent(item.parent_task_id)}`}
-            >
-              Parent task
-            </Link>
-          </>
-        )}
-      </div>
+              {copiedTaskID ? <Check size={12} aria-hidden /> : <Copy size={12} aria-hidden />}
+              {copiedTaskID ? "Copied" : "Copy"}
+            </button>
+          </dd>
+        </dl>
+      </Section>
     </Screen>
   );
 }

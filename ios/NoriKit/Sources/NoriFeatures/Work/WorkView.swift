@@ -62,6 +62,8 @@ public struct WorkView: View {
     @State private var selectedTaskDestination: String?
     @State private var showAllRecentTasks: Bool = false
     @State private var isResolvedExpanded: Bool = false
+    @State private var isRefreshingTasks: Bool = false
+    @State private var didAttemptInitialTasksLoad: Bool = false
 
     public init(
         store: NoriStore,
@@ -177,7 +179,8 @@ public struct WorkView: View {
                 store: store,
                 taskID: taskID,
                 onOpenDocument: onOpenDocument,
-                onOpenModels: onOpenModels
+                onOpenModels: onOpenModels,
+                onStartInChat: onStartInChat
             )
         }
         #if os(iOS)
@@ -231,16 +234,26 @@ public struct WorkView: View {
                     .padding(.bottom, 6)
                 }
 
-                if isAllClear, isLoadingOverview, !store.hasLoadedWorkOverview {
+                if isAllClear, (isLoadingOverview || isRefreshingTasks || !didAttemptInitialTasksLoad), !store.hasLoadedWorkOverview {
                     ProgressView()
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 16)
                 } else if isAllClear, !store.hasLoadedWorkOverview {
-                    Button("Refresh tasks") {
-                        Task { await store.refreshWorkAndInteractions() }
+                    NoriNotice(
+                        title: store.lastError ?? "Couldn’t load tasks.",
+                        tone: .warning,
+                        systemImage: "exclamationmark.triangle.fill"
+                    ) {
+                        Button("Try again") {
+                            Task {
+                                isRefreshingTasks = true
+                                await store.refreshWorkAndInteractions()
+                                isRefreshingTasks = false
+                            }
+                        }
+                        .buttonStyle(NoriButtonStyle(.neutral, compact: true))
                     }
-                    .buttonStyle(NoriButtonStyle(.neutral, fullWidth: true))
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 6)
                 } else if isAllClear {
                     allClearCard
                         .padding(.top, 4)
@@ -303,6 +316,15 @@ public struct WorkView: View {
             .padding(.bottom, 96)
         }
         .background(NoriColors.canvas)
+        .task {
+            guard !didAttemptInitialTasksLoad else { return }
+            didAttemptInitialTasksLoad = true
+            if !store.hasLoadedWorkOverview {
+                isRefreshingTasks = true
+                await store.refreshWorkAndInteractions()
+                isRefreshingTasks = false
+            }
+        }
         .refreshable {
             await store.refreshWorkAndInteractions()
         }
@@ -338,13 +360,16 @@ public struct WorkView: View {
     }
 
     private func waitingInChatRowView(_ row: WaitingInChatRow, showDivider: Bool) -> some View {
-        VStack(spacing: 0) {
+        let replyContext = (waitingInChatRows.count > 1 && row.title != "Waiting in Chat")
+            ? "Re: \(row.title): "
+            : ""
+        return VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
                 Button {
                     if let taskID = row.taskID {
                         navigateToTask(taskID)
                     } else {
-                        onStartInChat("")
+                        onStartInChat(replyContext)
                     }
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
@@ -363,7 +388,7 @@ public struct WorkView: View {
                 .buttonStyle(.plain)
 
                 Button("Reply") {
-                    onStartInChat("")
+                    onStartInChat(replyContext)
                 }
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(NoriColors.accent)
@@ -376,8 +401,9 @@ public struct WorkView: View {
             .padding(.vertical, 12)
 
             if showDivider {
-                Divider()
-                    .background(NoriColors.hairline)
+                Rectangle()
+                    .fill(NoriColors.hairline)
+                    .frame(height: 1)
                     .padding(.leading, 14)
             }
         }
@@ -433,8 +459,9 @@ public struct WorkView: View {
                 .contentShape(Rectangle())
 
                 if showDivider {
-                    Divider()
-                        .background(NoriColors.hairline)
+                    Rectangle()
+                        .fill(NoriColors.hairline)
+                        .frame(height: 1)
                         .padding(.leading, 14)
                 }
             }
@@ -444,6 +471,7 @@ public struct WorkView: View {
 
     private func workRow(item: WorkItem, showDivider: Bool) -> some View {
         let pill = WorkStatusPresentation.pill(for: item)
+        let showPill = !(item.status == .completed && item.operations.uncertain == 0)
         let timestampDetail: String = {
             if let finishedAt = item.finishedAt, !finishedAt.isEmpty {
                 return "Finished \(NoriDateFormatting.relative(finishedAt))"
@@ -468,7 +496,9 @@ public struct WorkView: View {
                             .foregroundStyle(NoriColors.warning)
                             .accessibilityLabel("Has an unconfirmed action")
                     }
-                    NoriPill(pill.label, tone: pill.tone)
+                    if showPill {
+                        NoriPill(pill.label, tone: pill.tone)
+                    }
                 }
             }
         }
