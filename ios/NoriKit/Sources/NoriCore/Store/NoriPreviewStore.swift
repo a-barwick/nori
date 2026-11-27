@@ -129,7 +129,101 @@ final class PreviewNoriTransport: NoriTransport, @unchecked Sendable {
     func performAutomationAction(id: String, expectedRevision: Int, action: String, requestID: String) async throws -> MutationReceipt<Automation> {
         MutationReceipt(requestID: requestID, resource: snapshot.automations[0])
     }
+    func createAutomation(_ value: AutomationEditable, requestID: String) async throws -> MutationReceipt<Automation> {
+        let created = Automation(
+            id: "auto-\(UUID().uuidString.prefix(6))",
+            title: value.title,
+            instruction: value.instruction,
+            status: .enabled,
+            trigger: value.trigger,
+            budgetUSD: value.budgetUSD
+        )
+        return MutationReceipt(requestID: requestID, resource: created)
+    }
+    func snoozeAutomation(id: String, expectedRevision: Int, until: String, requestID: String) async throws -> MutationReceipt<Automation> {
+        var updated = snapshot.automations.first(where: { $0.id == id }) ?? Automation(id: id, title: "Routine")
+        updated.snoozedUntil = until
+        return MutationReceipt(requestID: requestID, resource: updated)
+    }
+    func fetchAutomationOccurrences(id: String) async throws -> [AutomationOccurrence] {
+        [
+            AutomationOccurrence(
+                id: "occ-1",
+                automationID: id,
+                scheduledAt: ISO8601DateFormatter().string(from: Date().addingTimeInterval(-3600)),
+                status: "completed",
+                taskIDs: snapshot.workItems.first.map { [$0.taskID] } ?? [],
+                summary: "Sent morning brief"
+            )
+        ]
+    }
     func fetchGoals() async throws -> [Goal] { snapshot.goals }
+    func fetchGoal(id: String) async throws -> Goal {
+        snapshot.goals.first(where: { $0.id == id }) ?? Goal(id: id, title: "Preview Goal")
+    }
+    func createGoal(_ value: GoalEditable, requestID: String) async throws -> MutationReceipt<Goal> {
+        let created = Goal(
+            id: "goal-\(UUID().uuidString.prefix(6))",
+            title: value.title,
+            outcome: value.outcome,
+            completionCriteria: value.completionCriteria.map { GoalCriterion(text: $0.text) },
+            status: .active,
+            deadline: value.deadline,
+            followUp: value.followUp
+        )
+        return MutationReceipt(requestID: requestID, resource: created)
+    }
+    func updateGoal(id: String, expectedRevision: Int, value: GoalEditable, requestID: String) async throws -> MutationReceipt<Goal> {
+        var updated = snapshot.goals.first(where: { $0.id == id }) ?? Goal(id: id, title: value.title)
+        updated.title = value.title
+        updated.outcome = value.outcome
+        updated.completionCriteria = value.completionCriteria.map { GoalCriterion(id: $0.id ?? UUID().uuidString, text: $0.text) }
+        updated.deadline = value.deadline
+        updated.followUp = value.followUp
+        return MutationReceipt(requestID: requestID, resource: updated)
+    }
+    func performGoalAction(id: String, expectedRevision: Int, action: String, keepMonitors: Bool?, requestID: String) async throws -> MutationReceipt<Goal> {
+        var updated = snapshot.goals.first(where: { $0.id == id }) ?? Goal(id: id, title: "Preview Goal")
+        switch action {
+        case "pause": updated.status = .paused
+        case "resume": updated.status = .active
+        case "complete": updated.status = .completed
+        case "abandon": updated.status = .abandoned
+        default: break
+        }
+        return MutationReceipt(requestID: requestID, resource: updated)
+    }
+    func renameLibraryItem(id: String, expectedRevision: Int, title: String, collection: String?, requestID: String) async throws -> MutationReceipt<LibraryItem> {
+        var updated = snapshot.libraryItems.first(where: { $0.id == id }) ?? LibraryItem(id: id, title: title)
+        updated.title = title
+        updated.collection = collection
+        return MutationReceipt(requestID: requestID, resource: updated)
+    }
+    func deleteLibraryItem(id: String, expectedRevision: Int, scope: String, requestID: String) async throws -> MutationReceipt<LibraryItem> {
+        let item = snapshot.libraryItems.first(where: { $0.id == id }) ?? LibraryItem(id: id, title: "Deleted")
+        return MutationReceipt(requestID: requestID, resource: item)
+    }
+    func fetchLibraryItemVersions(id: String) async throws -> [LibraryItem] {
+        snapshot.libraryItems.filter { $0.id == id || $0.rootID == id }
+    }
+    func updateMemory(id: String, expectedRevision: Int, text: String, section: String?, about: String?, pinned: Bool, requestID: String) async throws -> MutationReceipt<MemoryFact> {
+        var fact = snapshot.coreMemories.first(where: { $0.id == id }) ?? MemoryFact(id: id, text: text)
+        fact.text = text
+        fact.section = section
+        fact.about = about
+        fact.pinned = pinned
+        return MutationReceipt(requestID: requestID, resource: fact)
+    }
+    func consolidateMemory(requestID: String) async throws {}
+    func updateMCPServer(serverID: String, expectedRevision: Int, input: MCPServerInput, requestID: String) async throws -> MutationReceipt<MCPServer> {
+        var server = snapshot.mcpServers.first(where: { $0.id == serverID }) ?? MCPServer(id: serverID, name: input.name)
+        server.name = input.name
+        server.endpoint = input.endpoint
+        server.auth = input.auth
+        server.enabled = input.enabled
+        server.exposure = input.exposure
+        return MutationReceipt(requestID: requestID, resource: server)
+    }
     func fetchPermissions() async throws -> [PermissionRule] { snapshot.permissions }
     func createPermissionRule(_ rule: PermissionRuleEditable, requestID: String) async throws -> MutationReceipt<PermissionRule> {
         MutationReceipt(requestID: requestID, resource: snapshot.permissions[0])
@@ -476,10 +570,65 @@ public extension NoriStore {
             )
         ]
 
+        let goals: [Goal] = [
+            Goal(
+                id: "goal-1",
+                title: "Plan Portland weekend trip",
+                outcome: "Book flights and hotel under $900 and put itinerary on calendar.",
+                completionCriteria: [
+                    GoalCriterion(id: "c-1", text: "Compare direct morning flight options", met: true),
+                    GoalCriterion(id: "c-2", text: "Shortlist 3 downtown hotels under $240/night", met: true),
+                    GoalCriterion(id: "c-3", text: "Confirm booking and add to calendar", met: false)
+                ],
+                status: .active,
+                progress: "2 of 3 criteria done.",
+                nextActions: ["Review hotel shortlist and approve booking"],
+                deadline: tTomorrowNoon,
+                followUp: "monitor"
+            )
+        ]
+
+        let libraryItems: [LibraryItem] = [
+            LibraryItem(
+                id: "lib-1",
+                version: 2,
+                kind: .document,
+                title: "Portland Weekend Itinerary",
+                mediaType: "text/markdown",
+                taskID: "task-3",
+                createdAt: tMinus8m,
+                previewText: "# Portland Weekend Itinerary\n\n1. Friday arrival & dinner\n2. Saturday Powell's Books & Forest Park\n3. Sunday brunch & flight home"
+            ),
+            LibraryItem(
+                id: "lib-2",
+                version: 1,
+                kind: .report,
+                title: "Q4 Spend Summary",
+                mediaType: "text/markdown",
+                createdAt: tMinus30m,
+                previewText: "## Highlights\n\n- Total spend down 14% MoM\n- Zero overdue vendor invoices"
+            )
+        ]
+
+        let mcpServers: [MCPServer] = [
+            MCPServer(
+                id: "mcp-1",
+                name: "Home Notes",
+                transport: .http,
+                endpoint: "https://notes.example.com/mcp",
+                enabled: true,
+                exposure: MCPExposureConfig(default: .discoverable),
+                observed: MCPObservedState(status: .connected, protocolVersion: "2025-03-26", capabilities: ["tools"], toolCount: 4, lastSuccessAt: tMinus5m),
+                auth: .oauth
+            )
+        ]
+
         let snapshot = NoriFullSnapshot(
             session: Session(messages: messages),
             workItems: workItems,
             interactions: [approval, clarification],
+            mcpServers: mcpServers,
+            libraryItems: libraryItems,
             coreMemories: coreMemories,
             workingMemory: WorkingMemory(
                 items: [],
@@ -488,6 +637,7 @@ public extension NoriStore {
                 coreBudgetBytes: 24 * 1024
             ),
             automations: automations,
+            goals: goals,
             permissions: [
                 PermissionRule(
                     id: "perm-1",
@@ -530,9 +680,12 @@ public extension NoriStore {
         store.workItems = snapshot.workItems
         store.workDetails = ["task-1": detail]
         store.interactions = snapshot.interactions
+        store.mcpServers = snapshot.mcpServers
+        store.libraryItems = snapshot.libraryItems
         store.coreMemories = snapshot.coreMemories
         store.workingMemory = snapshot.workingMemory
         store.automations = snapshot.automations
+        store.goals = snapshot.goals
         store.permissions = snapshot.permissions
         store.modelKeys = snapshot.modelKeys
         store.assistantSummary = AssistantSummary(needsYou: 2, working: 1, appsAttention: 0)

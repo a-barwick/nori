@@ -562,7 +562,7 @@ private struct AddPermissionRuleSheet: View {
                         save()
                     } label: {
                         if isSaving {
-                            ProgressView().tint(.white)
+                            ProgressView().tint(NoriColors.disabled)
                         } else {
                             Text("Save rule")
                         }

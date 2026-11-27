@@ -6,6 +6,7 @@ public struct RoutinesView: View {
     @Bindable private var store: NoriStore
     @State private var busyID: String?
     @State private var selectedRoutineID: String?
+    @State private var showNewRoutineSheet: Bool = false
 
     public init(store: NoriStore) {
         self.store = store
@@ -49,16 +50,34 @@ public struct RoutinesView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                if let nextRunLine {
-                    NoriLine(nextRunLine)
-                }
-
                 if activeAutomations.isEmpty {
                     NoriEmptyState(
                         title: "No routines yet",
-                        message: "Ask Nori in Chat to set up recurring briefs, monitors, or scheduled checks."
-                    )
+                        message: "Ask Nori in Chat or create a routine for recurring briefs, monitors, or scheduled checks."
+                    ) {
+                        Button {
+                            showNewRoutineSheet = true
+                        } label: {
+                            Label("New routine", systemImage: "plus")
+                        }
+                        .buttonStyle(NoriButtonStyle(.primary, compact: true))
+                    }
                 } else {
+                    HStack(alignment: .center, spacing: 8) {
+                        if let nextRunLine {
+                            NoriLine(nextRunLine)
+                        } else {
+                            Spacer(minLength: 0)
+                        }
+
+                        Button {
+                            showNewRoutineSheet = true
+                        } label: {
+                            Label("New", systemImage: "plus")
+                        }
+                        .buttonStyle(NoriButtonStyle(.primary, compact: true))
+                    }
+
                     NoriRows {
                         ForEach(Array(activeAutomations.enumerated()), id: \.element.id) { idx, automation in
                             routineRow(
@@ -76,6 +95,15 @@ public struct RoutinesView: View {
         .background(NoriColors.canvas)
         .navigationDestination(item: $selectedRoutineID) { routineID in
             RoutineDetailView(store: store, automationID: routineID)
+        }
+        .sheet(isPresented: $showNewRoutineSheet) {
+            RoutineEditorSheet(store: store) { created in
+                selectedRoutineID = created.id
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(NoriColors.sheetBackground)
+            .presentationCornerRadius(NoriRadius.sheet)
         }
         .refreshable {
             await store.refreshRoutinesAndGoals()
@@ -137,7 +165,9 @@ public struct RoutinesView: View {
                             if isEnabled,
                                automation.trigger.at == nil,
                                let nextAt = automation.nextAt, !nextAt.isEmpty {
-                                Text("Next \(NoriDateFormatting.relative(nextAt))")
+                                let rel = NoriDateFormatting.relative(nextAt)
+                                let nextText = rel.prefix(1).lowercased() + rel.dropFirst()
+                                Text("Next \(nextText)")
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundStyle(NoriColors.accent)
                                     .lineLimit(1)

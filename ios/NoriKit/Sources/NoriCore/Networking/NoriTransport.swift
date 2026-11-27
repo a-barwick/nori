@@ -135,6 +135,12 @@ public protocol NoriTransport: Sendable {
     func fetchMCPServers() async throws -> [MCPServer]
     func fetchMCPTools(serverID: String) async throws -> [MCPServerTool]
     func createMCPServer(input: MCPServerInput, requestID: String) async throws -> MutationReceipt<MCPServer>
+    func updateMCPServer(
+        serverID: String,
+        expectedRevision: Int,
+        input: MCPServerInput,
+        requestID: String
+    ) async throws -> MutationReceipt<MCPServer>
     func performMCPAction(
         serverID: String,
         expectedRevision: Int,
@@ -186,6 +192,20 @@ public protocol NoriTransport: Sendable {
         instruction: String,
         requestID: String
     ) async throws -> MutationReceipt<LibraryItem>
+    func renameLibraryItem(
+        id: String,
+        expectedRevision: Int,
+        title: String,
+        collection: String?,
+        requestID: String
+    ) async throws -> MutationReceipt<LibraryItem>
+    func deleteLibraryItem(
+        id: String,
+        expectedRevision: Int,
+        scope: String,
+        requestID: String
+    ) async throws -> MutationReceipt<LibraryItem>
+    func fetchLibraryItemVersions(id: String) async throws -> [LibraryItem]
 
     func fetchCoreMemories() async throws -> [MemoryFact]
     func fetchMemoryLogs() async throws -> [MemoryLog]
@@ -198,6 +218,16 @@ public protocol NoriTransport: Sendable {
         pinned: Bool,
         requestID: String
     ) async throws -> MutationReceipt<MemoryFact>
+    func updateMemory(
+        id: String,
+        expectedRevision: Int,
+        text: String,
+        section: String?,
+        about: String?,
+        pinned: Bool,
+        requestID: String
+    ) async throws -> MutationReceipt<MemoryFact>
+    func consolidateMemory(requestID: String) async throws
     func performMemoryAction(
         id: String,
         expectedRevision: Int,
@@ -212,6 +242,16 @@ public protocol NoriTransport: Sendable {
         pinned: Bool,
         requestID: String
     ) async throws -> MutationReceipt<MemoryLogEntryActionResource>
+    func promoteMemoryLogEntry(
+        date: String,
+        entryID: String,
+        expectedRevision: Int,
+        text: String?,
+        section: String?,
+        about: String?,
+        pinned: Bool,
+        requestID: String
+    ) async throws -> MutationReceipt<MemoryLogEntryActionResource>
     func performWorkingMemoryAction(
         itemID: String,
         expectedRevision: Int,
@@ -221,6 +261,10 @@ public protocol NoriTransport: Sendable {
 
     func fetchAutomations() async throws -> [Automation]
     func fetchAutomation(id: String) async throws -> Automation
+    func createAutomation(
+        _ value: AutomationEditable,
+        requestID: String
+    ) async throws -> MutationReceipt<Automation>
     func updateAutomation(
         id: String,
         expectedRevision: Int,
@@ -233,7 +277,29 @@ public protocol NoriTransport: Sendable {
         action: String,
         requestID: String
     ) async throws -> MutationReceipt<Automation>
+    func snoozeAutomation(
+        id: String,
+        expectedRevision: Int,
+        until: String,
+        requestID: String
+    ) async throws -> MutationReceipt<Automation>
+    func fetchAutomationOccurrences(id: String) async throws -> [AutomationOccurrence]
     func fetchGoals() async throws -> [Goal]
+    func fetchGoal(id: String) async throws -> Goal
+    func createGoal(_ value: GoalEditable, requestID: String) async throws -> MutationReceipt<Goal>
+    func updateGoal(
+        id: String,
+        expectedRevision: Int,
+        value: GoalEditable,
+        requestID: String
+    ) async throws -> MutationReceipt<Goal>
+    func performGoalAction(
+        id: String,
+        expectedRevision: Int,
+        action: String,
+        keepMonitors: Bool?,
+        requestID: String
+    ) async throws -> MutationReceipt<Goal>
     func fetchPermissions() async throws -> [PermissionRule]
     func createPermissionRule(
         _ rule: PermissionRuleEditable,
@@ -408,5 +474,120 @@ public extension NoriTransport {
 
     func sendTurn(id: String, message: String, attachmentIDs: [String]) async throws -> Session {
         try await sendTurn(id: id, message: message, attachmentIDs: attachmentIDs, modelSelection: nil)
+    }
+
+    func updateMCPServer(
+        serverID: String,
+        expectedRevision: Int,
+        input: MCPServerInput,
+        requestID: String
+    ) async throws -> MutationReceipt<MCPServer> {
+        throw NoriAPIError(message: "Updating MCP servers is not supported by this transport.")
+    }
+
+    func renameLibraryItem(
+        id: String,
+        expectedRevision: Int,
+        title: String,
+        collection: String?,
+        requestID: String
+    ) async throws -> MutationReceipt<LibraryItem> {
+        throw NoriAPIError(message: "Renaming artifacts is not supported by this transport.")
+    }
+
+    func deleteLibraryItem(
+        id: String,
+        expectedRevision: Int,
+        scope: String,
+        requestID: String
+    ) async throws -> MutationReceipt<LibraryItem> {
+        throw NoriAPIError(message: "Deleting artifacts is not supported by this transport.")
+    }
+
+    func fetchLibraryItemVersions(id: String) async throws -> [LibraryItem] { [] }
+
+    func updateMemory(
+        id: String,
+        expectedRevision: Int,
+        text: String,
+        section: String?,
+        about: String?,
+        pinned: Bool,
+        requestID: String
+    ) async throws -> MutationReceipt<MemoryFact> {
+        throw NoriAPIError(message: "Editing memory is not supported by this transport.")
+    }
+
+    func consolidateMemory(requestID: String) async throws {
+        throw NoriAPIError(message: "Consolidating memory is not supported by this transport.")
+    }
+
+    func promoteMemoryLogEntry(
+        date: String,
+        entryID: String,
+        expectedRevision: Int,
+        text: String?,
+        section: String?,
+        about: String?,
+        pinned: Bool,
+        requestID: String
+    ) async throws -> MutationReceipt<MemoryLogEntryActionResource> {
+        try await performMemoryLogEntryAction(
+            date: date,
+            entryID: entryID,
+            expectedRevision: expectedRevision,
+            action: "promote",
+            pinned: pinned,
+            requestID: requestID
+        )
+    }
+
+    func createAutomation(
+        _ value: AutomationEditable,
+        requestID: String
+    ) async throws -> MutationReceipt<Automation> {
+        throw NoriAPIError(message: "Creating routines is not supported by this transport.")
+    }
+
+    func snoozeAutomation(
+        id: String,
+        expectedRevision: Int,
+        until: String,
+        requestID: String
+    ) async throws -> MutationReceipt<Automation> {
+        throw NoriAPIError(message: "Snoozing routines is not supported by this transport.")
+    }
+
+    func fetchAutomationOccurrences(id: String) async throws -> [AutomationOccurrence] { [] }
+
+    func fetchGoal(id: String) async throws -> Goal {
+        let all = try await fetchGoals()
+        if let found = all.first(where: { $0.id == id }) {
+            return found
+        }
+        throw NoriAPIError(message: "Goal not found.", statusCode: 404)
+    }
+
+    func createGoal(_ value: GoalEditable, requestID: String) async throws -> MutationReceipt<Goal> {
+        throw NoriAPIError(message: "Creating goals is not supported by this transport.")
+    }
+
+    func updateGoal(
+        id: String,
+        expectedRevision: Int,
+        value: GoalEditable,
+        requestID: String
+    ) async throws -> MutationReceipt<Goal> {
+        throw NoriAPIError(message: "Updating goals is not supported by this transport.")
+    }
+
+    func performGoalAction(
+        id: String,
+        expectedRevision: Int,
+        action: String,
+        keepMonitors: Bool?,
+        requestID: String
+    ) async throws -> MutationReceipt<Goal> {
+        throw NoriAPIError(message: "Goal actions are not supported by this transport.")
     }
 }

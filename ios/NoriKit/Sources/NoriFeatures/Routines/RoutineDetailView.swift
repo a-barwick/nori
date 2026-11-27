@@ -8,6 +8,9 @@ public struct RoutineDetailView: View {
 
     @State private var isActing: Bool = false
     @State private var showCancelConfirm: Bool = false
+    @State private var showEditSheet: Bool = false
+    @State private var occurrences: [AutomationOccurrence] = []
+    @State private var isLoadingHistory: Bool = false
 
     public init(store: NoriStore, automationID: String) {
         self.store = store
@@ -44,7 +47,7 @@ public struct RoutineDetailView: View {
             }
         }
         .task(id: automationID) {
-            _ = await store.loadAutomation(id: automationID)
+            await refreshDetail()
         }
     }
 
@@ -65,34 +68,68 @@ public struct RoutineDetailView: View {
                 }
 
                 if automation.status != .cancelled {
-                    HStack(spacing: 8) {
-                        Button {
-                            performAction { await store.runAutomationNow(automationID: automation.id) }
-                        } label: {
-                            Label("Run now", systemImage: "bolt.fill")
-                        }
-                        .buttonStyle(NoriButtonStyle(.primary, compact: true))
-                        .disabled(isActing)
-
-                        if !automation.isSpentOneTime {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
                             Button {
-                                performAction { await store.toggleAutomation(automationID: automation.id) }
+                                performAction { await store.runAutomationNow(automationID: automation.id) }
                             } label: {
-                                Label(isEnabled ? "Pause" : "Resume", systemImage: isEnabled ? "pause.fill" : "play.fill")
+                                Label("Run now", systemImage: "bolt.fill")
+                            }
+                            .buttonStyle(NoriButtonStyle(.primary, compact: true))
+                            .disabled(isActing)
+
+                            if !automation.isSpentOneTime {
+                                Button {
+                                    performAction { await store.toggleAutomation(automationID: automation.id) }
+                                } label: {
+                                    Label(isEnabled ? "Pause" : "Resume", systemImage: isEnabled ? "pause.fill" : "play.fill")
+                                }
+                                .buttonStyle(NoriButtonStyle(.neutral, compact: true))
+                                .disabled(isActing)
+
+                                if isEnabled {
+                                    Menu {
+                                        Button("1 hour") {
+                                            snooze(hours: 1, automationID: automation.id)
+                                        }
+                                        Button("Tomorrow morning") {
+                                            snoozeUntilTomorrowMorning(automationID: automation.id)
+                                        }
+                                        Button("Next week") {
+                                            snooze(hours: 24 * 7, automationID: automation.id)
+                                        }
+                                    } label: {
+                                        Label("Snooze", systemImage: "moon.zzz")
+                                            .font(.system(size: 12.5, weight: .semibold))
+                                            .foregroundStyle(NoriColors.ink)
+                                            .padding(.horizontal, 12)
+                                            .frame(height: 32)
+                                            .background(NoriColors.surface, in: Capsule())
+                                            .overlay(
+                                                Capsule()
+                                                    .strokeBorder(NoriColors.hairlineStrong, lineWidth: 1)
+                                            )
+                                    }
+                                    .disabled(isActing)
+                                }
+                            }
+
+                            Button {
+                                showEditSheet = true
+                            } label: {
+                                Label("Edit", systemImage: "pencil")
                             }
                             .buttonStyle(NoriButtonStyle(.neutral, compact: true))
                             .disabled(isActing)
-                        }
 
-                        Button {
-                            showCancelConfirm = true
-                        } label: {
-                            Text("Cancel")
+                            Button {
+                                showCancelConfirm = true
+                            } label: {
+                                Text("Cancel")
+                            }
+                            .buttonStyle(NoriButtonStyle(.danger, compact: true))
+                            .disabled(isActing)
                         }
-                        .buttonStyle(NoriButtonStyle(.danger, compact: true))
-                        .disabled(isActing)
-
-                        Spacer(minLength: 0)
                     }
                     .padding(.bottom, 8)
                 }
@@ -119,6 +156,7 @@ public struct RoutineDetailView: View {
                         .foregroundStyle(NoriColors.ink2)
                 }
 
+                historySection
                 detailsSection(for: automation)
             }
             .padding(.horizontal, 16)
@@ -127,7 +165,14 @@ public struct RoutineDetailView: View {
         }
         .background(NoriColors.canvas)
         .refreshable {
-            _ = await store.loadAutomation(id: automationID)
+            await refreshDetail()
+        }
+        .sheet(isPresented: $showEditSheet) {
+            RoutineEditorSheet(store: store, existing: automation)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(NoriColors.sheetBackground)
+                .presentationCornerRadius(NoriRadius.sheet)
         }
         .confirmationDialog(
             "Cancel this routine?",
@@ -225,10 +270,105 @@ public struct RoutineDetailView: View {
         return nil
     }
 
+    @ViewBuilder
+    private var historySection: some View {
+        if isLoadingHistory && occurrences.isEmpty {
+            NoriSectionHeader("History")
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small).tint(NoriColors.accent)
+                Text("Loading recent runs…")
+                    .font(NoriTypography.meta)
+                    .foregroundStyle(NoriColors.ink2)
+            }
+            .padding(.vertical, 6)
+        } else if !occurrences.isEmpty {
+            NoriSectionHeader("History")
+            NoriRows {
+                ForEach(Array(occurrences.prefix(15).enumerated()), id: \.element.id) { idx, occ in
+                    let taskID = occ.taskIDs.first
+                    let titleText = (occ.summary?.isEmpty == false)
+                        ? (occ.summary ?? "")
+                        : NoriDateFormatting.shortDateTime(occ.scheduledAt)
+                    let detailText = (occ.summary?.isEmpty == false)
+                        ? NoriDateFormatting.shortDateTime(occ.scheduledAt)
+                        : occ.error?.message
+                    let pill = occurrencePill(for: occ.status)
+                    Group {
+                        if let taskID, !taskID.isEmpty {
+                            Button {
+                                store.pendingDeepLink = .workDetail(taskID)
+                            } label: {
+                                NoriRow(
+                                    title: titleText,
+                                    detail: detailText,
+                                    showChevron: true,
+                                    showDivider: idx < min(occurrences.count, 15) - 1,
+                                    wrapTitle: true
+                                ) {
+                                    if let pill {
+                                        NoriPill(pill.label, tone: pill.tone)
+                                    }
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            NoriRow(
+                                title: titleText,
+                                detail: detailText,
+                                showChevron: false,
+                                showDivider: idx < min(occurrences.count, 15) - 1,
+                                wrapTitle: true
+                            ) {
+                                if let pill {
+                                    NoriPill(pill.label, tone: pill.tone)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func occurrencePill(for status: String) -> (label: String, tone: NoriTone)? {
+        switch status {
+        case "completed": return nil
+        case "failed": return ("Failed", .danger)
+        case "running", "accepted": return ("Running", .working)
+        case "skipped": return ("Skipped", .neutral)
+        case "cancelled": return ("Cancelled", .neutral)
+        case "expired": return ("Expired", .neutral)
+        default: return nil
+        }
+    }
+
+    private func refreshDetail() async {
+        isLoadingHistory = true
+        async let autoTask = store.loadAutomation(id: automationID)
+        async let historyTask = store.loadAutomationOccurrences(automationID: automationID)
+        _ = await autoTask
+        occurrences = await historyTask
+        isLoadingHistory = false
+    }
+
+    private func snooze(hours: Int, automationID: String) {
+        let target = Date().addingTimeInterval(TimeInterval(hours * 3600))
+        performAction { await store.snoozeAutomation(automationID: automationID, until: target) }
+    }
+
+    private func snoozeUntilTomorrowMorning(automationID: String) {
+        var comps = Calendar.current.dateComponents([.year, .month, .day], from: Date().addingTimeInterval(86_400))
+        comps.hour = 9
+        comps.minute = 0
+        let target = Calendar.current.date(from: comps) ?? Date().addingTimeInterval(86_400)
+        performAction { await store.snoozeAutomation(automationID: automationID, until: target) }
+    }
+
     private func performAction(_ work: @escaping () async -> Void) {
         isActing = true
         Task {
             await work()
+            occurrences = await store.loadAutomationOccurrences(automationID: automationID)
             isActing = false
         }
     }

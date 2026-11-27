@@ -17,6 +17,7 @@ public struct MCPDetailView: View {
     @State private var accessToken = ""
     @State private var isTokenVisible = false
     @State private var isSavingCredential = false
+    @State private var showEditSheet = false
 
     public init(store: NoriStore, serverID: String) {
         self.store = store
@@ -67,7 +68,29 @@ public struct MCPDetailView: View {
 
                             HStack(spacing: 8) {
                                 let supportsOAuth = server.auth == .oauth || (server.auth == nil && server.observed.status == .needsSignIn)
-                                if supportsOAuth && server.observed.status != .connected {
+                                if server.transport == .stdio {
+                                    Button {
+                                        performLifecycleAction(
+                                            serverID: server.id,
+                                            action: server.observed.status == .connected ? "restart" : "start"
+                                        )
+                                    } label: {
+                                        Label(
+                                            server.observed.status == .connected ? "Restart" : "Start",
+                                            systemImage: server.observed.status == .connected ? "arrow.clockwise" : "play.fill"
+                                        )
+                                    }
+                                    .buttonStyle(NoriButtonStyle(.primary, compact: true))
+                                    .disabled(isBusy)
+
+                                    if server.observed.status == .connected {
+                                        Button("Stop") {
+                                            performLifecycleAction(serverID: server.id, action: "stop")
+                                        }
+                                        .buttonStyle(NoriButtonStyle(.neutral, compact: true))
+                                        .disabled(isBusy)
+                                    }
+                                } else if supportsOAuth && server.observed.status != .connected {
                                     Button {
                                         startOAuthFlow(for: server)
                                     } label: {
@@ -92,6 +115,14 @@ public struct MCPDetailView: View {
                                     .buttonStyle(NoriButtonStyle(.primary, compact: true))
                                     .disabled(isBusy)
                                 }
+
+                                Button {
+                                    showEditSheet = true
+                                } label: {
+                                    Label("Edit", systemImage: "pencil")
+                                }
+                                .buttonStyle(NoriButtonStyle(.neutral, compact: true))
+                                .disabled(isBusy)
                             }
                             .padding(.top, 4)
                         }
@@ -219,6 +250,15 @@ public struct MCPDetailView: View {
                 }
             }
         }
+        .sheet(isPresented: $showEditSheet) {
+            if let server {
+                EditMCPServerSheet(store: store, server: server)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .presentationBackground(NoriColors.sheetBackground)
+                    .presentationCornerRadius(NoriRadius.sheet)
+            }
+        }
     }
 
     private func exposureLabel(for exposure: MCPToolExposure) -> String {
@@ -308,7 +348,7 @@ public struct MCPDetailView: View {
                         HStack(spacing: 8) {
                             ProgressView()
                                 .controlSize(.small)
-                                .tint(.white)
+                                .tint(NoriColors.disabled)
                             Text("Saving…")
                         }
                     } else {
@@ -371,6 +411,15 @@ public struct MCPDetailView: View {
         authError = nil
         Task {
             await store.reconnectMCPServer(serverID: serverID)
+            isBusy = false
+        }
+    }
+
+    private func performLifecycleAction(serverID: String, action: String) {
+        isBusy = true
+        authError = nil
+        Task {
+            await store.performMCPServerAction(serverID: serverID, action: action)
             isBusy = false
         }
     }
@@ -458,5 +507,173 @@ public struct MCPDetailView: View {
             ? rawReason?.replacingOccurrences(of: "_", with: " ")
             : nil
         return (result, reason)
+    }
+}
+
+private struct EditMCPServerSheet: View {
+    @Bindable var store: NoriStore
+    let server: MCPServer
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String
+    @State private var endpoint: String
+    @State private var auth: MCPAuthKind
+    @State private var defaultExposure: MCPToolExposure
+    @State private var enabled: Bool
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    init(store: NoriStore, server: MCPServer) {
+        self.store = store
+        self.server = server
+        _name = State(initialValue: server.name)
+        _endpoint = State(initialValue: server.endpoint ?? "")
+        _auth = State(initialValue: server.auth ?? .oauth)
+        _defaultExposure = State(initialValue: server.exposure?.default ?? .discoverable)
+        _enabled = State(initialValue: server.enabled)
+    }
+
+    private var canSave: Bool {
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanName.isEmpty, !isSaving else { return false }
+        if server.transport == .http {
+            let cleanEndpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !cleanEndpoint.isEmpty
+        }
+        return true
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    if let errorMessage {
+                        NoriNotice(
+                            title: "Couldn’t update server",
+                            detail: errorMessage,
+                            tone: .danger,
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Name")
+                            .font(NoriTypography.metaSemibold)
+                            .foregroundStyle(NoriColors.ink)
+                        TextField("Server name", text: $name)
+                            .textFieldStyle(.plain)
+                            .foregroundStyle(NoriColors.ink)
+                            .tint(NoriColors.accent)
+                            .padding(.horizontal, 12)
+                            .frame(height: 42)
+                            .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                    }
+
+                    if server.transport == .http {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Server URL")
+                                .font(NoriTypography.metaSemibold)
+                                .foregroundStyle(NoriColors.ink)
+                            TextField("https://mcp.example.com/mcp", text: $endpoint)
+                                .textFieldStyle(.plain)
+                                .font(NoriTypography.monoSmall)
+                                .foregroundStyle(NoriColors.ink)
+                                .tint(NoriColors.accent)
+                                .autocorrectionDisabled()
+                                #if os(iOS)
+                                .textInputAutocapitalization(.never)
+                                .keyboardType(.URL)
+                                #endif
+                                .padding(.horizontal, 12)
+                                .frame(height: 42)
+                                .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Sign-in")
+                            .font(NoriTypography.metaSemibold)
+                            .foregroundStyle(NoriColors.ink)
+                        Picker("Sign-in", selection: $auth) {
+                            Text("OAuth").tag(MCPAuthKind.oauth)
+                            Text("None").tag(MCPAuthKind.none)
+                            Text("Access token").tag(MCPAuthKind.configured)
+                        }
+                        .pickerStyle(.segmented)
+                        .tint(NoriColors.accent)
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Default tool access")
+                            .font(NoriTypography.metaSemibold)
+                            .foregroundStyle(NoriColors.ink)
+                        Picker("Tools", selection: $defaultExposure) {
+                            Text("When relevant").tag(MCPToolExposure.discoverable)
+                            Text("Always").tag(MCPToolExposure.direct)
+                            Text("Off").tag(MCPToolExposure.disabled)
+                        }
+                        .pickerStyle(.segmented)
+                        .tint(NoriColors.accent)
+                    }
+
+                    Toggle(isOn: $enabled) {
+                        Text("Server enabled")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(NoriColors.ink)
+                    }
+                    .tint(NoriColors.brandPrimary)
+
+                    Button {
+                        save()
+                    } label: {
+                        if isSaving {
+                            ProgressView().tint(NoriColors.disabled)
+                        } else {
+                            Text("Save changes")
+                        }
+                    }
+                    .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
+                    .disabled(!canSave)
+                    .padding(.top, 4)
+                }
+                .padding(16)
+            }
+            .background(NoriColors.sheetBackground)
+            .navigationTitle("Edit Server")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .interactiveDismissDisabled(isSaving)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .foregroundStyle(NoriColors.ink2)
+                        .disabled(isSaving)
+                }
+            }
+        }
+    }
+
+    private func save() {
+        guard canSave else { return }
+        isSaving = true
+        errorMessage = nil
+        Task {
+            do {
+                _ = try await store.updateMCPServer(
+                    serverID: server.id,
+                    name: name,
+                    endpoint: server.transport == .http ? endpoint : server.endpoint,
+                    auth: auth,
+                    enabled: enabled,
+                    defaultExposure: defaultExposure
+                )
+                isSaving = false
+                dismiss()
+            } catch {
+                isSaving = false
+                errorMessage = error.localizedDescription
+            }
+        }
     }
 }

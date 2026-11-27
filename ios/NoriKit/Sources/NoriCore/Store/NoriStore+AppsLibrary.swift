@@ -92,6 +92,57 @@ extension NoriStore {
         }
     }
 
+    @discardableResult
+    public func updateMCPServer(
+        serverID: String,
+        name: String,
+        endpoint: String?,
+        auth: MCPAuthKind,
+        enabled: Bool,
+        defaultExposure: MCPToolExposure
+    ) async throws -> MCPServer {
+        let generation = sessionGeneration
+        guard let current = mcpServers.first(where: { $0.id == serverID }) else {
+            throw NoriAPIError(message: "MCP server not found.", statusCode: 404)
+        }
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanEndpoint = endpoint?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let input = MCPServerInput(
+            name: cleanName,
+            transport: current.transport,
+            endpoint: (cleanEndpoint?.isEmpty == false) ? cleanEndpoint : current.endpoint,
+            auth: auth,
+            enabled: enabled,
+            exposure: MCPExposureConfig(
+                default: defaultExposure,
+                overrides: current.exposure?.overrides
+            )
+        )
+        do {
+            let receipt = try await transport.updateMCPServer(
+                serverID: serverID,
+                expectedRevision: current.revision,
+                input: input,
+                requestID: UUID().uuidString.lowercased()
+            )
+            guard generation == sessionGeneration else { throw CancellationError() }
+            if let idx = mcpServers.firstIndex(where: { $0.id == serverID }) {
+                mcpServers[idx] = receipt.resource
+            }
+            let tools = try? await transport.fetchMCPTools(serverID: serverID)
+            guard generation == sessionGeneration else { throw CancellationError() }
+            if let tools {
+                mcpTools[serverID] = tools
+            }
+            showToast("Updated \(receipt.resource.name)")
+            return receipt.resource
+        } catch {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            _ = await handleOperationError(error, showToast: false)
+            throw error
+        }
+    }
+
     public func setToolExposure(serverID: String, toolName: String, exposure: MCPToolExposure) async {
         let generation = sessionGeneration
         guard let server = mcpServers.first(where: { $0.id == serverID }) else { return }
@@ -120,13 +171,17 @@ extension NoriStore {
     }
 
     public func reconnectMCPServer(serverID: String) async {
+        await performMCPServerAction(serverID: serverID, action: "reconnect")
+    }
+
+    public func performMCPServerAction(serverID: String, action: String) async {
         let generation = sessionGeneration
         guard let server = mcpServers.first(where: { $0.id == serverID }) else { return }
         do {
             let receipt = try await transport.performMCPAction(
                 serverID: serverID,
                 expectedRevision: server.revision,
-                action: "reconnect",
+                action: action,
                 requestID: UUID().uuidString.lowercased()
             )
             guard generation == sessionGeneration else { return }
@@ -138,7 +193,13 @@ extension NoriStore {
             if let tools {
                 mcpTools[serverID] = tools
             }
-            showToast("Reconnected \(server.name)")
+            let verb: String = switch action {
+            case "start": "Started"
+            case "stop": "Stopped"
+            case "restart": "Restarted"
+            default: "Reconnected"
+            }
+            showToast("\(verb) \(server.name)")
         } catch {
             guard generation == sessionGeneration else { return }
             _ = await handleOperationError(error)
@@ -456,6 +517,90 @@ extension NoriStore {
             guard generation == sessionGeneration else { return nil }
             _ = await handleOperationError(error)
             return nil
+        }
+    }
+
+    @discardableResult
+    public func renameLibraryItem(itemID: String, title: String, collection: String? = nil) async throws -> LibraryItem {
+        let generation = sessionGeneration
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanTitle.isEmpty else {
+            throw NoriAPIError(message: "Enter a title.")
+        }
+        let current: LibraryItem
+        if let cached = libraryItems.first(where: { $0.id == itemID }) {
+            current = cached
+        } else if let loaded = await loadLibraryItem(id: itemID) {
+            current = loaded
+        } else {
+            throw NoriAPIError(message: "Artifact not found.", statusCode: 404)
+        }
+        do {
+            let receipt = try await transport.renameLibraryItem(
+                id: itemID,
+                expectedRevision: current.revision,
+                title: cleanTitle,
+                collection: collection ?? current.collection,
+                requestID: UUID().uuidString.lowercased()
+            )
+            guard generation == sessionGeneration else { throw CancellationError() }
+            if let idx = libraryItems.firstIndex(where: { $0.id == itemID }) {
+                libraryItems[idx] = receipt.resource
+            } else {
+                libraryItems.insert(receipt.resource, at: 0)
+            }
+            showToast("Renamed artifact")
+            return receipt.resource
+        } catch {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            _ = await handleOperationError(error, showToast: false)
+            throw error
+        }
+    }
+
+    @discardableResult
+    public func deleteLibraryItem(itemID: String, scope: String = "version") async -> Bool {
+        let generation = sessionGeneration
+        let current: LibraryItem
+        if let cached = libraryItems.first(where: { $0.id == itemID }) {
+            current = cached
+        } else if let loaded = await loadLibraryItem(id: itemID) {
+            current = loaded
+        } else {
+            return false
+        }
+        do {
+            _ = try await transport.deleteLibraryItem(
+                id: itemID,
+                expectedRevision: current.revision,
+                scope: scope,
+                requestID: UUID().uuidString.lowercased()
+            )
+            guard generation == sessionGeneration else { return false }
+            if scope == "all_versions" {
+                libraryItems.removeAll { $0.rootID == current.rootID || $0.id == itemID }
+            } else {
+                libraryItems.removeAll { $0.id == itemID }
+            }
+            showToast(scope == "all_versions" ? "Deleted all versions" : "Deleted artifact")
+            return true
+        } catch {
+            guard generation == sessionGeneration else { return false }
+            _ = await handleOperationError(error)
+            return false
+        }
+    }
+
+    public func loadLibraryVersions(itemID: String) async -> [LibraryItem] {
+        let generation = sessionGeneration
+        do {
+            let items = try await transport.fetchLibraryItemVersions(id: itemID)
+            guard generation == sessionGeneration else { return [] }
+            return items
+        } catch {
+            guard generation == sessionGeneration else { return [] }
+            _ = await handleAuthFailureIfNeeded(error)
+            return []
         }
     }
 }

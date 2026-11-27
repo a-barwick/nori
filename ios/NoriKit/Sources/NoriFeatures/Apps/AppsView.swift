@@ -387,7 +387,8 @@ public struct AppsView: View {
 
     private func mcpDetailLine(for server: MCPServer) -> String {
         let transportLabel = server.transport == .http ? "Remote server" : "Local server"
-        let toolCount = store.mcpTools[server.id]?.count ?? server.observed.toolCount ?? 0
+        let loadedTools = store.mcpTools[server.id]
+        let toolCount = (loadedTools?.isEmpty == false ? loadedTools?.count : nil) ?? server.observed.toolCount ?? 0
         let toolsPart = "\(toolCount) \(toolCount == 1 ? "tool" : "tools")"
         var parts = [transportLabel, toolsPart]
         if let err = server.observed.error?.message, !err.isEmpty {
@@ -661,7 +662,7 @@ struct AddMCPServerSheet: View {
                     } label: {
                         if isSubmitting {
                             ProgressView()
-                                .tint(.white)
+                                .tint(NoriColors.disabled)
                         } else {
                             Text("Add server")
                         }

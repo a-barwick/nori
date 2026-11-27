@@ -13,6 +13,7 @@ public struct DocumentReaderSheet: View {
     public let itemID: String
 
     @Environment(\.dismiss) private var dismiss
+    @State private var activeItemID: String
     @State private var hydratedItem: NoriCore.LibraryItem?
     @State private var loadedItemID: String?
     @State private var hasAttemptedLoad = false
@@ -27,14 +28,22 @@ public struct DocumentReaderSheet: View {
     @State private var quickLookURL: URL?
     @State private var tempFileCleanup = DocumentTempFileCleanup()
     @State private var reloadTrigger = 0
+    @State private var versions: [NoriCore.LibraryItem] = []
 
     @State private var revisionInstruction = ""
     @State private var isRevising = false
     @State private var queuedRevision: LibraryRevisionResult?
 
+    @State private var showRenameAlert = false
+    @State private var renameDraft = ""
+    @State private var isRenaming = false
+    @State private var showDeleteConfirm = false
+    @State private var isDeleting = false
+
     public init(store: NoriStore, itemID: String) {
         self.store = store
         self.itemID = itemID
+        _activeItemID = State(initialValue: itemID)
     }
 
     private struct LoadKey: Equatable {
@@ -43,7 +52,7 @@ public struct DocumentReaderSheet: View {
     }
 
     private var item: NoriCore.LibraryItem? {
-        store.libraryItems.first(where: { $0.id == itemID }) ?? hydratedItem
+        store.libraryItems.first(where: { $0.id == activeItemID }) ?? hydratedItem
     }
 
     private var hasStructuredData: Bool {
@@ -93,7 +102,7 @@ public struct DocumentReaderSheet: View {
         if isTextPayload, let text = loadedPayload?.utf8Text, !text.isEmpty {
             return text
         }
-        if let cached = store.cachedBodyText(for: itemID), !cached.isEmpty {
+        if let cached = store.cachedBodyText(for: activeItemID), !cached.isEmpty {
             return cached
         }
         if let preview = item?.previewText, !preview.isEmpty {
@@ -152,7 +161,30 @@ public struct DocumentReaderSheet: View {
                 .toolbar {
                     if let item {
                         ToolbarItem(placement: .primaryAction) {
-                            toolbarShareButton(for: item)
+                            HStack(spacing: 8) {
+                                toolbarShareButton(for: item)
+                                Menu {
+                                    Button {
+                                        renameDraft = item.title
+                                        showRenameAlert = true
+                                    } label: {
+                                        Label("Rename", systemImage: "pencil")
+                                    }
+                                    Divider()
+                                    Button(role: .destructive) {
+                                        showDeleteConfirm = true
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                } label: {
+                                    Image(systemName: "ellipsis")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundStyle(NoriColors.ink)
+                                        .frame(width: 32, height: 32)
+                                        .background(NoriColors.fill1, in: Circle())
+                                }
+                                .accessibilityLabel("Artifact actions")
+                            }
                         }
                     }
                     ToolbarItem(placement: .cancellationAction) {
@@ -173,8 +205,33 @@ public struct DocumentReaderSheet: View {
         #if canImport(QuickLook)
         .quickLookPreview($quickLookURL)
         #endif
-        .task(id: LoadKey(itemID: itemID, trigger: reloadTrigger)) {
+        .task(id: LoadKey(itemID: activeItemID, trigger: reloadTrigger)) {
             await loadDocument()
+        }
+        .alert("Rename artifact", isPresented: $showRenameAlert) {
+            TextField("Title", text: $renameDraft)
+            Button("Save") {
+                renameCurrentItem()
+            }
+            .disabled(renameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isRenaming)
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "Delete this artifact?",
+            isPresented: $showDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete this version", role: .destructive) {
+                deleteCurrentItem(scope: "version")
+            }
+            if versions.count > 1 {
+                Button("Delete all versions", role: .destructive) {
+                    deleteCurrentItem(scope: "all_versions")
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(versions.count > 1 ? "Choose whether to remove only this version or every version." : "This removes the artifact from Nori.")
         }
         .onDisappear {
             if quickLookURL == nil {
@@ -189,12 +246,27 @@ public struct DocumentReaderSheet: View {
         ScrollView {
             if let item {
                 VStack(alignment: .leading, spacing: 14) {
+                    if let newerID = item.supersededBy, !newerID.isEmpty {
+                        NoriNotice(
+                            title: "A newer version exists",
+                            tone: .accent,
+                            systemImage: "arrow.up.circle.fill"
+                        ) {
+                            Button("Open latest") {
+                                activeItemID = newerID
+                            }
+                            .buttonStyle(NoriButtonStyle(.tonal, compact: true))
+                        }
+                    }
                     documentBodySection(for: item)
                     if canCopyContent || externalLinkURL != nil {
                         quickActionsRow(for: item)
                     }
                     if canRevise {
                         revisionSection(for: item)
+                    }
+                    if versions.count > 1 {
+                        versionsSection(current: item)
                     }
                     detailsSection(for: item)
                 }
@@ -400,6 +472,38 @@ public struct DocumentReaderSheet: View {
         }
     }
 
+    @ViewBuilder
+    private func versionsSection(current: NoriCore.LibraryItem) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            NoriSectionHeader("Versions")
+            NoriRows {
+                ForEach(Array(versions.enumerated()), id: \.element.id) { idx, ver in
+                    let isCurrent = ver.id == current.id
+                    Button {
+                        if !isCurrent {
+                            activeItemID = ver.id
+                        }
+                    } label: {
+                        NoriRow(
+                            title: ver.title,
+                            detail: ver.createdAt.isEmpty ? "Version \(ver.version)" : "Version \(ver.version) · \(NoriDateFormatting.shortDateTime(ver.createdAt))",
+                            showChevron: !isCurrent,
+                            showDivider: idx < versions.count - 1
+                        ) {
+                            if isCurrent {
+                                Text("Current")
+                                    .font(NoriTypography.caption)
+                                    .foregroundStyle(NoriColors.accent)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isCurrent)
+                }
+            }
+        }
+    }
+
     private func detailsSection(for item: NoriCore.LibraryItem) -> some View {
         let sourceURL: URL? = {
             guard let raw = item.provenance.sourceURL,
@@ -438,6 +542,34 @@ public struct DocumentReaderSheet: View {
                         .buttonStyle(.plain)
                     }
                 }
+                if let automationID = item.automationID, !automationID.isEmpty {
+                    GridRow {
+                        Text("Routine")
+                            .font(.system(size: 13))
+                            .foregroundStyle(NoriColors.ink3)
+                        Button("Open routines") {
+                            store.pendingDeepLink = .routines
+                            dismiss()
+                        }
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(NoriColors.accent)
+                        .buttonStyle(.plain)
+                    }
+                }
+                if let goalID = item.goalID, !goalID.isEmpty {
+                    GridRow {
+                        Text("Goal")
+                            .font(.system(size: 13))
+                            .foregroundStyle(NoriColors.ink3)
+                        Button("Open goals") {
+                            store.pendingDeepLink = .goals
+                            dismiss()
+                        }
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(NoriColors.accent)
+                        .buttonStyle(.plain)
+                    }
+                }
                 if let sourceURL {
                     GridRow {
                         Text("Source")
@@ -466,8 +598,8 @@ public struct DocumentReaderSheet: View {
     }
 
     private func loadDocument() async {
-        if loadedItemID != itemID {
-            loadedItemID = itemID
+        if loadedItemID != activeItemID {
+            loadedItemID = activeItemID
             hydratedItem = nil
             loadedPayload = nil
             fileLoadError = nil
@@ -484,11 +616,17 @@ public struct DocumentReaderSheet: View {
         isLoadingItem = (item == nil)
         fileLoadError = nil
 
-        let fetched = await store.loadLibraryItem(id: itemID)
+        async let fetchedTask = store.loadLibraryItem(id: activeItemID)
+        async let versionsTask = store.loadLibraryVersions(itemID: activeItemID)
+        let fetched = await fetchedTask
+        let loadedVersions = await versionsTask
         guard !Task.isCancelled else { return }
 
         if let fetched {
             hydratedItem = fetched
+        }
+        if !loadedVersions.isEmpty {
+            versions = loadedVersions.sorted { $0.version > $1.version }
         }
         hasAttemptedLoad = true
         isLoadingItem = false
@@ -510,6 +648,36 @@ public struct DocumentReaderSheet: View {
         } catch {
             guard !Task.isCancelled else { return }
             fileLoadError = error.localizedDescription
+        }
+    }
+
+    private func renameCurrentItem() {
+        let trimmed = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let current = item, !isRenaming else { return }
+        isRenaming = true
+        Task {
+            do {
+                let updated = try await store.renameLibraryItem(itemID: current.id, title: trimmed)
+                hydratedItem = updated
+                if let idx = versions.firstIndex(where: { $0.id == updated.id }) {
+                    versions[idx] = updated
+                }
+            } catch {
+                store.showToast(error.localizedDescription)
+            }
+            isRenaming = false
+        }
+    }
+
+    private func deleteCurrentItem(scope: String) {
+        guard let current = item, !isDeleting else { return }
+        isDeleting = true
+        Task {
+            let deleted = await store.deleteLibraryItem(itemID: current.id, scope: scope)
+            isDeleting = false
+            if deleted {
+                dismiss()
+            }
         }
     }
 

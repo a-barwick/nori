@@ -998,6 +998,21 @@ public actor LiveNoriTransport: NoriTransport {
         try await mutateEnvelope(OpenAPI.Path.mcp, requestID: requestID, value: input)
     }
 
+    public func updateMCPServer(
+        serverID: String,
+        expectedRevision: Int,
+        input: MCPServerInput,
+        requestID: String
+    ) async throws -> MutationReceipt<MCPServer> {
+        try await mutateEnvelope(
+            OpenAPI.Path.mcpByID(id: serverID),
+            method: "PUT",
+            requestID: requestID,
+            expectedRevision: expectedRevision,
+            value: input
+        )
+    }
+
     public func performMCPAction(
         serverID: String,
         expectedRevision: Int,
@@ -1195,6 +1210,45 @@ public actor LiveNoriTransport: NoriTransport {
         )
     }
 
+    public func renameLibraryItem(
+        id: String,
+        expectedRevision: Int,
+        title: String,
+        collection: String?,
+        requestID: String
+    ) async throws -> MutationReceipt<LibraryItem> {
+        struct RenameVal: Encodable {
+            let title: String
+            let collection: String?
+        }
+        return try await mutateEnvelope(
+            OpenAPI.Path.libraryByID(id: id),
+            method: "PUT",
+            requestID: requestID,
+            expectedRevision: expectedRevision,
+            value: RenameVal(title: title, collection: collection)
+        )
+    }
+
+    public func deleteLibraryItem(
+        id: String,
+        expectedRevision: Int,
+        scope: String,
+        requestID: String
+    ) async throws -> MutationReceipt<LibraryItem> {
+        try await mutateEnvelope(
+            OpenAPI.Path.libraryActions(id: id),
+            requestID: requestID,
+            expectedRevision: expectedRevision,
+            value: ["action": "delete", "scope": scope]
+        )
+    }
+
+    public func fetchLibraryItemVersions(id: String) async throws -> [LibraryItem] {
+        let resp: ListResponse<LibraryItem> = try await getJSON(OpenAPI.Path.libraryVersions(id: id))
+        return resp.items
+    }
+
     public func fetchCoreMemories() async throws -> [MemoryFact] {
         let resp: ListResponse<MemoryFact> = try await getJSON(OpenAPI.Path.memory)
         return resp.items
@@ -1240,6 +1294,39 @@ public actor LiveNoriTransport: NoriTransport {
         )
     }
 
+    public func updateMemory(
+        id: String,
+        expectedRevision: Int,
+        text: String,
+        section: String?,
+        about: String?,
+        pinned: Bool,
+        requestID: String
+    ) async throws -> MutationReceipt<MemoryFact> {
+        struct MemVal: Encodable {
+            let text: String
+            let section: String?
+            let about: String?
+            let pinned: Bool
+        }
+        return try await mutateEnvelope(
+            OpenAPI.Path.memoryByID(id: id),
+            method: "PUT",
+            requestID: requestID,
+            expectedRevision: expectedRevision,
+            value: MemVal(text: text, section: section, about: about, pinned: pinned)
+        )
+    }
+
+    public func consolidateMemory(requestID: String) async throws {
+        let _: MutationReceipt<AnyJSON> = try await mutateEnvelope(
+            OpenAPI.Path.memoryActions,
+            requestID: requestID,
+            expectedRevision: 0,
+            value: ["action": "consolidate"]
+        )
+    }
+
     public func performMemoryAction(
         id: String,
         expectedRevision: Int,
@@ -1274,6 +1361,37 @@ public actor LiveNoriTransport: NoriTransport {
         )
     }
 
+    public func promoteMemoryLogEntry(
+        date: String,
+        entryID: String,
+        expectedRevision: Int,
+        text: String?,
+        section: String?,
+        about: String?,
+        pinned: Bool,
+        requestID: String
+    ) async throws -> MutationReceipt<MemoryLogEntryActionResource> {
+        struct PromoteVal: Encodable {
+            let action: String
+            let text: String?
+            let section: String?
+            let about: String?
+            let pinned: Bool
+        }
+        return try await mutateEnvelope(
+            OpenAPI.Path.memoryLogsActions(date: date, entryID: entryID),
+            requestID: requestID,
+            expectedRevision: expectedRevision,
+            value: PromoteVal(
+                action: "promote",
+                text: text,
+                section: section,
+                about: about,
+                pinned: pinned
+            )
+        )
+    }
+
     public func performWorkingMemoryAction(
         itemID: String,
         expectedRevision: Int,
@@ -1295,6 +1413,18 @@ public actor LiveNoriTransport: NoriTransport {
 
     public func fetchAutomation(id: String) async throws -> Automation {
         try await getJSON(OpenAPI.Path.automationsByID(id: id))
+    }
+
+    public func createAutomation(
+        _ value: AutomationEditable,
+        requestID: String
+    ) async throws -> MutationReceipt<Automation> {
+        try await mutateEnvelope(
+            OpenAPI.Path.automations,
+            requestID: requestID,
+            expectedRevision: 0,
+            value: value
+        )
     }
 
     public func updateAutomation(
@@ -1326,9 +1456,75 @@ public actor LiveNoriTransport: NoriTransport {
         )
     }
 
+    public func snoozeAutomation(
+        id: String,
+        expectedRevision: Int,
+        until: String,
+        requestID: String
+    ) async throws -> MutationReceipt<Automation> {
+        try await mutateEnvelope(
+            OpenAPI.Path.automationsActions(id: id),
+            requestID: requestID,
+            expectedRevision: expectedRevision,
+            value: ["action": "snooze", "until": until]
+        )
+    }
+
+    public func fetchAutomationOccurrences(id: String) async throws -> [AutomationOccurrence] {
+        let resp: ListResponse<AutomationOccurrence> = try await getJSON(OpenAPI.Path.automationsOccurrences(id: id))
+        return resp.items
+    }
+
     public func fetchGoals() async throws -> [Goal] {
         let resp: ListResponse<Goal> = try await getJSON(OpenAPI.Path.goals)
         return resp.items
+    }
+
+    public func fetchGoal(id: String) async throws -> Goal {
+        try await getJSON(OpenAPI.Path.goalsByID(id: id))
+    }
+
+    public func createGoal(_ value: GoalEditable, requestID: String) async throws -> MutationReceipt<Goal> {
+        try await mutateEnvelope(
+            OpenAPI.Path.goals,
+            requestID: requestID,
+            expectedRevision: 0,
+            value: value
+        )
+    }
+
+    public func updateGoal(
+        id: String,
+        expectedRevision: Int,
+        value: GoalEditable,
+        requestID: String
+    ) async throws -> MutationReceipt<Goal> {
+        try await mutateEnvelope(
+            OpenAPI.Path.goalsByID(id: id),
+            method: "PUT",
+            requestID: requestID,
+            expectedRevision: expectedRevision,
+            value: value
+        )
+    }
+
+    public func performGoalAction(
+        id: String,
+        expectedRevision: Int,
+        action: String,
+        keepMonitors: Bool?,
+        requestID: String
+    ) async throws -> MutationReceipt<Goal> {
+        struct GoalActionVal: Encodable {
+            let action: String
+            let keep_monitors: Bool?
+        }
+        return try await mutateEnvelope(
+            OpenAPI.Path.goalsActions(id: id),
+            requestID: requestID,
+            expectedRevision: expectedRevision,
+            value: GoalActionVal(action: action, keep_monitors: keepMonitors)
+        )
     }
 
     public func fetchPermissions() async throws -> [PermissionRule] {

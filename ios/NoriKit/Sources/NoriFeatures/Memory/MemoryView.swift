@@ -45,6 +45,8 @@ public struct MemoryView: View {
     @State private var searchError: String?
     @State private var searchHits: [MemorySearchHit] = []
     @State private var showingAddSheet = false
+    @State private var editingFact: MemoryFact?
+    @State private var isConsolidating = false
     @State private var pendingForgetFact: MemoryFact?
     @State private var pendingForgetLogEntry: PromoteCandidate?
     @State private var pendingPromoteEntry: PromoteCandidate?
@@ -169,7 +171,14 @@ public struct MemoryView: View {
             }
         }
         .sheet(isPresented: $showingAddSheet) {
-            AddMemorySheet(store: store)
+            MemoryFactEditorSheet(store: store, existing: nil)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(NoriColors.sheetBackground)
+                .presentationCornerRadius(NoriRadius.sheet)
+        }
+        .sheet(item: $editingFact) { fact in
+            MemoryFactEditorSheet(store: store, existing: fact)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
                 .presentationBackground(NoriColors.sheetBackground)
@@ -322,27 +331,42 @@ public struct MemoryView: View {
                 NoriRows {
                     ForEach(Array(searchHits.enumerated()), id: \.element.id) { index, hit in
                         let isLast = index == searchHits.count - 1
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(alignment: .top, spacing: 8) {
-                                Text(hit.snippet)
-                                    .font(NoriTypography.body)
-                                    .foregroundStyle(NoriColors.ink)
-                                    .lineSpacing(2)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                                NoriPill(hit.layer == "core" ? "Core" : "Daily Log", tone: hit.layer == "core" ? .working : .neutral)
+                        Button {
+                            selectedTab = hit.layer == "core" ? .core : .logs
+                            searchQuery = ""
+                            searchHits = []
+                            searchError = nil
+                            if hit.layer == "core",
+                               let memID = hit.memoryID,
+                               let found = store.coreMemories.first(where: { $0.id == memID }) {
+                                editingFact = found
                             }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(alignment: .top, spacing: 8) {
+                                    Text(hit.snippet)
+                                        .font(NoriTypography.body)
+                                        .foregroundStyle(NoriColors.ink)
+                                        .lineSpacing(2)
+                                        .multilineTextAlignment(.leading)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                            let meta = searchHitMetadata(for: hit)
-                            if !meta.isEmpty {
-                                Text(meta)
-                                    .font(NoriTypography.caption)
-                                    .foregroundStyle(NoriColors.ink2)
+                                    NoriPill(hit.layer == "core" ? "Core" : "Daily Log", tone: hit.layer == "core" ? .working : .neutral)
+                                }
+
+                                let meta = searchHitMetadata(for: hit)
+                                if !meta.isEmpty {
+                                    Text(meta)
+                                        .font(NoriTypography.caption)
+                                        .foregroundStyle(NoriColors.ink2)
+                                }
                             }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                            .contentShape(Rectangle())
                         }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
+                        .buttonStyle(.plain)
 
                         if !isLast {
                             Rectangle()
@@ -558,17 +582,30 @@ public struct MemoryView: View {
 
     @ViewBuilder
     private var workingMemorySection: some View {
+        HStack(alignment: .center, spacing: 8) {
+            Text("Session summary")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(NoriColors.ink2)
+            Spacer(minLength: 8)
+            Button {
+                isConsolidating = true
+                Task {
+                    await store.consolidateMemory()
+                    isConsolidating = false
+                }
+            } label: {
+                Label(isConsolidating ? "Consolidating…" : "Consolidate now", systemImage: "sparkles")
+            }
+            .buttonStyle(NoriButtonStyle(.neutral, compact: true))
+            .disabled(isConsolidating)
+        }
+
         if !store.workingMemory.gist.isEmpty {
             NoriCard(backgroundColor: NoriColors.surfaceTinted, borderColor: NoriColors.cardBorder) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Session summary")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(NoriColors.ink2)
-                    Text(store.workingMemory.gist)
-                        .font(.system(size: 13.5))
-                        .foregroundStyle(NoriColors.ink)
-                        .lineSpacing(2)
-                }
+                Text(store.workingMemory.gist)
+                    .font(.system(size: 13.5))
+                    .foregroundStyle(NoriColors.ink)
+                    .lineSpacing(2)
             }
         }
 
@@ -696,6 +733,12 @@ public struct MemoryView: View {
     private func coreFactMenu(for fact: MemoryFact) -> some View {
         Menu {
             Button {
+                editingFact = fact
+            } label: {
+                Label("Edit", systemImage: "pencil")
+            }
+
+            Button {
                 Task { await store.togglePinMemory(memoryID: fact.id) }
             } label: {
                 Label(fact.pinned ? "Unpin" : "Pin", systemImage: fact.pinned ? "pin.slash" : "pin")
@@ -801,8 +844,30 @@ private struct PromoteTaskOutcomeSheet: View {
     let candidate: PromoteCandidate
 
     @Environment(\.dismiss) private var dismiss
+    @State private var factText: String
+    @State private var section: String
+    @State private var about: String
+    @State private var pinned: Bool = false
     @State private var reviewed = false
     @State private var isSaving = false
+
+    private let maxBytes = 2000
+
+    init(store: NoriStore, candidate: PromoteCandidate) {
+        self.store = store
+        self.candidate = candidate
+        _factText = State(initialValue: candidate.entry.text)
+        _section = State(initialValue: candidate.entry.section ?? "")
+        _about = State(initialValue: candidate.entry.about ?? "")
+    }
+
+    private var byteCount: Int {
+        factText.trimmingCharacters(in: .whitespacesAndNewlines).utf8.count
+    }
+
+    private var canPromote: Bool {
+        reviewed && byteCount > 0 && byteCount <= maxBytes && !isSaving
+    }
 
     var body: some View {
         NavigationStack {
@@ -810,17 +875,64 @@ private struct PromoteTaskOutcomeSheet: View {
                 VStack(alignment: .leading, spacing: 14) {
                     NoriNotice(
                         title: "Review task outcome before promoting",
-                        detail: "Task outcomes come from automated runs. Verify accuracy before loading this into every future chat.",
+                        detail: "Task outcomes come from automated runs. Edit or verify accuracy before loading this into future chats.",
                         tone: .warning,
                         systemImage: "exclamationmark.shield.fill"
                     )
 
-                    NoriCard(backgroundColor: NoriColors.elevated) {
-                        Text(candidate.entry.text)
-                            .font(.system(size: 14))
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("Fact")
+                                .font(NoriTypography.metaSemibold)
+                                .foregroundStyle(NoriColors.ink)
+                            Spacer()
+                            Text("\(byteCount) / \(maxBytes)")
+                                .font(NoriTypography.monoSmall)
+                                .foregroundStyle(byteCount > maxBytes ? NoriColors.danger : NoriColors.ink3)
+                        }
+
+                        TextField("Fact to remember…", text: $factText, axis: .vertical)
+                            .lineLimit(3...6)
+                            .textFieldStyle(.plain)
                             .foregroundStyle(NoriColors.ink)
-                            .lineSpacing(2)
+                            .tint(NoriColors.accent)
+                            .padding(12)
+                            .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                     }
+
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Section (optional)")
+                                .font(NoriTypography.metaSemibold)
+                                .foregroundStyle(NoriColors.ink)
+                            TextField("Work, Travel…", text: $section)
+                                .textFieldStyle(.plain)
+                                .foregroundStyle(NoriColors.ink)
+                                .tint(NoriColors.accent)
+                                .padding(.horizontal, 12)
+                                .frame(height: 40)
+                                .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                        }
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("About (optional)")
+                                .font(NoriTypography.metaSemibold)
+                                .foregroundStyle(NoriColors.ink)
+                            TextField("Flights, Q3…", text: $about)
+                                .textFieldStyle(.plain)
+                                .foregroundStyle(NoriColors.ink)
+                                .tint(NoriColors.accent)
+                                .padding(.horizontal, 12)
+                                .frame(height: 40)
+                                .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                        }
+                    }
+
+                    Toggle(isOn: $pinned) {
+                        Text("Pin in Core Memory")
+                            .font(.system(size: 13.5, weight: .medium))
+                            .foregroundStyle(NoriColors.ink)
+                    }
+                    .tint(NoriColors.brandPrimary)
 
                     Toggle(isOn: $reviewed) {
                         Text("I reviewed this fact and want Nori to remember it in Core Memory")
@@ -835,20 +947,23 @@ private struct PromoteTaskOutcomeSheet: View {
                             await store.promoteLogEntry(
                                 date: candidate.date,
                                 entryID: candidate.entry.id,
-                                pinned: false
+                                text: factText,
+                                section: section,
+                                about: about,
+                                pinned: pinned
                             )
                             isSaving = false
                             dismiss()
                         }
                     } label: {
                         if isSaving {
-                            ProgressView().tint(.white)
+                            ProgressView().tint(NoriColors.disabled)
                         } else {
                             Text("Promote to Core Memory")
                         }
                     }
                     .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
-                    .disabled(!reviewed || isSaving)
+                    .disabled(!canPromote)
                 }
                 .padding(16)
             }
@@ -857,24 +972,40 @@ private struct PromoteTaskOutcomeSheet: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
+            .interactiveDismissDisabled(isSaving)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                         .foregroundStyle(NoriColors.ink2)
+                        .disabled(isSaving)
                 }
             }
         }
     }
 }
 
-private struct AddMemorySheet: View {
+private struct MemoryFactEditorSheet: View {
     @Bindable var store: NoriStore
-    @Environment(\.dismiss) private var dismiss
+    let existing: MemoryFact?
 
-    @State private var factText = ""
+    @Environment(\.dismiss) private var dismiss
+    @State private var factText: String
+    @State private var section: String
+    @State private var about: String
+    @State private var pinned: Bool
     @State private var isSaving = false
+    @State private var errorMessage: String?
 
     private let maxBytes = 2000
+
+    init(store: NoriStore, existing: MemoryFact?) {
+        self.store = store
+        self.existing = existing
+        _factText = State(initialValue: existing?.text ?? "")
+        _section = State(initialValue: existing?.section ?? "")
+        _about = State(initialValue: existing?.about ?? "")
+        _pinned = State(initialValue: existing?.pinned ?? false)
+    }
 
     private var byteCount: Int {
         factText.trimmingCharacters(in: .whitespacesAndNewlines).utf8.count
@@ -888,6 +1019,15 @@ private struct AddMemorySheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    if let errorMessage {
+                        NoriNotice(
+                            title: "Couldn’t save memory",
+                            detail: errorMessage,
+                            tone: .danger,
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                    }
+
                     HStack {
                         Text("What should Nori remember?")
                             .font(NoriTypography.metaSemibold)
@@ -914,13 +1054,48 @@ private struct AddMemorySheet: View {
                             .strokeBorder(byteCount > maxBytes ? NoriColors.danger : NoriColors.cardBorder, lineWidth: 1)
                     )
 
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Section (optional)")
+                                .font(NoriTypography.metaSemibold)
+                                .foregroundStyle(NoriColors.ink)
+                            TextField("Travel, Work…", text: $section)
+                                .textFieldStyle(.plain)
+                                .foregroundStyle(NoriColors.ink)
+                                .tint(NoriColors.accent)
+                                .padding(.horizontal, 12)
+                                .frame(height: 40)
+                                .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("About (optional)")
+                                .font(NoriTypography.metaSemibold)
+                                .foregroundStyle(NoriColors.ink)
+                            TextField("Flights, Q3…", text: $about)
+                                .textFieldStyle(.plain)
+                                .foregroundStyle(NoriColors.ink)
+                                .tint(NoriColors.accent)
+                                .padding(.horizontal, 12)
+                                .frame(height: 40)
+                                .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                        }
+                    }
+
+                    Toggle(isOn: $pinned) {
+                        Text("Pin in Core Memory")
+                            .font(.system(size: 13.5, weight: .medium))
+                            .foregroundStyle(NoriColors.ink)
+                    }
+                    .tint(NoriColors.brandPrimary)
+
                     Button {
                         save()
                     } label: {
                         if isSaving {
-                            ProgressView().tint(.white)
+                            ProgressView().tint(NoriColors.disabled)
                         } else {
-                            Text("Save")
+                            Text(existing == nil ? "Save" : "Save changes")
                         }
                     }
                     .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
@@ -929,14 +1104,16 @@ private struct AddMemorySheet: View {
                 .padding(16)
             }
             .background(NoriColors.sheetBackground)
-            .navigationTitle("Add Memory")
+            .navigationTitle(existing == nil ? "Add Memory" : "Edit Memory")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
+            .interactiveDismissDisabled(isSaving)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                         .foregroundStyle(NoriColors.ink2)
+                        .disabled(isSaving)
                 }
             }
         }
@@ -944,16 +1121,34 @@ private struct AddMemorySheet: View {
 
     private func save() {
         guard isValid else { return }
+        let cleanSection = section.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanAbout = about.trimmingCharacters(in: .whitespacesAndNewlines)
         isSaving = true
+        errorMessage = nil
         Task {
-            await store.addMemory(
-                text: factText,
-                section: nil,
-                about: nil,
-                pinned: false
-            )
-            isSaving = false
-            dismiss()
+            do {
+                if let existing {
+                    _ = try await store.updateMemory(
+                        memoryID: existing.id,
+                        text: factText,
+                        section: cleanSection.isEmpty ? nil : cleanSection,
+                        about: cleanAbout.isEmpty ? nil : cleanAbout,
+                        pinned: pinned
+                    )
+                } else {
+                    await store.addMemory(
+                        text: factText,
+                        section: cleanSection.isEmpty ? nil : cleanSection,
+                        about: cleanAbout.isEmpty ? nil : cleanAbout,
+                        pinned: pinned
+                    )
+                }
+                isSaving = false
+                dismiss()
+            } catch {
+                isSaving = false
+                errorMessage = error.localizedDescription
+            }
         }
     }
 }

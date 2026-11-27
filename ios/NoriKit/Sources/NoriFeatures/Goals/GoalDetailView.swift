@@ -8,6 +8,12 @@ public struct GoalDetailView: View {
     private let onJumpToNeedsYou: () -> Void
     private let onOpenApps: () -> Void
 
+    @State private var isActing = false
+    @State private var showEditSheet = false
+    @State private var showCompleteConfirm = false
+    @State private var showDropConfirm = false
+    @State private var selectedRoutineID: String?
+
     public init(
         store: NoriStore,
         goalID: String,
@@ -45,7 +51,49 @@ public struct GoalDetailView: View {
                                 .font(NoriTypography.body)
                                 .foregroundStyle(NoriColors.ink)
                                 .fixedSize(horizontal: false, vertical: true)
-                                .padding(.bottom, 8)
+                                .padding(.bottom, 12)
+                        }
+
+                        if goal.status == .active || goal.status == .paused {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    Button {
+                                        showEditSheet = true
+                                    } label: {
+                                        Label("Edit", systemImage: "pencil")
+                                    }
+                                    .buttonStyle(NoriButtonStyle(.neutral, compact: true))
+                                    .disabled(isActing)
+
+                                    Button {
+                                        performAction(goal.status == .active ? "pause" : "resume")
+                                    } label: {
+                                        Label(
+                                            goal.status == .active ? "Pause" : "Resume",
+                                            systemImage: goal.status == .active ? "pause.fill" : "play.fill"
+                                        )
+                                    }
+                                    .buttonStyle(NoriButtonStyle(.neutral, compact: true))
+                                    .disabled(isActing)
+
+                                    Button {
+                                        showCompleteConfirm = true
+                                    } label: {
+                                        Label("Mark done", systemImage: "checkmark")
+                                    }
+                                    .buttonStyle(NoriButtonStyle(.tonal, compact: true))
+                                    .disabled(isActing)
+
+                                    Button {
+                                        showDropConfirm = true
+                                    } label: {
+                                        Text("Drop")
+                                    }
+                                    .buttonStyle(NoriButtonStyle(.danger, compact: true))
+                                    .disabled(isActing)
+                                }
+                            }
+                            .padding(.bottom, 10)
                         }
 
                         if !goal.blockers.isEmpty {
@@ -141,7 +189,44 @@ public struct GoalDetailView: View {
                 }
                 .background(NoriColors.canvas)
                 .refreshable {
-                    await store.refreshRoutinesAndGoals()
+                    _ = await store.loadGoal(id: goalID)
+                }
+                .sheet(isPresented: $showEditSheet) {
+                    GoalEditorSheet(store: store, existing: goal)
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
+                        .presentationBackground(NoriColors.sheetBackground)
+                        .presentationCornerRadius(NoriRadius.sheet)
+                }
+                .navigationDestination(item: $selectedRoutineID) { routineID in
+                    RoutineDetailView(store: store, automationID: routineID)
+                }
+                .confirmationDialog(
+                    "Mark this goal done?",
+                    isPresented: $showCompleteConfirm,
+                    titleVisibility: .visible
+                ) {
+                    Button("Mark done") {
+                        performAction("complete", keepMonitors: false)
+                    }
+                    if !goal.linked.automationIDs.isEmpty {
+                        Button("Mark done & keep routines") {
+                            performAction("complete", keepMonitors: true)
+                        }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                }
+                .confirmationDialog(
+                    "Drop this goal?",
+                    isPresented: $showDropConfirm,
+                    titleVisibility: .visible
+                ) {
+                    Button("Drop goal", role: .destructive) {
+                        performAction("abandon")
+                    }
+                    Button("Keep", role: .cancel) {}
+                } message: {
+                    Text("Nori will stop tracking this goal and pause linked monitors.")
                 }
             } else {
                 NoriEmptyState(
@@ -157,6 +242,9 @@ public struct GoalDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         #endif
+        .task(id: goalID) {
+            _ = await store.loadGoal(id: goalID)
+        }
         .toolbar {
             if let goal {
                 if goal.isBlocked {
@@ -179,10 +267,13 @@ public struct GoalDetailView: View {
         let linkedTasks = goal.linked.taskIDs.map { taskID in
             (id: taskID, title: store.workItems.first(where: { $0.taskID == taskID })?.title ?? "Task")
         }
+        let linkedRoutines = goal.linked.automationIDs.map { routineID in
+            (id: routineID, title: store.automations.first(where: { $0.id == routineID })?.title ?? "Routine")
+        }
         let linkedResults = goal.linked.resultIDs.map { resultID in
             (id: resultID, title: store.libraryItems.first(where: { $0.id == resultID })?.title ?? "Saved artifact")
         }
-        let total = linkedTasks.count + linkedResults.count
+        let total = linkedTasks.count + linkedRoutines.count + linkedResults.count
 
         if total > 0 {
             NoriSectionHeader("Linked")
@@ -194,7 +285,20 @@ public struct GoalDetailView: View {
                         NoriRow(
                             title: entry.title,
                             showChevron: true,
-                            showDivider: idx < linkedTasks.count - 1 || !linkedResults.isEmpty
+                            showDivider: idx < linkedTasks.count - 1 || !linkedRoutines.isEmpty || !linkedResults.isEmpty
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                ForEach(Array(linkedRoutines.enumerated()), id: \.element.id) { idx, entry in
+                    Button {
+                        selectedRoutineID = entry.id
+                    } label: {
+                        NoriRow(
+                            title: entry.title,
+                            showChevron: true,
+                            showDivider: idx < linkedRoutines.count - 1 || !linkedResults.isEmpty
                         )
                     }
                     .buttonStyle(.plain)
@@ -213,6 +317,14 @@ public struct GoalDetailView: View {
                     .buttonStyle(.plain)
                 }
             }
+        }
+    }
+
+    private func performAction(_ action: String, keepMonitors: Bool? = nil) {
+        isActing = true
+        Task {
+            _ = await store.performGoalAction(goalID: goalID, action: action, keepMonitors: keepMonitors)
+            isActing = false
         }
     }
 

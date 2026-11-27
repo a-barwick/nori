@@ -77,6 +77,63 @@ extension NoriStore {
         }
     }
 
+    @discardableResult
+    public func updateMemory(
+        memoryID: String,
+        text: String,
+        section: String? = nil,
+        about: String? = nil,
+        pinned: Bool
+    ) async throws -> MemoryFact {
+        let generation = sessionGeneration
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw NoriAPIError(message: "Enter something to remember.")
+        }
+        guard let current = coreMemories.first(where: { $0.id == memoryID }) else {
+            throw NoriAPIError(message: "Memory not found.", statusCode: 404)
+        }
+        let cleanSection = section?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanAbout = about?.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            let receipt = try await transport.updateMemory(
+                id: memoryID,
+                expectedRevision: current.revision,
+                text: trimmed,
+                section: (cleanSection?.isEmpty == false) ? cleanSection : nil,
+                about: (cleanAbout?.isEmpty == false) ? cleanAbout : nil,
+                pinned: pinned,
+                requestID: UUID().uuidString.lowercased()
+            )
+            guard generation == sessionGeneration else { throw CancellationError() }
+            upsertCoreMemory(receipt.resource)
+            if let working = try? await transport.fetchWorkingMemory() {
+                guard generation == sessionGeneration else { throw CancellationError() }
+                workingMemory = working
+            }
+            showToast("Memory updated")
+            return receipt.resource
+        } catch {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            _ = await handleOperationError(error, showToast: false)
+            throw error
+        }
+    }
+
+    public func consolidateMemory() async {
+        let generation = sessionGeneration
+        do {
+            try await transport.consolidateMemory(requestID: UUID().uuidString.lowercased())
+            guard generation == sessionGeneration else { return }
+            await refreshMemory()
+            guard generation == sessionGeneration else { return }
+            showToast("Memory consolidation requested")
+        } catch {
+            guard generation == sessionGeneration else { return }
+            _ = await handleOperationError(error)
+        }
+    }
+
     public func togglePinMemory(memoryID: String) async {
         let generation = sessionGeneration
         guard let fact = coreMemories.first(where: { $0.id == memoryID }) else { return }
@@ -162,18 +219,42 @@ extension NoriStore {
         }
     }
 
-    public func promoteLogEntry(date: String, entryID: String, pinned: Bool = false) async {
+    public func promoteLogEntry(
+        date: String,
+        entryID: String,
+        text: String? = nil,
+        section: String? = nil,
+        about: String? = nil,
+        pinned: Bool = false
+    ) async {
         let generation = sessionGeneration
         guard let log = memoryLogs.first(where: { $0.date == date }) else { return }
+        let cleanText = text?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanSection = section?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanAbout = about?.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            let receipt = try await transport.performMemoryLogEntryAction(
-                date: date,
-                entryID: entryID,
-                expectedRevision: log.revision,
-                action: "promote",
-                pinned: pinned,
-                requestID: UUID().uuidString.lowercased()
-            )
+            let receipt: MutationReceipt<MemoryLogEntryActionResource>
+            if (cleanText?.isEmpty == false) || (cleanSection?.isEmpty == false) || (cleanAbout?.isEmpty == false) {
+                receipt = try await transport.promoteMemoryLogEntry(
+                    date: date,
+                    entryID: entryID,
+                    expectedRevision: log.revision,
+                    text: (cleanText?.isEmpty == false) ? cleanText : nil,
+                    section: (cleanSection?.isEmpty == false) ? cleanSection : nil,
+                    about: (cleanAbout?.isEmpty == false) ? cleanAbout : nil,
+                    pinned: pinned,
+                    requestID: UUID().uuidString.lowercased()
+                )
+            } else {
+                receipt = try await transport.performMemoryLogEntryAction(
+                    date: date,
+                    entryID: entryID,
+                    expectedRevision: log.revision,
+                    action: "promote",
+                    pinned: pinned,
+                    requestID: UUID().uuidString.lowercased()
+                )
+            }
             guard generation == sessionGeneration else { return }
             switch receipt.resource {
             case .promoted(let fact):

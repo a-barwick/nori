@@ -343,39 +343,31 @@ public struct WorkDetailView: View {
         let milestones = extraMilestoneEvents
         if !entries.isEmpty || !milestones.isEmpty {
             NoriSectionHeader("Steps")
-            VStack(alignment: .leading, spacing: 10) {
-                if !entries.isEmpty {
-                    NoriRows {
-                        ForEach(Array(entries.enumerated()), id: \.element.id) { idx, entry in
-                            let showDivider = idx < entries.count - 1
-                            switch entry {
-                            case .single(let op):
-                                operationRow(op: op, showDivider: showDivider)
-                            case .webSearchGroup(let groupID, let ops):
-                                webSearchGroupRow(
-                                    groupID: groupID,
-                                    title: entry.groupTitle ?? "Searched the web (\(ops.count) queries)",
-                                    operations: ops,
-                                    badge: entry.groupBadge,
-                                    showDivider: showDivider
-                                )
-                            }
-                        }
+            NoriRows {
+                ForEach(Array(entries.enumerated()), id: \.element.id) { idx, entry in
+                    let showDivider = idx < entries.count - 1 || !milestones.isEmpty
+                    switch entry {
+                    case .single(let op):
+                        operationRow(op: op, showDivider: showDivider)
+                    case .webSearchGroup(let groupID, let ops):
+                        webSearchGroupRow(
+                            groupID: groupID,
+                            title: entry.groupTitle ?? "Searched the web (\(ops.count) queries)",
+                            operations: ops,
+                            badge: entry.groupBadge,
+                            showDivider: showDivider
+                        )
                     }
                 }
 
-                if !milestones.isEmpty {
-                    NoriRows {
-                        ForEach(Array(milestones.enumerated()), id: \.element.id) { idx, event in
-                            NoriRow(
-                                title: event.text,
-                                detail: event.createdAt.isEmpty ? nil : NoriDateFormatting.shortDateTime(event.createdAt),
-                                showChevron: false,
-                                showDivider: idx < milestones.count - 1,
-                                wrapTitle: true
-                            )
-                        }
-                    }
+                ForEach(Array(milestones.enumerated()), id: \.element.id) { idx, event in
+                    NoriRow(
+                        title: event.text,
+                        detail: event.createdAt.isEmpty ? nil : NoriDateFormatting.shortDateTime(event.createdAt),
+                        showChevron: false,
+                        showDivider: idx < milestones.count - 1,
+                        wrapTitle: true
+                    )
                 }
             }
         }
@@ -652,7 +644,7 @@ public struct WorkDetailView: View {
         return NoriRow(
             title: op.displaySummary,
             detail: detailParts.isEmpty ? nil : detailParts.joined(separator: " · "),
-            systemImage: op.isWebSearch ? "magnifyingglass" : nil,
+            systemImage: nil,
             iconTone: .neutral,
             showChevron: false,
             showDivider: showDivider,
@@ -691,12 +683,6 @@ public struct WorkDetailView: View {
                 }
             } label: {
                 HStack(spacing: 11) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(NoriColors.ink2)
-                        .frame(width: 36, height: 36)
-                        .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-
                     VStack(alignment: .leading, spacing: 2) {
                         Text(title)
                             .font(NoriTypography.rowTitle)

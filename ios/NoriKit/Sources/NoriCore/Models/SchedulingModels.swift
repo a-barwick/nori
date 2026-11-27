@@ -516,6 +516,114 @@ public struct Goal: Sendable, Codable, Hashable, Identifiable {
 
     public var isBlocked: Bool { !blockers.isEmpty }
     public var metCriteriaCount: Int { completionCriteria.filter(\.met).count }
+
+    public var editable: GoalEditable {
+        GoalEditable(
+            title: title,
+            outcome: outcome,
+            completionCriteria: completionCriteria.map { GoalCriterionInput(id: $0.id, text: $0.text) },
+            deadline: deadline,
+            followUp: followUp
+        )
+    }
+}
+
+public struct GoalCriterionInput: Sendable, Codable, Hashable {
+    public var id: String?
+    public var text: String
+
+    public init(id: String? = nil, text: String) {
+        self.id = id
+        self.text = text
+    }
+}
+
+public struct GoalEditable: Sendable, Codable, Hashable {
+    public var title: String
+    public var outcome: String
+    public var completionCriteria: [GoalCriterionInput]
+    public var deadline: String?
+    public var followUp: String?
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case outcome
+        case completionCriteria = "completion_criteria"
+        case deadline
+        case followUp = "follow_up"
+    }
+
+    public init(
+        title: String,
+        outcome: String = "",
+        completionCriteria: [GoalCriterionInput] = [],
+        deadline: String? = nil,
+        followUp: String? = nil
+    ) {
+        self.title = title
+        self.outcome = outcome
+        self.completionCriteria = completionCriteria
+        self.deadline = deadline
+        self.followUp = followUp
+    }
+}
+
+public struct AutomationOccurrence: Sendable, Codable, Hashable, Identifiable {
+    public var id: String
+    public var automationID: String
+    public var automationRevision: Int
+    public var scheduledAt: String
+    public var status: String
+    public var taskIDs: [String]
+    public var deliveryIDs: [String]
+    public var startedAt: String?
+    public var finishedAt: String?
+    public var summary: String?
+    public var error: ErrorDetail?
+    public var reason: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case automationID = "automation_id"
+        case automationRevision = "automation_revision"
+        case scheduledAt = "scheduled_at"
+        case status
+        case taskIDs = "task_ids"
+        case deliveryIDs = "delivery_ids"
+        case startedAt = "started_at"
+        case finishedAt = "finished_at"
+        case summary
+        case error
+        case reason
+    }
+
+    public init(
+        id: String,
+        automationID: String,
+        automationRevision: Int = 1,
+        scheduledAt: String,
+        status: String,
+        taskIDs: [String] = [],
+        deliveryIDs: [String] = [],
+        startedAt: String? = nil,
+        finishedAt: String? = nil,
+        summary: String? = nil,
+        error: ErrorDetail? = nil,
+        reason: String? = nil
+    ) {
+        self.id = id
+        self.automationID = automationID
+        self.automationRevision = automationRevision
+        self.scheduledAt = scheduledAt
+        self.status = status
+        self.taskIDs = taskIDs
+        self.deliveryIDs = deliveryIDs
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+        self.summary = summary
+        self.error = error
+        self.reason = reason
+    }
 }
 
 

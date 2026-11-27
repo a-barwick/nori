@@ -51,6 +51,7 @@ public struct GoalsView: View {
 
     @State private var showExamples: Bool = false
     @State private var selectedGoalID: String?
+    @State private var showNewGoalSheet: Bool = false
 
     public init(
         store: NoriStore,
@@ -81,10 +82,19 @@ public struct GoalsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 if store.goals.isEmpty {
                     NoriCard(padding: 16) {
-                        Text("Give Nori something bigger you want done—like planning a trip or organizing an event—and it will keep track of every step until it’s finished.")
-                            .font(NoriTypography.body)
-                            .foregroundStyle(NoriColors.ink)
-                            .fixedSize(horizontal: false, vertical: true)
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Give Nori something bigger you want done—like planning a trip or organizing an event—and it will keep track of every step until it’s finished.")
+                                .font(NoriTypography.body)
+                                .foregroundStyle(NoriColors.ink)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            Button {
+                                showNewGoalSheet = true
+                            } label: {
+                                Label("New goal", systemImage: "plus")
+                            }
+                            .buttonStyle(NoriButtonStyle(.primary, compact: true))
+                        }
                     }
 
                     VStack(alignment: .leading, spacing: 0) {
@@ -92,7 +102,7 @@ public struct GoalsView: View {
                         quickStartGrid
                     }
                 } else {
-                    HStack(alignment: .center, spacing: 10) {
+                    HStack(alignment: .center, spacing: 8) {
                         if blockedCount > 0 {
                             NoriLine(
                                 blockedCount == 1
@@ -115,6 +125,13 @@ public struct GoalsView: View {
                             }
                         }
                         .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+
+                        Button {
+                            showNewGoalSheet = true
+                        } label: {
+                            Label("New", systemImage: "plus")
+                        }
+                        .buttonStyle(NoriButtonStyle(.primary, compact: true))
                     }
 
                     if showExamples {
@@ -171,6 +188,15 @@ public struct GoalsView: View {
         }
         .refreshable {
             await store.refreshRoutinesAndGoals()
+        }
+        .sheet(isPresented: $showNewGoalSheet) {
+            GoalEditorSheet(store: store) { created in
+                selectedGoalID = created.id
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(NoriColors.sheetBackground)
+            .presentationCornerRadius(NoriRadius.sheet)
         }
     }
 

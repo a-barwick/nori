@@ -420,4 +420,194 @@ extension NoriStore {
             _ = await handleOperationError(error)
         }
     }
+
+    @discardableResult
+    public func createAutomation(_ value: AutomationEditable) async throws -> Automation {
+        let generation = sessionGeneration
+        do {
+            let receipt = try await transport.createAutomation(
+                value,
+                requestID: UUID().uuidString.lowercased()
+            )
+            guard generation == sessionGeneration else { throw CancellationError() }
+            upsertAutomation(receipt.resource)
+            showToast("Routine created")
+            return receipt.resource
+        } catch {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            _ = await handleOperationError(error, showToast: false)
+            throw error
+        }
+    }
+
+    @discardableResult
+    public func saveAutomation(id: String, value: AutomationEditable) async throws -> Automation {
+        let generation = sessionGeneration
+        let current: Automation
+        if let cached = automations.first(where: { $0.id == id }) {
+            current = cached
+        } else if let loaded = await loadAutomation(id: id) {
+            current = loaded
+        } else {
+            throw NoriAPIError(message: "Routine not found.", statusCode: 404)
+        }
+        do {
+            let receipt = try await transport.updateAutomation(
+                id: id,
+                expectedRevision: current.revision,
+                value: value,
+                requestID: UUID().uuidString.lowercased()
+            )
+            guard generation == sessionGeneration else { throw CancellationError() }
+            upsertAutomation(receipt.resource)
+            showToast("Routine updated")
+            return receipt.resource
+        } catch {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            _ = await handleOperationError(error, showToast: false)
+            throw error
+        }
+    }
+
+    public func snoozeAutomation(automationID: String, until: Date) async {
+        let generation = sessionGeneration
+        guard let auto = automations.first(where: { $0.id == automationID }) else { return }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        let iso = formatter.string(from: until)
+        do {
+            let receipt = try await transport.snoozeAutomation(
+                id: automationID,
+                expectedRevision: auto.revision,
+                until: iso,
+                requestID: UUID().uuidString.lowercased()
+            )
+            guard generation == sessionGeneration else { return }
+            upsertAutomation(receipt.resource)
+            showToast("Snoozed \(auto.title)")
+        } catch {
+            guard generation == sessionGeneration else { return }
+            _ = await handleOperationError(error)
+        }
+    }
+
+    public func loadAutomationOccurrences(automationID: String) async -> [AutomationOccurrence] {
+        let generation = sessionGeneration
+        do {
+            let items = try await transport.fetchAutomationOccurrences(id: automationID)
+            guard generation == sessionGeneration else { return [] }
+            return items
+        } catch {
+            guard generation == sessionGeneration else { return [] }
+            _ = await handleAuthFailureIfNeeded(error)
+            return []
+        }
+    }
+
+    private func upsertGoal(_ goal: Goal) {
+        if let idx = goals.firstIndex(where: { $0.id == goal.id }) {
+            goals[idx] = goal
+        } else {
+            goals.insert(goal, at: 0)
+        }
+    }
+
+    public func loadGoal(id: String) async -> Goal? {
+        let generation = sessionGeneration
+        do {
+            let fresh = try await transport.fetchGoal(id: id)
+            guard generation == sessionGeneration else { return nil }
+            upsertGoal(fresh)
+            return fresh
+        } catch {
+            guard generation == sessionGeneration else { return nil }
+            _ = await handleAuthFailureIfNeeded(error)
+            return goals.first(where: { $0.id == id })
+        }
+    }
+
+    @discardableResult
+    public func createGoal(_ value: GoalEditable) async throws -> Goal {
+        let generation = sessionGeneration
+        do {
+            let receipt = try await transport.createGoal(
+                value,
+                requestID: UUID().uuidString.lowercased()
+            )
+            guard generation == sessionGeneration else { throw CancellationError() }
+            upsertGoal(receipt.resource)
+            showToast("Goal created")
+            return receipt.resource
+        } catch {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            _ = await handleOperationError(error, showToast: false)
+            throw error
+        }
+    }
+
+    @discardableResult
+    public func updateGoal(id: String, value: GoalEditable) async throws -> Goal {
+        let generation = sessionGeneration
+        let current: Goal
+        if let cached = goals.first(where: { $0.id == id }) {
+            current = cached
+        } else if let loaded = await loadGoal(id: id) {
+            current = loaded
+        } else {
+            throw NoriAPIError(message: "Goal not found.", statusCode: 404)
+        }
+        do {
+            let receipt = try await transport.updateGoal(
+                id: id,
+                expectedRevision: current.revision,
+                value: value,
+                requestID: UUID().uuidString.lowercased()
+            )
+            guard generation == sessionGeneration else { throw CancellationError() }
+            upsertGoal(receipt.resource)
+            showToast("Goal updated")
+            return receipt.resource
+        } catch {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            _ = await handleOperationError(error, showToast: false)
+            throw error
+        }
+    }
+
+    @discardableResult
+    public func performGoalAction(goalID: String, action: String, keepMonitors: Bool? = nil) async -> Goal? {
+        let generation = sessionGeneration
+        let current: Goal
+        if let cached = goals.first(where: { $0.id == goalID }) {
+            current = cached
+        } else if let loaded = await loadGoal(id: goalID) {
+            current = loaded
+        } else {
+            return nil
+        }
+        do {
+            let receipt = try await transport.performGoalAction(
+                id: goalID,
+                expectedRevision: current.revision,
+                action: action,
+                keepMonitors: keepMonitors,
+                requestID: UUID().uuidString.lowercased()
+            )
+            guard generation == sessionGeneration else { return nil }
+            upsertGoal(receipt.resource)
+            let label: String = switch action {
+            case "pause": "Goal paused"
+            case "resume": "Goal resumed"
+            case "complete": "Goal marked done"
+            case "abandon": "Goal dropped"
+            default: "Goal updated"
+            }
+            showToast(label)
+            return receipt.resource
+        } catch {
+            guard generation == sessionGeneration else { return nil }
+            _ = await handleOperationError(error)
+            return nil
+        }
+    }
 }

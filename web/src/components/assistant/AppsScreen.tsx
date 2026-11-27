@@ -189,6 +189,7 @@ export function MCPDetailScreen({ id }: { id: string }) {
   const tools = useResource<List<MCPTool>>(`/mcp/${encodeURIComponent(id)}/tools`, { poll: 0 });
   const action = useAction();
   const { result } = useReturnedResult();
+  const [editing, setEditing] = useState(false);
   const item = server.data;
   if (server.loading) return <Screen title="MCP server" back="/apps"><Loading /></Screen>;
   if (!item) return <Screen title="MCP server" back="/apps"><Failure error={server.error ?? "Not found."} /></Screen>;
@@ -212,18 +213,36 @@ export function MCPDetailScreen({ id }: { id: string }) {
     actions={<MCPStatus server={item} />}>
     {result && <div className="mb-4"><Notice tone={result === "connected" ? "ok" : "danger"}>{result === "connected" ? "Signed in." : "Sign-in didn’t finish. Nothing was saved; try again."}</Notice></div>}
     {action.error && <div className="mb-4"><Notice tone="danger">{action.error}</Notice></div>}
-    <Section title="Connection"><div className="rounded-card border border-card-border bg-surface p-4"><dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-meta">
-      <dt className="text-ink-3">Type</dt><dd>{item.transport === "http" ? "Remote server" : "Local server"}</dd>
-      {item.endpoint && <><dt className="text-ink-3">Server URL</dt><dd className="[overflow-wrap:anywhere]">{item.endpoint}</dd></>}
-    </dl>
-      {desktop && (observed.status === "needs_sign_in" || item.auth === "oauth" && observed.status !== "connected") && <p className="mt-3 text-meta text-ink-2">Sign in to Nori with the same account in your browser, then continue the connection there.</p>}
-      <div className="mt-4 flex flex-wrap gap-2">
-        {item.transport === "stdio" ? <>
-          <Button size="sm" variant="primary" disabled={!!action.pending} onClick={() => void act({ action: observed.status === "connected" ? "restart" : "start" }, "start")}>{observed.status === "connected" ? "Restart" : "Start"}</Button>
-          {observed.status === "connected" && <Button size="sm" disabled={!!action.pending} onClick={() => void act({ action: "stop" }, "stop")}>Stop</Button>}
-        </> : <Button size="sm" variant="primary" disabled={!!action.pending} onClick={() => void act({ action: "reconnect" }, "reconnect")}>Reconnect</Button>}
-        {(observed.status === "needs_sign_in" || item.auth === "oauth" && observed.status !== "connected") && <Button size="sm" disabled={!!action.pending} onClick={() => void signIn()}>{action.pending === "sign_in" ? "Opening…" : desktop ? "Continue in browser" : "Sign in"}</Button>}
-      </div></div></Section>
+    <Section title="Connection"><div className="rounded-card border border-card-border bg-surface p-4">
+      {editing ? (
+        <EditMCPServer
+          server={item}
+          onCancel={() => setEditing(false)}
+          onSaved={(next) => {
+            server.apply(next);
+            invalidate("/mcp", `/mcp/${encodeURIComponent(id)}/tools`);
+            setEditing(false);
+          }}
+        />
+      ) : (
+        <>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-meta">
+            <dt className="text-ink-3">Type</dt><dd>{item.transport === "http" ? "Remote server" : "Local server"}</dd>
+            {item.endpoint && <><dt className="text-ink-3">Server URL</dt><dd className="[overflow-wrap:anywhere]">{item.endpoint}</dd></>}
+            {!item.enabled && <><dt className="text-ink-3">Status</dt><dd className="text-ink-2">Disabled</dd></>}
+          </dl>
+          {desktop && (observed.status === "needs_sign_in" || item.auth === "oauth" && observed.status !== "connected") && <p className="mt-3 text-meta text-ink-2">Sign in to Nori with the same account in your browser, then continue the connection there.</p>}
+          <div className="mt-4 flex flex-wrap gap-2">
+            {item.transport === "stdio" ? <>
+              <Button size="sm" variant="primary" disabled={!!action.pending} onClick={() => void act({ action: observed.status === "connected" ? "restart" : "start" }, "start")}>{observed.status === "connected" ? "Restart" : "Start"}</Button>
+              {observed.status === "connected" && <Button size="sm" disabled={!!action.pending} onClick={() => void act({ action: "stop" }, "stop")}>Stop</Button>}
+            </> : <Button size="sm" variant="primary" disabled={!!action.pending} onClick={() => void act({ action: "reconnect" }, "reconnect")}>Reconnect</Button>}
+            {(observed.status === "needs_sign_in" || item.auth === "oauth" && observed.status !== "connected") && <Button size="sm" disabled={!!action.pending} onClick={() => void signIn()}>{action.pending === "sign_in" ? "Opening…" : desktop ? "Continue in browser" : "Sign in"}</Button>}
+            <Button size="sm" variant="neutral" disabled={!!action.pending} onClick={() => setEditing(true)}>Edit</Button>
+          </div>
+        </>
+      )}
+    </div></Section>
     {item.auth === "configured" && <Section title="Access token"><Credential server={item} onSaved={(next) => server.apply(next)} /></Section>}
     <Section title="Tools">
       {tools.loading ? <Loading /> : tools.data?.items.length ? <Rows>{tools.data.items.map((tool) => <li key={tool.name} className="flex min-h-14 flex-wrap items-center gap-3 px-4 py-2">
@@ -245,4 +264,79 @@ export function MCPDetailScreen({ id }: { id: string }) {
       </Section>
     )}
   </Screen>;
+}
+
+function EditMCPServer({
+  server,
+  onSaved,
+  onCancel,
+}: {
+  server: MCPServer;
+  onSaved: (next: MCPServer) => void;
+  onCancel: () => void;
+}) {
+  const action = useAction();
+  const [name, setName] = useState(server.name);
+  const [endpoint, setEndpoint] = useState(server.endpoint ?? "");
+  const [auth, setAuth] = useState<"oauth" | "none" | "configured">(server.auth ?? "oauth");
+  const [exposure, setExposure] = useState<"direct" | "discoverable" | "disabled">(
+    (server.exposure?.default === "direct" || server.exposure?.default === "disabled") ? server.exposure.default : "discoverable",
+  );
+  const [enabled, setEnabled] = useState(server.enabled);
+  const validEndpoint = server.transport !== "http" || isValidMCPEndpoint(endpoint);
+  const save = () => action.run("save", async () => {
+    const receipt = await mutate<MCPServer>(`/mcp/${encodeURIComponent(server.id)}`, {
+      request_id: newRequestID(),
+      expected_revision: server.revision,
+      value: {
+        name: name.trim(),
+        transport: server.transport,
+        ...(server.transport === "http" ? { endpoint: endpoint.trim() } : {}),
+        auth,
+        enabled,
+        exposure: { ...server.exposure, default: exposure },
+      },
+    }, "PUT");
+    onSaved(receipt.resource as MCPServer);
+  });
+  return (
+    <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); if (name.trim() && validEndpoint) void save(); }}>
+      <div className="flex flex-wrap gap-3">
+        <Field label="Name"><input value={name} onChange={(event) => setName(event.target.value)} className={cn(inputBase, "w-56")} required /></Field>
+        {server.transport === "http" && (
+          <Field label="Server URL"><input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} className={cn(inputBase, "w-96 max-w-full")} inputMode="url" required /></Field>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-3">
+        <Field label="Sign-in">
+          <select value={auth} onChange={(event) => setAuth(event.target.value as typeof auth)} className={cn(inputBase, "w-auto")}>
+            <option value="oauth">OAuth</option>
+            <option value="none">None</option>
+            <option value="configured">Access token</option>
+          </select>
+        </Field>
+        <Field label="Tools">
+          <select value={exposure} onChange={(event) => setExposure(event.target.value as typeof exposure)} className={cn(inputBase, "w-auto")}>
+            <option value="discoverable">When relevant</option>
+            <option value="direct">Always</option>
+            <option value="disabled">Off</option>
+          </select>
+        </Field>
+      </div>
+      <label className="flex items-center gap-2 text-meta text-ink">
+        <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="size-4 accent-accent" />
+        Server enabled
+      </label>
+      {server.transport === "http" && endpoint && !validEndpoint && (
+        <p role="alert" className="text-meta text-danger">Use an https:// address, or http://localhost / 127.0.0.1 / .local for a local server.</p>
+      )}
+      {action.error && <Notice tone="danger">{action.error}</Notice>}
+      <div className="flex gap-2">
+        <Button type="submit" size="sm" variant="primary" disabled={!name.trim() || !validEndpoint || !!action.pending}>
+          {action.pending ? "Saving…" : "Save changes"}
+        </Button>
+        <Button size="sm" variant="quiet" onClick={onCancel}>Cancel</Button>
+      </div>
+    </form>
+  );
 }
