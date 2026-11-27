@@ -99,7 +99,6 @@ type TaskOrigin struct {
 	MessageID       string `json:"message_id,omitempty" firestore:"message_id,omitempty"`
 	AutomationID    string `json:"automation_id,omitempty" firestore:"automation_id,omitempty"`
 	OccurrenceID    string `json:"occurrence_id,omitempty" firestore:"occurrence_id,omitempty"`
-	GoalID          string `json:"goal_id,omitempty" firestore:"goal_id,omitempty"`
 	ContinuesTaskID string `json:"continues_task_id,omitempty" firestore:"continues_task_id,omitempty"`
 }
 

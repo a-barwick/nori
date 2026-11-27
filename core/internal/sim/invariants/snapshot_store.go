@@ -36,7 +36,6 @@ type storedOccurrence struct {
 	scheduler.Occurrence
 	Instruction string  `json:"instruction"`
 	BudgetUSD   float64 `json:"budget_usd"`
-	GoalID      string  `json:"goal_id,omitempty"`
 	Monitor     bool    `json:"monitor,omitempty"`
 }
 

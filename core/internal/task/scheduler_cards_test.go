@@ -151,40 +151,38 @@ func TestDateRequestInputWakesOuterLoopInsteadOfOpeningDatePickerCard(t *testing
 	}
 }
 
-func TestGoalCreateInvalidDeadlineDoesNotTriggerUncertainWriteLockout(t *testing.T) {
+func TestAutomationCreateInvalidTimestampDoesNotTriggerUncertainWriteLockout(t *testing.T) {
 	ctx := context.Background()
 	f := newRunnerFixture(t, func(_ context.Context, callNum int, _ agent.Request) (agent.Response, error) {
 		switch callNum {
 		case 1:
-			return toolCallResponse("c-goal-bad", "goal_create", map[string]any{
-				"title":               "Plan weekend trip",
-				"outcome":             "Booked itinerary under $900",
-				"completion_criteria": []any{"Flights and hotel compared"},
-				"deadline":            "2026-11-27",
+			return toolCallResponse("c-auto-bad", "automation_create", map[string]any{
+				"title":       "Follow up on weekend trip",
+				"instruction": "Remind me to finalize weekend trip bookings",
+				"trigger":     map[string]any{"kind": "once", "at": "2026-11-27"},
 			}, 0.02), nil
 		case 2:
-			return toolCallResponse("c-goal-good", "goal_create", map[string]any{
-				"title":               "Plan weekend trip",
-				"outcome":             "Booked itinerary under $900",
-				"completion_criteria": []any{"Flights and hotel compared"},
-				"deadline":            "2026-11-27T23:59:59Z",
+			return toolCallResponse("c-auto-good", "automation_create", map[string]any{
+				"title":       "Follow up on weekend trip",
+				"instruction": "Remind me to finalize weekend trip bookings",
+				"trigger":     map[string]any{"kind": "once", "at": "2026-11-27T23:59:59Z"},
 			}, 0.02), nil
 		default:
 			return toolCallResponse("c-done", "complete", map[string]any{
-				"answer": "Goal saved.", "evidence": []any{}, "unmet": []any{},
+				"answer": "Scheduled.", "evidence": []any{}, "unmet": []any{},
 			}, 0.02), nil
 		}
 	})
 	sched := attachNoriScheduler(t, f, "America/Los_Angeles")
 
-	run := f.startTask(ctx, "run-goal-bad-deadline", "Create a goal to plan a weekend trip by Friday")
-	outcome, err := f.claimAndRun(ctx, run.ID, "worker-goal-1")
+	run := f.startTask(ctx, "run-auto-bad-time", "Remind me Friday to finalize weekend trip bookings")
+	outcome, err := f.claimAndRun(ctx, run.ID, "worker-auto-1")
 	if err != nil || outcome != task.OutcomeDone {
 		t.Fatalf("claimAndRun = (%s, %v), want (done, nil) without uncertain lockout", outcome, err)
 	}
-	goals, err := sched.Goals(ctx, "active")
-	if err != nil || len(goals) != 1 || goals[0].Title != "Plan weekend trip" {
-		t.Fatalf("expected 1 saved goal after self-correction, got (%+v, %v)", goals, err)
+	items, err := sched.List(ctx, "enabled")
+	if err != nil || len(items) != 1 || items[0].Title != "Follow up on weekend trip" {
+		t.Fatalf("expected 1 saved automation after self-correction, got (%+v, %v)", items, err)
 	}
 }
 

@@ -851,37 +851,6 @@ func TestSchedulerDrainPaginationPast100AndMonitorFraming(t *testing.T) {
 		}
 	}
 
-	const totalGoals = 205
-	for i := 0; i < totalGoals; i++ {
-		_, err := h.sched.SaveGoal(ctx, "", fmt.Sprintf("req-goal-%03d", i), 0, scheduler.GoalEditable{
-			Title:   fmt.Sprintf("Goal %03d", i),
-			Outcome: "Verified pagination",
-			CompletionCriteria: []struct {
-				ID   string `json:"id,omitempty"`
-				Text string `json:"text"`
-			}{{ID: "c1", Text: "done"}},
-		})
-		if err != nil {
-			t.Fatalf("SaveGoal %d: %v", i, err)
-		}
-	}
-	goals, err := h.sched.Goals(ctx, "active")
-	if err != nil {
-		t.Fatalf("Goals >200: %v", err)
-	}
-	if len(goals) != totalGoals {
-		t.Fatalf("Goals returned %d, want %d", len(goals), totalGoals)
-	}
-	progressed, err := h.sched.RecordProgress(ctx, goals[0].ID, "req-goal-utf8-progress", scheduler.GoalProgress{
-		Progress: utf8LongResult,
-	})
-	if err != nil {
-		t.Fatalf("RecordProgress UTF-8: %v", err)
-	}
-	if !utf8.ValidString(progressed.Progress) {
-		t.Fatalf("clipped goal progress is not valid UTF-8")
-	}
-
 	monReceipt, err := h.sched.Save(ctx, "", "req-monitor", 0, scheduler.Editable{
 		Title:       "Inbox Security Monitor",
 		Instruction: "Report urgent items.",

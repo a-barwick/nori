@@ -570,59 +570,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/goals": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List goals */
-        get: operations["listGoals"];
-        put?: never;
-        /** Create a goal */
-        post: operations["createGoal"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/goals/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read a goal */
-        get: operations["getGoal"];
-        /** Update a goal */
-        put: operations["updateGoal"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/goals/{id}/actions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Pause, resume, complete, or abandon a goal */
-        post: operations["actOnGoal"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/inbox": {
         parameters: {
             query?: never;
@@ -921,7 +868,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Search across library items, tasks, messages, memory, goals, and automations */
+        /** Search across library items, tasks, messages, memory, and automations */
         get: operations["searchWorkspace"];
         put?: never;
         post?: never;
@@ -1546,7 +1493,6 @@ export interface components {
             interactions?: boolean;
             work?: boolean;
             automations?: boolean;
-            goals?: boolean;
             library?: boolean;
             search?: boolean;
             permissions?: boolean;
@@ -1863,7 +1809,6 @@ export interface components {
             message_id?: string;
             automation_id?: components["schemas"]["ID"];
             occurrence_id?: string;
-            goal_id?: components["schemas"]["ID"];
             continues_task_id?: string;
         };
         /** @enum {string} */
@@ -2135,13 +2080,17 @@ export interface components {
         };
         WorkOrigin: {
             /** @enum {string} */
-            kind: "conversation" | "automation" | "goal" | "external";
+            kind: "conversation" | "automation" | "external";
             conversation_id?: string;
             message_id?: string;
             automation_id?: components["schemas"]["ID"];
             occurrence_id?: string;
-            goal_id?: components["schemas"]["ID"];
             continues_task_id?: string;
+        };
+        WorkStep: {
+            text: string;
+            /** @enum {string} */
+            status: "done" | "active" | "upcoming";
         };
         WorkOperationsSummary: {
             total: number;
@@ -2172,6 +2121,8 @@ export interface components {
             started_at: components["schemas"]["Instant"];
             finished_at?: components["schemas"]["Instant"];
             cancel_requested: boolean;
+            queued?: boolean;
+            steps?: components["schemas"]["WorkStep"][];
             partial?: boolean;
             error?: components["schemas"]["ErrorDetail"];
         };
@@ -2211,7 +2162,6 @@ export interface components {
             title?: string;
             created_at?: components["schemas"]["Instant"];
             updated_at?: components["schemas"]["Instant"];
-            goal_id?: components["schemas"]["ID"];
             summary?: string;
         };
         PermissionRuleEditable: {
@@ -2226,7 +2176,6 @@ export interface components {
             expires_at?: components["schemas"]["Instant"];
             max_operations?: number;
             title?: string;
-            goal_id?: components["schemas"]["ID"];
         };
         PermissionRuleChange: {
             request_id: components["schemas"]["UUID"];
@@ -2401,7 +2350,6 @@ export interface components {
             next_at?: components["schemas"]["Instant"];
             end_at?: components["schemas"]["Instant"];
             max_occurrences?: number;
-            goal_id?: components["schemas"]["ID"];
             last_occurrence_id?: string;
             created_at?: components["schemas"]["Instant"];
             updated_at?: components["schemas"]["Instant"];
@@ -2429,7 +2377,6 @@ export interface components {
             destination_ids: components["schemas"]["ID"][];
             end_at?: components["schemas"]["Instant"];
             max_occurrences?: number;
-            goal_id?: components["schemas"]["ID"];
         };
         AutomationChange: {
             request_id: components["schemas"]["UUID"];
@@ -2495,70 +2442,9 @@ export interface components {
             missed_run_explanation: string;
             warnings: components["schemas"]["AutomationPreviewWarning"][];
         };
-        GoalCriterion: {
-            id: string;
-            text: string;
-            met: boolean;
-            evidence_result_ids?: string[];
-        };
-        GoalBlocker: {
-            text: string;
-            interaction_id?: string;
-            connection_id?: string;
-        };
-        GoalLinks: {
-            task_ids: string[];
-            automation_ids: string[];
-            result_ids: string[];
-        };
-        Goal: {
-            id: components["schemas"]["ID"];
-            revision: components["schemas"]["Revision"];
-            title: string;
-            outcome: string;
-            completion_criteria: components["schemas"]["GoalCriterion"][];
-            /** @enum {string} */
-            status: "active" | "paused" | "completed" | "abandoned";
-            progress: string;
-            next_actions: string[];
-            blockers: components["schemas"]["GoalBlocker"][];
-            linked: components["schemas"]["GoalLinks"];
-            deadline?: components["schemas"]["Instant"];
-            /** @enum {string} */
-            follow_up?: "none" | "remind" | "monitor";
-            created_at?: components["schemas"]["Instant"];
-            updated_at?: components["schemas"]["Instant"];
-            completed_at?: components["schemas"]["Instant"];
-            authority_rule_ids?: components["schemas"]["ID"][];
-        };
-        GoalEditable: {
-            title: string;
-            outcome: string;
-            completion_criteria: {
-                id?: string;
-                text: string;
-            }[];
-            deadline?: components["schemas"]["Instant"];
-            /** @enum {string} */
-            follow_up?: "none" | "remind" | "monitor";
-        };
-        GoalChange: {
-            request_id: components["schemas"]["UUID"];
-            expected_revision: components["schemas"]["Revision"];
-            value: components["schemas"]["GoalEditable"];
-        };
-        GoalAction: {
-            request_id: components["schemas"]["UUID"];
-            expected_revision: components["schemas"]["Revision"];
-            value: {
-                /** @enum {string} */
-                action: "pause" | "resume" | "complete" | "abandon";
-                keep_monitors?: boolean;
-            };
-        };
         InboxLink: {
             /** @enum {string} */
-            kind: "interaction" | "automation" | "goal" | "connection" | "task" | "result";
+            kind: "interaction" | "automation" | "connection" | "task" | "result";
             id: string;
             revision?: components["schemas"]["Revision"];
         };
@@ -2720,10 +2606,10 @@ export interface components {
             type: "card";
             schema_version: number;
             /** @enum {string} */
-            kind: "connection_request" | "question" | "approval" | "progress" | "calendar_event" | "mail_draft" | "mail_message" | "automation" | "goal" | "file" | "outcome" | "availability";
+            kind: "connection_request" | "question" | "approval" | "progress" | "calendar_event" | "mail_draft" | "mail_message" | "automation" | "file" | "outcome" | "availability";
             resource: {
                 /** @enum {string} */
-                kind: "interaction" | "automation" | "goal" | "connection" | "task" | "result";
+                kind: "interaction" | "automation" | "connection" | "task" | "result";
                 id: string;
                 revision?: components["schemas"]["Revision"];
             };
@@ -2874,7 +2760,6 @@ export interface components {
             url?: string;
             task_id?: string;
             conversation_id?: string;
-            goal_id?: string;
             automation_id?: string;
             provenance: components["schemas"]["Provenance"];
             /** @enum {string} */
@@ -2952,10 +2837,6 @@ export interface components {
             item_id: string;
         } | {
             /** @enum {string} */
-            kind: "goal";
-            goal_id: components["schemas"]["ID"];
-        } | {
-            /** @enum {string} */
             kind: "automation";
             automation_id: components["schemas"]["ID"];
         } | {
@@ -2969,7 +2850,7 @@ export interface components {
         };
         SearchHit: {
             /** @enum {string} */
-            kind: "result" | "message" | "task" | "goal" | "automation" | "file" | "memory";
+            kind: "result" | "message" | "task" | "automation" | "file" | "memory";
             id: string;
             title: string;
             snippet: string;
@@ -3911,7 +3792,6 @@ export interface operations {
         parameters: {
             query?: {
                 automation_id?: components["schemas"]["ID"];
-                goal_id?: components["schemas"]["ID"];
             };
             header?: never;
             path?: never;
@@ -4221,138 +4101,6 @@ export interface operations {
                 };
             };
             404: components["responses"]["ErrorResponse"];
-        };
-    };
-    listGoals: {
-        parameters: {
-            query?: {
-                status?: "active" | "paused" | "completed" | "abandoned";
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Goals list */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        items: components["schemas"]["Goal"][];
-                        next_cursor?: string;
-                    };
-                };
-            };
-        };
-    };
-    createGoal: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["GoalChange"];
-            };
-        };
-        responses: {
-            /** @description Goal created */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MutationReceipt"];
-                };
-            };
-            400: components["responses"]["ErrorResponse"];
-            409: components["responses"]["ErrorResponse"];
-        };
-    };
-    getGoal: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["IdParam"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Goal */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Goal"];
-                };
-            };
-            404: components["responses"]["ErrorResponse"];
-        };
-    };
-    updateGoal: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["IdParam"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["GoalChange"];
-            };
-        };
-        responses: {
-            /** @description Goal updated */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MutationReceipt"];
-                };
-            };
-            400: components["responses"]["ErrorResponse"];
-            404: components["responses"]["ErrorResponse"];
-            409: components["responses"]["ErrorResponse"];
-        };
-    };
-    actOnGoal: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["IdParam"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["GoalAction"];
-            };
-        };
-        responses: {
-            /** @description Goal action applied */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MutationReceipt"];
-                };
-            };
-            400: components["responses"]["ErrorResponse"];
-            404: components["responses"]["ErrorResponse"];
-            409: components["responses"]["ErrorResponse"];
         };
     };
     listInbox: {

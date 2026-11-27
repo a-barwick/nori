@@ -544,25 +544,11 @@ public struct DocumentReaderSheet: View {
                 }
                 if let automationID = item.automationID, !automationID.isEmpty {
                     GridRow {
-                        Text("Routine")
+                        Text("Automation")
                             .font(.system(size: 13))
                             .foregroundStyle(NoriColors.ink3)
-                        Button("Open routines") {
+                        Button("Open automations") {
                             store.pendingDeepLink = .routines
-                            dismiss()
-                        }
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(NoriColors.accent)
-                        .buttonStyle(.plain)
-                    }
-                }
-                if let goalID = item.goalID, !goalID.isEmpty {
-                    GridRow {
-                        Text("Goal")
-                            .font(.system(size: 13))
-                            .foregroundStyle(NoriColors.ink3)
-                        Button("Open goals") {
-                            store.pendingDeepLink = .goals
                             dismiss()
                         }
                         .font(.system(size: 13, weight: .medium))

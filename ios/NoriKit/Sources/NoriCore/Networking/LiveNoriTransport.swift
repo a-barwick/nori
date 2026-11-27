@@ -544,7 +544,6 @@ public actor LiveNoriTransport: NoriTransport {
         async let logsResult = captureSnapshotDomain { try await self.fetchMemoryLogs() }
         async let workingResult = captureSnapshotDomain { try await self.fetchWorkingMemory() }
         async let automationsResult = captureSnapshotDomain { try await self.fetchAutomations() }
-        async let goalsResult = captureSnapshotDomain { try await self.fetchGoals() }
         async let permissionsResult = captureSnapshotDomain { try await self.fetchPermissions() }
         async let preferencesResult = captureSnapshotDomain { try await self.fetchPreferences() }
         async let modelKeysResult = captureSnapshotDomain { try await self.fetchModelKeys() }
@@ -570,7 +569,6 @@ public actor LiveNoriTransport: NoriTransport {
             logsRes,
             workingRes,
             automationsRes,
-            goalsRes,
             permissionsRes,
             preferencesRes,
             modelKeysRes
@@ -578,7 +576,6 @@ public actor LiveNoriTransport: NoriTransport {
             logsResult,
             workingResult,
             automationsResult,
-            goalsResult,
             permissionsResult,
             preferencesResult,
             modelKeysResult
@@ -608,7 +605,6 @@ public actor LiveNoriTransport: NoriTransport {
         let logs = try unwrap(logsRes, domain: "memory_logs", fallback: [])
         let working = try unwrap(workingRes, domain: "working_memory", fallback: WorkingMemory())
         let automations = try unwrap(automationsRes, domain: "automations", fallback: [])
-        let goals = try unwrap(goalsRes, domain: "goals", fallback: [])
         let permissions = try unwrap(permissionsRes, domain: "permissions", fallback: [])
         let preferences = try unwrap(preferencesRes, domain: "preferences", fallback: Preferences())
         let modelKeys = try unwrap(modelKeysRes, domain: "model_keys", fallback: ModelKeysResponse())
@@ -651,7 +647,6 @@ public actor LiveNoriTransport: NoriTransport {
             memoryLogs: logs.value,
             workingMemory: working.value,
             automations: automations.value,
-            goals: goals.value,
             permissions: permissions.value,
             preferences: preferences.value,
             modelKeys: modelKeys.value,
@@ -665,7 +660,6 @@ public actor LiveNoriTransport: NoriTransport {
             didLoadMemoryLogs: logs.loaded,
             didLoadWorkingMemory: working.loaded,
             didLoadAutomations: automations.loaded,
-            didLoadGoals: goals.loaded,
             didLoadPermissions: permissions.loaded,
             didLoadPreferences: preferences.loaded,
             didLoadModelKeys: modelKeys.loaded,
@@ -1472,11 +1466,6 @@ public actor LiveNoriTransport: NoriTransport {
 
     public func fetchAutomationOccurrences(id: String) async throws -> [AutomationOccurrence] {
         let resp: ListResponse<AutomationOccurrence> = try await getJSON(OpenAPI.Path.automationsOccurrences(id: id))
-        return resp.items
-    }
-
-    public func fetchGoals() async throws -> [Goal] {
-        let resp: ListResponse<Goal> = try await getJSON(OpenAPI.Path.goals)
         return resp.items
     }
 

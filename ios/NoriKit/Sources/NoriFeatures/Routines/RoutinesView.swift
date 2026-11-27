@@ -13,10 +13,10 @@ public struct RoutinesView: View {
     }
 
     private var activeAutomations: [Automation] {
-        let nonCancelled = store.automations.filter { $0.status != .cancelled }
-        let enabled = nonCancelled.filter { $0.status == .enabled && !$0.isSpentOneTime }
-        let other = nonCancelled.filter { $0.status != .enabled || $0.isSpentOneTime }
-        return enabled + other
+        let nonCancelled = store.automations.filter { $0.status != .cancelled && $0.trigger.kind != "once" }
+        let enabled = nonCancelled.filter { $0.status == .enabled }
+        let paused = nonCancelled.filter { $0.status != .enabled }
+        return enabled + paused
     }
 
     private var nextEnabledAutomation: Automation? {
@@ -44,7 +44,7 @@ public struct RoutinesView: View {
             }()
             return "Next up: \(next.title), \(when)."
         }
-        return "All routines are paused."
+        return "All automations are currently paused."
     }
 
     public var body: some View {
@@ -52,13 +52,13 @@ public struct RoutinesView: View {
             VStack(alignment: .leading, spacing: 14) {
                 if activeAutomations.isEmpty {
                     NoriEmptyState(
-                        title: "No routines yet",
-                        message: "Ask Nori in Chat or create a routine for recurring briefs, monitors, or scheduled checks."
+                        title: "No automations yet",
+                        message: "Ask Nori in Chat to set up recurring briefs, monitors, or scheduled checks."
                     ) {
                         Button {
                             showNewRoutineSheet = true
                         } label: {
-                            Label("New routine", systemImage: "plus")
+                            Label("New automation", systemImage: "plus")
                         }
                         .buttonStyle(NoriButtonStyle(.primary, compact: true))
                     }
@@ -106,7 +106,7 @@ public struct RoutinesView: View {
             .presentationCornerRadius(NoriRadius.sheet)
         }
         .refreshable {
-            await store.refreshRoutinesAndGoals()
+            await store.refreshAutomations()
         }
     }
 

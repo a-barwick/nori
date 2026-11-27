@@ -159,17 +159,11 @@ public struct NoriRootView: View {
         case .work:
             async let workTask: Void = store.refreshWorkAndInteractions()
             async let libraryTask: Void = store.refreshLibrary()
-            async let routinesGoalsTask: Void = store.refreshRoutinesAndGoals()
-            _ = await (workTask, libraryTask)
+            async let automationsTask: Void = store.refreshAutomations()
+            _ = await (workTask, libraryTask, automationsTask)
             if !Task.isCancelled, !didApplyInitialWorkTab {
                 didApplyInitialWorkTab = true
-                if !selectedWorkTabExplicitly, workTabFilter == .tasks,
-                   store.hasLoadedWorkOverview, store.pendingInteractions.isEmpty,
-                   store.workItems.isEmpty, !store.libraryItems.isEmpty {
-                    workTabFilter = .artifacts
-                }
             }
-            await routinesGoalsTask
         case .more:
             async let summaryTask: Void = store.refreshSummary()
             async let appsTask: Void = store.refreshApps()
@@ -365,12 +359,7 @@ public struct NoriRootView: View {
             presentedDocument = nil
             selectedTab = .work
             workPath = []
-            workTabFilter = .routines
-        case .goals:
-            presentedDocument = nil
-            selectedTab = .work
-            workPath = []
-            workTabFilter = .goals
+            workTabFilter = .automations
         case .settings:
             presentedDocument = nil
             selectedTab = .more

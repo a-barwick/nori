@@ -17,7 +17,6 @@ tags:
   - name: Interactions
   - name: Permissions
   - name: Automations
-  - name: Goals
   - name: Inbox
   - name: Memory
   - name: Library
@@ -626,10 +625,6 @@ paths:
           in: query
           schema:
             $ref: "#/components/schemas/ID"
-        - name: goal_id
-          in: query
-          schema:
-            $ref: "#/components/schemas/ID"
       responses:
         "200":
           description: Permission rules
@@ -897,123 +892,6 @@ paths:
                   next_cursor:
                     type: string
         "404":
-          $ref: "#/components/responses/ErrorResponse"
-
-  /v1/goals:
-    get:
-      operationId: listGoals
-      tags: [Goals]
-      summary: List goals
-      parameters:
-        - name: status
-          in: query
-          schema:
-            type: string
-            enum: [active, paused, completed, abandoned]
-      responses:
-        "200":
-          description: Goals list
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Goal"
-                  next_cursor:
-                    type: string
-    post:
-      operationId: createGoal
-      tags: [Goals]
-      summary: Create a goal
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/GoalChange"
-      responses:
-        "201":
-          description: Goal created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MutationReceipt"
-        "400":
-          $ref: "#/components/responses/ErrorResponse"
-        "409":
-          $ref: "#/components/responses/ErrorResponse"
-
-  /v1/goals/{id}:
-    get:
-      operationId: getGoal
-      tags: [Goals]
-      summary: Read a goal
-      parameters:
-        - $ref: "#/components/parameters/IdParam"
-      responses:
-        "200":
-          description: Goal
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Goal"
-        "404":
-          $ref: "#/components/responses/ErrorResponse"
-    put:
-      operationId: updateGoal
-      tags: [Goals]
-      summary: Update a goal
-      parameters:
-        - $ref: "#/components/parameters/IdParam"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/GoalChange"
-      responses:
-        "200":
-          description: Goal updated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MutationReceipt"
-        "400":
-          $ref: "#/components/responses/ErrorResponse"
-        "404":
-          $ref: "#/components/responses/ErrorResponse"
-        "409":
-          $ref: "#/components/responses/ErrorResponse"
-
-  /v1/goals/{id}/actions:
-    post:
-      operationId: actOnGoal
-      tags: [Goals]
-      summary: Pause, resume, complete, or abandon a goal
-      parameters:
-        - $ref: "#/components/parameters/IdParam"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/GoalAction"
-      responses:
-        "200":
-          description: Goal action applied
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MutationReceipt"
-        "400":
-          $ref: "#/components/responses/ErrorResponse"
-        "404":
-          $ref: "#/components/responses/ErrorResponse"
-        "409":
           $ref: "#/components/responses/ErrorResponse"
 
   /v1/inbox:
@@ -1520,7 +1398,7 @@ paths:
     get:
       operationId: searchWorkspace
       tags: [Library]
-      summary: Search across library items, tasks, messages, memory, goals, and automations
+      summary: Search across library items, tasks, messages, memory, and automations
       parameters:
         - name: q
           in: query
@@ -2626,8 +2504,6 @@ components:
           type: boolean
         automations:
           type: boolean
-        goals:
-          type: boolean
         library:
           type: boolean
         search:
@@ -3357,8 +3233,6 @@ components:
           $ref: "#/components/schemas/ID"
         occurrence_id:
           type: string
-        goal_id:
-          $ref: "#/components/schemas/ID"
         continues_task_id:
           type: string
 
@@ -3975,7 +3849,7 @@ components:
       properties:
         kind:
           type: string
-          enum: [conversation, automation, goal, external]
+          enum: [conversation, automation, external]
         conversation_id:
           type: string
         message_id:
@@ -3984,10 +3858,18 @@ components:
           $ref: "#/components/schemas/ID"
         occurrence_id:
           type: string
-        goal_id:
-          $ref: "#/components/schemas/ID"
         continues_task_id:
           type: string
+
+    WorkStep:
+      type: object
+      required: [text, status]
+      properties:
+        text:
+          type: string
+        status:
+          type: string
+          enum: [done, active, upcoming]
 
     WorkOperationsSummary:
       type: object
@@ -4072,6 +3954,12 @@ components:
           $ref: "#/components/schemas/Instant"
         cancel_requested:
           type: boolean
+        queued:
+          type: boolean
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkStep"
         partial:
           type: boolean
         error:
@@ -4173,8 +4061,6 @@ components:
           $ref: "#/components/schemas/Instant"
         updated_at:
           $ref: "#/components/schemas/Instant"
-        goal_id:
-          $ref: "#/components/schemas/ID"
         summary:
           type: string
 
@@ -4214,8 +4100,6 @@ components:
           minimum: 1
         title:
           type: string
-        goal_id:
-          $ref: "#/components/schemas/ID"
 
     PermissionRuleChange:
       type: object
@@ -4491,7 +4375,7 @@ components:
                   enum: [decline]
 
     # -------------------------------------------------------------------------
-    # Automations, Goals & Inbox
+    # Automations & Inbox
     # -------------------------------------------------------------------------
     Trigger:
       oneOf:
@@ -4616,8 +4500,6 @@ components:
         max_occurrences:
           type: integer
           minimum: 1
-        goal_id:
-          $ref: "#/components/schemas/ID"
         last_occurrence_id:
           type: string
         created_at:
@@ -4703,8 +4585,6 @@ components:
         max_occurrences:
           type: integer
           minimum: 1
-        goal_id:
-          $ref: "#/components/schemas/ID"
 
     AutomationChange:
       type: object
@@ -4856,167 +4736,13 @@ components:
           items:
             $ref: "#/components/schemas/AutomationPreviewWarning"
 
-    GoalCriterion:
-      type: object
-      required: [id, text, met]
-      properties:
-        id:
-          type: string
-        text:
-          type: string
-        met:
-          type: boolean
-        evidence_result_ids:
-          type: array
-          items:
-            type: string
-
-    GoalBlocker:
-      type: object
-      required: [text]
-      properties:
-        text:
-          type: string
-        interaction_id:
-          type: string
-        connection_id:
-          type: string
-
-    GoalLinks:
-      type: object
-      required: [task_ids, automation_ids, result_ids]
-      properties:
-        task_ids:
-          type: array
-          items:
-            type: string
-        automation_ids:
-          type: array
-          items:
-            type: string
-        result_ids:
-          type: array
-          items:
-            type: string
-
-    Goal:
-      type: object
-      required:
-        - id
-        - revision
-        - title
-        - outcome
-        - completion_criteria
-        - status
-        - progress
-        - next_actions
-        - blockers
-        - linked
-      properties:
-        id:
-          $ref: "#/components/schemas/ID"
-        revision:
-          $ref: "#/components/schemas/Revision"
-        title:
-          type: string
-        outcome:
-          type: string
-        completion_criteria:
-          type: array
-          items:
-            $ref: "#/components/schemas/GoalCriterion"
-        status:
-          type: string
-          enum: [active, paused, completed, abandoned]
-        progress:
-          type: string
-        next_actions:
-          type: array
-          items:
-            type: string
-        blockers:
-          type: array
-          items:
-            $ref: "#/components/schemas/GoalBlocker"
-        linked:
-          $ref: "#/components/schemas/GoalLinks"
-        deadline:
-          $ref: "#/components/schemas/Instant"
-        follow_up:
-          type: string
-          enum: [none, remind, monitor]
-        created_at:
-          $ref: "#/components/schemas/Instant"
-        updated_at:
-          $ref: "#/components/schemas/Instant"
-        completed_at:
-          $ref: "#/components/schemas/Instant"
-        authority_rule_ids:
-          type: array
-          items:
-            $ref: "#/components/schemas/ID"
-
-    GoalEditable:
-      type: object
-      required: [title, outcome, completion_criteria]
-      properties:
-        title:
-          type: string
-          minLength: 1
-        outcome:
-          type: string
-        completion_criteria:
-          type: array
-          items:
-            type: object
-            required: [text]
-            properties:
-              id:
-                type: string
-              text:
-                type: string
-        deadline:
-          $ref: "#/components/schemas/Instant"
-        follow_up:
-          type: string
-          enum: [none, remind, monitor]
-
-    GoalChange:
-      type: object
-      required: [request_id, expected_revision, value]
-      properties:
-        request_id:
-          $ref: "#/components/schemas/UUID"
-        expected_revision:
-          $ref: "#/components/schemas/Revision"
-        value:
-          $ref: "#/components/schemas/GoalEditable"
-
-    GoalAction:
-      type: object
-      required: [request_id, expected_revision, value]
-      properties:
-        request_id:
-          $ref: "#/components/schemas/UUID"
-        expected_revision:
-          $ref: "#/components/schemas/Revision"
-        value:
-          type: object
-          required: [action]
-          properties:
-            action:
-              type: string
-              enum: [pause, resume, complete, abandon]
-            keep_monitors:
-              type: boolean
-
     InboxLink:
       type: object
       required: [kind, id]
       properties:
         kind:
           type: string
-          enum: [interaction, automation, goal, connection, task, result]
+          enum: [interaction, automation, connection, task, result]
         id:
           type: string
         revision:
@@ -5373,7 +5099,6 @@ components:
             - mail_draft
             - mail_message
             - automation
-            - goal
             - file
             - outcome
             - availability
@@ -5383,7 +5108,7 @@ components:
           properties:
             kind:
               type: string
-              enum: [interaction, automation, goal, connection, task, result]
+              enum: [interaction, automation, connection, task, result]
             id:
               type: string
             revision:
@@ -5708,8 +5433,6 @@ components:
           type: string
         conversation_id:
           type: string
-        goal_id:
-          type: string
         automation_id:
           type: string
         provenance:
@@ -5874,14 +5597,6 @@ components:
             item_id:
               type: string
         - type: object
-          required: [kind, goal_id]
-          properties:
-            kind:
-              type: string
-              enum: [goal]
-            goal_id:
-              $ref: "#/components/schemas/ID"
-        - type: object
           required: [kind, automation_id]
           properties:
             kind:
@@ -5911,7 +5626,7 @@ components:
       properties:
         kind:
           type: string
-          enum: [result, message, task, goal, automation, file, memory]
+          enum: [result, message, task, automation, file, memory]
         id:
           type: string
         title:

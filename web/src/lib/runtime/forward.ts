@@ -242,7 +242,7 @@ export async function capabilitiesRoute(request: Request) {
 }
 
 const ASSISTANT_FAMILIES = new Set([
-  "integrations", "connections", "interactions", "work", "automations", "goals", "library", "search", "permissions",
+  "integrations", "connections", "interactions", "work", "automations", "library", "search", "permissions",
   "preferences", "mcp", "assistant", "mutations", "operations", "memory", "inbox", "tools", "settings",
 ]);
 

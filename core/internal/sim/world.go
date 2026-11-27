@@ -108,7 +108,6 @@ type UserWorld struct {
 	interactions    []*trackedInteraction
 	ruleIDs         []string
 	automationIDs   []string
-	goalIDs         []string
 	inputs          []trackedInput
 	assistantMsgIDs []string
 	activeConvFence *state.ConversationFence

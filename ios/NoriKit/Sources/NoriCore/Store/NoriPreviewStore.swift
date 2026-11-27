@@ -157,7 +157,6 @@ final class PreviewNoriTransport: NoriTransport, @unchecked Sendable {
             )
         ]
     }
-    func fetchGoals() async throws -> [Goal] { snapshot.goals }
     func renameLibraryItem(id: String, expectedRevision: Int, title: String, collection: String?, requestID: String) async throws -> MutationReceipt<LibraryItem> {
         var updated = snapshot.libraryItems.first(where: { $0.id == id }) ?? LibraryItem(id: id, title: title)
         updated.title = title
@@ -434,13 +433,28 @@ public extension NoriStore {
             ),
             WorkItem(
                 taskID: "task-2",
-                title: "Draft weekly release digest",
+                title: "Plan weekend trip to Kyoto",
                 status: .running,
                 bucket: .working,
-                progress: "Synthesizing 4 PR summaries and release notes…",
+                progress: "Comparing ryokan options near Higashiyama…",
                 operations: WorkOperationsSummary(total: 4, uncertain: 0, failed: 0, submitted: 1),
                 cost: WorkCost(amountUSD: 0.22, status: .known, budgetUSD: 1.00),
-                startedAt: tMinus8m
+                startedAt: tMinus8m,
+                steps: [
+                    WorkStep(text: "Compare direct flights under $900", status: .done),
+                    WorkStep(text: "Shortlist ryokans near Higashiyama", status: .done),
+                    WorkStep(text: "Draft 3-day itinerary with dinner spots", status: .active),
+                    WorkStep(text: "Confirm bookings and add to calendar", status: .upcoming)
+                ]
+            ),
+            WorkItem(
+                taskID: "task-queued-1",
+                title: "Prep 1-page brief for Monday Q4 review",
+                status: .running,
+                bucket: .working,
+                cost: WorkCost(amountUSD: 0, status: .known, budgetUSD: 1.00),
+                startedAt: tMinus2m,
+                queued: true
             ),
             WorkItem(
                 taskID: "task-3",
@@ -511,6 +525,13 @@ public extension NoriStore {
                 title: "Friday vendor spend rollup",
                 status: .paused,
                 trigger: AutomationTrigger(kind: "recurring", rrule: "FREQ=WEEKLY;BYDAY=FR;BYHOUR=16;BYMINUTE=0")
+            ),
+            Automation(
+                id: "auto-once-1",
+                title: "Follow up with Sam if SOW isn’t signed",
+                status: .enabled,
+                trigger: AutomationTrigger(kind: "once", at: tTomorrowNoon),
+                nextAt: tTomorrowNoon
             )
         ]
 
@@ -631,7 +652,6 @@ public extension NoriStore {
         store.coreMemories = snapshot.coreMemories
         store.workingMemory = snapshot.workingMemory
         store.automations = snapshot.automations
-        store.goals = snapshot.goals
         store.permissions = snapshot.permissions
         store.modelKeys = snapshot.modelKeys
         store.assistantSummary = AssistantSummary(needsYou: 2, working: 1, appsAttention: 0)

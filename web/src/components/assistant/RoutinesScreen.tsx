@@ -94,11 +94,11 @@ export function RoutinesContent() {
   const list = useResource<List<Automation>>(has("automations") ? "/automations" : null, { poll: 30_000 });
   const action = useAction();
 
-  if (!has("automations")) return <NotYet what="Routines" />;
+  if (!has("automations")) return <NotYet what="Automations" />;
 
   const items = list.data?.items ?? [];
   const active = items
-    .filter((item) => item.status !== "cancelled")
+    .filter((item) => item.status !== "cancelled" && item.trigger.kind !== "once")
     .sort((a, b) => Date.parse(a.next_at ?? "9999") - Date.parse(b.next_at ?? "9999"));
   const next = active.find((item) => item.status === "enabled" && item.next_at);
 
@@ -122,7 +122,7 @@ export function RoutinesContent() {
         {next ? (
           <NoriLine>Next up: {next.title}, {relative(next.next_at)}.</NoriLine>
         ) : active.length ? (
-          <NoriLine>All routines are paused.</NoriLine>
+          <NoriLine>All automations are paused.</NoriLine>
         ) : (
           <div />
         )}
@@ -131,7 +131,7 @@ export function RoutinesContent() {
           className="inline-flex h-8 items-center gap-1.5 rounded-full bg-accent px-3.5 text-meta font-semibold text-on-accent transition-colors hover:bg-accent-hover"
         >
           <Plus size={14} aria-hidden />
-          New routine
+          New automation
         </Link>
       </div>
 
@@ -141,7 +141,7 @@ export function RoutinesContent() {
       {list.loading ? (
         <Loading />
       ) : active.length ? (
-        <Rows label="Routines">
+        <Rows label="Automations">
           {active.map((item) => {
             const state = stateOf(item);
             const isEnabled = item.status === "enabled" && !spent(item);
@@ -190,7 +190,7 @@ export function RoutinesContent() {
           })}
         </Rows>
       ) : (
-        <Empty title="No routines yet">
+        <Empty title="No automations yet">
           Ask Nori in Chat to set up recurring briefs, monitors, or scheduled checks.
         </Empty>
       )}
@@ -200,7 +200,7 @@ export function RoutinesContent() {
 
 export function RoutinesScreen() {
   return (
-    <Screen title="Routines" back="/work?tab=routines" backLabel="Work">
+    <Screen title="Automations" back="/work?tab=automations" backLabel="Work">
       <RoutinesContent />
     </Screen>
   );
@@ -407,16 +407,6 @@ export function RoutineDetailScreen({ id }: { id: string }) {
             <>
               <dt className="text-ink-3">Ends</dt>
               <dd>{when(item.end_at)}</dd>
-            </>
-          )}
-          {item.goal_id && (
-            <>
-              <dt className="text-ink-3">For goal</dt>
-              <dd>
-                <Link className="text-accent-text hover:underline" href={`/goals/${encodeURIComponent(item.goal_id)}`}>
-                  Open goal
-                </Link>
-              </dd>
             </>
           )}
         </dl>

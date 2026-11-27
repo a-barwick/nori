@@ -174,7 +174,7 @@ function safeFramePath(path?: string): string | undefined {
 }
 
 export function safeSpanName(name: string): string {
-  const route = name.match(/^(?:(GET|POST|PUT|DELETE) )?(\/(?:api\/(?:turn|input|cancel|command|artifact|trace|delivered|seen|health|observability|v1|\[operation\])|work|more|apps|routines|goals|library|memory|settings)?)(?:[?#].*)?$/);
+  const route = name.match(/^(?:(GET|POST|PUT|DELETE) )?(\/(?:api\/(?:turn|input|cancel|command|artifact|trace|delivered|seen|health|observability|v1|\[operation\])|work|more|apps|routines|library|memory|settings)?)(?:[?#].*)?$/);
   if (route) return `${route[1] ? `${route[1]} ` : ""}${route[2]}`;
   if (name === "nori.submit_to_reply") return name;
   return "operation";

@@ -94,8 +94,6 @@ export function jumpHref(hit: SearchHit) {
       return `/work/${encodeURIComponent(jump.task_id)}`;
     case "library":
       return `/library/${encodeURIComponent(jump.item_id)}`;
-    case "goal":
-      return `/goals/${encodeURIComponent(jump.goal_id)}`;
     case "automation":
       return `/routines/${encodeURIComponent(jump.automation_id)}`;
     case "memory": {
@@ -196,8 +194,7 @@ export function LibraryContent({ syncURL = false }: { syncURL?: boolean }) {
                         result: "Saved",
                         message: "Chat",
                         task: "Task",
-                        goal: "Goal",
-                        automation: "Routine",
+                        automation: "Automation",
                         file: "File",
                         memory: "Memory",
                       }[hit.kind]
@@ -522,16 +519,6 @@ export function LibraryDetailScreen({ id }: { id: string }) {
               <dd>
                 <Link className="text-accent-text hover:underline" href={`/routines/${encodeURIComponent(item.automation_id)}`}>
                   Open routine
-                </Link>
-              </dd>
-            </>
-          )}
-          {item.goal_id && (
-            <>
-              <dt className="text-ink-3">Goal</dt>
-              <dd>
-                <Link className="text-accent-text hover:underline" href={`/goals/${encodeURIComponent(item.goal_id)}`}>
-                  Open goal
                 </Link>
               </dd>
             </>

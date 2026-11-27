@@ -770,7 +770,6 @@ public struct PermissionRule: Sendable, Codable, Hashable, Identifiable {
     public var title: String?
     public var createdAt: String?
     public var updatedAt: String?
-    public var goalID: String?
     public var summary: String?
 
     enum CodingKeys: String, CodingKey {
@@ -788,7 +787,6 @@ public struct PermissionRule: Sendable, Codable, Hashable, Identifiable {
         case title
         case createdAt = "created_at"
         case updatedAt = "updated_at"
-        case goalID = "goal_id"
         case summary
     }
 
@@ -807,7 +805,6 @@ public struct PermissionRule: Sendable, Codable, Hashable, Identifiable {
         title: String? = nil,
         createdAt: String? = nil,
         updatedAt: String? = nil,
-        goalID: String? = nil,
         summary: String? = nil
     ) {
         self.id = id
@@ -824,7 +821,6 @@ public struct PermissionRule: Sendable, Codable, Hashable, Identifiable {
         self.title = title
         self.createdAt = createdAt
         self.updatedAt = updatedAt
-        self.goalID = goalID
         self.summary = summary
     }
 }
@@ -840,7 +836,6 @@ public struct PermissionRuleEditable: Sendable, Codable, Hashable {
     public var expiresAt: String?
     public var maxOperations: Int?
     public var title: String?
-    public var goalID: String?
 
     enum CodingKeys: String, CodingKey {
         case effect
@@ -853,7 +848,6 @@ public struct PermissionRuleEditable: Sendable, Codable, Hashable {
         case expiresAt = "expires_at"
         case maxOperations = "max_operations"
         case title
-        case goalID = "goal_id"
     }
 
     public init(
@@ -866,8 +860,7 @@ public struct PermissionRuleEditable: Sendable, Codable, Hashable {
         automationID: String? = nil,
         expiresAt: String? = nil,
         maxOperations: Int? = nil,
-        title: String? = nil,
-        goalID: String? = nil
+        title: String? = nil
     ) {
         self.effect = effect
         self.toolIDs = toolIDs
@@ -879,6 +872,5 @@ public struct PermissionRuleEditable: Sendable, Codable, Hashable {
         self.expiresAt = expiresAt
         self.maxOperations = maxOperations
         self.title = title
-        self.goalID = goalID
     }
 }

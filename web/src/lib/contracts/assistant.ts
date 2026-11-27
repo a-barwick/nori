@@ -60,6 +60,7 @@ export type CostReport = Schemas["CostReport"];
 
 // Work & operations
 export type OperationProjection = Schemas["OperationProjection"];
+export type WorkStep = Schemas["WorkStep"];
 export type WorkItem = Schemas["WorkItem"];
 export type WorkDetail = Schemas["WorkDetail"];
 export type RunEvent = Schemas["RunEvent"];
@@ -77,7 +78,7 @@ export type SignInPayload = Schemas["SignInPayload"];
 export type Interaction = Schemas["Interaction"];
 export type InteractionResponse = Schemas["InteractionResponse"];
 
-// Automations, goals & inbox
+// Automations & inbox
 export type Trigger = Schemas["Trigger"];
 export type MissedRun = Schemas["MissedRun"];
 export type OccurrenceStatus = Schemas["OccurrenceStatus"];
@@ -88,10 +89,6 @@ export type AutomationAction = Schemas["AutomationAction"];
 export type Occurrence = Schemas["Occurrence"];
 export type Delivery = Schemas["Delivery"];
 export type AutomationPreview = Schemas["AutomationPreview"];
-export type Goal = Schemas["Goal"];
-export type GoalEditable = Schemas["GoalEditable"];
-export type GoalChange = Schemas["GoalChange"];
-export type GoalAction = Schemas["GoalAction"];
 export type InboxItem = Schemas["InboxItem"];
 export type InboxAction = Schemas["InboxAction"];
 

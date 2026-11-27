@@ -32,7 +32,6 @@ type Rule struct {
 	ActionClasses []string   `json:"action_classes"`
 	Recipients    []string   `json:"recipients,omitempty"`
 	AutomationID  string     `json:"automation_id,omitempty"`
-	GoalID        string     `json:"goal_id,omitempty"`
 	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
 	MaxOperations int        `json:"max_operations,omitempty"`
 	Title         string     `json:"title,omitempty"`
@@ -50,7 +49,6 @@ type RuleEditable struct {
 	ActionClasses []string   `json:"action_classes"`
 	Recipients    []string   `json:"recipients,omitempty"`
 	AutomationID  string     `json:"automation_id,omitempty"`
-	GoalID        string     `json:"goal_id,omitempty"`
 	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
 	MaxOperations int        `json:"max_operations,omitempty"`
 	Title         string     `json:"title,omitempty"`
@@ -220,11 +218,11 @@ func (s *Service) ruleWrite(id string, revision int64, used int, value RuleEdita
 	rule := Rule{
 		ID: id, Revision: revision, Effect: value.Effect, ToolIDs: nonNil(value.ToolIDs), ConnectionIDs: nonNil(value.ConnectionIDs),
 		ResourceIDs: nonNil(value.ResourceIDs), ActionClasses: nonNil(value.ActionClasses), Recipients: value.Recipients,
-		AutomationID: value.AutomationID, GoalID: value.GoalID, ExpiresAt: value.ExpiresAt, MaxOperations: value.MaxOperations,
+		AutomationID: value.AutomationID, ExpiresAt: value.ExpiresAt, MaxOperations: value.MaxOperations,
 		Title: value.Title, Summary: Summarize(value),
 	}
 	now := s.now()
-	r, err := state.NewResource(CollectionRules, id, revision, storedRule{Rule: rule, Used: used}, map[string]string{"automation_id": value.AutomationID, "goal_id": value.GoalID}, now)
+	r, err := state.NewResource(CollectionRules, id, revision, storedRule{Rule: rule, Used: used}, map[string]string{"automation_id": value.AutomationID}, now)
 	if err != nil {
 		return state.MutationResult{}, err
 	}
@@ -280,7 +278,6 @@ type Request struct {
 	Revision                int64
 	Origin                  string
 	AutomationID            string
-	GoalID                  string
 	ReadOnly                bool
 	ToolID                  string
 	Effect                  string
@@ -353,7 +350,7 @@ func (s *Service) applies(rule Rule, req Request) bool {
 	if rule.MaxOperations > 0 && rule.Effect == "allow" && rule.Used >= rule.MaxOperations {
 		return false
 	}
-	if rule.AutomationID != "" && rule.AutomationID != req.AutomationID || rule.GoalID != "" && rule.GoalID != req.GoalID {
+	if rule.AutomationID != "" && rule.AutomationID != req.AutomationID {
 		return false
 	}
 	if !matches(rule.ActionClasses, req.Effect) || !matches(rule.ToolIDs, req.ToolID) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -23,8 +24,12 @@ type workOrigin struct {
 	MessageID       string `json:"message_id,omitempty"`
 	AutomationID    string `json:"automation_id,omitempty"`
 	OccurrenceID    string `json:"occurrence_id,omitempty"`
-	GoalID          string `json:"goal_id,omitempty"`
 	ContinuesTaskID string `json:"continues_task_id,omitempty"`
+}
+
+type workStep struct {
+	Text   string `json:"text"`
+	Status string `json:"status"`
 }
 
 type workOperations struct {
@@ -62,6 +67,8 @@ type workItem struct {
 	StartedAt           time.Time      `json:"started_at"`
 	FinishedAt          *time.Time     `json:"finished_at,omitempty"`
 	CancelRequested     bool           `json:"cancel_requested"`
+	Queued              bool           `json:"queued,omitempty"`
+	Steps               []workStep     `json:"steps,omitempty"`
 	Partial             bool           `json:"partial,omitempty"`
 	Error               *errorDetail   `json:"error,omitempty"`
 }
@@ -101,11 +108,8 @@ func originOf(run state.Run) workOrigin {
 		return workOrigin{Kind: "conversation", ConversationID: "assistant"}
 	}
 	o := run.Origin
-	switch {
-	case o.AutomationID != "":
-		return workOrigin{Kind: "automation", AutomationID: o.AutomationID, OccurrenceID: o.OccurrenceID, GoalID: o.GoalID}
-	case o.GoalID != "":
-		return workOrigin{Kind: "goal", GoalID: o.GoalID}
+	if o.AutomationID != "" {
+		return workOrigin{Kind: "automation", AutomationID: o.AutomationID, OccurrenceID: o.OccurrenceID}
 	}
 	conversation := o.ConversationID
 	if conversation == "" {
@@ -116,6 +120,118 @@ func originOf(run state.Run) workOrigin {
 		kind = "external"
 	}
 	return workOrigin{Kind: kind, ConversationID: conversation, MessageID: o.MessageID, ContinuesTaskID: o.ContinuesTaskID}
+}
+
+func humanStepLabel(name string) string {
+	switch name {
+	case "web_search":
+		return "Searched the web"
+	case "compose":
+		return "Ran multi-step workflow"
+	case "results_find":
+		return "Checked saved results"
+	case "result_read":
+		return "Read saved result"
+	case "upload_inspect", "upload_read_text":
+		return "Read attached file"
+	case "conversation_find", "conversation_read":
+		return "Checked earlier chat"
+	case "automation_create":
+		return "Scheduled automation"
+	case "automations_list":
+		return "Checked automations"
+	case "automation_change":
+		return "Updated automation"
+	}
+	cleaned := strings.TrimSpace(strings.ReplaceAll(name, "_", " "))
+	if cleaned == "" {
+		return "Working"
+	}
+	return strings.ToUpper(cleaned[:1]) + cleaned[1:]
+}
+
+func isHiddenStepTool(name string) bool {
+	switch name {
+	case "capability_load", "complete", "request_input", "request_work",
+		"operation_read", "task_history_read", "memory_read", "memory_search", "memory_get":
+		return true
+	}
+	return false
+}
+
+func stepStatusOf(op state.OperationRecord) string {
+	switch op.Outcome {
+	case "attempted", "pending", "submitted":
+		return "active"
+	default:
+		return "done"
+	}
+}
+
+func projectWorkSteps(run state.Run, ops []state.OperationRecord) []workStep {
+	if run.Status != state.RunRunning {
+		return nil
+	}
+	steps := make([]workStep, 0, len(ops)+2)
+	for i := 0; i < len(ops); i++ {
+		op := ops[i]
+		if isHiddenStepTool(op.Name) {
+			continue
+		}
+		if op.Name == "web_search" {
+			count := 1
+			active := stepStatusOf(op) == "active"
+			for i+1 < len(ops) && ops[i+1].Name == "web_search" {
+				i++
+				count++
+				if stepStatusOf(ops[i]) == "active" {
+					active = true
+				}
+			}
+			label := "Searched the web"
+			if count > 1 {
+				label = fmt.Sprintf("Searched the web (%d queries)", count)
+			}
+			status := "done"
+			if active {
+				status = "active"
+			}
+			steps = append(steps, workStep{Text: label, Status: status})
+			continue
+		}
+		label := ""
+		if op.Action != nil {
+			label = strings.TrimSpace(op.Action.Text)
+		}
+		if label == "" {
+			label = humanStepLabel(op.Name)
+		}
+		steps = append(steps, workStep{Text: clip(label, 140), Status: stepStatusOf(op)})
+	}
+	if len(steps) > 0 {
+		hasActive := false
+		for _, s := range steps {
+			if s.Status == "active" {
+				hasActive = true
+				break
+			}
+		}
+		if !hasActive {
+			if p := strings.TrimSpace(run.Progress); p != "" {
+				steps = append(steps, workStep{Text: clip(p, 140), Status: "active"})
+			} else if w := strings.TrimSpace(run.Waiting); w != "" {
+				steps = append(steps, workStep{Text: clip(w, 140), Status: "active"})
+			} else {
+				steps = append(steps, workStep{Text: "Finishing up", Status: "active"})
+			}
+		}
+	} else if p := strings.TrimSpace(run.Progress); p != "" {
+		steps = append(steps, workStep{Text: clip(p, 140), Status: "active"})
+	}
+	if len(steps) == 0 {
+		return nil
+	}
+	return steps
 }
 
 func (a *Assistant) item(ctx context.Context, run state.Run, ops []state.OperationRecord, pending []string, results []string) workItem {
@@ -182,6 +298,10 @@ func (a *Assistant) item(ctx context.Context, run state.Run, ops []state.Operati
 		}
 	default:
 		item.Bucket = "working"
+	}
+	item.Queued = run.Status == state.RunRunning && item.Bucket == "working" && run.Incorporated == 0 && len(run.Events) == 0 && len(ops) == 0
+	if !item.Queued {
+		item.Steps = projectWorkSteps(run, ops)
 	}
 	if run.Error != "" {
 		code := "task_failed"

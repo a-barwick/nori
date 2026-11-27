@@ -533,8 +533,6 @@ actor MockNoriTransport: NoriTransport {
         return MutationReceipt(requestID: requestID, resource: updated)
     }
 
-    func fetchGoals() async throws -> [Goal] { [] }
-
     func fetchPermissions() async throws -> [PermissionRule] {
         fetchPermissionsCallCount += 1
         return mockPermissions

@@ -96,9 +96,10 @@ Never pair `bg-ink` with `text-surface` for selected pills, tabs, or tooltips (i
 - Top-level tab hubs (`Work`, `More`) omit redundant visible page titles via `<Screen hideHeaderTitle>` while keeping an `<h1 className="sr-only">` for keyboard/screen-reader focus management.
 
 ### Single-Column Full-Width Hub Stacks
-- **Work → Tasks:** Full-width single-column vertical stack: `Action needed` (or a slim single-row `All clear` bar when idle) → `Running` → `Recent`. Never squeeze `Recent` task lists into narrow multi-column tracks where long titles overflow or clip.
+- **Work → Artifacts | Automations | Tasks:** Three underline tabs in order (`Artifacts`, `Automations`, `Tasks`, defaulting to `Tasks`).
+- **Work → Tasks:** `Action needed` approval cards above a single unified list of open tasks (active tasks with circular progress rings and inline-expandable read-only steps, queued tasks, and one-off scheduled tasks), with inline `Cancel` / `Keep` confirmation and no archived task history. Shows a slim single-row `All clear` bar when idle.
+- **Work → Automations:** Recurring routines, monitors, and event-relative automations with quick Run / Pause controls.
 - **Work → Artifacts:** Starts directly with Search + Kind filter chips + clean chronological list (no oversized hero banner pulling the newest item out of flow).
-- **Work → Goals:** Concise explanation of multi-step outcomes + 2-column quick-start example cards that pre-fill the Chat composer (`/?compose=1`) so users can kick off goals conversationally.
 - **More:** Flat grouped rows under **Workspace** (`Apps & MCP`, `Memory`), **Settings** (`Models`, `Standing Permissions`, `Preferences & Budgets`, `Appearance`), and **Account** (`Account`, `Action History`, `Diagnostics`)—no top hero card or oversized 2-up workspace tiles.
 
 ### Chat Chrome & Mascot
@@ -113,7 +114,7 @@ Never pair `bg-ink` with `text-surface` for selected pills, tabs, or tooltips (i
 
 ### Copy & Sublabels
 - **No filler sublabels.** Only show a row `detail` or card subtitle when it carries live data or state (e.g., `0.3 / 24 KB`, `3 rules`, `Dark`, `2 connected`). Never add explanatory filler that repeats the title, explains an obvious control, or fills an empty state with extra taglines.
-- **Plain, positive English.** When a screen needs a brief explanation (such as empty Goals), write one clear, positive sentence for non-technical readers—never start by defining what something is *not*.
+- **Plain, positive English.** When a screen needs a brief explanation, write one clear, positive sentence for non-technical readers—never start by defining what something is *not*.
 
 ---
 
@@ -131,4 +132,4 @@ Never pair `bg-ink` with `text-surface` for selected pills, tabs, or tooltips (i
    ```bash
    make local-web   # or `make dev` to run web + local core together on http://127.0.0.1:3210
    ```
-   Verify every primary screen (`/`, `/work`, `/work?tab=artifacts`, `/work?tab=goals`, `/work?tab=routines`, `/more`, `/settings/appearance`) in both **Light** and **Dark** modes at desktop (`1280px+`) and mobile (`390px`) widths.
+   Verify every primary screen (`/`, `/work`, `/work?tab=artifacts`, `/work?tab=automations`, `/more`, `/settings/appearance`) in both **Light** and **Dark** modes at desktop (`1280px+`) and mobile (`390px`) widths.

@@ -58,16 +58,11 @@ func denial(in ToolInput, effect, outcome, message string, extra map[string]any)
 	return output
 }
 
-func taskOrigin(run state.Run) (origin, automationID, goalID string) {
-	if run.Origin != nil {
-		switch {
-		case run.Origin.AutomationID != "":
-			return "automation", run.Origin.AutomationID, run.Origin.GoalID
-		case run.Origin.GoalID != "":
-			return "goal", "", run.Origin.GoalID
-		}
+func taskOrigin(run state.Run) (origin, automationID string) {
+	if run.Origin != nil && run.Origin.AutomationID != "" {
+		return "automation", run.Origin.AutomationID
 	}
-	return "user", "", ""
+	return "user", ""
 }
 
 func interactionID(prefix, operationID, digest string) string {
@@ -189,7 +184,7 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 	if recovering {
 		return plan, nil, nil
 	}
-	origin, automationID, goalID := taskOrigin(run)
+	origin, automationID := taskOrigin(run)
 	resourceIDs := make([]string, 0, len(prepared.Resources))
 	for _, r := range prepared.Resources {
 		resourceIDs = append(resourceIDs, r.ProviderID)
@@ -197,7 +192,7 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 	decision := permissions.Decision{Result: "allow", Source: "user_request"}
 	if a.Executor.Permissions != nil {
 		decision, err = a.Executor.Permissions.Check(ctx, permissions.Request{
-			RunID: in.RunID, Revision: in.Revision, Origin: origin, AutomationID: automationID, GoalID: goalID, ReadOnly: run.ReadOnly,
+			RunID: in.RunID, Revision: in.Revision, Origin: origin, AutomationID: automationID, ReadOnly: run.ReadOnly,
 			ToolID: in.Exec.Tool.ID, Effect: string(prepared.Effect), ConnectionID: connectionID, Epoch: epoch,
 			ResourceIDs: resourceIDs, Recipients: prepared.Recipients, Digest: plan.digest,
 			RequireExplicitApproval: prepared.RequireExplicitApproval, OperationID: in.OperationID,

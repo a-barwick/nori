@@ -197,7 +197,7 @@ func (a *Assistant) feedback(w http.ResponseWriter, r *http.Request) {
 		}
 		evidence["operation_ids"], evidence["status"], evidence["spend_usd"] = ids, run.Status, run.Spent+run.SubtaskSpent
 		if run.Origin != nil {
-			for key, value := range map[string]string{"automation_id": run.Origin.AutomationID, "occurrence_id": run.Origin.OccurrenceID, "goal_id": run.Origin.GoalID} {
+			for key, value := range map[string]string{"automation_id": run.Origin.AutomationID, "occurrence_id": run.Origin.OccurrenceID} {
 				if value != "" {
 					evidence[key] = value
 				}

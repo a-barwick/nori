@@ -16,11 +16,6 @@ func (a *Assistant) registerScheduling(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /v1/automations/{id}", jsonBody(a.updateAutomation))
 	mux.HandleFunc("POST /v1/automations/{id}/actions", jsonBody(a.automationAction))
 	mux.HandleFunc("GET /v1/automations/{id}/occurrences", a.occurrences)
-	mux.HandleFunc("GET /v1/goals", a.goals)
-	mux.HandleFunc("POST /v1/goals", jsonBody(a.createGoal))
-	mux.HandleFunc("GET /v1/goals/{id}", a.goal)
-	mux.HandleFunc("PUT /v1/goals/{id}", jsonBody(a.updateGoal))
-	mux.HandleFunc("POST /v1/goals/{id}/actions", jsonBody(a.goalAction))
 	mux.HandleFunc("GET /v1/inbox", a.inbox)
 	mux.HandleFunc("POST /v1/inbox/{id}/actions", jsonBody(a.inboxAction))
 }
@@ -129,86 +124,6 @@ func (a *Assistant) occurrences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, list[scheduler.Occurrence]{Items: items})
-}
-
-func (a *Assistant) goals(w http.ResponseWriter, r *http.Request) {
-	items, err := a.Scheduler.Goals(r.Context(), r.URL.Query().Get("status"))
-	if err != nil {
-		writeAPIError(w, err, "", nil)
-		return
-	}
-	writeJSON(w, 200, list[scheduler.Goal]{Items: items})
-}
-
-func (a *Assistant) goal(w http.ResponseWriter, r *http.Request) {
-	item, err := a.Scheduler.Goal(r.Context(), r.PathValue("id"))
-	if err != nil {
-		writeAPIError(w, err, "", nil)
-		return
-	}
-	writeJSON(w, 200, item)
-}
-
-func (a *Assistant) currentGoal(ctx context.Context, id string) any {
-	item, err := a.Scheduler.Goal(ctx, id)
-	if err != nil {
-		return nil
-	}
-	return item
-}
-
-func (a *Assistant) createGoal(w http.ResponseWriter, r *http.Request) {
-	var value scheduler.GoalEditable
-	requestID, expected, ok := decodeChange(w, r, &value)
-	if !ok {
-		return
-	}
-	if expected != 0 {
-		writeAPIError(w, state.ErrRevisionConflict, requestID, nil)
-		return
-	}
-	receipt, err := a.Scheduler.SaveGoal(r.Context(), "", requestID, 0, value)
-	if err != nil {
-		writeAPIError(w, err, requestID, nil)
-		return
-	}
-	writeReceipt(w, receipt)
-}
-
-func (a *Assistant) updateGoal(w http.ResponseWriter, r *http.Request) {
-	var value scheduler.GoalEditable
-	requestID, expected, ok := decodeChange(w, r, &value)
-	if !ok {
-		return
-	}
-	if _, err := a.Scheduler.Goal(r.Context(), r.PathValue("id")); err != nil {
-		writeAPIError(w, err, requestID, nil)
-		return
-	}
-	receipt, err := a.Scheduler.SaveGoal(r.Context(), r.PathValue("id"), requestID, expected, value)
-	if err != nil {
-		writeAPIError(w, err, requestID, a.currentGoal(r.Context(), r.PathValue("id")))
-		return
-	}
-	writeReceipt(w, receipt)
-}
-
-func (a *Assistant) goalAction(w http.ResponseWriter, r *http.Request) {
-	var value scheduler.GoalAction
-	requestID, expected, ok := decodeChange(w, r, &value)
-	if !ok {
-		return
-	}
-	if !value.Valid() {
-		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
-		return
-	}
-	receipt, err := a.Scheduler.ActGoal(r.Context(), r.PathValue("id"), requestID, expected, value)
-	if err != nil {
-		writeAPIError(w, err, requestID, a.currentGoal(r.Context(), r.PathValue("id")))
-		return
-	}
-	writeReceipt(w, receipt)
 }
 
 func (a *Assistant) inbox(w http.ResponseWriter, r *http.Request) {

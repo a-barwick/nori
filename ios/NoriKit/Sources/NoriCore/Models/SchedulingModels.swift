@@ -203,7 +203,6 @@ public struct Automation: Sendable, Codable, Hashable, Identifiable {
     public var nextAt: String?
     public var endAt: String?
     public var maxOccurrences: Int?
-    public var goalID: String?
     public var lastOccurrenceID: String?
     public var createdAt: String?
     public var updatedAt: String?
@@ -227,7 +226,6 @@ public struct Automation: Sendable, Codable, Hashable, Identifiable {
         case nextAt = "next_at"
         case endAt = "end_at"
         case maxOccurrences = "max_occurrences"
-        case goalID = "goal_id"
         case lastOccurrenceID = "last_occurrence_id"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
@@ -252,7 +250,6 @@ public struct Automation: Sendable, Codable, Hashable, Identifiable {
         nextAt: String? = nil,
         endAt: String? = nil,
         maxOccurrences: Int? = nil,
-        goalID: String? = nil,
         lastOccurrenceID: String? = nil,
         createdAt: String? = nil,
         updatedAt: String? = nil,
@@ -275,7 +272,6 @@ public struct Automation: Sendable, Codable, Hashable, Identifiable {
         self.nextAt = nextAt
         self.endAt = endAt
         self.maxOccurrences = maxOccurrences
-        self.goalID = goalID
         self.lastOccurrenceID = lastOccurrenceID
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -311,8 +307,7 @@ public struct Automation: Sendable, Codable, Hashable, Identifiable {
             executionWindowSeconds: executionWindowSeconds,
             destinationIDs: destinationIDs,
             endAt: endAt,
-            maxOccurrences: maxOccurrences,
-            goalID: goalID
+            maxOccurrences: maxOccurrences
         )
     }
 }
@@ -329,7 +324,6 @@ public struct AutomationEditable: Sendable, Codable, Hashable {
     public var destinationIDs: [String]
     public var endAt: String?
     public var maxOccurrences: Int?
-    public var goalID: String?
 
     enum CodingKeys: String, CodingKey {
         case title
@@ -343,7 +337,6 @@ public struct AutomationEditable: Sendable, Codable, Hashable {
         case destinationIDs = "destination_ids"
         case endAt = "end_at"
         case maxOccurrences = "max_occurrences"
-        case goalID = "goal_id"
     }
 
     public init(
@@ -357,8 +350,7 @@ public struct AutomationEditable: Sendable, Codable, Hashable {
         executionWindowSeconds: Int = 3600,
         destinationIDs: [String] = [],
         endAt: String? = nil,
-        maxOccurrences: Int? = nil,
-        goalID: String? = nil
+        maxOccurrences: Int? = nil
     ) {
         self.title = title
         self.instruction = instruction
@@ -371,152 +363,9 @@ public struct AutomationEditable: Sendable, Codable, Hashable {
         self.destinationIDs = destinationIDs
         self.endAt = endAt
         self.maxOccurrences = maxOccurrences
-        self.goalID = goalID
     }
 }
 
-
-public enum GoalStatus: String, Sendable, Codable, Hashable {
-    case active
-    case paused
-    case completed
-    case abandoned
-}
-
-public struct GoalCriterion: Sendable, Codable, Hashable, Identifiable {
-    public var id: String
-    public var text: String
-    public var met: Bool
-    public var evidenceResultIDs: [String]?
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case text
-        case met
-        case evidenceResultIDs = "evidence_result_ids"
-    }
-
-    public init(id: String = UUID().uuidString, text: String, met: Bool = false, evidenceResultIDs: [String]? = nil) {
-        self.id = id
-        self.text = text
-        self.met = met
-        self.evidenceResultIDs = evidenceResultIDs
-    }
-}
-
-public struct GoalBlocker: Sendable, Codable, Hashable, Identifiable {
-    public var id: String { "\(text)-\(interactionID ?? connectionID ?? "")" }
-    public var text: String
-    public var interactionID: String?
-    public var connectionID: String?
-
-    enum CodingKeys: String, CodingKey {
-        case text
-        case interactionID = "interaction_id"
-        case connectionID = "connection_id"
-    }
-
-    public init(text: String, interactionID: String? = nil, connectionID: String? = nil) {
-        self.text = text
-        self.interactionID = interactionID
-        self.connectionID = connectionID
-    }
-}
-
-public struct GoalLinked: Sendable, Codable, Hashable {
-    public var taskIDs: [String]
-    public var automationIDs: [String]
-    public var resultIDs: [String]
-
-    enum CodingKeys: String, CodingKey {
-        case taskIDs = "task_ids"
-        case automationIDs = "automation_ids"
-        case resultIDs = "result_ids"
-    }
-
-    public init(taskIDs: [String] = [], automationIDs: [String] = [], resultIDs: [String] = []) {
-        self.taskIDs = taskIDs
-        self.automationIDs = automationIDs
-        self.resultIDs = resultIDs
-    }
-}
-
-public struct Goal: Sendable, Codable, Hashable, Identifiable {
-    public var id: String
-    public var revision: Int
-    public var title: String
-    public var outcome: String
-    public var completionCriteria: [GoalCriterion]
-    public var status: GoalStatus
-    public var progress: String
-    public var nextActions: [String]
-    public var blockers: [GoalBlocker]
-    public var linked: GoalLinked
-    public var deadline: String?
-    public var followUp: String?
-    public var createdAt: String?
-    public var updatedAt: String?
-    public var completedAt: String?
-    public var authorityRuleIDs: [String]?
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case revision
-        case title
-        case outcome
-        case completionCriteria = "completion_criteria"
-        case status
-        case progress
-        case nextActions = "next_actions"
-        case blockers
-        case linked
-        case deadline
-        case followUp = "follow_up"
-        case createdAt = "created_at"
-        case updatedAt = "updated_at"
-        case completedAt = "completed_at"
-        case authorityRuleIDs = "authority_rule_ids"
-    }
-
-    public init(
-        id: String,
-        revision: Int = 1,
-        title: String,
-        outcome: String = "",
-        completionCriteria: [GoalCriterion] = [],
-        status: GoalStatus = .active,
-        progress: String = "",
-        nextActions: [String] = [],
-        blockers: [GoalBlocker] = [],
-        linked: GoalLinked = GoalLinked(),
-        deadline: String? = nil,
-        followUp: String? = nil,
-        createdAt: String? = nil,
-        updatedAt: String? = nil,
-        completedAt: String? = nil,
-        authorityRuleIDs: [String]? = nil
-    ) {
-        self.id = id
-        self.revision = revision
-        self.title = title
-        self.outcome = outcome
-        self.completionCriteria = completionCriteria
-        self.status = status
-        self.progress = progress
-        self.nextActions = nextActions
-        self.blockers = blockers
-        self.linked = linked
-        self.deadline = deadline
-        self.followUp = followUp
-        self.createdAt = createdAt
-        self.updatedAt = updatedAt
-        self.completedAt = completedAt
-        self.authorityRuleIDs = authorityRuleIDs
-    }
-
-    public var isBlocked: Bool { !blockers.isEmpty }
-    public var metCriteriaCount: Int { completionCriteria.filter(\.met).count }
-}
 
 public struct AutomationOccurrence: Sendable, Codable, Hashable, Identifiable {
     public var id: String
@@ -575,7 +424,6 @@ public struct AutomationOccurrence: Sendable, Codable, Hashable, Identifiable {
         self.reason = reason
     }
 }
-
 
 public struct HealthCheckResult: Sendable, Codable, Hashable {
     public var ok: Bool

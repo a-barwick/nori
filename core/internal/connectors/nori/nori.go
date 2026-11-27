@@ -40,7 +40,7 @@ var specs = []spec{
 		`{"type": "object", "properties": {"title": {"type": "string", "minLength": 1, "maxLength": 200}, "instruction": {"type": "string", "minLength": 1, "maxLength": 6000}, ` + triggerSchema + `,
 			"missed_run": {"enum": ["skip", "latest", "all"]}, "execution_window_seconds": {"type": "integer", "minimum": 0}, "max_active_runs": {"type": "integer", "minimum": 1, "maximum": 10},
 			"budget_usd": {"type": "number", "minimum": 0, "maximum": 20}, "connection_ids": {"type": "array", "items": {"type": "string"}}, "destination_ids": {"type": "array", "items": {"type": "string"}},
-			"end_at": {"type": "string"}, "max_occurrences": {"type": "integer", "minimum": 1}, "goal_id": {"type": "string"},
+			"end_at": {"type": "string"}, "max_occurrences": {"type": "integer", "minimum": 1},
 			"requested_authority": {"type": "object", "properties": {"action_classes": {"type": "array", "items": {"enum": ["read", "reversible_write", "sensitive_send"]}}, "tool_ids": {"type": "array", "items": {"type": "string"}}, "recipients": {"type": "array", "items": {"type": "string"}}, "max_operations": {"type": "integer", "minimum": 1}}, "required": ["action_classes"], "additionalProperties": false}
 		}, "required": ["title", "instruction", "trigger"], "additionalProperties": false}`},
 	{"automations_list", "List reminders and routines", "nori_automations", "Reminders and routines", "nori.automations/list", "read", "safe",
@@ -49,17 +49,6 @@ var specs = []spec{
 	{"automation_change", "Pause, resume, snooze, run or cancel a routine", "nori_automations", "Reminders and routines", "nori.automations/act", "reversible_write", "provider_key",
 		"Pause, resume, snooze until a time, run now or cancel one of the user's reminders or routines.",
 		`{"type": "object", "properties": {"automation_id": {"type": "string"}, "action": {"enum": ["pause", "resume", "snooze", "run_now", "cancel"]}, "until": {"type": "string", "description": "RFC 3339, for snooze"}}, "required": ["automation_id", "action"], "additionalProperties": false}`},
-	{"goal_create", "Adopt a goal", "nori_goals", "Goals", "nori.goals/create", "reversible_write", "provider_key",
-		"Record a goal the user explicitly adopted, with its outcome and completion criteria. Never create a goal from an inferred wish.",
-		`{"type": "object", "properties": {"title": {"type": "string", "minLength": 1}, "outcome": {"type": "string", "minLength": 1}, "completion_criteria": {"type": "array", "items": {"type": "string"}, "minItems": 1}, "deadline": {"type": "string"}, "follow_up": {"enum": ["none", "remind", "monitor"]}}, "required": ["title", "outcome", "completion_criteria"], "additionalProperties": false}`},
-	{"goals_list", "List goals", "nori_goals", "Goals", "nori.goals/list", "read", "safe",
-		"List the user's goals with progress, next actions, blockers and criteria.",
-		`{"type": "object", "properties": {"status": {"enum": ["active", "paused", "completed", "abandoned"]}}, "additionalProperties": false}`},
-	{"goal_progress", "Record goal progress", "nori_goals", "Goals", "nori.goals/progress", "reversible_write", "provider_key",
-		"Record progress, next actions and blockers on an active goal, and mark criteria met with the saved results that prove them. A failed attempt is a blocker, not a reason to drop the goal.",
-		`{"type": "object", "properties": {"goal_id": {"type": "string"}, "progress": {"type": "string", "maxLength": 2000}, "next_actions": {"type": "array", "items": {"type": "string"}},
-			"blockers": {"type": "array", "items": {"type": "string"}}, "met_criteria": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}, "result_ids": {"type": "array", "items": {"type": "string"}, "minItems": 1}}, "required": ["id", "result_ids"], "additionalProperties": false}}
-		}, "required": ["goal_id"], "additionalProperties": false}`},
 }
 
 var Definitions = func() []extensions.Definition {
@@ -171,17 +160,8 @@ func (a Adapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Prepared
 			}
 		}
 		return invoke.Prepared{Summary: fmt.Sprintf("%s automation %s", invoke.String(call.Args, "action"), invoke.String(call.Args, "automation_id")), Effect: extensions.EffectReversibleWrite, Spec: spec}, nil
-	case "nori.goals/create":
-		if deadline := invoke.String(call.Args, "deadline"); deadline != "" {
-			if _, err := parseInstant(deadline); err != nil {
-				return invoke.Prepared{}, fmt.Errorf("%w: deadline must be RFC 3339", invoke.ErrInvalidArguments)
-			}
-		}
-		return invoke.Prepared{Summary: "Adopt the goal " + invoke.String(call.Args, "title"), Effect: extensions.EffectReversibleWrite, Spec: spec}, nil
 	case "nori.uploads/read":
 		return invoke.Prepared{Summary: "Read an attached file", Effect: extensions.EffectRead, Spec: spec}, nil
-	case "nori.goals/progress":
-		return invoke.Prepared{Summary: "Record progress on goal " + invoke.String(call.Args, "goal_id"), Effect: extensions.EffectReversibleWrite, Spec: spec}, nil
 	}
 	_ = operation
 	return invoke.Prepared{Summary: call.Exec.Binding.Target, Effect: extensions.EffectRead, Spec: spec}, nil
@@ -322,59 +302,12 @@ func (a Adapter) Execute(ctx context.Context, call invoke.Call, _ invoke.Prepare
 			return failed(err)
 		}
 		return invoke.Result{Outcome: "confirmed", Content: map[string]any{"automation": json.RawMessage(receipt.Resource)}}
-	case "nori.goals/create":
-		value := scheduler.GoalEditable{Title: invoke.String(call.Args, "title"), Outcome: invoke.String(call.Args, "outcome"), FollowUp: invoke.String(call.Args, "follow_up")}
-		for _, text := range invoke.Strings(call.Args, "completion_criteria") {
-			value.CompletionCriteria = append(value.CompletionCriteria, struct {
-				ID   string `json:"id,omitempty"`
-				Text string `json:"text"`
-			}{Text: text})
-		}
-		if deadline := invoke.String(call.Args, "deadline"); deadline != "" {
-			t, err := parseInstant(deadline)
-			if err != nil {
-				return failed(fmt.Errorf("%w: deadline must be RFC 3339", invoke.ErrInvalidArguments))
-			}
-			value.Deadline = &t
-		}
-		receipt, err := a.Scheduler.SaveGoal(ctx, "", requestID(call), 0, value)
-		if err != nil {
-			return failed(err)
-		}
-		return invoke.Result{Outcome: "confirmed", Content: map[string]any{"goal": json.RawMessage(receipt.Resource)}}
-	case "nori.goals/list":
-		goals, err := a.Scheduler.Goals(ctx, invoke.String(call.Args, "status"))
-		if err != nil {
-			return failed(err)
-		}
-		return invoke.Result{Outcome: "confirmed", Content: map[string]any{"goals": goals}}
-	case "nori.goals/progress":
-		update := scheduler.GoalProgress{Progress: invoke.String(call.Args, "progress"), TaskID: call.RunID}
-		if _, ok := call.Args["next_actions"]; ok {
-			update.NextActions = invoke.Strings(call.Args, "next_actions")
-		}
-		if _, ok := call.Args["blockers"]; ok {
-			update.Blockers = []scheduler.Blocker{}
-			for _, text := range invoke.Strings(call.Args, "blockers") {
-				update.Blockers = append(update.Blockers, scheduler.Blocker{Text: text})
-			}
-		}
-		if raw, ok := call.Args["met_criteria"]; ok {
-			data, _ := json.Marshal(raw)
-			_ = json.Unmarshal(data, &update.MetCriteria)
-		}
-		goal, err := a.Scheduler.RecordProgress(ctx, invoke.String(call.Args, "goal_id"), requestID(call), update)
-		if err != nil {
-			return failed(err)
-		}
-		return invoke.Result{Outcome: "confirmed", Content: map[string]any{"goal": goal}}
 	}
 	return failed(errors.New("unknown Nori tool"))
 }
 
 func Register(registry *invoke.Registry, adapter Adapter) {
 	registry.Register(extensions.AdapterNative, "nori.automations", adapter)
-	registry.Register(extensions.AdapterNative, "nori.goals", adapter)
 	registry.Register(extensions.AdapterNative, "nori.uploads", adapter)
 }
 
@@ -382,8 +315,7 @@ type Source struct{}
 
 func (Source) Inventory(context.Context) (extensions.Inventory, error) {
 	return extensions.Inventory{Definitions: Definitions, Capabilities: []extensions.CapabilityState{
-		{Capability: "nori_automations", Title: "Reminders and routines", Account: "Nori", Availability: "Available", Ready: true},
-		{Capability: "nori_goals", Title: "Goals", Account: "Nori", Availability: "Available", Ready: true},
+		{Capability: "nori_automations", Title: "Reminders and automations", Account: "Nori", Availability: "Available", Ready: true},
 		{Capability: "nori_files", Title: "Attached text files", Account: "Nori", Availability: "Available", Ready: true},
 	}}, nil
 }

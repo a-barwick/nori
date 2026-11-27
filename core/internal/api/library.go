@@ -78,7 +78,6 @@ type libraryItem struct {
 	TaskID         string          `json:"task_id,omitempty"`
 	AutomationID   string          `json:"automation_id,omitempty"`
 	ConversationID string          `json:"conversation_id,omitempty"`
-	GoalID         string          `json:"goal_id,omitempty"`
 	Data           json.RawMessage `json:"data,omitempty"`
 	DataKind       string          `json:"data_kind,omitempty"`
 	DeleteEffect   string          `json:"delete_effect,omitempty"`
@@ -562,7 +561,6 @@ type searchJump struct {
 	MessageID      string `json:"message_id,omitempty"`
 	TaskID         string `json:"task_id,omitempty"`
 	ItemID         string `json:"item_id,omitempty"`
-	GoalID         string `json:"goal_id,omitempty"`
 	AutomationID   string `json:"automation_id,omitempty"`
 	Layer          string `json:"layer,omitempty"`
 	MemoryID       string `json:"memory_id,omitempty"`
@@ -742,14 +740,6 @@ func (a *Assistant) searchHits(ctx context.Context, q string) ([]searchHit, erro
 		}
 	}
 	if a.Scheduler != nil {
-		if goals, err := a.Scheduler.Goals(ctx, ""); err == nil {
-			for _, g := range goals {
-				if s, snippet := score(words, g.Title, g.Outcome, g.Progress); s > 0 {
-					hits = append(hits, searchHit{Kind: "goal", ID: g.ID, Title: g.Title, Snippet: snippet, Score: s,
-						Jump: &searchJump{Kind: "goal", GoalID: g.ID}})
-				}
-			}
-		}
 		if automations, err := a.Scheduler.List(ctx, ""); err == nil {
 			for _, auto := range automations {
 				if s, snippet := score(words, auto.Title, auto.Instruction); s > 0 {
@@ -798,6 +788,6 @@ func (a *Assistant) withOrigins(ctx context.Context, items []libraryItem) {
 			continue
 		}
 		origin := originOf(*run)
-		items[i].ConversationID, items[i].AutomationID, items[i].GoalID = origin.ConversationID, origin.AutomationID, origin.GoalID
+		items[i].ConversationID, items[i].AutomationID = origin.ConversationID, origin.AutomationID
 	}
 }

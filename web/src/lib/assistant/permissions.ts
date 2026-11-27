@@ -53,12 +53,12 @@ export function groupPermissionRules(rules: PermissionRule[], filter: RuleFilter
     {
       id: "allow",
       title: RULE_EFFECT_META.allow.groupTitle,
-      rules: filtered.filter((rule) => rule.effect === "allow" && !rule.automation_id && !rule.goal_id),
+      rules: filtered.filter((rule) => rule.effect === "allow" && !rule.automation_id),
     },
     {
       id: "scoped",
-      title: "For automations and goals",
-      rules: filtered.filter((rule) => rule.effect === "allow" && (rule.automation_id || rule.goal_id)),
+      title: "For automations",
+      rules: filtered.filter((rule) => rule.effect === "allow" && Boolean(rule.automation_id)),
     },
   ];
 }

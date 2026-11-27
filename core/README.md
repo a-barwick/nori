@@ -75,10 +75,10 @@ Processes are assembled in `internal/platform` and `internal/app`. Infrastructur
 | `internal/task` | Postgres-native inner task state machine (`Runner`), step activities, durable tool execution, completion verification, and paused-stop recovery (`StopPaused`). |
 | `internal/worker` | Unified Postgres-native worker pool (`Pool`) driving `LISTEN nori_wake`, inner task leases, outer conversation/scheduler lanes, periodic repair, and graceful drain. |
 | `internal/agent` | Built-in runtime tools (`web_search`, `upload_inspect`, `result_*`, `memory_read`, `conversation_*`, `capability_load`), capability catalog, and `agent/responses` client. |
-| `internal/scheduler` | Recurring automations, goals, occurrences, and inbox item scheduling. |
+| `internal/scheduler` | Recurring automations, occurrences, and inbox item scheduling. |
 | `internal/permissions` | Permission rules (`allow`/`deny`), action authorization checks, approvals, and pending user interactions (approval cards, questions, sign-in prompts). |
 | `internal/connectors/mcp` | Streamable HTTP and local-dev stdio MCP client, tool/resource/prompt discovery, OAuth/bearer auth, and execution adapter. |
-| `internal/connectors/nori` | Nori's built-in internal tools adapter for automations and goals. |
+| `internal/connectors/nori` | Nori's built-in internal tools adapter for reminders and automations. |
 | `internal/connections` | User connection port/registry, preferences, and integration catalog contract. |
 | `internal/extensions` | Sealed tool definitions, JSON Schema 2020-12 compilation/projection, and combined tool inventory registry. |
 | `internal/invoke` | Adapter contract (`Adapter`, `Reconciler`, `Canceller`, `SignInChecker`), deterministic action digesting, and adapter registry. |
@@ -188,7 +188,7 @@ User-scoped routes are mounted under `/users/{id}/` (resolved by the trusted web
 | `/v1/mcp*` | Register/update HTTP or local stdio MCP servers, run `connect`/`reconnect`/`set_exposure`/`sign_in`/`sign_out`, store bearer credentials, and list discovered tools. |
 | `/v1/permissions*`, `/v1/interactions*` | Manage allow/deny permission rules and inspect or respond to pending approval cards, questions, and sign-in prompts. |
 | `/v1/work*`, `/v1/operations`, `/v1/tools*` | Inspect tasks, operations, and available tool inventory; trigger task actions (`stop`, `continue`, etc.). |
-| `/v1/automations*`, `/v1/goals*`, `/v1/inbox*` | Manage scheduled automations, goals, occurrences, and inbox notifications. |
+| `/v1/automations*`, `/v1/inbox*` | Manage scheduled automations, occurrences, and inbox notifications. |
 | `/v1/integrations*`, `/v1/connections*`, `/v1/preferences` | Integration catalog, user connections, OAuth callbacks, and user preferences. |
 | `/v1/library*`, `/v1/search`, `/v1/memory*`, `/v1/diagnostics*`, `/v1/feedback`, `/v1/mutations/{request_id}` | Saved results library, search, memory, diagnostics, feedback, and idempotent mutation receipts. |
 | `POST /api/process`, `POST /api/resume`, `POST /api/turn`, `POST /api/command`, `POST /api/trace`, `POST /api/artifact`, `POST /api/delivered`, `POST /api/seen` | Internal wake processing, operator resume, turn/command submission, task traces, artifacts, and read/delivery marks. |

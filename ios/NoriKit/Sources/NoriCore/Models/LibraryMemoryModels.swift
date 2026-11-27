@@ -81,7 +81,6 @@ public struct LibraryItem: Sendable, Codable, Hashable, Identifiable {
     public var url: String?
     public var taskID: String?
     public var conversationID: String?
-    public var goalID: String?
     public var automationID: String?
     public var provenance: Provenance
     public var indexStatus: String?
@@ -110,7 +109,6 @@ public struct LibraryItem: Sendable, Codable, Hashable, Identifiable {
         case url
         case taskID = "task_id"
         case conversationID = "conversation_id"
-        case goalID = "goal_id"
         case automationID = "automation_id"
         case provenance
         case indexStatus = "index_status"
@@ -140,7 +138,6 @@ public struct LibraryItem: Sendable, Codable, Hashable, Identifiable {
         url: String? = nil,
         taskID: String? = nil,
         conversationID: String? = nil,
-        goalID: String? = nil,
         automationID: String? = nil,
         provenance: Provenance = Provenance(),
         indexStatus: String? = "indexed",
@@ -168,7 +165,6 @@ public struct LibraryItem: Sendable, Codable, Hashable, Identifiable {
         self.url = url
         self.taskID = taskID
         self.conversationID = conversationID
-        self.goalID = goalID
         self.automationID = automationID
         self.provenance = provenance
         self.indexStatus = indexStatus
@@ -191,7 +187,6 @@ public struct SearchJump: Sendable, Codable, Hashable {
     public var messageID: String?
     public var taskID: String?
     public var itemID: String?
-    public var goalID: String?
     public var automationID: String?
     public var layer: String?
     public var memoryID: String?
@@ -204,7 +199,6 @@ public struct SearchJump: Sendable, Codable, Hashable {
         case messageID = "message_id"
         case taskID = "task_id"
         case itemID = "item_id"
-        case goalID = "goal_id"
         case automationID = "automation_id"
         case layer
         case memoryID = "memory_id"
@@ -218,7 +212,6 @@ public struct SearchJump: Sendable, Codable, Hashable {
         messageID: String? = nil,
         taskID: String? = nil,
         itemID: String? = nil,
-        goalID: String? = nil,
         automationID: String? = nil,
         layer: String? = nil,
         memoryID: String? = nil,
@@ -230,7 +223,6 @@ public struct SearchJump: Sendable, Codable, Hashable {
         self.messageID = messageID
         self.taskID = taskID
         self.itemID = itemID
-        self.goalID = goalID
         self.automationID = automationID
         self.layer = layer
         self.memoryID = memoryID
@@ -244,7 +236,6 @@ public struct SearchHit: Sendable, Codable, Hashable, Identifiable {
         case result
         case message
         case task
-        case goal
         case automation
         case file
         case memory
@@ -254,8 +245,7 @@ public struct SearchHit: Sendable, Codable, Hashable, Identifiable {
             case .result: return "Document"
             case .message: return "Chat"
             case .task: return "Task"
-            case .goal: return "Goal"
-            case .automation: return "Routine"
+            case .automation: return "Automation"
             case .file: return "File"
             case .memory: return "Memory"
             }

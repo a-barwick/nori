@@ -388,7 +388,6 @@ func AssistantFeatures(conns *connections.Service, disableBackgroundTasks bool) 
 		"work":         !disableBackgroundTasks,
 		"operations":   true,
 		"automations":  !disableBackgroundTasks,
-		"goals":        true,
 		"inbox":        true,
 		"library":      true,
 		"search":       true,

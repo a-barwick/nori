@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useAssistantConfig } from "@/lib/assistant/context";
 import { cadence, eventTime, relative } from "@/lib/assistant/format";
 import { useResource } from "@/lib/assistant/useResource";
-import type { AssistantFeature, Automation, CardPart, Connection, Goal, Interaction, LibraryItem, WorkDetail } from "@/lib/contracts/assistant";
+import type { AssistantFeature, Automation, CardPart, Connection, Interaction, LibraryItem, WorkDetail } from "@/lib/contracts/assistant";
 import { connectionState } from "./AppsScreen";
 import { InteractionCard } from "./InteractionCard";
 import { provenanceLabel } from "./LibraryScreen";
@@ -15,7 +15,6 @@ type Kind = CardPart["resource"]["kind"];
 const ROUTES: Record<Kind, { path: (id: string) => string; feature: AssistantFeature; href?: (id: string) => string }> = {
   interaction: { path: (id) => `/interactions/${id}`, feature: "interactions" },
   automation: { path: (id) => `/automations/${id}`, feature: "automations", href: (id) => `/routines/${id}` },
-  goal: { path: (id) => `/goals/${id}`, feature: "goals", href: (id) => `/goals/${id}` },
   connection: { path: (id) => `/connections/${id}`, feature: "connections", href: () => "/apps" },
   task: { path: (id) => `/work/${id}`, feature: "work", href: (id) => `/work/${id}` },
   result: { path: (id) => `/library/${id}`, feature: "library", href: (id) => `/library/${id}` },
@@ -55,11 +54,6 @@ export function CardView({ part }: { part: CardPart }) {
           }
         />
       );
-    }
-    case "goal": {
-      const goal = data as Goal;
-      const met = goal.completion_criteria.filter((criterion) => criterion.met).length;
-      return <Shell href={href} title={goal.title} detail={goal.blockers[0] ? `Blocked: ${goal.blockers[0].text}` : goal.progress} pill={<Pill tone={goal.status === "completed" ? "ok" : "accent"}>{met} of {goal.completion_criteria.length}</Pill>} />;
     }
     case "connection": {
       const connection = data as Connection;

@@ -10,7 +10,6 @@ const (
 	CollectionOccurrences = "occurrences"
 	CollectionDeliveries  = "deliveries"
 	CollectionInbox       = "inbox"
-	CollectionGoals       = "goals"
 	InAppDestination      = "dest_in_app"
 )
 
@@ -76,7 +75,6 @@ type Editable struct {
 	DestinationIDs         []string            `json:"destination_ids"`
 	EndAt                  *time.Time          `json:"end_at,omitempty"`
 	MaxOccurrences         int                 `json:"max_occurrences,omitempty"`
-	GoalID                 string              `json:"goal_id,omitempty"`
 }
 
 type Automation struct {
@@ -96,7 +94,6 @@ type Automation struct {
 	NextAt                 *time.Time       `json:"next_at,omitempty"`
 	EndAt                  *time.Time       `json:"end_at,omitempty"`
 	MaxOccurrences         int              `json:"max_occurrences,omitempty"`
-	GoalID                 string           `json:"goal_id,omitempty"`
 	LastOccurrenceID       string           `json:"last_occurrence_id,omitempty"`
 	SnoozedUntil           *time.Time       `json:"snoozed_until,omitempty"`
 	LastOccurrence         *Occurrence      `json:"last_occurrence,omitempty"`
@@ -163,7 +160,6 @@ type occurrenceDoc struct {
 	Occurrence
 	Instruction string  `json:"instruction"`
 	BudgetUSD   float64 `json:"budget_usd"`
-	GoalID      string  `json:"goal_id,omitempty"`
 	Monitor     bool    `json:"monitor,omitempty"`
 }
 
@@ -212,67 +208,4 @@ type Preview struct {
 type Warning struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
-}
-
-type Goal struct {
-	ID                 string      `json:"id"`
-	Revision           int64       `json:"revision"`
-	Title              string      `json:"title"`
-	Outcome            string      `json:"outcome"`
-	CompletionCriteria []Criterion `json:"completion_criteria"`
-	Status             string      `json:"status"`
-	Progress           string      `json:"progress"`
-	NextActions        []string    `json:"next_actions"`
-	Blockers           []Blocker   `json:"blockers"`
-	Linked             GoalLinks   `json:"linked"`
-	Deadline           *time.Time  `json:"deadline,omitempty"`
-	FollowUp           string      `json:"follow_up,omitempty"`
-	AuthorityRuleIDs   []string    `json:"authority_rule_ids,omitempty"`
-	CreatedAt          *time.Time  `json:"created_at,omitempty"`
-	UpdatedAt          *time.Time  `json:"updated_at,omitempty"`
-	CompletedAt        *time.Time  `json:"completed_at,omitempty"`
-}
-
-type Criterion struct {
-	ID                string   `json:"id"`
-	Text              string   `json:"text"`
-	Met               bool     `json:"met"`
-	EvidenceResultIDs []string `json:"evidence_result_ids,omitempty"`
-}
-
-type Blocker struct {
-	Text          string `json:"text"`
-	InteractionID string `json:"interaction_id,omitempty"`
-	ConnectionID  string `json:"connection_id,omitempty"`
-}
-
-type GoalLinks struct {
-	TaskIDs       []string `json:"task_ids"`
-	AutomationIDs []string `json:"automation_ids"`
-	ResultIDs     []string `json:"result_ids"`
-}
-
-type GoalEditable struct {
-	Title              string `json:"title"`
-	Outcome            string `json:"outcome"`
-	CompletionCriteria []struct {
-		ID   string `json:"id,omitempty"`
-		Text string `json:"text"`
-	} `json:"completion_criteria"`
-	Deadline *time.Time `json:"deadline,omitempty"`
-	FollowUp string     `json:"follow_up,omitempty"`
-}
-
-type GoalAction struct {
-	Action       string `json:"action"`
-	KeepMonitors bool   `json:"keep_monitors,omitempty"`
-}
-
-func (a GoalAction) Valid() bool {
-	switch a.Action {
-	case "pause", "resume", "complete", "abandon":
-		return true
-	default:
-		return false
-	}
 }
