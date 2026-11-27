@@ -120,6 +120,13 @@ func (s *Service) Backend() docstore.Backend {
 	return s.storage.Backend()
 }
 
+func (s *Service) HomeRelayHandler() http.Handler {
+	if s == nil || s.home == nil {
+		return nil
+	}
+	return s.home.Handler()
+}
+
 func (s *Service) AdvisoryLocker() docstore.AdvisoryLocker {
 	locker, _ := s.Backend().(docstore.AdvisoryLocker)
 	return locker

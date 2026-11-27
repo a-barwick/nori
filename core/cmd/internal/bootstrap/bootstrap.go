@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -90,6 +91,9 @@ func Run(ctx context.Context, opts Options) {
 	}
 	observability.SetRuntimeMetrics(observability.RuntimeMetricsSourcesFromBackend(nori.Backend(), workerLanes))
 
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+
 	localMode := s.Cloud == "local"
 	var server *http.Server
 	if runAPI {
@@ -112,6 +116,9 @@ func Run(ctx context.Context, opts Options) {
 				observability.Fatal(err)
 			}
 		}
+		if relay := nori.HomeRelayHandler(); relay != nil && s.HomeAI.RelayHost != "" {
+			handler = withRelayHost(runCtx, s.HomeAI.RelayHost, relay, handler)
+		}
 		server = httpserver.New(ctx, net.JoinHostPort(bindHost, cmp.Or(s.Port, "8080")), handler)
 	} else if opts.MetricsAddr != "" {
 		if localMode {
@@ -130,9 +137,6 @@ func Run(ctx context.Context, opts Options) {
 		}
 		server = httpserver.New(ctx, opts.MetricsAddr, handler)
 	}
-
-	runCtx, cancelRun := context.WithCancel(ctx)
-	defer cancelRun()
 
 	var (
 		wg       sync.WaitGroup
@@ -202,4 +206,23 @@ func Run(ctx context.Context, opts Options) {
 		observability.Shutdown(stopTelemetry)
 		observability.Fatal(firstErr)
 	}
+}
+
+func withRelayHost(shutdownCtx context.Context, relayHost string, relay, fallback http.Handler) http.Handler {
+	target := strings.ToLower(strings.TrimSpace(relayHost))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := strings.TrimSpace(r.Host)
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		if strings.EqualFold(host, target) {
+			reqCtx, cancel := context.WithCancel(r.Context())
+			stop := context.AfterFunc(shutdownCtx, cancel)
+			defer stop()
+			defer cancel()
+			relay.ServeHTTP(w, r.WithContext(reqCtx))
+			return
+		}
+		fallback.ServeHTTP(w, r)
+	})
 }

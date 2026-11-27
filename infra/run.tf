@@ -59,7 +59,12 @@ locals {
   # Each map is NAME => { value } or NAME => { secret, version }, sorted by name.
   env = {
     core = merge(
-      { for k, v in merge(local.runtime_env, local.feature_env, { NORI_ROLE = "api", NORI_POSTGRES_MAX_CONNS = "8" }) : k => { value = v, secret = null } },
+      { for k, v in merge(local.runtime_env, local.feature_env, {
+        NORI_HOME_AI_MAX_CONNS  = "4"
+        NORI_HOME_AI_RELAY_HOST = "relay.noribot.chat"
+        NORI_POSTGRES_MAX_CONNS = "8"
+        NORI_ROLE               = "all"
+      }) : k => { value = v, secret = null } },
       { for k, v in merge(local.runtime_secrets, local.feature_secrets) : k => { value = null, secret = v } },
     )
     worker = merge(
@@ -119,7 +124,7 @@ resource "google_cloud_run_v2_service" "nori_core" {
   ingress  = "INGRESS_TRAFFIC_ALL"
 
   scaling {
-    max_instance_count = 20
+    max_instance_count = 3
   }
 
   template {
@@ -129,7 +134,7 @@ resource "google_cloud_run_v2_service" "nori_core" {
 
     scaling {
       min_instance_count = 1
-      max_instance_count = 10
+      max_instance_count = 2
     }
 
     containers {
@@ -777,6 +782,24 @@ resource "google_cloud_run_domain_mapping" "www_noribot_chat" {
 
   spec {
     route_name = google_cloud_run_v2_service.nori_site.name
+  }
+
+  # The API omits certificate_mode until the certificate is issued.
+  lifecycle {
+    ignore_changes = [spec[0].certificate_mode]
+  }
+}
+
+resource "google_cloud_run_domain_mapping" "relay_noribot_chat" {
+  name     = "relay.noribot.chat"
+  location = local.region
+
+  metadata {
+    namespace = local.project
+  }
+
+  spec {
+    route_name = google_cloud_run_v2_service.nori_core.name
   }
 
   # The API omits certificate_mode until the certificate is issued.

@@ -6,14 +6,13 @@ import (
 	"hash/fnv"
 	"log/slog"
 	"math"
-	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"nori/internal/netguard"
 	"nori/internal/settings"
 )
 
@@ -287,26 +286,7 @@ func hashRateLimitKey(raw string) string {
 }
 
 func clientIP(r *http.Request) string {
-	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
-		// Cloud Run's Google Front End appends the connecting client IP as the rightmost hop.
-		parts := strings.Split(xff, ",")
-		for i := len(parts) - 1; i >= 0; i-- {
-			if ip := strings.TrimSpace(parts[i]); ip != "" {
-				return ip
-			}
-		}
-	}
-	if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" {
-		return xri
-	}
-	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
-	if err == nil && host != "" {
-		return host
-	}
-	if addr := strings.TrimSpace(r.RemoteAddr); addr != "" {
-		return addr
-	}
-	return "unknown"
+	return netguard.ClientIP(r)
 }
 
 func classifyUserRequest(method, path string) (cat RateLimitCategory, isSSE bool) {

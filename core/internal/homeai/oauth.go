@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"nori/internal/netguard"
 )
 
 type deviceAuthorization struct {
@@ -70,7 +70,7 @@ func (s *Service) Handler() http.Handler {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	return mux
+	return newIPRateLimiter().wrap(mux)
 }
 
 func (s *Service) startAuthorization(w http.ResponseWriter, r *http.Request) {
@@ -85,10 +85,7 @@ func (s *Service) startAuthorization(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, oauthError{Error: "invalid_request"})
 		return
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
+	host := netguard.RateLimitIPKey(netguard.ClientIP(r))
 	peer := tokenHash(host)
 	ctx := r.Context()
 	tx, err := s.pool.Begin(ctx)

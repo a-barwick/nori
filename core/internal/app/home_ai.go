@@ -37,7 +37,7 @@ func openHomeAI(ctx context.Context, cfg settings.Settings) (*homeai.Service, er
 	return homeai.Open(ctx, homeai.Options{
 		PostgresListenURL: listenURL,
 		PostgresURL:       cmp.Or(cfg.HomeAI.PostgresURL, cfg.Store.PostgresURL),
-		VerificationURI:   cfg.HomeAI.VerificationURL, Key: key, MaxConns: 6,
+		VerificationURI:   cfg.HomeAI.VerificationURL, Key: key, MaxConns: int32(cmp.Or(cfg.HomeAI.MaxConns, 4)),
 	})
 }
 

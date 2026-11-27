@@ -49,6 +49,7 @@ func main() {
 
 	bootstrap.Run(ctx, bootstrap.Options{
 		Settings:      s,
+		ServiceName:   "nori-core",
 		Role:          role,
 		MetricsAddr:   *metricsAddrFlag,
 		ShutdownGrace: 25 * time.Second,

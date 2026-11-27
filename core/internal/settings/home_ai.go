@@ -5,15 +5,18 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"nori/internal/netguard"
 )
 
 type HomeAI struct {
-	Key, VerificationURL, PostgresURL, PostgresListenURL string
-	WorkEnabled                                          bool
-	Downloads                                            HomeAIDownloads
+	Key, VerificationURL, PostgresURL, PostgresListenURL, RelayHost string
+	MaxConns                                                        int
+	MaxConnsRaw                                                     string
+	WorkEnabled                                                     bool
+	Downloads                                                       HomeAIDownloads
 }
 
 type HomeAIDownloads struct {
@@ -24,9 +27,21 @@ type HomeAIDownloads struct {
 
 func homeAIFromEnvironment() HomeAI {
 	value := func(name string) string { return strings.TrimSpace(os.Getenv(name)) }
+	rawMaxConns := value("NORI_HOME_AI_MAX_CONNS")
+	maxConns := 4
+	if rawMaxConns != "" {
+		if parsed, err := strconv.Atoi(rawMaxConns); err == nil {
+			maxConns = parsed
+		} else {
+			maxConns = -1
+		}
+	}
 	return HomeAI{
 		Key: value("NORI_HOME_AI_KEY"), VerificationURL: value("NORI_HOME_AI_VERIFY_URL"),
 		PostgresURL: value("NORI_HOME_AI_POSTGRES_URL"), PostgresListenURL: value("NORI_HOME_AI_POSTGRES_LISTEN_URL"),
+		RelayHost:   strings.ToLower(value("NORI_HOME_AI_RELAY_HOST")),
+		MaxConns:    maxConns,
+		MaxConnsRaw: rawMaxConns,
 		WorkEnabled: value("NORI_HOME_AI_WORK_ENABLED") == "true",
 		Downloads: HomeAIDownloads{
 			MacOS:      value("NORI_HOME_AI_DOWNLOAD_MACOS"),
@@ -47,8 +62,14 @@ func (c HomeAI) EncryptionKey() ([]byte, error) {
 }
 
 func (c HomeAI) validate(cloud string) error {
-	if !c.Enabled() && c.VerificationURL == "" && c.PostgresURL == "" && c.PostgresListenURL == "" && c.Downloads == (HomeAIDownloads{}) && !c.WorkEnabled {
+	if !c.Enabled() && c.VerificationURL == "" && c.PostgresURL == "" && c.PostgresListenURL == "" && c.RelayHost == "" && c.MaxConnsRaw == "" && c.Downloads == (HomeAIDownloads{}) && !c.WorkEnabled {
 		return nil
+	}
+	if c.MaxConnsRaw != "" && (c.MaxConns < 1 || c.MaxConns > 100) {
+		return fmt.Errorf("NORI_HOME_AI_MAX_CONNS must be between 1 and 100")
+	}
+	if c.RelayHost != "" && strings.ContainsAny(c.RelayHost, "/:?# \t\r\n") {
+		return fmt.Errorf("NORI_HOME_AI_RELAY_HOST must be a bare hostname")
 	}
 	if _, err := c.EncryptionKey(); err != nil {
 		return err
