@@ -42,5 +42,27 @@ export function extractDocumentTitle(body: string): { title?: string; rest: stri
 }
 
 export function documentTitle(body: string) {
-  return extractDocumentTitle(body).title ?? firstSentence(body).slice(0, 64);
+  return extractDocumentTitle(body).title ?? (firstSentence(body).slice(0, 64) || "Document");
+}
+
+export function resolveDocumentPresentation(
+  body: string,
+  explicitTitle?: string,
+): { title: string; body: string } {
+  const extracted = extractDocumentTitle(body);
+  const trimmedExplicit = explicitTitle?.trim();
+  if (trimmedExplicit) {
+    const matchesExtracted =
+      !!extracted.title &&
+      extracted.title.trim().toLowerCase() === trimmedExplicit.toLowerCase();
+    return {
+      title: trimmedExplicit,
+      body: matchesExtracted ? extracted.rest : body,
+    };
+  }
+  const title = extracted.title || firstSentence(body).slice(0, 64) || "Document";
+  return {
+    title,
+    body: extracted.title ? extracted.rest : body,
+  };
 }

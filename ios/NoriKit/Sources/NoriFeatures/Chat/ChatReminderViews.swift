@@ -16,8 +16,34 @@ struct InlineReminderCard: View {
     let onEdit: () -> Void
     let onCancel: () -> Void
 
+    enum DisplayState: Equatable {
+        case set
+        case done
+        case cancelled
+    }
+
+    static func displayState(for automation: Automation?) -> DisplayState {
+        guard let automation else { return .set }
+        if automation.status == .cancelled {
+            return .cancelled
+        }
+        let hasNext = !(automation.nextAt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        if automation.status == .enabled && !hasNext && automation.trigger.kind == "once" {
+            return .done
+        }
+        return .set
+    }
+
+    private var state: DisplayState {
+        Self.displayState(for: automation)
+    }
+
     private var isCancelled: Bool {
-        automation?.status == .cancelled
+        state == .cancelled
+    }
+
+    private var isDone: Bool {
+        state == .done
     }
 
     private var displayTitle: String {
@@ -41,23 +67,39 @@ struct InlineReminderCard: View {
         return nil
     }
 
+    private var iconName: String {
+        switch state {
+        case .set: return "bell.fill"
+        case .done: return "checkmark"
+        case .cancelled: return "bell.slash"
+        }
+    }
+
+    private var statusHeading: String {
+        switch state {
+        case .set: return "Reminder set"
+        case .done: return "Reminder sent"
+        case .cancelled: return "Reminder cancelled"
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: isCancelled ? "bell.slash" : "bell.fill")
+                Image(systemName: iconName)
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(isCancelled ? NoriColors.ink3 : NoriColors.accent)
+                    .foregroundStyle(state == .set ? NoriColors.accent : NoriColors.ink3)
                     .frame(width: 32, height: 32)
                     .background(
-                        isCancelled ? NoriColors.fill1 : NoriColors.accentSubtle,
-                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        state == .set ? NoriColors.accentSubtle : NoriColors.fill1,
+                        in: RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous)
                     )
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 5) {
-                        Text(isCancelled ? "Reminder cancelled" : "Reminder set")
+                        Text(statusHeading)
                             .font(.system(size: 12.5, weight: .semibold))
-                            .foregroundStyle(isCancelled ? NoriColors.ink3 : NoriColors.accent)
+                            .foregroundStyle(state == .set ? NoriColors.accent : NoriColors.ink2)
 
                         if let when = displayWhen, !isCancelled {
                             Text("· \(when)")
@@ -76,7 +118,7 @@ struct InlineReminderCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            if !isCancelled {
+            if state == .set {
                 HStack(spacing: 8) {
                     Button(action: onEdit) {
                         HStack(spacing: 4) {
@@ -94,6 +136,7 @@ struct InlineReminderCard: View {
                             if isCancelling {
                                 ProgressView()
                                     .controlSize(.mini)
+                                    .tint(NoriColors.danger)
                             } else {
                                 Image(systemName: "xmark")
                                     .font(.system(size: 10.5, weight: .semibold))
@@ -101,7 +144,7 @@ struct InlineReminderCard: View {
                             Text(isCancelling ? "Cancelling…" : "Cancel")
                         }
                     }
-                    .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                    .buttonStyle(NoriButtonStyle(.danger, compact: true))
                     .disabled(isCancelling)
                     .accessibilityLabel("Cancel reminder \(displayTitle)")
 
@@ -118,7 +161,7 @@ struct InlineReminderCard: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
-                .strokeBorder(isCancelled ? NoriColors.cardBorder : NoriColors.accentBorder, lineWidth: 1)
+                .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
         )
         .shadow(color: isCancelled ? .clear : NoriColors.cardShadow, radius: 8, x: 0, y: 2)
     }
@@ -132,6 +175,7 @@ struct EditReminderSheet: View {
     @State private var title: String
     @State private var scheduledAt: Date
     @State private var isSaving: Bool = false
+    @State private var errorMessage: String?
 
     init(store: NoriStore, target: ReminderEditTarget) {
         self.store = store
@@ -154,9 +198,11 @@ struct EditReminderSheet: View {
                             .foregroundStyle(NoriColors.ink)
                         TextField("What should Nori remind you about?", text: $title)
                             .textFieldStyle(.plain)
+                            .foregroundStyle(NoriColors.ink)
+                            .tint(NoriColors.accent)
                             .padding(.horizontal, 12)
                             .frame(height: 42)
-                            .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                            .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                             .overlay(
                                 RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
                                     .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
@@ -176,11 +222,19 @@ struct EditReminderSheet: View {
                         .tint(NoriColors.accent)
                     }
 
+                    if let errorMessage, !errorMessage.isEmpty {
+                        NoriNotice(
+                            title: errorMessage,
+                            tone: .danger,
+                            systemImage: "exclamationmark.circle.fill"
+                        )
+                    }
+
                     Button {
                         save()
                     } label: {
                         if isSaving {
-                            ProgressView().tint(.white)
+                            ProgressView().tint(NoriColors.onAccent)
                         } else {
                             Text("Save changes")
                         }
@@ -208,6 +262,7 @@ struct EditReminderSheet: View {
     private func save() {
         guard isValid else { return }
         isSaving = true
+        errorMessage = nil
         Task {
             let updated = await store.updateReminder(
                 automationID: target.automationID,
@@ -217,6 +272,9 @@ struct EditReminderSheet: View {
             isSaving = false
             if updated != nil {
                 dismiss()
+            } else {
+                let raw = store.lastError?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                errorMessage = raw.isEmpty ? "Couldn’t update this reminder. Please try again." : raw
             }
         }
     }

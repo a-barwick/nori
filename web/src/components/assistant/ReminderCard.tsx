@@ -10,7 +10,7 @@ import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant
 import type { Automation } from "@/lib/contracts/assistant";
 import type { Part } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { Notice, Pill } from "./ui";
+import { Notice } from "./ui";
 
 export function formatReminderTime(part: Pick<Part, "text" | "scheduled_at">, now = Date.now()): string {
   if (part.scheduled_at) {
@@ -100,8 +100,6 @@ export function ReminderCard({ part }: { part: Part }) {
         {schedule && !cancelled && (
           <span className="text-meta text-ink-2">· {schedule}</span>
         )}
-        {cancelled && <Pill tone="neutral">Cancelled</Pill>}
-        {done && <Pill tone="neutral">Done</Pill>}
       </div>
       <p className={cn("mt-1 text-row font-medium [overflow-wrap:anywhere]", cancelled ? "text-ink-2 line-through" : "text-ink")}>
         {title}
@@ -117,8 +115,7 @@ export function ReminderCard({ part }: { part: Part }) {
           </Link>
           <Button
             size="sm"
-            variant="quiet"
-            className="text-danger hover:bg-danger-bg hover:text-danger"
+            variant="danger-quiet"
             disabled={!!action.pending}
             onClick={handleCancel}
           >

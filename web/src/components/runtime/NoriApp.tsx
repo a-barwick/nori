@@ -57,7 +57,7 @@ export function ChatScreen() {
     () => mergeInlineInteractions((pendingInteractions.items ?? []).filter(isChatInlineInteraction), sessionResolved),
     [pendingInteractions.items, sessionResolved],
   );
-  const [document, setDocument] = useState<{ body: string; at: number } | null>(null);
+  const [document, setDocument] = useState<{ body: string; at: number; title?: string } | null>(null);
   const [unread, setUnread] = useState<{ count: number; jump: () => void }>({
     count: 0,
     jump: () => {},
@@ -157,7 +157,7 @@ export function ChatScreen() {
         <Thread
           conversation={conversation}
           onStatusDetails={() => router.push("/work")}
-          onOpenDocument={(item, body) => setDocument({ body, at: item.at })}
+          onOpenDocument={(item, body, title) => setDocument({ body, at: item.at, title })}
           status={work}
           thinking={runtime.conversationBusy}
           streamingText={streamingDelta?.text}
@@ -173,7 +173,7 @@ export function ChatScreen() {
           onLoadOlder={() => void runtime.loadOlder()}
           emptyMessage={
             loading
-              ? "Loading your conversation…"
+              ? "Loading conversation…"
               : !session
                 ? "Your conversation will appear when Nori reconnects."
                 : "Ask Nori anything…"
@@ -187,7 +187,7 @@ export function ChatScreen() {
           const label = item.text || item.attachments?.map((file) => file.name).join(", ") || "your message";
           return (
             <div key={item.id} className="nori-page-col shrink-0 pb-2">
-              <div role="alert" className="max-w-[680px] rounded-tile border border-hairline bg-surface p-3 text-meta text-ink-2">
+              <div role="alert" className="max-w-[680px] rounded-tile border border-card-border bg-surface p-3 text-meta text-ink-2">
                 Could not confirm “{label.slice(0, 80)}
                 {label.length > 80 ? "…" : ""}”. {item.error}{" "}
                 {(item.errorCode === "model_key_required" || item.errorCode === "missing_api_key") && (
@@ -234,7 +234,7 @@ export function ChatScreen() {
         <div className="nori-page-col shrink-0 pb-2">
           <div
             role={error && !reconnecting ? "alert" : "status"}
-            className="max-w-[680px] rounded-tile border border-hairline bg-wash-top px-3.5 py-2.5 text-meta text-ink-2"
+            className="max-w-[680px] rounded-tile border border-card-border bg-wash-top px-3.5 py-2.5 text-meta text-ink-2"
           >
             {notice}{" "}
             {error && (

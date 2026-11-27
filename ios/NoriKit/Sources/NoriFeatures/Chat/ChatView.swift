@@ -155,6 +155,7 @@ public struct ChatView: View {
     private var threadArea: some View {
         let units = threadUnits
         let latestNoriID = latestNoriMessageID(in: units)
+        let isStreaming = !(store.streamingAssistantText ?? "").isEmpty
         let primaryPendingInThread: Interaction? = units.compactMap { unit in
             if case .interaction(let item) = unit { return item }
             return nil
@@ -166,23 +167,23 @@ public struct ChatView: View {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         if units.isEmpty {
                             NoriEmptyState(
-                                title: store.isLoading ? "Loading conversation…" : "Ask Nori anything",
+                                title: store.isLoading ? "Loading conversation…" : "Ask Nori anything…",
                                 markState: store.isLoading ? .thinking : .idle
                             )
                             .padding(.top, 48)
                         } else {
                             ForEach(units) { unit in
-                                threadUnitView(unit, activeNoriMessageID: store.isThinking ? nil : latestNoriID)
+                                threadUnitView(unit, activeNoriMessageID: (store.isThinking || isStreaming) ? nil : latestNoriID)
                             }
                         }
 
                         if let streaming = store.streamingAssistantText, !streaming.isEmpty {
-                            HStack(alignment: .top, spacing: 8) {
-                                NoriMark(size: 28, state: .thinking)
+                            HStack(alignment: .top, spacing: 10) {
+                                NoriMark(size: 26, state: .thinking)
                                     .matchedGeometryEffect(id: "active-nori-avatar", in: noriAvatarNamespace)
-                                Text(streaming)
-                                    .font(.body)
-                                    .foregroundStyle(.primary)
+                                    .padding(.top, 2)
+                                MarkdownBlocksView(markdown: streaming, bodyFont: NoriTypography.body, compact: true)
+                                    .padding(.vertical, 4)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .padding(.top, 4)
@@ -323,6 +324,7 @@ public struct ChatView: View {
             PageBlockCard(
                 message: message,
                 part: part,
+                onCopy: copyMessageText,
                 onOpen: {
                     let doc = resolveLibraryItem(for: message, part: part)
                     onOpenDocument(doc)
@@ -440,14 +442,19 @@ public struct ChatView: View {
         if let candidateID, let existing = store.libraryItems.first(where: { $0.id == candidateID }) {
             return existing
         }
+        let rawBody = part.text ?? part.fallback ?? (message.text.isEmpty ? "" : message.text)
+        let presentation = MarkdownBlocksView.resolveDocumentPresentation(
+            body: rawBody,
+            explicitTitle: part.title
+        )
         return NoriCore.LibraryItem(
             id: candidateID ?? message.id,
             kind: .document,
-            title: part.title ?? (message.text.isEmpty ? "Document" : message.text),
+            title: presentation.title,
             taskID: message.runID.isEmpty ? nil : message.runID,
             provenance: Provenance(content: .generated),
             createdAt: message.createdAt,
-            previewText: part.text ?? part.fallback ?? (message.text.isEmpty ? nil : message.text)
+            previewText: rawBody.isEmpty ? nil : rawBody
         )
     }
 
@@ -509,7 +516,7 @@ private struct ReconnectingBanner: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text("Can’t reach Nori right now. Resuming SSE…")
+            Text("Can’t reach Nori right now. Reconnecting on its own…")
                 .font(.system(size: 12.5, weight: .medium))
                 .foregroundStyle(NoriColors.warning)
                 .lineLimit(2)
@@ -524,7 +531,33 @@ private struct ReconnectingBanner: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
-        .background(NoriColors.warningBg, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .background(NoriColors.warningBg, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+                .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
+        )
+    }
+}
+
+enum InlineNeedsYouCopy {
+    static func heading(interaction: Interaction?, totalPendingCount: Int) -> String {
+        if let interaction {
+            return interaction.displayHeading
+        }
+        return totalPendingCount == 1
+            ? "1 item waiting for review"
+            : "\(totalPendingCount) items waiting for review"
+    }
+
+    static func subtitle(interaction: Interaction?, totalPendingCount: Int) -> String {
+        if let interaction {
+            let base = interaction.taskTitle ?? "Action needed"
+            if totalPendingCount > 1 {
+                return "\(base) · +\(totalPendingCount - 1) more"
+            }
+            return base
+        }
+        return "Open Work to review"
     }
 }
 
@@ -535,23 +568,11 @@ private struct InlineNeedsYouBanner: View {
     let onTap: () -> Void
 
     private var heading: String {
-        if let interaction {
-            return interaction.displayHeading
-        }
-        return totalPendingCount == 1
-            ? "1 item needs your review"
-            : "\(totalPendingCount) items need your review"
+        InlineNeedsYouCopy.heading(interaction: interaction, totalPendingCount: totalPendingCount)
     }
 
     private var subtitle: String {
-        if let interaction {
-            let base = interaction.taskTitle ?? "Waiting for your review"
-            if totalPendingCount > 1 {
-                return "\(base) · +\(totalPendingCount - 1) more"
-            }
-            return base
-        }
-        return "Open Work to review"
+        InlineNeedsYouCopy.subtitle(interaction: interaction, totalPendingCount: totalPendingCount)
     }
 
     var body: some View {
@@ -589,25 +610,21 @@ private struct InlineNeedsYouBanner: View {
                 .foregroundStyle(NoriColors.accent)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(NoriColors.elevated, in: Capsule())
-                .overlay(
-                    Capsule()
-                        .strokeBorder(NoriColors.accentBorder, lineWidth: 1)
-                )
+                .background(NoriColors.selected, in: Capsule())
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
             .background {
-                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
                     .fill(.ultraThinMaterial)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 15, style: .continuous)
+                        RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
                             .fill(NoriColors.accentSubtle.opacity(0.9))
                     )
             }
             .overlay(
-                RoundedRectangle(cornerRadius: 15, style: .continuous)
-                    .strokeBorder(NoriColors.accentBorder, lineWidth: 1)
+                RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
+                    .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
             )
             .shadow(color: NoriColors.shadowColor, radius: 10, x: 0, y: 4)
             .contentShape(Rectangle())
@@ -617,50 +634,21 @@ private struct InlineNeedsYouBanner: View {
         .accessibilityHint(
             scrollsToInlineCard
                 ? "Scrolls to the pending card in this conversation"
-                : "Opens Work tasks needing your review"
+                : "Opens Work items waiting for review"
         )
     }
 }
 
 enum NoriThinkingWords {
     static let all: [String] = [
-        // Whimsical (Claude-style)
-        "Onigirifying…",
-        "Umamifying…",
-        "Norifying…",
-        "Makifying…",
-        "Temaki-ing…",
-        "Wasabi-ing…",
-        "Sushifying…",
-        "Dashi-ing…",
-        "Omakase-ing…",
-        "Kombulating…",
-        "Mirinating…",
-        "Musubifying…",
-        "Bentofying…",
-        "Misofying…",
-        "Furikake-ing…",
-        "Yuzufying…",
-        "Matchafying…",
-        "Mochifying…",
-        // Cozy sushi prep
-        "Rolling the nori…",
-        "Seasoning the rice…",
-        "Toasting the seaweed…",
-        "Pressing the onigiri…",
-        "Simmering dashi…",
-        "Grating wasabi…",
-        "Plating…",
-        "Fanning the rice…",
-        "Tucking in the filling…",
-        "Sprinkling sesame seeds…",
-        "Folding the tamago…",
-        "Slicing the maki…",
-        "Brushing with soy…",
-        "Shaving bonito flakes…",
-        "Pickling the ginger…",
-        "Pouring green tea…",
-        "Setting the chopsticks…"
+        "Thinking…",
+        "Working on it…",
+        "Reading…",
+        "Checking…",
+        "Looking into it…",
+        "Putting it together…",
+        "Reviewing…",
+        "Drafting…"
     ]
 }
 
@@ -729,18 +717,32 @@ struct PulsingStatusDot: View {
     var size: CGFloat = 7
     var animated: Bool = true
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulsing: Bool = false
+
+    private var shouldAnimate: Bool {
+        animated && !reduceMotion
+    }
 
     var body: some View {
         Circle()
             .fill(color)
             .frame(width: size, height: size)
-            .scaleEffect(animated && pulsing ? 1.25 : 0.9)
-            .opacity(animated && pulsing ? 0.55 : 1.0)
+            .scaleEffect(shouldAnimate && pulsing ? 1.25 : 0.9)
+            .opacity(shouldAnimate && pulsing ? 0.55 : 1.0)
             .onAppear {
-                guard animated else { return }
+                guard shouldAnimate else { return }
                 withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
                     pulsing = true
+                }
+            }
+            .onChange(of: reduceMotion) { _, reduced in
+                if reduced {
+                    pulsing = false
+                } else if animated {
+                    withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                        pulsing = true
+                    }
                 }
             }
     }

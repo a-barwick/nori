@@ -10,7 +10,7 @@ function CodeBlock({ children, text }: { children: React.ReactNode; text: string
   const { copied, copy } = useCopyToClipboard();
   return (
     <div className="group/code relative my-3">
-      <pre className="scrollbar-quiet overflow-x-auto rounded-card bg-surface p-4 font-mono text-code text-ink shadow-[inset_0_0_0_1px_var(--hairline-strong)]">
+      <pre className="scrollbar-quiet overflow-x-auto rounded-card border border-card-border bg-fill-1 p-4 font-mono text-code text-ink">
         {children}
       </pre>
       <button

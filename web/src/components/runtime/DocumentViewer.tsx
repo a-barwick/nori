@@ -5,18 +5,18 @@ import { Dialog } from "radix-ui";
 import { Markdown } from "@/components/chat/Markdown";
 import { Button, IconButton } from "@/components/ui/primitives";
 import { downloadBlob, useCopyToClipboard } from "@/lib/browser";
-import { documentTitle } from "@/lib/utils";
+import { resolveDocumentPresentation } from "@/lib/utils";
 import { shortDate } from "@/lib/time";
 
 export function DocumentViewer({
   document,
   onClose,
 }: {
-  document: { body: string; at: number } | null;
+  document: { body: string; at: number; title?: string } | null;
   onClose: () => void;
 }) {
   const { copied, copy } = useCopyToClipboard();
-  const title = documentTitle(document?.body ?? "");
+  const { title, body: displayBody } = resolveDocumentPresentation(document?.body ?? "", document?.title);
 
   const download = () => {
     if (!document) return;
@@ -62,7 +62,7 @@ export function DocumentViewer({
           </header>
           <div className="scrollbar-quiet min-h-0 flex-1 overflow-y-auto px-6 py-6 sm:px-7">
             <div className="max-w-[68ch]">
-              <Markdown variant="page">{document?.body ?? ""}</Markdown>
+              {displayBody && <Markdown variant="page">{displayBody}</Markdown>}
             </div>
           </div>
         </Dialog.Content>

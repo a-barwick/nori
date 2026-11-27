@@ -19,6 +19,55 @@ struct ChatComposerView: View {
     @State private var focusRequestToken: Int = 0
     @FocusState private var isInputFocused: Bool
 
+    static var allowedImportTypes: [UTType] {
+        var types: [UTType] = [.pdf, .commaSeparatedText, .image, .plainText]
+        if let markdown = UTType(filenameExtension: "md") {
+            types.append(markdown)
+        }
+        if let calendar = UTType(filenameExtension: "ics") {
+            types.append(calendar)
+        }
+        return types
+    }
+
+    static func friendlyUploadError(_ error: Error) -> String {
+        if let norm = error as? ImageUploadNormalizationError {
+            switch norm {
+            case .emptyData:
+                return "That photo appears to be empty."
+            case .unsupportedImageFormat:
+                return "Nori can’t read that image format."
+            case .encodingFailed:
+                return "Couldn’t prepare that photo for upload."
+            case .exceedsMaxBytes(let limit):
+                let mb = max(1, limit / (1024 * 1024))
+                return "That photo is larger than the \(mb) MB limit."
+            }
+        }
+        if let apiError = error as? NoriAPIError {
+            switch apiError.statusCode {
+            case 413:
+                return "That file is too large to upload."
+            case 415:
+                return "Nori can’t read that file type here."
+            case 401, 403:
+                return "Please sign in again to upload files."
+            case 500...:
+                return "Couldn’t upload right now. Please try again."
+            default:
+                let msg = apiError.message.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !msg.isEmpty && !msg.contains("NSError") && !msg.contains("Error Domain") {
+                    return msg
+                }
+                return "Couldn’t upload this file. Please try again."
+            }
+        }
+        if error is URLError {
+            return "Couldn’t reach Nori. Check your connection and try again."
+        }
+        return "Couldn’t upload this file. Please try again."
+    }
+
     private var canSend: Bool {
         let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasReadyAttachments = draftAttachments.contains { $0.uploaded != nil }
@@ -56,19 +105,21 @@ struct ChatComposerView: View {
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(NoriColors.ink2)
+                        .foregroundStyle(store.isLoading || isSending ? NoriColors.disabled : NoriColors.ink2)
                         .frame(width: 34, height: 34)
                         .background(NoriColors.fill1.opacity(0.001), in: Circle())
                 }
                 .buttonStyle(.plain)
+                .disabled(store.isLoading || isSending)
                 .accessibilityLabel("Attach file or photo")
 
                 TextField("Ask Nori anything…", text: $draft, axis: .vertical)
                     .font(NoriTypography.body)
-                    .foregroundStyle(NoriColors.ink)
+                    .foregroundStyle(store.isLoading ? NoriColors.disabled : NoriColors.ink)
                     .tint(NoriColors.accent)
                     .lineLimit(1...5)
                     .focused($isInputFocused)
+                    .disabled(store.isLoading)
                     .padding(.vertical, 7)
                     .padding(.horizontal, 2)
                     .frame(minHeight: 34)
@@ -86,7 +137,7 @@ struct ChatComposerView: View {
                         if isSending {
                             ProgressView()
                                 .controlSize(.small)
-                                .tint(.white)
+                                .tint(NoriColors.onAccent)
                         } else {
                             Image(systemName: "arrow.up")
                                 .font(.system(size: 16, weight: .bold))
@@ -96,7 +147,7 @@ struct ChatComposerView: View {
                     .frame(width: 34, height: 34)
                     .background(
                         isSending
-                            ? NoriColors.brandPrimary.opacity(0.6)
+                            ? NoriColors.accentHover
                             : (canSend ? NoriColors.brandPrimary : NoriColors.disabledBg),
                         in: Circle()
                     )
@@ -177,7 +228,7 @@ struct ChatComposerView: View {
                 },
                 onPhotoNormalizationError: { message in
                     isAttachSheetPresented = false
-                    store.showToast("Photo failed: \(message)")
+                    store.showToast(message)
                 },
                 onRequestFilePicker: {
                     pendingFileImporterAfterAttachDismiss = true
@@ -187,7 +238,7 @@ struct ChatComposerView: View {
         }
         .fileImporter(
             isPresented: $isFileImporterPresented,
-            allowedContentTypes: [.pdf, .commaSeparatedText, .image, .plainText, .data],
+            allowedContentTypes: Self.allowedImportTypes,
             allowsMultipleSelection: true
         ) { result in
             switch result {
@@ -195,8 +246,8 @@ struct ChatComposerView: View {
                 for url in urls {
                     importLocalFile(url: url)
                 }
-            case .failure(let error):
-                store.showToast(error.localizedDescription)
+            case .failure:
+                store.showToast("Couldn’t open the file picker. Please try again.")
             }
         }
     }
@@ -280,7 +331,7 @@ struct ChatComposerView: View {
                         }.value
                         uploadDraftAttachment(data: normalized.data, filename: normalized.filename, mediaType: normalized.mediaType)
                     } catch {
-                        store.showToast("Could not prepare \(filename): \(error.localizedDescription)")
+                        store.showToast(Self.friendlyUploadError(error))
                     }
                 }
                 return
@@ -296,7 +347,7 @@ struct ChatComposerView: View {
             }
             uploadDraftAttachment(data: data, filename: filename, mediaType: mediaType)
         } catch {
-            store.showToast("Could not read \(url.lastPathComponent): \(error.localizedDescription)")
+            store.showToast("Couldn’t read \(url.lastPathComponent). Try another file.")
         }
     }
 
@@ -338,12 +389,12 @@ struct ChatComposerView: View {
                     draftAttachments[idx].error = nil
                 }
             } catch {
-                let reason = error.localizedDescription
+                let reason = Self.friendlyUploadError(error)
                 if let idx = draftAttachments.firstIndex(where: { $0.id == localID }) {
                     draftAttachments[idx].isUploading = false
                     draftAttachments[idx].error = reason
                 }
-                store.showToast("Upload failed (\(filename)): \(reason)")
+                store.showToast("Upload failed: \(reason)")
             }
         }
     }
@@ -400,34 +451,32 @@ private struct AttachmentChipView: View {
                     }
                     .foregroundStyle(NoriColors.danger)
                     .padding(.horizontal, 8)
-                    .frame(height: 24)
+                    .frame(height: 26)
                     .background(NoriColors.surface, in: Capsule())
-                    .overlay(
-                        Capsule()
-                            .strokeBorder(NoriColors.danger.opacity(0.32), lineWidth: 1)
-                    )
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Retry uploading \(item.name)")
 
                 Button(action: onRemove) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: 10.5, weight: .bold))
                         .foregroundStyle(NoriColors.ink3)
-                        .frame(width: 18, height: 18)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Remove \(item.name)")
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(NoriColors.dangerBg, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(.leading, 10)
+            .padding(.trailing, 4)
+            .padding(.vertical, 5)
+            .background(NoriColors.dangerBg, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(NoriColors.danger.opacity(0.35), lineWidth: 1)
+                RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+                    .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
             )
         } else {
-            HStack(spacing: 5) {
+            HStack(spacing: 4) {
                 if item.isUploading {
                     ProgressView()
                         .controlSize(.mini)
@@ -444,16 +493,17 @@ private struct AttachmentChipView: View {
 
                 Button(action: onRemove) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: 10.5, weight: .bold))
                         .foregroundStyle(NoriColors.ink3)
-                        .frame(width: 18, height: 18)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Remove \(item.name)")
             }
-            .padding(.leading, 9)
-            .padding(.trailing, 5)
-            .padding(.vertical, 6)
+            .padding(.leading, 10)
+            .padding(.trailing, 2)
+            .padding(.vertical, 3)
             .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
@@ -475,7 +525,6 @@ private struct AttachSheetView: View {
     var body: some View {
         let photoLibraryRow = NoriRow(
             title: "Photo Library",
-            detail: "Photos & screenshots (auto-converted if needed)",
             systemImage: "photo.on.rectangle",
             iconTone: .accent,
             showChevron: true,
@@ -494,7 +543,6 @@ private struct AttachSheetView: View {
                         Button(action: onRequestFilePicker) {
                             NoriRow(
                                 title: "Choose File",
-                                detail: "PDF, CSV, Markdown via Files",
                                 systemImage: "folder",
                                 iconTone: .accent,
                                 showChevron: true,
@@ -509,7 +557,7 @@ private struct AttachSheetView: View {
                 .padding(.bottom, 20)
             }
             .background(NoriColors.sheetBackground)
-            .navigationTitle("Attach to Nori")
+            .navigationTitle("Attach")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -548,7 +596,7 @@ private struct AttachSheetView: View {
                     }.value
                     onPickedPhotoData(normalized.data, normalized.filename, normalized.mediaType)
                 } catch {
-                    onPhotoNormalizationError(error.localizedDescription)
+                    onPhotoNormalizationError(ChatComposerView.friendlyUploadError(error))
                 }
                 selectedPhotoItem = nil
             }

@@ -152,7 +152,7 @@ export function RuntimeComposer({
             setDragging(false);
             take([...e.dataTransfer.files]);
           }}
-          className={`glass t-fast rounded-[24px] p-2 pl-3 transition-[border-color,box-shadow] focus-within:border-accent-signal focus-within:shadow-[0_2px_8px_rgba(80,0,255,0.08),0_12px_30px_rgba(80,0,255,0.09)] ${dragging ? "border-accent! bg-accent-subtle" : ""}`}
+          className={`glass t-fast rounded-[24px] p-2 pl-3 transition-[border-color,box-shadow] focus-within:border-accent-signal ${dragging ? "border-accent! bg-accent-subtle" : ""}`}
         >
           {notice && (
             <p role="alert" className="mb-2 pl-2 text-meta text-danger">
@@ -164,7 +164,9 @@ export function RuntimeComposer({
               {files.map((file) => (
                 <li
                   key={file.id}
-                  className="flex max-w-full items-center gap-1.5 rounded-full border border-hairline bg-surface px-2.5 py-1 text-meta text-ink-2"
+                  className={`flex max-w-full items-center gap-1.5 rounded-full border border-card-border px-2.5 py-1 text-meta ${
+                    file.status === "error" ? "bg-danger-bg text-danger" : "bg-surface text-ink-2"
+                  }`}
                 >
                   {file.file.type.startsWith("image/") && <Thumbnail file={file.file} />}
                   <span className="min-w-0 truncate">{file.name}</span>
@@ -179,7 +181,12 @@ export function RuntimeComposer({
                     </span>
                   )}
                   {file.status === "error" && file.size <= MAX_FILE_BYTES && (
-                    <button type="button" aria-label={`Retry ${file.name}`} onClick={() => onRetryFile(file)}>
+                    <button
+                      type="button"
+                      aria-label={`Retry ${file.name}`}
+                      onClick={() => onRetryFile(file)}
+                      className="grid size-6 shrink-0 place-items-center rounded-full text-danger hover:bg-surface"
+                    >
                       <RotateCw size={13} aria-hidden />
                     </button>
                   )}
@@ -187,7 +194,7 @@ export function RuntimeComposer({
                     type="button"
                     aria-label={file.status === "uploading" ? `Cancel uploading ${file.name}` : `Remove ${file.name}`}
                     onClick={() => onRemoveFile(file.id)}
-                    className="grid size-6 place-items-center rounded-full hover:bg-fill-1"
+                    className="grid size-6 shrink-0 place-items-center rounded-full hover:bg-fill-1"
                   >
                     <X size={13} aria-hidden />
                   </button>
@@ -213,7 +220,7 @@ export function RuntimeComposer({
               aria-label="Attach a file"
               disabled={disabled}
               onClick={() => picker.current?.click()}
-              className="grid size-[34px] shrink-0 place-items-center rounded-full text-ink-2 transition-colors hover:bg-fill-1 hover:text-ink disabled:opacity-40"
+              className="grid size-[34px] shrink-0 place-items-center rounded-full text-ink-2 transition-colors hover:bg-fill-1 hover:text-ink disabled:bg-disabled-bg disabled:text-disabled disabled:hover:bg-disabled-bg disabled:hover:text-disabled"
             >
               <Plus size={18} strokeWidth={2} aria-hidden />
             </button>
@@ -241,13 +248,13 @@ export function RuntimeComposer({
               }}
               placeholder="Ask Nori anything…"
               aria-label="Message Nori"
-              className="scrollbar-quiet max-h-[168px] min-h-[34px] min-w-0 flex-1 resize-none bg-transparent py-1.5 text-input text-ink transition-[height] duration-150 ease-out placeholder:text-ink-3 focus-visible:outline-none disabled:opacity-60"
+              className="scrollbar-quiet max-h-[168px] min-h-[34px] min-w-0 flex-1 resize-none bg-transparent py-1.5 text-input text-ink transition-[height] duration-150 ease-out placeholder:text-ink-3 focus-visible:outline-none disabled:text-disabled disabled:placeholder:text-disabled"
             />
             <button
               type="submit"
               aria-label="Send"
               disabled={!canSend}
-              className="grid size-[34px] shrink-0 place-items-center rounded-full bg-accent text-on-accent transition-colors hover:bg-accent-hover disabled:bg-fill-1 disabled:text-ink-3"
+              className="grid size-[34px] shrink-0 place-items-center rounded-full bg-accent text-on-accent transition-colors hover:bg-accent-hover disabled:bg-disabled-bg disabled:text-disabled"
             >
               <ArrowUp size={16} strokeWidth={2.4} />
             </button>

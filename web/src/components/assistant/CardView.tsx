@@ -40,7 +40,21 @@ export function CardView({ part }: { part: CardPart }) {
     }
     case "automation": {
       const routine = data as Automation;
-      return <Shell href={href} title={routine.title} detail={`${cadence(routine.trigger)}${routine.status === "enabled" && routine.next_at ? ` · next ${relative(routine.next_at)}` : ""}`} pill={<Pill tone={routine.status === "enabled" && (routine.next_at || routine.trigger.kind !== "once") ? "ok" : "neutral"}>{routine.status === "enabled" ? routine.next_at || routine.trigger.kind !== "once" ? "On" : "Done" : routine.status === "paused" ? "Paused" : "Cancelled"}</Pill>} />;
+      const isOn = routine.status === "enabled" && (routine.next_at || routine.trigger.kind !== "once");
+      return (
+        <Shell
+          href={href}
+          title={routine.title}
+          detail={`${cadence(routine.trigger)}${routine.status === "enabled" && routine.next_at ? ` · next ${relative(routine.next_at)}` : ""}`}
+          pill={
+            !isOn ? (
+              <Pill tone="neutral">
+                {routine.status === "enabled" ? "Done" : routine.status === "paused" ? "Paused" : "Cancelled"}
+              </Pill>
+            ) : undefined
+          }
+        />
+      );
     }
     case "goal": {
       const goal = data as Goal;
@@ -50,19 +64,37 @@ export function CardView({ part }: { part: CardPart }) {
     case "connection": {
       const connection = data as Connection;
       const state = connectionState(connection);
-      return <Shell href="/apps" title={[connection.title, connection.account?.label].filter(Boolean).join(" · ")} detail={connection.health.message} pill={<Pill tone={state.tone}>{state.label}</Pill>} />;
+      return <Shell href="/apps" title={connection.title} detail={connection.health.message} pill={<Pill tone={state.tone}>{state.label}</Pill>} />;
     }
     case "result": {
       const item = data as LibraryItem;
-      if (item.data_kind === "calendar_event" && item.data) return <Shell href={href} title={item.data.title} detail={`${eventTime(item.data.time)}${item.data.location ? ` · ${item.data.location}` : ""}`} pill={<Pill tone={item.data.status === "cancelled" ? "neutral" : "ok"}>{item.data.status === "cancelled" ? "Cancelled" : "On calendar"}</Pill>} />;
-      if (item.data_kind === "mail_draft" && item.data) return <Shell href={href} title={item.data.subject || "Draft"} detail={`To ${item.data.to.map((to) => to.email).join(", ")}`} pill={<Pill tone={item.data.state === "sent" ? "ok" : "neutral"}>{item.data.state === "sent" ? "Sent" : "Draft"}</Pill>} />;
-      return <Shell href={href} title={item.title} detail={provenanceLabel(item)} pill={item.version > 1 ? <Pill>v{item.version}</Pill> : undefined} />;
+      if (item.data_kind === "calendar_event" && item.data) {
+        return (
+          <Shell
+            href={href}
+            title={item.data.title}
+            detail={`${eventTime(item.data.time)}${item.data.location ? ` · ${item.data.location}` : ""}`}
+            pill={item.data.status === "cancelled" ? <Pill tone="neutral">Cancelled</Pill> : undefined}
+          />
+        );
+      }
+      if (item.data_kind === "mail_draft" && item.data) {
+        return (
+          <Shell
+            href={href}
+            title={item.data.subject || "Draft"}
+            detail={`To ${item.data.to.map((to) => to.email).join(", ")}`}
+            pill={item.data.state !== "sent" ? <Pill tone="neutral">Draft</Pill> : undefined}
+          />
+        );
+      }
+      return <Shell href={href} title={item.title} detail={provenanceLabel(item)} />;
     }
   }
 }
 
 function Shell({ href, title, detail, pill }: { href: string; title: string; detail?: string; pill?: React.ReactNode }) {
-  return <Link href={href} className="flex min-h-14 items-center gap-3 rounded-card border border-hairline bg-surface px-4 py-3 hover:border-hairline-strong hover:bg-fill-1">
+  return <Link href={href} className="flex min-h-14 items-center gap-3 rounded-card border border-card-border bg-surface px-4 py-3 transition-colors hover:bg-fill-1">
     <span className="min-w-0 flex-1"><span className="block truncate text-row font-medium text-ink">{title}</span>{detail && <span className="block truncate text-meta text-ink-2">{detail}</span>}</span>
     {pill}
   </Link>;

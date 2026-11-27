@@ -430,7 +430,8 @@ extension NoriStore {
             session.messages.removeAll { $0.id == expectedUserMessageID }
             isThinking = false
             lastError = error.localizedDescription
-            if let apiError = error as? NoriAPIError, apiError.code == "model_key_required" {
+            if let apiError = error as? NoriAPIError,
+               apiError.code == "model_key_required" || apiError.code == "missing_api_key" {
                 modelKeyError = apiError.message
             }
             if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled {

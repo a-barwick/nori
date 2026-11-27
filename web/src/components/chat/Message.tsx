@@ -105,7 +105,7 @@ export function BubbleUnit({
           <Parts parts={unit.item.parts!} />
         </div>
       ) : (
-        <div className={cn("min-w-0", mine ? "flex flex-col items-end" : "flex-1")}>
+        <div className={cn("relative min-w-0", mine ? "flex flex-col items-end" : "flex-1")}>
           <div
             className={cn(
               "min-w-0",
@@ -119,20 +119,21 @@ export function BubbleUnit({
             {unit.item.parts && <Parts parts={unit.item.parts} />}
           </div>
           {copyText && (
-            <div className={cn("mt-0.5 flex", mine ? "justify-end" : "justify-start")}>
-              <button
-                type="button"
-                onClick={triggerCopy}
-                aria-label={copied ? "Copied message" : "Copy message"}
-                title={copied ? "Copied" : "Copy"}
-                className={cn(
-                  "t-fast -ml-1.5 inline-flex size-6 items-center justify-center rounded-md text-ink-3 transition-opacity hover:bg-fill-1 hover:text-ink focus-visible:opacity-100",
-                  copied ? "opacity-100 text-accent-text" : "opacity-0 group-hover/msg:opacity-100",
-                )}
-              >
-                {copied ? <Check size={13} strokeWidth={2.2} aria-hidden /> : <Copy size={13} strokeWidth={1.8} aria-hidden />}
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={triggerCopy}
+              aria-label={copied ? "Copied message" : "Copy message"}
+              title={copied ? "Copied" : "Copy"}
+              className={cn(
+                "t-fast absolute inline-flex size-6 items-center justify-center rounded-md text-ink-3 transition-opacity hover:bg-fill-1 hover:text-ink focus-visible:pointer-events-auto focus-visible:opacity-100",
+                mine ? "bottom-1.5 -left-8" : "top-1.5 right-0 bg-canvas/90",
+                copied
+                  ? "pointer-events-auto text-accent-text opacity-100"
+                  : "pointer-events-none opacity-0 group-hover/msg:pointer-events-auto group-hover/msg:opacity-100",
+              )}
+            >
+              {copied ? <Check size={13} strokeWidth={2.2} aria-hidden /> : <Copy size={13} strokeWidth={1.8} aria-hidden />}
+            </button>
           )}
         </div>
       )}

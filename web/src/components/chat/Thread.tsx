@@ -13,12 +13,12 @@ import { clock } from "@/lib/time";
 import { THINKING_WORDS } from "@/lib/thinkingWords";
 import { buildUnits, posOf, type Unit } from "@/lib/units";
 import type { ReadPosition, TextItem, Thread as Conversation } from "@/lib/types";
-import { cn, documentTitle, firstSentence } from "@/lib/utils";
+import { cn, firstSentence, resolveDocumentPresentation } from "@/lib/utils";
 import { Markdown } from "./Markdown";
 import { BubbleUnit } from "./Message";
 
 const TOP_MASK = 24;
-type OpenDocument = (item: TextItem, body: string) => void;
+type OpenDocument = (item: TextItem, body: string, title?: string) => void;
 
 function PageBlock({
   item,
@@ -33,7 +33,7 @@ function PageBlock({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [tall, setTall] = useState(false);
-  const [expanded, setExpanded] = useState(() => Date.now() - item.at < 15000);
+  const [expanded, setExpanded] = useState(false);
   const { copied, copy } = useCopyToClipboard();
 
   useLayoutEffect(() => {
@@ -47,11 +47,11 @@ function PageBlock({
   }, []);
 
   const collapsed = tall && !expanded;
-  const title = explicitTitle?.trim() || documentTitle(body);
+  const { title, body: displayBody } = resolveDocumentPresentation(body, explicitTitle);
 
   return (
     <article
-      className="nori-document group/page relative mt-4 w-full max-w-[680px] transition-[border-color,box-shadow] hover:border-hairline-strong"
+      className="nori-document group/page relative mt-4 w-full max-w-[680px]"
       data-item-id={item.id}
       aria-label={`Nori: ${title}`}
     >
@@ -71,26 +71,37 @@ function PageBlock({
             {copied ? <Check size={14} strokeWidth={1.8} /> : <Copy size={14} strokeWidth={1.8} />}
             {copied ? "Copied" : "Copy"}
           </Button>
-          <button
-            type="button"
-            onClick={() => onOpenDocument(item, body)}
-            className="t-fast inline-flex h-8 items-center gap-1.5 rounded-full border border-lavender-border bg-accent-subtle px-3 text-meta font-semibold text-accent-text hover:bg-accent-muted"
+          <Button
+            size="sm"
+            variant="tonal"
+            onClick={() => onOpenDocument(item, body, title)}
           >
             <FileText size={14} strokeWidth={1.8} aria-hidden />
             Open
-          </button>
+          </Button>
         </div>
       </header>
-      <div className={cn("relative mt-1", collapsed && "max-h-[48vh] overflow-hidden")}>
-        <div ref={ref} className="max-w-[68ch]">
-          <Markdown variant="page">{body}</Markdown>
-        </div>
-        {collapsed && (
-          <div className="page-fade absolute inset-x-0 bottom-0 flex h-28 items-end justify-center pb-2">
-            <Button onClick={() => setExpanded(true)}>Keep reading</Button>
+      {displayBody && (
+        <div className={cn("relative mt-1", collapsed && "max-h-[48vh] overflow-hidden")}>
+          <div ref={ref} className="max-w-[68ch]">
+            <Markdown variant="page">{displayBody}</Markdown>
           </div>
-        )}
-      </div>
+          {collapsed && (
+            <div className="page-fade absolute inset-x-0 bottom-0 flex h-28 items-end justify-center pb-2">
+              <Button size="sm" variant="neutral" onClick={() => setExpanded(true)}>
+                Expand
+              </Button>
+            </div>
+          )}
+          {tall && expanded && (
+            <div className="mt-2 flex justify-center">
+              <Button size="sm" variant="quiet" onClick={() => setExpanded(false)}>
+                Collapse
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
     </article>
   );
 }
@@ -175,7 +186,7 @@ function ErrorCard({
       data-item-id={item.id}
       data-message-error
       data-error-code={item.error?.code}
-      className="mt-4 max-w-[min(680px,100%)] rounded-card border border-danger/25 bg-surface px-4 py-3.5 shadow-[0_1px_2px_rgba(25,9,54,0.05)]"
+      className="mt-4 max-w-[min(680px,100%)] rounded-card border border-card-border bg-danger-bg px-4 py-3.5 shadow-card"
     >
       <div className="flex items-start gap-2.5">
         <AlertCircle size={18} className="mt-0.5 shrink-0 text-danger" aria-hidden />
@@ -330,7 +341,10 @@ export function Thread({
   const thread = conversation;
   const items = thread.items;
   const units = useMemo(() => buildUnits(items, interactions), [items, interactions]);
-  const activeNoriMessageId = useMemo(() => (thinking ? undefined : latestNoriMessageId(units)), [thinking, units]);
+  const activeNoriMessageId = useMemo(
+    () => (thinking || !!streamingText ? undefined : latestNoriMessageId(units)),
+    [thinking, streamingText, units],
+  );
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
@@ -555,10 +569,12 @@ export function Thread({
             />
           ))}
           {streamingText && (
-            <div className="mt-4 flex max-w-[680px] items-start gap-2.5" data-streaming-reply>
-              <NoriMark size={28} state="thinking" />
-              <div className="min-w-0 flex-1 whitespace-pre-wrap text-body text-ink">
-                {streamingText}
+            <div className="nori-message mt-4 flex max-w-[min(680px,100%)] items-start" data-streaming-reply>
+              <span className="mt-2.5 mr-3 w-7 shrink-0" data-active-avatar="true">
+                <NoriMark size={26} state="thinking" />
+              </span>
+              <div className="min-w-0 flex-1 bg-bubble px-0 py-1.5 text-ink">
+                <Markdown>{streamingText}</Markdown>
               </div>
             </div>
           )}
