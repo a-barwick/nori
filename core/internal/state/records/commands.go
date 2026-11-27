@@ -268,7 +268,13 @@ func (d *Database) appendTaskEvent(tx *docstore.Transaction, run state.Run, even
 }
 
 func reportsToAssistant(run state.Run) bool {
-	return run.Origin == nil || run.Origin.ConversationID == "" || run.Origin.ConversationID == "assistant"
+	if run.Origin == nil {
+		return true
+	}
+	if run.Origin.ConversationID == "automation" {
+		return false
+	}
+	return run.Origin.ConversationID == "" || run.Origin.ConversationID == "assistant"
 }
 
 func (d *Database) preferredTaskBudget(ctx context.Context) float64 {

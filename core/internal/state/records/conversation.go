@@ -596,6 +596,115 @@ func (d *Database) EnsureConversationIntroduction(ctx context.Context, prompt st
 	})
 }
 
+// ProactiveMessageID returns the deterministic message ID for a proactive delivery.
+func ProactiveMessageID(deliveryID string) string {
+	return "proactive-" + deliveryID
+}
+
+// AppendProactiveMessage idempotently appends a proactive assistant message
+// (such as a Morning Brief PartBrief or surfaced watch alert) directly to Chat
+// without enqueuing a ConversationInput or waking the outer conversation loop.
+// It emits EventMessage and EventConversation through the event log so SSE
+// subscribers receive the message immediately.
+func (d *Database) AppendProactiveMessage(ctx context.Context, deliveryID string, message state.Message) (state.Message, error) {
+	if deliveryID == "" {
+		return state.Message{}, fmt.Errorf("%w: delivery ID is required", state.ErrInvalidResource)
+	}
+	msgID := ProactiveMessageID(deliveryID)
+	var out state.Message
+	err := d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
+		doc, err := tx.Get(d.messages().Doc(msgID))
+		if err == nil {
+			return doc.DataTo(&out)
+		}
+		if !notFound(err) {
+			return err
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
+		c, err := d.readConversation(tx)
+		if err != nil {
+			return err
+		}
+		now := d.now()
+		m := message
+		m.ID = msgID
+		m.Role = "assistant"
+		if m.Status == "" {
+			m.Status = state.MessageStatusCompleted
+		}
+		if m.CreatedAt.IsZero() {
+			m.CreatedAt = now
+		}
+		if m.CreatedAt.After(c.LatestAt) {
+			c.LatestAt = m.CreatedAt
+		}
+		if err = tx.Create(d.messages().Doc(m.ID), m); err != nil {
+			return err
+		}
+		if err = tx.Set(d.conversation(), c); err != nil {
+			return err
+		}
+		if err = log.add(state.EventMessage, m.ID); err != nil {
+			return err
+		}
+		if err = log.add(state.EventConversation, ""); err != nil {
+			return err
+		}
+		out = m
+		return nil
+	})
+	return out, err
+}
+
+// EnqueueProactiveTaskEvent idempotently enqueues a surfaced proactive task
+// event into the conversation input queue and wakes the outer conversation loop.
+func (d *Database) EnqueueProactiveTaskEvent(ctx context.Context, event state.TaskEvent) error {
+	if event.ID == "" {
+		return fmt.Errorf("%w: event ID is required", state.ErrInvalidResource)
+	}
+	traceContext := observability.InjectTrace(ctx)
+	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
+		ref := d.conversationInputs().Doc(state.TaskEventInputID(event.ID))
+		doc, err := tx.Get(ref)
+		if err == nil {
+			var prior state.ConversationInput
+			if err := doc.DataTo(&prior); err != nil {
+				return err
+			}
+			return state.ClassifyEventReplay(prior, event)
+		}
+		if !notFound(err) {
+			return err
+		}
+		log, err := d.openLog(tx)
+		if err != nil {
+			return err
+		}
+		c, err := d.readConversation(tx)
+		if err != nil {
+			return err
+		}
+		now := d.now()
+		if event.CreatedAt.IsZero() {
+			event.CreatedAt = now
+		}
+		c, input := state.EnqueueTaskEvent(c, event, now, traceContext)
+		if err := tx.Set(d.conversation(), c); err != nil {
+			return err
+		}
+		if err := tx.Create(ref, input); err != nil {
+			return err
+		}
+		if err := log.add(state.EventConversation, ""); err != nil {
+			return err
+		}
+		return tx.WakeUser(d.user.ID, docstore.LaneConversation, now)
+	})
+}
+
 func (d *Database) CancelConversation(ctx context.Context, turnID string) error {
 	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		c, err := d.readConversation(tx)

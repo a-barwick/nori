@@ -3,15 +3,80 @@ package scheduler
 import (
 	"encoding/json"
 	"time"
+
+	"nori/internal/state"
 )
 
 const (
-	CollectionAutomations = "automations"
-	CollectionOccurrences = "occurrences"
-	CollectionDeliveries  = "deliveries"
-	CollectionInbox       = "inbox"
-	InAppDestination      = "dest_in_app"
+	CollectionAutomations    = "automations"
+	CollectionOccurrences    = "occurrences"
+	CollectionDeliveries     = "deliveries"
+	CollectionInbox          = "inbox"
+	CollectionFindings       = "proactive_findings"
+	InAppDestination         = "dest_in_app"
+	ChatDestination          = "dest_chat"
+	AutomationConversationID = "automation"
+	MorningBriefAutomationID = "auto_morning_brief"
+
+	DefaultMorningBriefExecutionWindowSeconds int64 = 7200
+	DefaultInactivityPauseDays                      = 14
+
+	DeliveryStatePending   = "pending"
+	DeliveryStateHeld      = "held"
+	DeliveryStateDelivered = "delivered"
+	DeliveryStateFolded    = "folded"
+	DeliveryStateDropped   = "dropped"
+	DeliveryStateFailed    = "failed"
 )
+
+type OutcomeKind string
+
+const (
+	OutcomeNoOp   OutcomeKind = "no_op"
+	OutcomeUpdate OutcomeKind = "update"
+	OutcomeAlert  OutcomeKind = "alert"
+)
+
+type ProactiveOutcome struct {
+	Outcome       OutcomeKind       `json:"outcome"`
+	Summary       string            `json:"summary,omitempty"`
+	FindingKeys   []string          `json:"finding_keys,omitempty"`
+	Greeting      string            `json:"greeting,omitempty"`
+	Meta          string            `json:"meta,omitempty"`
+	Items         []state.BriefItem `json:"items,omitempty"`
+	InteractionID string            `json:"interaction_id,omitempty"`
+}
+
+type ProactiveSpend struct {
+	TaskLLMUSD      float64 `json:"task_llm_usd"`
+	OuterLoopUSD    float64 `json:"outer_loop_usd"`
+	ComputerWakeUSD float64 `json:"computer_wake_usd"`
+}
+
+func (p ProactiveSpend) Total() float64 {
+	return p.TaskLLMUSD + p.OuterLoopUSD + p.ComputerWakeUSD
+}
+
+type FindingState struct {
+	Key             string     `json:"key"`
+	FirstSurfacedAt time.Time  `json:"first_surfaced_at"`
+	LastSurfacedAt  time.Time  `json:"last_surfaced_at"`
+	BriefFoldCount  int        `json:"brief_fold_count"`
+	InteractionID   string     `json:"interaction_id,omitempty"`
+	EngagedAt       *time.Time `json:"engaged_at,omitempty"`
+	EngagedVia      string     `json:"engaged_via,omitempty"`
+	Dropped         bool       `json:"dropped,omitempty"`
+}
+
+type BudgetConfirmation struct {
+	Status            string  `json:"status"`
+	InteractionID     string  `json:"interaction_id"`
+	ActionDigest      string  `json:"action_digest"`
+	ProjectedDailyUSD float64 `json:"projected_daily_usd"`
+	DailyCapUSD       float64 `json:"daily_cap_usd"`
+	Reason            string  `json:"reason"`
+	Prompt            string  `json:"prompt"`
+}
 
 type AutomationStatus string
 
@@ -39,6 +104,7 @@ type Trigger struct {
 	At                 *time.Time   `json:"at,omitempty"`
 	LocalStart         string       `json:"local_start,omitempty"`
 	Timezone           string       `json:"timezone,omitempty"`
+	FollowUserTimezone bool         `json:"follow_user_timezone,omitempty"`
 	RRule              string       `json:"rrule,omitempty"`
 	Event              *ResourceRef `json:"event,omitempty"`
 	OffsetSeconds      *int64       `json:"offset_seconds,omitempty"`
@@ -73,8 +139,9 @@ type Editable struct {
 	MissedRun              string              `json:"missed_run,omitempty"`
 	ExecutionWindowSeconds int64               `json:"execution_window_seconds"`
 	DestinationIDs         []string            `json:"destination_ids"`
-	EndAt                  *time.Time          `json:"end_at,omitempty"`
-	MaxOccurrences         int                 `json:"max_occurrences,omitempty"`
+	EndAt                     *time.Time `json:"end_at,omitempty"`
+	MaxOccurrences            int        `json:"max_occurrences,omitempty"`
+	ConfirmationInteractionID string     `json:"confirmation_interaction_id,omitempty"`
 }
 
 type Automation struct {
@@ -83,6 +150,8 @@ type Automation struct {
 	Title                  string           `json:"title"`
 	Instruction            string           `json:"instruction"`
 	Status                 AutomationStatus `json:"status"`
+	System                 bool             `json:"system,omitempty"`
+	PausedReason           string           `json:"paused_reason,omitempty"`
 	Trigger                Trigger          `json:"trigger"`
 	ConnectionIDs          []string         `json:"connection_ids"`
 	AuthorityRuleIDs       []string         `json:"authority_rule_ids"`
@@ -112,12 +181,14 @@ type stored struct {
 	EventStatus         string     `json:"event_status,omitempty"`
 	EventCheckedAt      *time.Time `json:"event_checked_at,omitempty"`
 	Checkpoint          string     `json:"checkpoint,omitempty"`
+	CheckpointKeys      []string   `json:"checkpoint_keys,omitempty"`
 	ConsecutiveFailures int        `json:"consecutive_failures,omitempty"`
 }
 
 type Action struct {
-	Action string     `json:"action"`
-	Until  *time.Time `json:"until,omitempty"`
+	Action                    string     `json:"action"`
+	Until                     *time.Time `json:"until,omitempty"`
+	ConfirmationInteractionID string     `json:"confirmation_interaction_id,omitempty"`
 }
 
 func (a Action) Valid() bool {
@@ -150,6 +221,8 @@ type Occurrence struct {
 	StartedAt          *time.Time       `json:"started_at,omitempty"`
 	FinishedAt         *time.Time       `json:"finished_at,omitempty"`
 	Summary            string           `json:"summary,omitempty"`
+	Outcome            OutcomeKind      `json:"outcome,omitempty"`
+	FindingKeys        []string         `json:"finding_keys,omitempty"`
 	Error              *ErrorDetail     `json:"error,omitempty"`
 	Reason             string           `json:"reason,omitempty"`
 	Deliveries         []Delivery       `json:"deliveries,omitempty"`
@@ -166,10 +239,16 @@ type occurrenceDoc struct {
 type Delivery struct {
 	ID             string       `json:"id"`
 	OccurrenceID   string       `json:"occurrence_id,omitempty"`
+	AutomationID   string       `json:"automation_id,omitempty"`
 	ResultIDs      []string     `json:"result_ids,omitempty"`
 	TaskID         string       `json:"task_id,omitempty"`
 	DestinationID  string       `json:"destination_id"`
 	State          string       `json:"state"`
+	Title          string       `json:"title,omitempty"`
+	Body           string       `json:"body,omitempty"`
+	Outcome        OutcomeKind  `json:"outcome,omitempty"`
+	FindingKeys    []string     `json:"finding_keys,omitempty"`
+	InteractionID  string       `json:"interaction_id,omitempty"`
 	AttemptID      string       `json:"attempt_id,omitempty"`
 	Receipt        string       `json:"receipt,omitempty"`
 	AcknowledgedAt *time.Time   `json:"acknowledged_at,omitempty"`

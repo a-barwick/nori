@@ -42,23 +42,58 @@ func (s *Service) Tick(ctx context.Context) (*time.Time, error) {
 	if err != nil {
 		return nil, err
 	}
+	inactive, err := s.pauseIfInactive(ctx, enabled, now)
+	if err != nil {
+		slog.WarnContext(ctx, "scheduler inactivity check failed", "err", err)
+	}
 	var earliest *time.Time
-	for _, a := range enabled {
-		next, err := s.schedule(ctx, a, now)
-		if err != nil && !errors.Is(err, ErrStale) && !errors.Is(err, state.ErrRevisionConflict) {
-			slog.WarnContext(ctx, "scheduler automation failed", "automation_id", a.ID, "err", err)
-		}
-		if next != nil && (earliest == nil || next.Before(*earliest)) {
-			earliest = next
+	if !inactive {
+		for _, a := range enabled {
+			next, err := s.schedule(ctx, a, now)
+			if err != nil && !errors.Is(err, ErrStale) && !errors.Is(err, state.ErrRevisionConflict) {
+				slog.WarnContext(ctx, "scheduler automation failed", "automation_id", a.ID, "err", err)
+			}
+			if next != nil && (earliest == nil || next.Before(*earliest)) {
+				earliest = next
+			}
 		}
 	}
 	if err := s.drain(ctx, now); err != nil {
 		return earliest, err
 	}
+	if err := s.flushHeldDeliveries(ctx, now, false); err != nil {
+		slog.WarnContext(ctx, "scheduler flush held deliveries failed", "err", err)
+	}
 	if earliest != nil && s.Arm != nil && !skipTickArm(ctx) {
 		s.Arm(ctx, *earliest)
 	}
 	return earliest, nil
+}
+
+func (s *Service) pauseIfInactive(ctx context.Context, enabled []stored, now time.Time) (bool, error) {
+	days := s.inactivityPauseDays()
+	if s.LastActivity == nil || days <= 0 {
+		return false, nil
+	}
+	lastActive, err := s.LastActivity(ctx)
+	if err != nil || lastActive.IsZero() {
+		return false, err
+	}
+	if now.Sub(lastActive) < time.Duration(days)*24*time.Hour {
+		return false, nil
+	}
+	for _, a := range enabled {
+		_ = s.updateAutomationWithRetry(ctx, a.ID, func(latest *stored, _ state.Resource) (bool, map[string]string, error) {
+			if latest.Status != AutomationEnabled {
+				return false, nil, nil
+			}
+			latest.Status = AutomationPaused
+			latest.PausedReason = "inactive_account"
+			latest.NextAt = nil
+			return true, map[string]string{"status": string(latest.Status)}, nil
+		})
+	}
+	return true, nil
 }
 
 func (s *Service) schedule(ctx context.Context, a stored, now time.Time) (*time.Time, error) {
@@ -334,10 +369,17 @@ func (s *Service) advance(ctx context.Context, r state.Resource, o occurrenceDoc
 		if window := time.Duration(a.ExecutionWindowSeconds) * time.Second; window > 0 && now.Sub(o.ScheduledAt) > window && o.Reason == "" {
 			return s.settle(ctx, r, o, OccurrenceExpired, "missed_window", "", nil)
 		}
+		if exceeded, _, _, budgetErr := s.CheckRuntimeBudget(ctx, now); budgetErr == nil && exceeded {
+			return s.settle(ctx, r, o, OccurrenceSkipped, "budget_exhausted", "", nil)
+		}
 		id := taskID(o.ID)
 		run, err := s.Accept(ctx, state.Command{
 			ID: id, RunID: id, Kind: state.CommandStart, Text: o.Instruction, BudgetUSD: o.BudgetUSD,
-			Origin: &state.TaskOrigin{AutomationID: o.AutomationID, OccurrenceID: o.ID},
+			Origin: &state.TaskOrigin{
+				ConversationID: AutomationConversationID,
+				AutomationID:   o.AutomationID,
+				OccurrenceID:   o.ID,
+			},
 		})
 		if err != nil && !errors.Is(err, state.ErrDuplicate) {
 			return err
@@ -390,7 +432,16 @@ func (s *Service) settle(ctx context.Context, r state.Resource, o occurrenceDoc,
 }
 
 func (s *Service) finish(ctx context.Context, r state.Resource, o occurrenceDoc, a stored, run state.Run, status OccurrenceStatus) error {
-	summary := strings.TrimSpace(run.Result)
+	rawSummary := strings.TrimSpace(run.Result)
+	outcome, parsedOutcome := ParseProactiveOutcome(rawSummary)
+	displaySummary := rawSummary
+	if parsedOutcome {
+		o.Outcome = outcome.Outcome
+		o.FindingKeys = outcome.FindingKeys
+		if outcome.Summary != "" {
+			displaySummary = outcome.Summary
+		}
+	}
 	var failure *ErrorDetail
 	if status != OccurrenceCompleted {
 		code := "task_" + string(status)
@@ -399,8 +450,56 @@ func (s *Service) finish(ctx context.Context, r state.Resource, o occurrenceDoc,
 		}
 		failure = &ErrorDetail{Code: code, Message: clip(run.Error, 1000)}
 	}
-	quiet := o.Monitor && status == OccurrenceCompleted && (strings.HasPrefix(summary, NoChange) || sameFinding(summary, a.Checkpoint))
-	if !quiet {
+
+	// Determine typed NO_OP / unchanged monitor suppression.
+	noChange := false
+	if status == OccurrenceCompleted {
+		switch {
+		case parsedOutcome && outcome.Outcome == OutcomeNoOp:
+			noChange = true
+		case o.Monitor && parsedOutcome && len(outcome.FindingKeys) > 0 && allKeysCheckpointed(outcome.FindingKeys, a.CheckpointKeys):
+			noChange = true
+		case o.Monitor && !parsedOutcome && (strings.HasPrefix(rawSummary, NoChange) || sameFinding(rawSummary, a.Checkpoint)):
+			noChange = true
+		}
+	}
+	if noChange {
+		if err := s.settle(ctx, r, o, OccurrenceCompleted, "no_change", clip(displaySummary, 2000), nil); err != nil {
+			return err
+		}
+		if err := s.recordOutcomeHealth(ctx, a.ID, status, run.Error); err != nil && !errors.Is(err, state.ErrNotFound) {
+			slog.WarnContext(ctx, "scheduler outcome health update failed", "automation_id", a.ID, "occurrence_id", o.ID, "err", err)
+		}
+		return nil
+	}
+
+	// Determine failure throttle (report 1st failure, suppress intermediate retries,
+	// report threshold Nth failure and auto-pause).
+	settleReason := ""
+	throttled := false
+	pausedOnFailure := false
+	if status == OccurrenceFailed && !modelkeys.IsAccessFailure(run.Error) && !isTransientAutomationFailure(run.Error) {
+		threshold := s.failurePauseThreshold()
+		nextFailures := a.ConsecutiveFailures + 1
+		if nextFailures > 1 && nextFailures < threshold {
+			throttled = true
+			settleReason = "failure_throttled"
+		} else if nextFailures >= threshold {
+			pausedOnFailure = true
+		}
+	}
+
+	// Anti-nagging check for non-brief completed deliveries with finding_keys.
+	antiNagDropped := false
+	if status == OccurrenceCompleted && a.ID != MorningBriefAutomationID && len(outcome.FindingKeys) > 0 {
+		if drop, err := s.shouldDropForAntiNag(ctx, outcome.FindingKeys, outcome.InteractionID); err == nil && drop {
+			antiNagDropped = true
+			settleReason = "anti_nag"
+			s.markFindingDropped(ctx, outcome.FindingKeys, s.now())
+		}
+	}
+
+	if !throttled && !antiNagDropped {
 		results := []string{}
 		if s.Results != nil {
 			results = s.Results(ctx, run.ID)
@@ -408,17 +507,30 @@ func (s *Service) finish(ctx context.Context, r state.Resource, o occurrenceDoc,
 		// Delivery uses deterministic IDs and tolerates duplicate writes, so running it
 		// before settle ensures DeliveryIDs are persisted atomically on the settled
 		// occurrence without advancing the monitor checkpoint before settlement succeeds.
-		deliveries, err := s.deliver(ctx, a, o, run, summary, status, results)
+		var deliveries []string
+		var err error
+		if a.ID == MorningBriefAutomationID && status == OccurrenceCompleted {
+			deliveries, err = s.deliverMorningBrief(ctx, a, o, run, outcome, displaySummary, results)
+		} else {
+			deliveries, err = s.deliver(ctx, a, o, run, outcome, displaySummary, status, results, pausedOnFailure)
+		}
 		if err != nil {
 			return err
 		}
 		o.DeliveryIDs = deliveries
 	}
-	if err := s.settle(ctx, r, o, status, "", clip(summary, 2000), failure); err != nil {
+
+	if err := s.settle(ctx, r, o, status, settleReason, clip(displaySummary, 2000), failure); err != nil {
 		return err
 	}
-	if !quiet && o.Monitor && status == OccurrenceCompleted {
-		if err := s.checkpoint(ctx, a.ID, clip(summary, 2000)); err != nil && !errors.Is(err, state.ErrNotFound) {
+	if a.ID == MorningBriefAutomationID && status != OccurrenceCompleted {
+		// If the Morning Brief failed or was cancelled, flush held quiet-hours deliveries.
+		if err := s.flushHeldDeliveries(ctx, s.now(), true); err != nil {
+			slog.WarnContext(ctx, "scheduler flush held deliveries after brief failure failed", "automation_id", a.ID, "err", err)
+		}
+	}
+	if !antiNagDropped && o.Monitor && status == OccurrenceCompleted {
+		if err := s.checkpoint(ctx, a.ID, clip(displaySummary, 2000), outcome.FindingKeys); err != nil && !errors.Is(err, state.ErrNotFound) {
 			slog.WarnContext(ctx, "scheduler monitor checkpoint update failed", "automation_id", a.ID, "occurrence_id", o.ID, "err", err)
 		}
 	}
@@ -487,6 +599,7 @@ func (s *Service) recordOutcomeHealth(ctx context.Context, id string, status Occ
 	if status == OccurrenceFailed && (modelkeys.IsAccessFailure(errText) || isTransientAutomationFailure(errText)) {
 		return nil
 	}
+	threshold := s.failurePauseThreshold()
 	return s.updateAutomationWithRetry(ctx, id, func(a *stored, _ state.Resource) (bool, map[string]string, error) {
 		if status == OccurrenceCompleted {
 			if a.ConsecutiveFailures == 0 {
@@ -495,8 +608,9 @@ func (s *Service) recordOutcomeHealth(ctx context.Context, id string, status Occ
 			a.ConsecutiveFailures = 0
 		} else {
 			a.ConsecutiveFailures++
-			if a.ConsecutiveFailures >= maxConsecutiveAutomationFailures && a.Status == AutomationEnabled {
+			if a.ConsecutiveFailures >= threshold && a.Status == AutomationEnabled {
 				a.Status = AutomationPaused
+				a.PausedReason = "consecutive_failures"
 				a.NextAt = nil
 				slog.WarnContext(ctx, "auto-pausing automation after consecutive failures",
 					"automation_id", id, "consecutive_failures", a.ConsecutiveFailures)
@@ -511,9 +625,12 @@ func sameFinding(a, b string) bool {
 	return b != "" && norm(clip(a, 2000)) == norm(b)
 }
 
-func (s *Service) checkpoint(ctx context.Context, id, summary string) error {
+func (s *Service) checkpoint(ctx context.Context, id, summary string, keys []string) error {
 	return s.updateAutomationWithRetry(ctx, id, func(a *stored, r state.Resource) (bool, map[string]string, error) {
 		a.Checkpoint = summary
+		if len(keys) > 0 {
+			a.CheckpointKeys = mergeCheckpointKeys(a.CheckpointKeys, keys)
+		}
 		return true, r.Index, nil
 	})
 }
