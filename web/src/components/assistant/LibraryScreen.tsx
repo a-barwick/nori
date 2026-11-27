@@ -261,7 +261,7 @@ export function LibraryContent({ syncURL = false }: { syncURL?: boolean }) {
 
 export function LibraryScreen() {
   return (
-    <Screen title="Artifacts" back="/work?tab=artifacts" backLabel="Work">
+    <Screen title="Artifacts" back="/work" backLabel="Work">
       <LibraryContent syncURL />
     </Screen>
   );

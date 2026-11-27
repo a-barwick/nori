@@ -4,12 +4,10 @@ import Link from "next/link";
 import { BarChart3, Brain, LayoutGrid, Monitor, Moon, ShieldCheck, SlidersHorizontal, Sparkles, Sun, UserCircle } from "lucide-react";
 import { useAppearance, type NoriAppearance } from "@/lib/appearance";
 import type { ModelKeysResponse, ModelSettings } from "@/lib/assistant/api";
-import { computerStatusPill } from "@/lib/assistant/computerStatus";
 import { useAssistant } from "@/lib/assistant/context";
 import { hasSelectedHomeChat, needsByokSetup } from "@/lib/assistant/modelSetup";
 import { useSummary } from "@/lib/assistant/sources";
 import { useResource } from "@/lib/assistant/useResource";
-import type { ComputerStatus } from "@/lib/contracts/assistant";
 import { Notice, Pill, Row, Rows, Screen, Section } from "./ui";
 
 const APPEARANCE_ICON: Record<NoriAppearance, typeof Monitor> = {
@@ -20,13 +18,12 @@ const APPEARANCE_ICON: Record<NoriAppearance, typeof Monitor> = {
 
 export function MoreScreen({ userEmail: _userEmail }: { userEmail?: string } = {}) {
   void _userEmail;
-  const { has, runtime } = useAssistant();
+  const { runtime } = useAssistant();
   const summary = useSummary();
   const [appearance] = useAppearance();
 
   const modelKeys = useResource<ModelKeysResponse>("/settings/model-keys", { poll: 60_000, versioned: false });
   const models = useResource<ModelSettings>("/settings/models", { poll: 60_000 });
-  const computer = useResource<ComputerStatus>(has("computer") ? "/computer" : null, { poll: 30_000, versioned: false });
 
   const appsAttention = summary.apps_attention ?? 0;
 
@@ -70,24 +67,6 @@ export function MoreScreen({ userEmail: _userEmail }: { userEmail?: string } = {
             title="Apps"
             trailing={appsAttention > 0 ? <Pill tone="warning">{appsAttention} attention</Pill> : undefined}
           />
-          {has("computer") && (
-            <Row
-              href="/computer"
-              leading={
-                <span className="grid size-9 place-items-center rounded-[10px] bg-accent-subtle text-accent-text">
-                  <Monitor size={18} strokeWidth={1.85} aria-hidden />
-                </span>
-              }
-              title="Computer"
-              trailing={
-                computer.data && computer.data.status !== "not_provisioned" ? (
-                  <Pill tone={computerStatusPill(computer.data.status).tone}>
-                    {computerStatusPill(computer.data.status).label}
-                  </Pill>
-                ) : undefined
-              }
-            />
-          )}
           <Row
             href="/memory"
             leading={

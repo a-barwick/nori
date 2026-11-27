@@ -5,7 +5,6 @@ import NoriDesign
 public enum MoreRoute: Hashable, Sendable {
     case apps
     case mcpDetail(String)
-    case computer
     case memory
     case permissions
     case preferences
@@ -86,23 +85,6 @@ public struct MoreHubView: View {
                 }
             }
             .buttonStyle(.plain)
-
-            if store.isComputerEnabled {
-                NavigationLink(value: MoreRoute.computer) {
-                    NoriRow(
-                        title: "Computer",
-                        systemImage: "desktopcomputer",
-                        iconTone: .accent,
-                        showChevron: true,
-                        showDivider: true
-                    ) {
-                        if let status = store.computerStatus?.status, status != .notProvisioned {
-                            NoriPill(status.displayLabel, tone: computerStateTone(status))
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-            }
 
             NavigationLink(value: MoreRoute.memory) {
                 NoriRow(
@@ -198,15 +180,6 @@ public struct MoreHubView: View {
                 }
             }
             .buttonStyle(.plain)
-        }
-    }
-
-    private func computerStateTone(_ state: ComputerState) -> NoriTone {
-        switch state {
-        case .running: return .ok
-        case .provisioning, .resetting: return .working
-        case .error: return .danger
-        default: return .neutral
         }
     }
 }

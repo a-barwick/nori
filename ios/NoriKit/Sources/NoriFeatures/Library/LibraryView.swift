@@ -138,6 +138,11 @@ public struct LibraryView: View {
             .padding(.bottom, 96)
         }
         .background(NoriColors.canvas)
+        .navigationTitle("Artifacts")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        #endif
         .refreshable {
             await store.refreshLibrary()
         }

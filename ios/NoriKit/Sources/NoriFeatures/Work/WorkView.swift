@@ -3,6 +3,15 @@ import NoriCore
 import NoriDesign
 
 
+public enum WorkRoute: Hashable, Sendable {
+    case actionNeeded
+    case tasks
+    case automations
+    case artifacts
+    case computer
+    case taskDetail(String)
+}
+
 public enum WorkTabFilter: String, Sendable, Hashable, CaseIterable {
     case artifacts
     case automations
@@ -75,6 +84,86 @@ private enum UnifiedTaskRow: Identifiable {
         case .todo(_, let taskID, _, _): return taskID != nil
         }
     }
+
+    var isInProgress: Bool {
+        if case .inProgress = self { return true }
+        return false
+    }
+
+    var isScheduled: Bool {
+        if case .scheduled = self { return true }
+        return false
+    }
+}
+
+
+@MainActor
+private func buildUnifiedRows(
+    store: NoriStore,
+    dismissedRowIDs: Set<String>
+) -> (actionable: [Interaction], rows: [UnifiedTaskRow]) {
+    let pendingInteractions = store.pendingInteractions
+    let actionable = pendingInteractions.filter { $0.kind != .question }
+    let chatWaitingQuestions = pendingInteractions.filter { $0.kind == .question }
+
+    let actionableTaskIDs = Set(actionable.compactMap(\.taskID))
+    let chatWaitingTaskIDs = Set(chatWaitingQuestions.compactMap(\.taskID))
+
+    var running: [UnifiedTaskRow] = []
+    var queued: [UnifiedTaskRow] = []
+    var seenTaskIDs = Set<String>()
+
+    for item in store.workItems {
+        guard item.status == .running, !item.cancelRequested else { continue }
+        guard !actionableTaskIDs.contains(item.taskID) else { continue }
+        guard item.bucket != .needsYou, !chatWaitingTaskIDs.contains(item.taskID) else { continue }
+        seenTaskIDs.insert(item.taskID)
+        if item.queued == true {
+            queued.append(.todo(id: "task:\(item.taskID)", taskID: item.taskID, title: item.title, replyInChat: false))
+        } else {
+            running.append(.inProgress(id: "task:\(item.taskID)", taskID: item.taskID, title: item.title, steps: item.steps ?? []))
+        }
+    }
+
+    var waiting: [UnifiedTaskRow] = []
+    var waitingSeen = Set<String>()
+    for q in chatWaitingQuestions {
+        let key = q.taskID ?? q.id
+        guard waitingSeen.insert(key).inserted else { continue }
+        let workItem = q.taskID.flatMap { tid in store.workItems.first { $0.taskID == tid } }
+        let title = workItem?.title ?? q.taskTitle ?? "Waiting in Chat"
+        waiting.append(.todo(id: "chat:\(key)", taskID: q.taskID, title: title, replyInChat: true))
+    }
+    for item in store.workItems where item.status == .running && !item.cancelRequested && item.bucket == .needsYou {
+        guard !actionableTaskIDs.contains(item.taskID), !seenTaskIDs.contains(item.taskID) else { continue }
+        guard waitingSeen.insert(item.taskID).inserted else { continue }
+        waiting.append(.todo(id: "chat:\(item.taskID)", taskID: item.taskID, title: item.title, replyInChat: true))
+    }
+
+    let scheduled: [UnifiedTaskRow] = store.automations
+        .filter { auto in
+            auto.status == .enabled
+                && auto.trigger.kind == "once"
+                && !((auto.nextAt ?? auto.trigger.at ?? "").isEmpty)
+        }
+        .sorted { lhs, rhs in
+            let lDate = (lhs.nextAt ?? lhs.trigger.at).flatMap { NoriDateFormatting.parse($0) }
+            let rDate = (rhs.nextAt ?? rhs.trigger.at).flatMap { NoriDateFormatting.parse($0) }
+            switch (lDate, rDate) {
+            case (let l?, let r?): return l < r
+            case (_?, nil): return true
+            case (nil, _?): return false
+            case (nil, nil): return lhs.title < rhs.title
+            }
+        }
+        .map { auto in
+            let raw = auto.nextAt ?? auto.trigger.at ?? ""
+            let label = raw.isEmpty ? "" : NoriDateFormatting.shortDateTime(raw)
+            return .scheduled(id: "auto:\(auto.id)", automation: auto, title: auto.title, scheduleLabel: label)
+        }
+
+    let rows = (running + waiting + queued + scheduled).filter { !dismissedRowIDs.contains($0.id) }
+    return (actionable, rows)
 }
 
 
@@ -120,15 +209,15 @@ private struct CircularTaskProgressRing: View {
 
 
 public struct WorkView: View {
+    public static let hubSectionLimit = 3
+
     @Bindable private var store: NoriStore
-    private let externalSelection: Binding<WorkTabFilter>?
     private let isLoadingOverview: Bool
     private let onOpenDocument: (NoriCore.LibraryItem) -> Void
     private let onOpenTask: ((String) -> Void)?
     private let onStartInChat: (String) -> Void
     private let onOpenModels: () -> Void
 
-    @State private var internalTab: WorkTabFilter = .tasks
     @State private var selectedTaskDestination: String?
     @State private var expandedRowID: String?
     @State private var confirmingCancelID: String?
@@ -136,7 +225,6 @@ public struct WorkView: View {
 
     public init(
         store: NoriStore,
-        selectedTab: Binding<WorkTabFilter>? = nil,
         isLoadingOverview: Bool = false,
         onOpenDocument: @escaping (NoriCore.LibraryItem) -> Void = { _ in },
         onOpenTask: ((String) -> Void)? = nil,
@@ -144,7 +232,6 @@ public struct WorkView: View {
         onOpenModels: @escaping () -> Void = {}
     ) {
         self.store = store
-        self.externalSelection = selectedTab
         self.isLoadingOverview = isLoadingOverview
         self.onOpenDocument = onOpenDocument
         self.onOpenTask = onOpenTask
@@ -152,115 +239,83 @@ public struct WorkView: View {
         self.onOpenModels = onOpenModels
     }
 
-    private var activeTabBinding: Binding<WorkTabFilter> {
-        externalSelection ?? $internalTab
+    private var activeRecurringAutomationsCount: Int {
+        store.automations.filter { $0.status == .enabled && $0.trigger.kind != "once" }.count
     }
 
-    private var activeTab: WorkTabFilter {
-        activeTabBinding.wrappedValue
-    }
-
-    private var tabOptions: [NoriSegmentOption<WorkTabFilter>] {
-        [
-            NoriSegmentOption(value: .artifacts, label: "Artifacts"),
-            NoriSegmentOption(value: .automations, label: "Automations"),
-            NoriSegmentOption(
-                value: .tasks,
-                label: "Tasks",
-                count: store.actionableNeedsYouCount > 0 ? store.actionableNeedsYouCount : nil
-            )
-        ]
-    }
-
-    private var pendingInteractions: [Interaction] {
-        store.pendingInteractions
-    }
-
-    private var actionableInteractions: [Interaction] {
-        pendingInteractions.filter { $0.kind != .question }
-    }
-
-    private var chatWaitingQuestions: [Interaction] {
-        pendingInteractions.filter { $0.kind == .question }
-    }
-
-    private var unifiedRows: [UnifiedTaskRow] {
-        let actionableTaskIDs = Set(actionableInteractions.compactMap(\.taskID))
-        let chatWaitingTaskIDs = Set(chatWaitingQuestions.compactMap(\.taskID))
-
-        var running: [UnifiedTaskRow] = []
-        var queued: [UnifiedTaskRow] = []
-        var seenTaskIDs = Set<String>()
-
-        for item in store.workItems {
-            guard item.status == .running, !item.cancelRequested else { continue }
-            guard !actionableTaskIDs.contains(item.taskID) else { continue }
-            guard item.bucket != .needsYou, !chatWaitingTaskIDs.contains(item.taskID) else { continue }
-            seenTaskIDs.insert(item.taskID)
-            if item.queued == true {
-                queued.append(.todo(id: "task:\(item.taskID)", taskID: item.taskID, title: item.title, replyInChat: false))
-            } else {
-                running.append(.inProgress(id: "task:\(item.taskID)", taskID: item.taskID, title: item.title, steps: item.steps ?? []))
-            }
-        }
-
-        var waiting: [UnifiedTaskRow] = []
-        var waitingSeen = Set<String>()
-        for q in chatWaitingQuestions {
-            let key = q.taskID ?? q.id
-            guard waitingSeen.insert(key).inserted else { continue }
-            let workItem = q.taskID.flatMap { tid in store.workItems.first { $0.taskID == tid } }
-            let title = workItem?.title ?? q.taskTitle ?? "Waiting in Chat"
-            waiting.append(.todo(id: "chat:\(key)", taskID: q.taskID, title: title, replyInChat: true))
-        }
-        for item in store.workItems where item.status == .running && !item.cancelRequested && item.bucket == .needsYou {
-            guard !actionableTaskIDs.contains(item.taskID), !seenTaskIDs.contains(item.taskID) else { continue }
-            guard waitingSeen.insert(item.taskID).inserted else { continue }
-            waiting.append(.todo(id: "chat:\(item.taskID)", taskID: item.taskID, title: item.title, replyInChat: true))
-        }
-
-        let scheduled: [UnifiedTaskRow] = store.automations
-            .filter { auto in
-                auto.status == .enabled
-                    && auto.trigger.kind == "once"
-                    && !((auto.nextAt ?? auto.trigger.at ?? "").isEmpty)
-            }
-            .sorted { lhs, rhs in
-                let lDate = (lhs.nextAt ?? lhs.trigger.at).flatMap { NoriDateFormatting.parse($0) }
-                let rDate = (rhs.nextAt ?? rhs.trigger.at).flatMap { NoriDateFormatting.parse($0) }
-                switch (lDate, rDate) {
-                case (let l?, let r?): return l < r
-                case (_?, nil): return true
-                case (nil, _?): return false
-                case (nil, nil): return lhs.title < rhs.title
-                }
-            }
-            .map { auto in
-                let raw = auto.nextAt ?? auto.trigger.at ?? ""
-                let label = raw.isEmpty ? "" : NoriDateFormatting.shortDateTime(raw)
-                return .scheduled(id: "auto:\(auto.id)", automation: auto, title: auto.title, scheduleLabel: label)
-            }
-
-        return (running + waiting + queued + scheduled).filter { !dismissedRowIDs.contains($0.id) }
+    private var artifactsCount: Int {
+        store.libraryItems.count
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            headerSection
+        let computed = buildUnifiedRows(store: store, dismissedRowIDs: dismissedRowIDs)
+        let actionable = computed.actionable
+        let allRows = computed.rows
+        let inProgressRows = allRows.filter(\.isInProgress)
+        let visibleApprovals = Array(actionable.prefix(Self.hubSectionLimit))
+        let visibleInProgress = Array(inProgressRows.prefix(Self.hubSectionLimit))
 
-            Group {
-                switch activeTab {
-                case .artifacts:
-                    LibraryView(store: store, onOpenDocument: onOpenDocument)
-                case .automations:
-                    RoutinesView(store: store)
-                case .tasks:
-                    tasksContent
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                if !visibleApprovals.isEmpty {
+                    NoriSectionHeader(actionable.count > 1 ? "Action needed · \(actionable.count)" : "Action needed")
+
+                    LazyVStack(spacing: 12) {
+                        ForEach(visibleApprovals) { interaction in
+                            InteractionCardView(
+                                store: store,
+                                interaction: interaction,
+                                onOpenTask: navigateToTask
+                            )
+                        }
+                    }
+
+                    if actionable.count > Self.hubSectionLimit {
+                        NavigationLink(value: WorkRoute.actionNeeded) {
+                            seeAllBarLabel
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 10)
+                    }
+
+                    Spacer().frame(height: 6)
                 }
+
+                if !visibleInProgress.isEmpty {
+                    NoriSectionHeader(inProgressRows.count > 1 ? "In progress · \(inProgressRows.count)" : "In progress")
+
+                    WorkTaskRowsList(
+                        store: store,
+                        rows: visibleInProgress,
+                        expandedRowID: $expandedRowID,
+                        confirmingCancelID: $confirmingCancelID,
+                        dismissedRowIDs: $dismissedRowIDs,
+                        onStartInChat: onStartInChat
+                    )
+
+                    if inProgressRows.count > Self.hubSectionLimit {
+                        NavigationLink(value: WorkRoute.tasks) {
+                            seeAllBarLabel
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 10)
+                    }
+
+                    Spacer().frame(height: 6)
+                }
+
+                NoriSectionHeader("Workspace")
+                workspaceRows(openTasksCount: allRows.count)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 96)
         }
         .background(NoriColors.canvas.ignoresSafeArea())
+        .refreshable {
+            await store.refreshForTab(.work, force: true)
+        }
+        .navigationTitle("Work")
         .navigationDestination(item: $selectedTaskDestination) { taskID in
             WorkDetailView(
                 store: store,
@@ -275,41 +330,224 @@ public struct WorkView: View {
         #endif
     }
 
+    private func workspaceRows(openTasksCount: Int) -> some View {
+        let showComputer = store.isComputerEnabled
 
-    private var headerSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            NoriUnderlineTabs(options: tabOptions, selection: activeTabBinding)
-                .padding(.horizontal, 8)
-                .padding(.top, 12)
+        return NoriRows {
+            NavigationLink(value: WorkRoute.tasks) {
+                NoriRow(
+                    title: "Tasks",
+                    systemImage: "checklist",
+                    iconTone: .accent,
+                    showChevron: true,
+                    showDivider: true
+                ) {
+                    if openTasksCount > 0 {
+                        Text("\(openTasksCount) open")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(NoriColors.ink3)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink(value: WorkRoute.automations) {
+                NoriRow(
+                    title: "Automations",
+                    systemImage: "bolt.fill",
+                    iconTone: .accent,
+                    showChevron: true,
+                    showDivider: true
+                ) {
+                    if activeRecurringAutomationsCount > 0 {
+                        Text("\(activeRecurringAutomationsCount) active")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(NoriColors.ink3)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink(value: WorkRoute.artifacts) {
+                NoriRow(
+                    title: "Artifacts",
+                    systemImage: "doc.text",
+                    iconTone: .accent,
+                    showChevron: true,
+                    showDivider: showComputer
+                ) {
+                    if artifactsCount > 0 {
+                        Text("\(artifactsCount)")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(NoriColors.ink3)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+
+            if showComputer {
+                NavigationLink(value: WorkRoute.computer) {
+                    NoriRow(
+                        title: "Computer",
+                        systemImage: "desktopcomputer",
+                        iconTone: .accent,
+                        showChevron: true,
+                        showDivider: false
+                    ) {
+                        if let status = store.computerStatus?.status, status != .notProvisioned {
+                            NoriPill(status.displayLabel, tone: computerStateTone(status))
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+            }
         }
+    }
+
+    private var seeAllBarLabel: some View {
+        HStack(spacing: 5) {
+            Text("See all")
+            Image(systemName: "chevron.right")
+                .font(.system(size: 11, weight: .semibold))
+        }
+        .font(.system(size: 13.5, weight: .semibold))
+        .foregroundStyle(NoriColors.accent)
+        .frame(maxWidth: .infinity)
+        .frame(height: 40)
         .background(
-            NoriTopWash()
-                .ignoresSafeArea(edges: .top)
+            NoriColors.fill1,
+            in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
         )
     }
 
+    private func computerStateTone(_ state: ComputerState) -> NoriTone {
+        switch state {
+        case .running: return .ok
+        case .provisioning, .resetting: return .working
+        case .error: return .danger
+        default: return .neutral
+        }
+    }
 
-    private var tasksContent: some View {
-        let actionable = actionableInteractions
-        let rows = unifiedRows
-        let isAllClear = actionable.isEmpty && rows.isEmpty
+    private func navigateToTask(_ taskID: String) {
+        if let onOpenTask {
+            onOpenTask(taskID)
+        } else {
+            selectedTaskDestination = taskID
+        }
+    }
+}
 
-        return ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                if !actionable.isEmpty {
-                    NoriSectionHeader(actionable.count > 1 ? "Action needed · \(actionable.count)" : "Action needed")
-                    LazyVStack(spacing: 12) {
-                        ForEach(actionable) { interaction in
-                            InteractionCardView(
-                                store: store,
-                                interaction: interaction,
-                                onOpenTask: navigateToTask
-                            )
-                        }
+
+public struct WorkActionNeededView: View {
+    @Bindable private var store: NoriStore
+    private let onOpenTask: ((String) -> Void)?
+
+    public init(
+        store: NoriStore,
+        onOpenTask: ((String) -> Void)? = nil
+    ) {
+        self.store = store
+        self.onOpenTask = onOpenTask
+    }
+
+    private var actionable: [Interaction] {
+        store.pendingInteractions.filter { $0.kind != .question }
+    }
+
+    public var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 12) {
+                if actionable.isEmpty {
+                    WorkAllClearCard()
+                        .padding(.top, 4)
+                } else {
+                    ForEach(actionable) { interaction in
+                        InteractionCardView(
+                            store: store,
+                            interaction: interaction,
+                            onOpenTask: { taskID in onOpenTask?(taskID) }
+                        )
                     }
-                    .padding(.bottom, rows.isEmpty ? 6 : 18)
                 }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 96)
+        }
+        .background(NoriColors.canvas)
+        .navigationTitle("Action needed")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        #endif
+        .refreshable {
+            await store.refreshWorkAndInteractions()
+        }
+    }
+}
 
+
+private struct WorkAllClearCard: View {
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            NoriMark(size: 22, state: .idle)
+                .frame(width: 32, height: 32)
+                .background(
+                    NoriColors.elevated,
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                )
+
+            Text("All clear")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(NoriColors.ink)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            NoriColors.surface,
+            in: RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: NoriRadius.card, style: .continuous)
+                .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
+        )
+    }
+}
+
+
+public struct WorkTasksView: View {
+    @Bindable private var store: NoriStore
+    private let isLoadingOverview: Bool
+    private let onOpenTask: ((String) -> Void)?
+    private let onStartInChat: (String) -> Void
+
+    @State private var expandedRowID: String?
+    @State private var confirmingCancelID: String?
+    @State private var dismissedRowIDs: Set<String> = []
+
+    public init(
+        store: NoriStore,
+        isLoadingOverview: Bool = false,
+        onOpenTask: ((String) -> Void)? = nil,
+        onStartInChat: @escaping (String) -> Void = { _ in }
+    ) {
+        self.store = store
+        self.isLoadingOverview = isLoadingOverview
+        self.onOpenTask = onOpenTask
+        self.onStartInChat = onStartInChat
+    }
+
+    public var body: some View {
+        let computed = buildUnifiedRows(store: store, dismissedRowIDs: dismissedRowIDs)
+        let rows = computed.rows
+        let isAllClear = rows.isEmpty
+
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
                 if isAllClear, isLoadingOverview, !store.hasLoadedWorkOverview {
                     ProgressView()
                         .frame(maxWidth: .infinity)
@@ -331,11 +569,14 @@ public struct WorkView: View {
                 }
 
                 if !rows.isEmpty {
-                    NoriRows {
-                        ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
-                            unifiedRowView(row, showDivider: idx < rows.count - 1)
-                        }
-                    }
+                    WorkTaskRowsList(
+                        store: store,
+                        rows: rows,
+                        expandedRowID: $expandedRowID,
+                        confirmingCancelID: $confirmingCancelID,
+                        dismissedRowIDs: $dismissedRowIDs,
+                        onStartInChat: onStartInChat
+                    )
                 }
             }
             .padding(.horizontal, 16)
@@ -343,13 +584,17 @@ public struct WorkView: View {
             .padding(.bottom, 96)
         }
         .background(NoriColors.canvas)
+        .navigationTitle("Tasks")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        #endif
         .refreshable {
             async let work: Void = store.refreshWorkAndInteractions()
             async let autos: Void = store.refreshAutomations()
             _ = await (work, autos)
         }
     }
-
 
     private var allClearCard: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -378,7 +623,24 @@ public struct WorkView: View {
                 .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
         )
     }
+}
 
+
+private struct WorkTaskRowsList: View {
+    @Bindable var store: NoriStore
+    let rows: [UnifiedTaskRow]
+    @Binding var expandedRowID: String?
+    @Binding var confirmingCancelID: String?
+    @Binding var dismissedRowIDs: Set<String>
+    let onStartInChat: (String) -> Void
+
+    var body: some View {
+        NoriRows {
+            ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                unifiedRowView(row, showDivider: idx < rows.count - 1)
+            }
+        }
+    }
 
     private func unifiedRowView(_ row: UnifiedTaskRow, showDivider: Bool) -> some View {
         let steps: [WorkStep] = {
@@ -591,20 +853,5 @@ public struct WorkView: View {
                 }
             }
         }
-    }
-
-    private func navigateToTask(_ taskID: String) {
-        if let onOpenTask {
-            onOpenTask(taskID)
-        } else {
-            selectedTaskDestination = taskID
-        }
-    }
-}
-
-private extension UnifiedTaskRow {
-    var isScheduled: Bool {
-        if case .scheduled = self { return true }
-        return false
     }
 }
