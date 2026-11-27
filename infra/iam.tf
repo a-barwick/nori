@@ -16,11 +16,6 @@ resource "google_service_account" "nori_web_mac" {
   display_name = "Nori Mac Web"
 }
 
-resource "google_service_account" "nori_home_ai_relay" {
-  account_id   = "nori-home-ai-relay"
-  display_name = "Nori Home AI relay"
-}
-
 resource "google_service_account" "nori_site" {
   account_id   = "nori-site"
   display_name = "Nori public site runtime"
@@ -75,18 +70,6 @@ resource "google_project_iam_member" "this" {
   project = local.project
   role    = each.value.role
   member  = each.value.member
-}
-
-# The relay may connect only to nori-pg.
-resource "google_project_iam_member" "relay_sql" {
-  project = local.project
-  role    = "roles/cloudsql.client"
-  member  = google_service_account.nori_home_ai_relay.member
-
-  condition {
-    title      = "NoriHomeAICloudSQLInstance"
-    expression = "resource.name == 'projects/${local.project}/instances/${google_sql_database_instance.nori_pg.name}' && resource.service == 'sqladmin.googleapis.com'"
-  }
 }
 
 # Release deploys revisions that run as these accounts.

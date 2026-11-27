@@ -67,17 +67,9 @@ locals {
       }) : k => { value = v, secret = null } },
       { for k, v in merge(local.runtime_secrets, local.feature_secrets) : k => { value = null, secret = v } },
     )
-    worker = merge(
-      { for k, v in merge(local.runtime_env, local.feature_env, { NORI_ROLE = "worker", NORI_POSTGRES_MAX_CONNS = "10" }) : k => { value = v, secret = null } },
-      { for k, v in merge(local.runtime_secrets, local.feature_secrets) : k => { value = null, secret = v } },
-    )
     migrate = merge(
       { for k, v in merge(local.runtime_env, { NORI_ROLE = "all", NORI_POSTGRES_MAX_CONNS = "4" }) : k => { value = v, secret = null } },
       { for k, v in local.runtime_secrets : k => { value = null, secret = v } },
-    )
-    home_ai_migrate = merge(
-      { for k, v in { ARTIFACT_BUCKET = google_storage_bucket.artifacts.name, NORI_CLOUD = "gcp", NORI_POSTGRES_MAX_CONNS = "2", NORI_STORE_BACKEND = "postgres" } : k => { value = v, secret = null } },
-      { NORI_POSTGRES_URL = { value = null, secret = "nori-postgres-url:latest" } },
     )
     web = merge(
       { for k, v in {
@@ -104,13 +96,6 @@ locals {
       {
         NORI_OIDC_IAP_ALLOWED_IDENTITIES = { value = null, secret = "nori-mac-google-identities:1" }
         NORI_SERVICE_TOKEN_KEY           = { value = null, secret = "nori-service-token-key:latest" }
-      },
-    )
-    relay = merge(
-      { for k, v in { NORI_HOME_AI_MAX_CONNS = "4", NORI_HOME_AI_VERIFY_URL = "${local.web_origin}/connector/activate" } : k => { value = v, secret = null } },
-      {
-        NORI_HOME_AI_KEY          = { value = null, secret = "nori-home-ai-key:1" }
-        NORI_HOME_AI_POSTGRES_URL = { value = null, secret = "nori-home-ai-db-url:1" }
       },
     )
   }
@@ -208,92 +193,6 @@ resource "google_cloud_run_v2_service_iam_member" "core_public" {
   member   = "allUsers"
 }
 
-# --- Worker (scaled to 0, deletion_protection=false for removal in next commit) -
-
-resource "google_cloud_run_v2_service" "nori_worker" {
-  name                = "nori-worker"
-  location            = local.region
-  ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
-  deletion_protection = false
-
-  scaling {
-    max_instance_count = 1
-  }
-
-  template {
-    service_account                  = google_service_account.nori_runtime.email
-    max_instance_request_concurrency = 80
-    timeout                          = "300s"
-
-    scaling {
-      min_instance_count = 0
-      max_instance_count = 1
-    }
-
-    containers {
-      image = "${local.registry}/nori-core:bootstrap"
-      args  = ["--metrics-addr=0.0.0.0:8080"]
-
-      dynamic "env" {
-        for_each = local.env.worker
-        content {
-          name  = env.key
-          value = env.value.value
-          dynamic "value_source" {
-            for_each = env.value.secret == null ? [] : [split(":", env.value.secret)]
-            content {
-              secret_key_ref {
-                secret  = value_source.value[0]
-                version = value_source.value[1]
-              }
-            }
-          }
-        }
-      }
-
-      ports {
-        name           = "http1"
-        container_port = 8080
-      }
-
-      resources {
-        cpu_idle          = true
-        startup_cpu_boost = true
-        limits = {
-          cpu    = "1"
-          memory = "1Gi"
-        }
-      }
-
-      startup_probe {
-        failure_threshold = 40
-        period_seconds    = 3
-        timeout_seconds   = 3
-        http_get {
-          path = "/readyz"
-          port = 8080
-        }
-      }
-
-      volume_mounts {
-        name       = "cloudsql"
-        mount_path = "/cloudsql"
-      }
-    }
-
-    volumes {
-      name = "cloudsql"
-      cloud_sql_instance {
-        instances = [local.cloud_sql]
-      }
-    }
-  }
-
-  lifecycle {
-    ignore_changes = [client, client_version, traffic, template[0].labels, template[0].containers[0].image]
-  }
-}
-
 # --- Migration jobs ------------------------------------------------------------
 
 # Release runs this with each Core image before staging Core.
@@ -335,69 +234,6 @@ resource "google_cloud_run_v2_job" "nori_migrate" {
           limits = {
             cpu    = "1"
             memory = "1Gi"
-          }
-        }
-
-        volume_mounts {
-          name       = "cloudsql"
-          mount_path = "/cloudsql"
-        }
-      }
-
-      volumes {
-        name = "cloudsql"
-        cloud_sql_instance {
-          instances = [local.cloud_sql]
-        }
-      }
-    }
-  }
-
-  lifecycle {
-    ignore_changes = [client, client_version, template[0].template[0].containers[0].image]
-  }
-}
-
-# Applies Core migrations for the Home AI relay rollout (core/infrastructure/home-ai.md).
-resource "google_cloud_run_v2_job" "nori_home_ai_migrate" {
-  name                = "nori-home-ai-migrate"
-  location            = local.region
-  deletion_protection = false
-
-  template {
-    task_count = 1
-
-    template {
-      service_account       = google_service_account.nori_runtime.email
-      execution_environment = "EXECUTION_ENVIRONMENT_GEN2"
-      max_retries           = 0
-      timeout               = "300s"
-
-      containers {
-        image = "${local.registry}/nori-core:bootstrap"
-        args  = ["--migrate-only"]
-
-        dynamic "env" {
-          for_each = local.env.home_ai_migrate
-          content {
-            name  = env.key
-            value = env.value.value
-            dynamic "value_source" {
-              for_each = env.value.secret == null ? [] : [split(":", env.value.secret)]
-              content {
-                secret_key_ref {
-                  secret  = value_source.value[0]
-                  version = value_source.value[1]
-                }
-              }
-            }
-          }
-        }
-
-        resources {
-          limits = {
-            cpu    = "1000m"
-            memory = "512Mi"
           }
         }
 
@@ -583,94 +419,6 @@ resource "google_cloud_run_v2_service" "nori_web_mac" {
   }
 }
 
-# --- Home AI relay -------------------------------------------------------------
-
-# Reachable only through the load balancer in home_ai_edge.tf. Its image is
-# deployed by scripts/deploy-home-ai-relay.sh.
-resource "google_cloud_run_v2_service" "nori_connector_relay" {
-  name                 = "nori-connector-relay"
-  location             = local.region
-  deletion_protection  = false
-  ingress              = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
-  default_uri_disabled = true
-  invoker_iam_disabled = true
-
-  scaling {
-    max_instance_count = 1
-  }
-
-  template {
-    service_account                  = google_service_account.nori_home_ai_relay.email
-    max_instance_request_concurrency = 40
-    timeout                          = "3600s"
-
-    scaling {
-      max_instance_count = 1
-    }
-
-    containers {
-      image = "${local.registry}/nori-connector-relay:bootstrap"
-
-      dynamic "env" {
-        for_each = local.env.relay
-        content {
-          name  = env.key
-          value = env.value.value
-          dynamic "value_source" {
-            for_each = env.value.secret == null ? [] : [split(":", env.value.secret)]
-            content {
-              secret_key_ref {
-                secret  = value_source.value[0]
-                version = value_source.value[1]
-              }
-            }
-          }
-        }
-      }
-
-      ports {
-        name           = "http1"
-        container_port = 8080
-      }
-
-      resources {
-        cpu_idle          = true
-        startup_cpu_boost = true
-        limits = {
-          cpu    = "1000m"
-          memory = "512Mi"
-        }
-      }
-
-      startup_probe {
-        failure_threshold = 40
-        period_seconds    = 3
-        timeout_seconds   = 3
-        http_get {
-          path = "/readyz"
-          port = 8080
-        }
-      }
-
-      volume_mounts {
-        name       = "cloudsql"
-        mount_path = "/cloudsql"
-      }
-    }
-
-    volumes {
-      name = "cloudsql"
-      cloud_sql_instance {
-        instances = [local.cloud_sql]
-      }
-    }
-  }
-
-  lifecycle {
-    ignore_changes = [client, client_version, traffic, template[0].labels, template[0].containers[0].image]
-  }
-}
-
 # --- Public site ---------------------------------------------------------------
 
 # Public site at www.noribot.chat, built from site/. Releases ship its image.
@@ -734,8 +482,8 @@ resource "google_cloud_run_v2_service_iam_member" "site_public" {
 }
 
 # --- Domains -------------------------------------------------------------------
-# DNS for noribot.chat is hosted at Porkbun: the apex, app and www point at
-# ghs.googlehosted.com, and relay points at the Home AI edge address.
+# DNS for noribot.chat is hosted at Porkbun: the apex, app, www, and relay all
+# point at ghs.googlehosted.com.
 
 # The bare domain serves the public site, whose nginx sends site pages to www and
 # every other path to app.noribot.chat with a 308.

@@ -23,8 +23,6 @@ locals {
   # secretAccessor role in iam.tf.
   secret_readers = {
     "exa-runtime"            = { secret = "nori-exa-api-key", member = google_service_account.nori_runtime.member }
-    "home-ai-db-relay"       = { secret = "nori-home-ai-db-url", member = google_service_account.nori_home_ai_relay.member }
-    "home-ai-key-relay"      = { secret = "nori-home-ai-key", member = google_service_account.nori_home_ai_relay.member }
     "home-ai-key-runtime"    = { secret = "nori-home-ai-key", member = google_service_account.nori_runtime.member }
     "mac-identities-web-mac" = { secret = "nori-mac-google-identities", member = google_service_account.nori_web_mac.member }
     "mac-pilot-web-mac"      = { secret = "nori-mac-pilot-identities", member = google_service_account.nori_web_mac.member }
