@@ -7,21 +7,25 @@ REGION="${GCP_REGION:-us-central1}"
 REGISTRY="${REGION}-docker.pkg.dev/${PROJECT}/${GCP_AR_REPO:-nori-poc}"
 REPO_SLUG="${NORI_GITHUB_REPO:-a-barwick/nori}"
 MIGRATION_JOB="${NORI_GCP_MIGRATION_JOB:-nori-migrate}"
+BAKE_SECONDS_SET="${NORI_RELEASE_BAKE_SECONDS+set}"
+BAKE_INTERVAL_SET="${NORI_RELEASE_BAKE_INTERVAL+set}"
 BAKE_SECONDS="${NORI_RELEASE_BAKE_SECONDS:-600}"
 BAKE_INTERVAL="${NORI_RELEASE_BAKE_INTERVAL:-30}"
 
 usage() {
   cat <<'USAGE'
 Release Nori Core, Web and the public site to Cloud Run. The Release workflow runs this
-every three hours and on demand with --latest-green.
+every three hours and on demand with --latest-green (using --quick for manual runs).
 
 Usage:
-  scripts/release.sh [--latest-green] [--dry-run] [--core] [--web] [--site] [--force-unverified]
+  scripts/release.sh [--latest-green] [--quick] [--dry-run] [--core] [--web] [--site] [--force-unverified]
   scripts/release.sh rollback core|web|site|all
 
 Releases HEAD (or NORI_RELEASE_SHA) using the images CI built for that commit.
 --latest-green instead picks the newest commit on main whose CI checks passed and whose
 core and web images exist.
+--quick skips the Deep Deterministic Simulation CI gate and uses a 60s bake by default
+(instead of 600s).
 Only groups whose code changed since the live release ship; --core / --web / --site force a group.
   core: nori-migrate job, then nori-core (API) and nori-worker
   web:  nori-web and nori-web-mac (same image)
@@ -29,7 +33,7 @@ Only groups whose code changed since the live release ship; --core / --web / --s
         or the service doesn't exist yet.
 Each service is staged with no traffic and must pass its HTTP startup probe and checks
 before promotion. Promoted revisions are then watched for NORI_RELEASE_BAKE_SECONDS
-(default 600); any 5xx or crash reverts that group to its previous revision.
+(default 600, or 60 with --quick); any 5xx or crash reverts that group to its previous revision.
 USAGE
 }
 
@@ -133,6 +137,7 @@ FORCE_WEB=0
 FORCE_SITE=0
 FORCE_UNVERIFIED=0
 LATEST_GREEN=0
+QUICK=0
 if [[ "${1:-}" == rollback ]]; then
   [[ "$#" -eq 2 ]] || { usage >&2; exit 2; }
   rollback "$2"
@@ -146,10 +151,16 @@ for arg in "$@"; do
     --site) FORCE_SITE=1 ;;
     --force-unverified) FORCE_UNVERIFIED=1 ;;
     --latest-green) LATEST_GREEN=1 ;;
+    --quick) QUICK=1 ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
   esac
 done
+
+if [[ "$QUICK" -eq 1 ]]; then
+  [[ -n "$BAKE_SECONDS_SET" ]] || BAKE_SECONDS=60
+  [[ -n "$BAKE_INTERVAL_SET" ]] || BAKE_INTERVAL=15
+fi
 
 cd "${NORI_RELEASE_REPO:-$SCRIPT_DIR/..}"
 CI_STATUS="${NORI_CI_STATUS_CMD:-$SCRIPT_DIR/ci-status.sh}"
@@ -161,7 +172,11 @@ fi
 
 ci_green() {
   [[ "${NORI_RELEASE_CI_GATED:-}" == 1 ]] && return 0
-  NORI_GITHUB_REPO="$REPO_SLUG" "$CI_STATUS" "$1" --exclude-job "Swift package and iOS app" >/dev/null
+  local exclude=(--exclude-job "Swift package and iOS app")
+  if [[ "$QUICK" -eq 1 ]]; then
+    exclude+=(--exclude-job "Deep Deterministic Simulation")
+  fi
+  NORI_GITHUB_REPO="$REPO_SLUG" "$CI_STATUS" "$1" "${exclude[@]}" >/dev/null
 }
 # The site image is optional: commits from before site/ existed, or whose site build
 # failed, still release core and web.

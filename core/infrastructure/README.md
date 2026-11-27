@@ -42,20 +42,21 @@ Terraform ignores each service's image, its `nori-commit` and `nori-prev` labels
 
 ## Cloud Run release
 
-After CI's checks pass on a `main` commit, the **Build images** job pushes `nori-core:<sha>` and `nori-web:<sha>` to Artifact Registry. When `site/Dockerfile` exists, the same job then pushes `nori-site:<sha>` in a separate step, so a failed site build leaves the core and web images in place. The **Release** workflow runs every three hours. It also runs when someone presses **Run workflow** on the Release workflow's Actions page, or runs `gh workflow run release.yml`. The workflow runs [`scripts/release.sh --latest-green`](../../scripts/release.sh), which picks the newest `main` commit with passing checks and built core and web images. A missing `nori-site` image doesn't stop core or web from releasing. GitHub authenticates to GCP through Workload Identity Federation (pool `github`), which accepts only `a-barwick/nori` on `main`.
+After CI's fast checks (`Check`, `Web Build, Browser E2E & Full-Stack Smoke`, `Go Race Tests`, and `Postgres 18 Integration`) pass on a `main` commit, the **Build images** job pushes `nori-core:<sha>` and `nori-web:<sha>` to Artifact Registry without waiting for `Deep Deterministic Simulation`. When `site/Dockerfile` exists, the same job then pushes `nori-site:<sha>` in a separate step, so a failed site build leaves the core and web images in place. The **Release** workflow runs every three hours with full checks (including `Deep Deterministic Simulation`) and a 10-minute bake. It also runs on demand when someone presses **Run workflow** on the Release workflow's Actions page, or runs `gh workflow run release.yml`, defaulting to `--quick` (skips the `Deep Deterministic Simulation` gate and bakes for 60 seconds; pass `quick=false` for a full release). Both paths run [`scripts/release.sh --latest-green`](../../scripts/release.sh), which picks the newest `main` commit with passing checks and built core and web images. A missing `nori-site` image doesn't stop core or web from releasing. GitHub authenticates to GCP through Workload Identity Federation (pool `github`), which accepts only `a-barwick/nori` on `main`.
 
 | Step | What happens |
 | --- | --- |
 | Choose services | Each revision carries a `nori-commit` label. A change under `core/` or `contracts/` releases the migration job, `nori-core` and `nori-worker`. A change under `web/` or `contracts/` releases `nori-web` and `nori-web-mac`, which share one image. A change under `site/` releases `nori-site`. The release skips `nori-site` when the commit has no `nori-site` image. |
 | Stage | Each service gets a new revision with no traffic. The revision must pass its HTTP startup probe (`/readyz`, `/api/health` or `/healthz`). `nori-core` must also return 200 from `/readyz` on its tagged URL, `nori-web-mac` must return 403 to anonymous requests, and `nori-site` must return 200 from `/` and `/privacy` to anonymous requests. Cloud Run reserves `/healthz` on public URLs, so only the startup probe uses it. |
 | Promote | Each staged revision receives all traffic. |
-| Watch | For 10 minutes, a 5xx or container crash from a new revision moves its services back to the revisions named in their `nori-prev` labels. |
+| Watch | For 10 minutes (60 seconds with `--quick`), a 5xx or container crash from a new revision moves its services back to the revisions named in their `nori-prev` labels. |
 
 Migrations may only add schema, and `TestMigrationsOnlyAddSchema` fails on a drop or rename. A reverted revision therefore runs against a schema it supports. Removals and renames ship later, in a `*_cleanup.sql` migration.
 
 | Command | Effect |
 | --- | --- |
 | `scripts/release.sh --dry-run` | Prints which services would ship. It refuses a commit that isn't on `origin/main` or whose CI checks haven't passed. |
+| `scripts/release.sh --quick` | Skips the `Deep Deterministic Simulation` CI gate and uses a 60-second bake. |
 | `scripts/release.sh --force-unverified` | Skips the CI check. |
 | `scripts/release.sh --core`, `--web` or `--site` | Releases that group even if its code is unchanged. `--site` fails if the commit has no `nori-site` image. |
 | `scripts/release.sh rollback core\|web\|site\|all` | Moves each service in the group back to its previous revision. |

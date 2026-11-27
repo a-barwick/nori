@@ -34,6 +34,7 @@ function fixture(
     failLogReads = 0,
     args = [],
     green = null,
+    bakeSeconds = "0",
   } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), "nori-release-test-"));
@@ -93,7 +94,7 @@ case "$1 $2 $3" in
     [ -z "$FIXTURE_BAD" ] || printf '%s\\n' $FIXTURE_BAD ;;
 esac
 exit 0`);
-  command("ci-status", `for sha in $FIXTURE_GREEN; do [ "$sha" = "$1" ] && exit 0; done; exit 1`);
+  command("ci-status", `printf 'ci-status %s\\n' "$*" >> "$FIXTURE_LOG"\nfor sha in $FIXTURE_GREEN; do [ "$sha" = "$1" ] && exit 0; done; exit 1`);
   command("curl", `
 url="\${@: -1}"
 case "$url" in
@@ -104,30 +105,33 @@ case "$url" in
   *) printf 403 ;;
 esac`);
 
+  const env = {
+    PATH: `${bin}:${process.env.PATH}`,
+    HOME: dir,
+    FIXTURE_LOG: log,
+    FIXTURE_TAG: `release-${released.slice(0, 12)}`,
+    FIXTURE_GREEN: (greenCommits ?? []).join(" "),
+    NORI_CI_STATUS_CMD: join(bin, "ci-status"),
+    FIXTURE_LIVE: liveCommit,
+    FIXTURE_FAIL_DEPLOY: failDeploy,
+    FIXTURE_BAD: badRevisions,
+    FIXTURE_WEB_ROOT_STATUS: webRootStatus,
+    FIXTURE_SITE_ROOT_STATUS: siteRootStatus,
+    FIXTURE_MISSING_IMAGES: missingImages,
+    FIXTURE_MISSING_SERVICES: missingServices,
+    FIXTURE_FAIL_LOG_READS: String(failLogReads),
+    FIXTURE_LOG_FAIL_FILE: join(dir, "log-fail-count"),
+    GITHUB_ACTIONS: "true",
+    NORI_RELEASE_CI_GATED: greenCommits ? "0" : "1",
+    NORI_RELEASE_REPO: repo,
+    NORI_RELEASE_LOG_RETRY_SLEEP: "0",
+  };
+  if (bakeSeconds !== null) {
+    env.NORI_RELEASE_BAKE_SECONDS = bakeSeconds;
+  }
   const result = spawnSync("bash", [release, ...args], {
     encoding: "utf8",
-    env: {
-      PATH: `${bin}:${process.env.PATH}`,
-      HOME: dir,
-      FIXTURE_LOG: log,
-      FIXTURE_TAG: `release-${released.slice(0, 12)}`,
-      FIXTURE_GREEN: (greenCommits ?? []).join(" "),
-      NORI_CI_STATUS_CMD: join(bin, "ci-status"),
-      FIXTURE_LIVE: liveCommit,
-      FIXTURE_FAIL_DEPLOY: failDeploy,
-      FIXTURE_BAD: badRevisions,
-      FIXTURE_WEB_ROOT_STATUS: webRootStatus,
-      FIXTURE_SITE_ROOT_STATUS: siteRootStatus,
-      FIXTURE_MISSING_IMAGES: missingImages,
-      FIXTURE_MISSING_SERVICES: missingServices,
-      FIXTURE_FAIL_LOG_READS: String(failLogReads),
-      FIXTURE_LOG_FAIL_FILE: join(dir, "log-fail-count"),
-      GITHUB_ACTIONS: "true",
-      NORI_RELEASE_CI_GATED: greenCommits ? "0" : "1",
-      NORI_RELEASE_REPO: repo,
-      NORI_RELEASE_BAKE_SECONDS: "0",
-      NORI_RELEASE_LOG_RETRY_SLEEP: "0",
-    },
+    env,
   });
   const calls = readFileSync(log, "utf8");
   return { result, calls, head, released, deployed: [...calls.matchAll(/gcloud run deploy (\S+)/g)].map((m) => m[1]) };
@@ -337,4 +341,22 @@ fi`,
   const excluded = spawnSync("bash", [ciStatus, "a".repeat(40), "--exclude-job", "Swift package and iOS app"], { encoding: "utf8", env });
   assert.equal(excluded.status, 0, excluded.stderr + excluded.stdout);
   assert.equal(excluded.stdout.trim(), "success");
+});
+
+test("--quick excludes Deep Deterministic Simulation from CI status and defaults bake to 60s", (t) => {
+  const normal = fixture(t, { change: ["web/page.tsx"], green: [0], args: ["--latest-green"] });
+  assert.equal(normal.result.status, 0, normal.result.stderr + normal.result.stdout);
+  assert.match(normal.calls, /ci-status [0-9a-f]{40} --exclude-job Swift package and iOS app\n/);
+  assert.doesNotMatch(normal.calls, /Deep Deterministic Simulation/);
+
+  const quick = fixture(t, {
+    change: ["web/page.tsx"],
+    green: [0],
+    args: ["--latest-green", "--quick"],
+    bakeSeconds: null,
+    badRevisions: "nori-web-new",
+  });
+  assert.equal(quick.result.status, 1);
+  assert.match(quick.calls, /ci-status [0-9a-f]{40} --exclude-job Swift package and iOS app --exclude-job Deep Deterministic Simulation\n/);
+  assert.match(quick.result.stdout, /Baking nori-web nori-web-mac for 60s/);
 });
