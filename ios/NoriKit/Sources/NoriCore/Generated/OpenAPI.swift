@@ -6830,6 +6830,7 @@ public enum OpenAPI {
         }
 
         public var id: String
+        public var title: String?
         public var status: OpenAPI.RunStatus
         public var cancelRequested: Bool
         public var origin: OpenAPI.TaskOrigin?
@@ -6860,6 +6861,7 @@ public enum OpenAPI {
 
         public init(
             id: String,
+            title: String? = nil,
             status: OpenAPI.RunStatus,
             cancelRequested: Bool,
             origin: OpenAPI.TaskOrigin? = nil,
@@ -6889,6 +6891,7 @@ public enum OpenAPI {
             artifacts: [OpenAPI.Artifact]? = nil
         ) {
             self.id = id
+            self.title = title
             self.status = status
             self.cancelRequested = cancelRequested
             self.origin = origin
@@ -6920,6 +6923,7 @@ public enum OpenAPI {
 
         enum CodingKeys: String, CodingKey {
             case id
+            case title
             case status
             case cancelRequested = "cancel_requested"
             case origin

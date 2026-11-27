@@ -43,6 +43,7 @@ export function RuntimeComposer({
   onAttach,
   onRetryFile,
   onRemoveFile,
+  focusSignal,
 }: {
   accept?: string;
   draft: string;
@@ -55,6 +56,7 @@ export function RuntimeComposer({
   onAttach: (files: File[]) => void;
   onRetryFile: (file: DraftFile) => void;
   onRemoveFile: (id: string) => void;
+  focusSignal?: number;
 }) {
   const [notice, setNotice] = useState("");
   const [dragging, setDragging] = useState(false);
@@ -84,6 +86,16 @@ export function RuntimeComposer({
       el.setSelectionRange(el.value.length, el.value.length);
     });
   }, []);
+
+  useEffect(() => {
+    if (!focusSignal) return;
+    requestAnimationFrame(() => {
+      const el = area.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    });
+  }, [focusSignal]);
 
   useLayoutEffect(() => {
     const el = area.current;

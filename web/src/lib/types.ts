@@ -52,6 +52,7 @@ export type PendingTaskCommand = { command: TaskCommand; started: number; sendin
 export type Artifact = { id: string; kind: "screenshot" };
 export type Run = {
   id: string;
+  title?: string;
   status: RunStatus;
   cancel_requested: boolean;
   finishing?: { status: RunStatus };

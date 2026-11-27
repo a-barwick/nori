@@ -86,3 +86,18 @@ func TestTextPartsSegmentsCoverPageAndTrailingNarrative(t *testing.T) {
 		t.Fatalf("forced bubble parts = %+v", forced)
 	}
 }
+
+func TestTaskTitleAndShortTaskTitle(t *testing.T) {
+	if got := TaskTitle(Run{Title: "  Nova project presentation  ", Request: "Create a long prompt..."}); got != "Nova project presentation" {
+		t.Fatalf("explicit title = %q, want %q", got, "Nova project presentation")
+	}
+	if got := ShortTaskTitle(`Create a presentation about Nova, the user's internal enterprise project. Gather details about Nova from the docs.`); got != "Create a presentation about Nova" {
+		t.Fatalf("nova presentation fallback = %q", got)
+	}
+	if got := ShortTaskTitle(`Set a reminder for the user to check the status on the Nova project "later" (the user's words). If "later" is too vague to schedule, ask.`); got != `Set a reminder to check the status on the Nova project "later"` {
+		t.Fatalf("nova reminder fallback = %q", got)
+	}
+	if got := ShortTaskTitle(""); got != "Task" {
+		t.Fatalf("empty fallback = %q, want Task", got)
+	}
+}

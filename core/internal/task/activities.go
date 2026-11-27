@@ -543,7 +543,7 @@ func (a *Activities) Ask(ctx context.Context, p QuestionProjection) (err error) 
 			p.Question.Interactive = true
 		} else if isStructuredQuestion(p.Question) {
 			revision := p.Revision
-			title := clip(run.Request, 200)
+			title := state.TaskTitle(run)
 			if _, err := a.Executor.Permissions.Open(ctx, permissions.Interaction{
 				ID: p.Question.ID, TaskID: p.RunID, InstructionRevision: &revision, Kind: "question", Prompt: p.Question.Text,
 				Payload: questionPayloadJSON(p.Question), LegacyQuestionID: p.Question.ID, TaskTitle: title,

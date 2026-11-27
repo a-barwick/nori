@@ -46,6 +46,7 @@ type Command struct {
 	RunID          string          `json:"run_id" firestore:"run_id"`
 	ParentID       string          `json:"parent_id,omitempty" firestore:"parent_id,omitempty"`
 	Kind           CommandKind     `json:"kind" firestore:"kind"`
+	Title          string          `json:"title,omitempty" firestore:"title,omitempty"`
 	Text           string          `json:"text" firestore:"text"`
 	Position       int64           `json:"position" firestore:"position"`
 	Revision       int64           `json:"revision" firestore:"revision"`
@@ -282,7 +283,7 @@ func (p *commandPrep) start(cmd Command) (Run, error) {
 		return Run{}, fmt.Errorf("%w: start needs a task request", ErrCommandInvalid)
 	}
 	run := Run{
-		ID: cmd.RunID, Request: cmd.Text, Status: RunRunning,
+		ID: cmd.RunID, Title: TaskTitle(Run{Title: cmd.Title, Request: cmd.Text}), Request: cmd.Text, Status: RunRunning,
 		StartedAt: p.now, Budget: p.taskBudgetUSD, Events: []Event{}, Artifacts: []Artifact{},
 		TraceContext: p.traceContext, OriginTraceContext: p.traceContext, Revises: cmd.Revises, Origin: cmd.Origin,
 		ModelSelection: cmd.ModelSelection.Clone(),

@@ -41,7 +41,7 @@ export function ChatScreen() {
   const { draft, draftFiles, streamingDelta } = useChatLive();
   const accepted = capabilities?.upload_accept;
   const uploadAccept = accepted ? [...accepted.media_types, ...(accepted.extensions ?? [])].join(",") : undefined;
-  const { session, pending, activeTasks, selected, loading, error, reconnecting } = runtime;
+  const { session, pending, activeTasks, loading, error, reconnecting } = runtime;
   const pendingInteractions = usePendingInteractions();
   const modelKeys = useResource<ModelKeysResponse>("/settings/model-keys", { poll: 60_000, versioned: false });
   const models = useResource<ModelSettings>("/settings/models", { poll: 60_000 });
@@ -59,8 +59,13 @@ export function ChatScreen() {
   );
   const [document, setDocument] = useState<{ body: string; at: number } | null>(null);
   const [activityOpen, setActivityOpen] = useState(false);
+  const [composerFocusTick, setComposerFocusTick] = useState(0);
   const closePanel = useCallback(() => setActivityOpen(false), []);
   const togglePanel = useCallback(() => setActivityOpen((open) => !open), []);
+  const replyInChat = useCallback(() => {
+    setActivityOpen(false);
+    setComposerFocusTick((n) => n + 1);
+  }, []);
   const [unread, setUnread] = useState<{ count: number; jump: () => void }>({
     count: 0,
     jump: () => {},
@@ -147,18 +152,14 @@ export function ChatScreen() {
   const panel = (
     <TaskPanel
       session={session}
-      selected={selected}
       pending={pending.length > 0}
       loading={loading}
       error={error}
       unavailable={runtime.tasksUnavailable}
-      onSelect={runtime.setSelectedId}
       onRefresh={() => void runtime.refreshHistory()}
       onClose={closePanel}
-      debug={debug}
+      onReplyInChat={replyInChat}
       commands={runtime.taskCommands}
-      drafts={runtime.taskDrafts}
-      onDraft={runtime.setTaskDraft}
       onCommand={runtime.commandTask}
       onRetryCommand={runtime.retryTaskCommand}
       onDismissCommand={runtime.dismissTaskCommand}
@@ -294,6 +295,7 @@ export function ChatScreen() {
         onRemoveFile={runtime.removeFile}
         unread={unread.count}
         onJump={unread.jump}
+        focusSignal={composerFocusTick}
       />
 
       <DocumentViewer document={document} onClose={() => setDocument(null)} />

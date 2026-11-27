@@ -388,7 +388,7 @@ func (a *Activities) requestApproval(ctx context.Context, in ToolInput, run stat
 	}
 	interaction, err := a.Executor.Permissions.Open(ctx, permissions.Interaction{
 		ID: interactionID("int_", in.OperationID, plan.digest), TaskID: in.RunID, InstructionRevision: &revision, Kind: "approval",
-		Prompt: prompt, Payload: data, ActionDigest: plan.digest, ExpiresAt: &expires, TaskTitle: clip(run.Request, 200),
+		Prompt: prompt, Payload: data, ActionDigest: plan.digest, ExpiresAt: &expires, TaskTitle: state.TaskTitle(run),
 		ConnectionID: connectionID, ToolID: toolID, ToolTitle: toolTitle, ActionClass: string(plan.prepared.Effect), Recipients: plan.prepared.Recipients,
 	}, "")
 	if err != nil {
@@ -414,7 +414,7 @@ func (a *Activities) chooseAccount(ctx context.Context, in ToolInput, run state.
 	prompt := fmt.Sprintf("Which account should Nori use for %s?", choose.Purpose)
 	interaction, err := a.Executor.Permissions.Open(ctx, permissions.Interaction{
 		ID: interactionID("int_", in.OperationID, "account:"+choose.Purpose), TaskID: in.RunID, InstructionRevision: &revision,
-		Kind: "account_selection", Prompt: prompt, Payload: data, TaskTitle: clip(run.Request, 200),
+		Kind: "account_selection", Prompt: prompt, Payload: data, TaskTitle: state.TaskTitle(run),
 	}, choose.Purpose)
 	if err != nil {
 		return nil, err
@@ -460,7 +460,7 @@ func (a *Activities) signIn(ctx context.Context, in ToolInput, run state.Run, re
 	data, _ := json.Marshal(payload)
 	interaction, err := a.Executor.Permissions.Open(ctx, permissions.Interaction{
 		ID: interactionID("int_", in.OperationID, "sign_in:"+record.ID), TaskID: in.RunID, InstructionRevision: &revision,
-		Kind: "sign_in", Prompt: prompt, Payload: data, TaskTitle: clip(run.Request, 200),
+		Kind: "sign_in", Prompt: prompt, Payload: data, TaskTitle: state.TaskTitle(run),
 	}, "")
 	if err != nil {
 		return nil, err
@@ -477,7 +477,7 @@ func (a *Activities) signInStarted(ctx context.Context, in ToolInput, run state.
 		"auth_attempt_id": start.AttemptID, "authorize_url": start.AuthorizeURL, "expires_at": start.ExpiresAt, "return_to": "/work/" + in.RunID})
 	interaction, err := a.Executor.Permissions.Open(ctx, permissions.Interaction{
 		ID: interactionID("int_", in.OperationID, "sign_in:"+start.ConnectionID), TaskID: in.RunID, InstructionRevision: &revision,
-		Kind: "sign_in", Prompt: prompt, Payload: data, TaskTitle: clip(run.Request, 200),
+		Kind: "sign_in", Prompt: prompt, Payload: data, TaskTitle: state.TaskTitle(run),
 	}, "")
 	if err != nil {
 		return nil, err
