@@ -13,20 +13,31 @@ const (
 	PartImage      = "image"
 	PartLink       = "link"
 	PartReminder   = "reminder"
+	PartBrief      = "brief"
 )
 
+type BriefItem struct {
+	Title         string `json:"title" firestore:"title"`
+	Trailing      string `json:"trailing,omitempty" firestore:"trailing,omitempty"`
+	InteractionID string `json:"interaction_id,omitempty" firestore:"interaction_id,omitempty"`
+	ActionLabel   string `json:"action_label,omitempty" firestore:"action_label,omitempty"`
+}
+
 type Part struct {
-	Type        string `json:"type" firestore:"type"`
-	Title       string `json:"title,omitempty" firestore:"title,omitempty"`
-	Text        string `json:"text,omitempty" firestore:"text,omitempty"`
-	Display     string `json:"display,omitempty" firestore:"display,omitempty"`
-	Fallback    string `json:"fallback,omitempty" firestore:"fallback,omitempty"`
-	ID          string `json:"id,omitempty" firestore:"id,omitempty"`
-	Name        string `json:"name,omitempty" firestore:"name,omitempty"`
-	MediaType   string `json:"media_type,omitempty" firestore:"media_type,omitempty"`
-	Size        int64  `json:"size,omitempty" firestore:"size,omitempty"`
-	URL         string `json:"url,omitempty" firestore:"url,omitempty"`
-	ScheduledAt string `json:"scheduled_at,omitempty" firestore:"scheduled_at,omitempty"`
+	Type        string      `json:"type" firestore:"type"`
+	Title       string      `json:"title,omitempty" firestore:"title,omitempty"`
+	Text        string      `json:"text,omitempty" firestore:"text,omitempty"`
+	Display     string      `json:"display,omitempty" firestore:"display,omitempty"`
+	Fallback    string      `json:"fallback,omitempty" firestore:"fallback,omitempty"`
+	ID          string      `json:"id,omitempty" firestore:"id,omitempty"`
+	Name        string      `json:"name,omitempty" firestore:"name,omitempty"`
+	MediaType   string      `json:"media_type,omitempty" firestore:"media_type,omitempty"`
+	Size        int64       `json:"size,omitempty" firestore:"size,omitempty"`
+	URL         string      `json:"url,omitempty" firestore:"url,omitempty"`
+	ScheduledAt string      `json:"scheduled_at,omitempty" firestore:"scheduled_at,omitempty"`
+	Greeting    string      `json:"greeting,omitempty" firestore:"greeting,omitempty"`
+	Meta        string      `json:"meta,omitempty" firestore:"meta,omitempty"`
+	Items       []BriefItem `json:"items,omitempty" firestore:"items,omitempty"`
 }
 
 const (

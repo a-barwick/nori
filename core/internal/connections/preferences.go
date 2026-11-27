@@ -4,25 +4,40 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"time"
 
 	"nori/internal/state"
 )
 
+const (
+	PushPolicyUrgentAndApprovals = "urgent_and_approvals"
+	PushPolicyIncludeBrief       = "include_brief"
+	PushPolicyQuietOnly          = "quiet_only"
+
+	DefaultQuietHoursStart         = "21:00"
+	DefaultQuietHoursEnd           = "07:30"
+	DefaultMorningBriefTime        = "08:00"
+	DefaultDailyProactiveBudgetUSD = 1.0
+)
+
+var hhmmRe = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
+
 type Preferences struct {
-	Revision              int64             `json:"revision"`
-	Timezone              string            `json:"timezone"`
-	Locale                string            `json:"locale,omitempty"`
-	WorkingHours          WorkingHours      `json:"working_hours"`
-	QuietHours            *QuietHours       `json:"quiet_hours,omitempty"`
-	DefaultDestinationIDs []string          `json:"default_destination_ids"`
-	AccountDefaults       map[string]string `json:"account_defaults"`
-	Budgets               Budgets           `json:"budgets"`
-	Input                 *InputPreferences `json:"input,omitempty"`
-	OnboardingCompletedAt *time.Time        `json:"onboarding_completed_at,omitempty"`
-	DataResetAt           string            `json:"data_reset_at,omitempty"`
-	DataResetPending      bool              `json:"data_reset_pending,omitempty"`
-	UpdatedAt             *time.Time        `json:"updated_at,omitempty"`
+	Revision              int64                   `json:"revision"`
+	Timezone              string                  `json:"timezone"`
+	Locale                string                  `json:"locale,omitempty"`
+	WorkingHours          WorkingHours            `json:"working_hours"`
+	QuietHours            *QuietHours             `json:"quiet_hours,omitempty"`
+	DefaultDestinationIDs []string                `json:"default_destination_ids"`
+	AccountDefaults       map[string]string       `json:"account_defaults"`
+	Budgets               Budgets                 `json:"budgets"`
+	Input                 *InputPreferences       `json:"input,omitempty"`
+	Proactivity           *ProactivityPreferences `json:"proactivity,omitempty"`
+	OnboardingCompletedAt *time.Time              `json:"onboarding_completed_at,omitempty"`
+	DataResetAt           string                  `json:"data_reset_at,omitempty"`
+	DataResetPending      bool                    `json:"data_reset_pending,omitempty"`
+	UpdatedAt             *time.Time              `json:"updated_at,omitempty"`
 }
 
 type WorkingHours []WorkingInterval
@@ -34,8 +49,32 @@ type WorkingInterval struct {
 }
 
 type QuietHours struct {
-	Start string `json:"start"`
-	End   string `json:"end"`
+	Enabled *bool  `json:"enabled,omitempty"`
+	Start   string `json:"start"`
+	End     string `json:"end"`
+}
+
+// IsEnabled reports whether quiet hours are enabled (defaults to true when Enabled is nil).
+func (q *QuietHours) IsEnabled() bool {
+	if q == nil || q.Enabled == nil {
+		return true
+	}
+	return *q.Enabled
+}
+
+type ProactivityPreferences struct {
+	PushPolicy              string  `json:"push_policy,omitempty"`
+	MorningBriefTime        string  `json:"morning_brief_time,omitempty"`
+	MorningBriefEnabled     *bool   `json:"morning_brief_enabled,omitempty"`
+	DailyProactiveBudgetUSD float64 `json:"daily_proactive_budget_usd,omitempty"`
+}
+
+// IsMorningBriefEnabled reports whether the Morning Brief is enabled (defaults to true when nil).
+func (p *ProactivityPreferences) IsMorningBriefEnabled() bool {
+	if p == nil || p.MorningBriefEnabled == nil {
+		return true
+	}
+	return *p.MorningBriefEnabled
 }
 
 type Budgets struct {
@@ -48,21 +87,148 @@ type InputPreferences struct {
 }
 
 type PreferencesEditable struct {
-	Timezone              string            `json:"timezone"`
-	Locale                string            `json:"locale,omitempty"`
-	WorkingHours          WorkingHours      `json:"working_hours"`
-	QuietHours            *QuietHours       `json:"quiet_hours,omitempty"`
-	DefaultDestinationIDs []string          `json:"default_destination_ids"`
-	AccountDefaults       map[string]string `json:"account_defaults"`
-	Budgets               Budgets           `json:"budgets"`
-	Input                 *InputPreferences `json:"input,omitempty"`
-	OnboardingCompletedAt *time.Time        `json:"onboarding_completed_at,omitempty"`
+	Timezone              string                  `json:"timezone"`
+	Locale                string                  `json:"locale,omitempty"`
+	WorkingHours          WorkingHours            `json:"working_hours"`
+	QuietHours            *QuietHours             `json:"quiet_hours,omitempty"`
+	DefaultDestinationIDs []string                `json:"default_destination_ids"`
+	AccountDefaults       map[string]string       `json:"account_defaults"`
+	Budgets               Budgets                 `json:"budgets"`
+	Input                 *InputPreferences       `json:"input,omitempty"`
+	Proactivity           *ProactivityPreferences `json:"proactivity,omitempty"`
+	OnboardingCompletedAt *time.Time              `json:"onboarding_completed_at,omitempty"`
 }
 
 var (
 	DefaultTimezone   = "UTC"
 	DefaultTaskBudget = 5.0
 )
+
+func boolPtr(v bool) *bool { return &v }
+
+func defaultQuietHours() *QuietHours {
+	return &QuietHours{
+		Enabled: boolPtr(true),
+		Start:   DefaultQuietHoursStart,
+		End:     DefaultQuietHoursEnd,
+	}
+}
+
+func defaultProactivityPreferences() *ProactivityPreferences {
+	return &ProactivityPreferences{
+		PushPolicy:              PushPolicyUrgentAndApprovals,
+		MorningBriefTime:        DefaultMorningBriefTime,
+		MorningBriefEnabled:     boolPtr(true),
+		DailyProactiveBudgetUSD: DefaultDailyProactiveBudgetUSD,
+	}
+}
+
+// EffectiveQuietHours returns quiet hours with read-time defaults applied.
+func (p Preferences) EffectiveQuietHours() QuietHours {
+	if p.QuietHours == nil {
+		return *defaultQuietHours()
+	}
+	q := *p.QuietHours
+	if q.Enabled == nil {
+		q.Enabled = boolPtr(true)
+	}
+	if q.Start == "" {
+		q.Start = DefaultQuietHoursStart
+	}
+	if q.End == "" {
+		q.End = DefaultQuietHoursEnd
+	}
+	return q
+}
+
+// EffectiveProactivity returns proactivity preferences with read-time defaults applied.
+func (p Preferences) EffectiveProactivity() ProactivityPreferences {
+	if p.Proactivity == nil {
+		return *defaultProactivityPreferences()
+	}
+	out := *p.Proactivity
+	if out.PushPolicy == "" {
+		out.PushPolicy = PushPolicyUrgentAndApprovals
+	}
+	if out.MorningBriefTime == "" {
+		out.MorningBriefTime = DefaultMorningBriefTime
+	}
+	if out.MorningBriefEnabled == nil {
+		out.MorningBriefEnabled = boolPtr(true)
+	}
+	if out.DailyProactiveBudgetUSD <= 0 {
+		out.DailyProactiveBudgetUSD = DefaultDailyProactiveBudgetUSD
+	}
+	return out
+}
+
+func applyReadDefaults(prefs *Preferences) {
+	if prefs.AccountDefaults == nil {
+		prefs.AccountDefaults = map[string]string{}
+	}
+	if prefs.WorkingHours == nil {
+		prefs.WorkingHours = WorkingHours{}
+	}
+	if prefs.DefaultDestinationIDs == nil {
+		prefs.DefaultDestinationIDs = []string{}
+	}
+	if prefs.QuietHours == nil {
+		prefs.QuietHours = defaultQuietHours()
+	} else {
+		if prefs.QuietHours.Enabled == nil {
+			prefs.QuietHours.Enabled = boolPtr(true)
+		}
+		if prefs.QuietHours.Start == "" {
+			prefs.QuietHours.Start = DefaultQuietHoursStart
+		}
+		if prefs.QuietHours.End == "" {
+			prefs.QuietHours.End = DefaultQuietHoursEnd
+		}
+	}
+	if prefs.Proactivity == nil {
+		prefs.Proactivity = defaultProactivityPreferences()
+	} else {
+		if prefs.Proactivity.PushPolicy == "" {
+			prefs.Proactivity.PushPolicy = PushPolicyUrgentAndApprovals
+		}
+		if prefs.Proactivity.MorningBriefTime == "" {
+			prefs.Proactivity.MorningBriefTime = DefaultMorningBriefTime
+		}
+		if prefs.Proactivity.MorningBriefEnabled == nil {
+			prefs.Proactivity.MorningBriefEnabled = boolPtr(true)
+		}
+		if prefs.Proactivity.DailyProactiveBudgetUSD <= 0 {
+			prefs.Proactivity.DailyProactiveBudgetUSD = DefaultDailyProactiveBudgetUSD
+		}
+	}
+}
+
+func validateProactivity(p *ProactivityPreferences) bool {
+	if p == nil {
+		return true
+	}
+	if p.PushPolicy != "" {
+		switch p.PushPolicy {
+		case PushPolicyUrgentAndApprovals, PushPolicyIncludeBrief, PushPolicyQuietOnly:
+		default:
+			return false
+		}
+	}
+	if p.MorningBriefTime != "" && !hhmmRe.MatchString(p.MorningBriefTime) {
+		return false
+	}
+	if p.DailyProactiveBudgetUSD < 0 {
+		return false
+	}
+	return true
+}
+
+func validateQuietHours(q *QuietHours) bool {
+	if q == nil {
+		return true
+	}
+	return hhmmRe.MatchString(q.Start) && hhmmRe.MatchString(q.End)
+}
 
 func defaultPreferences(zone string) Preferences {
 	if _, err := time.LoadLocation(zone); zone == "" || err != nil {
@@ -71,9 +237,11 @@ func defaultPreferences(zone string) Preferences {
 	return Preferences{
 		Timezone:              zone,
 		WorkingHours:          WorkingHours{{1, "09:00", "17:00"}, {2, "09:00", "17:00"}, {3, "09:00", "17:00"}, {4, "09:00", "17:00"}, {5, "09:00", "17:00"}},
+		QuietHours:            defaultQuietHours(),
 		DefaultDestinationIDs: []string{},
 		AccountDefaults:       map[string]string{},
 		Budgets:               Budgets{TaskUSD: DefaultTaskBudget},
+		Proactivity:           defaultProactivityPreferences(),
 	}
 }
 
@@ -95,20 +263,15 @@ func (s *Service) Preferences(ctx context.Context) (Preferences, state.Resource,
 	prefs.DataResetAt = s.DataResetAt
 	updated := r.UpdatedAt
 	prefs.UpdatedAt = &updated
-	if prefs.AccountDefaults == nil {
-		prefs.AccountDefaults = map[string]string{}
-	}
-	if prefs.WorkingHours == nil {
-		prefs.WorkingHours = WorkingHours{}
-	}
-	if prefs.DefaultDestinationIDs == nil {
-		prefs.DefaultDestinationIDs = []string{}
-	}
+	applyReadDefaults(&prefs)
 	return prefs, r, nil
 }
 
 func (s *Service) SavePreferences(ctx context.Context, requestID string, expected int64, value PreferencesEditable) (state.MutationReceipt, error) {
 	if _, err := time.LoadLocation(value.Timezone); err != nil || value.Budgets.TaskUSD <= 0 {
+		return state.MutationReceipt{}, state.ErrInvalidResource
+	}
+	if !validateQuietHours(value.QuietHours) || !validateProactivity(value.Proactivity) {
 		return state.MutationReceipt{}, state.ErrInvalidResource
 	}
 	return s.Store.Mutate(ctx, state.Mutation{
@@ -133,19 +296,28 @@ func (s *Service) SavePreferences(ctx context.Context, requestID string, expecte
 			}
 			revision := int64(1)
 			onboardingCompletedAt := value.OnboardingCompletedAt
+			quietHours := value.QuietHours
+			proactivity := value.Proactivity
 			if current != nil {
 				revision = current.Revision + 1
-				if onboardingCompletedAt == nil {
-					var existing Preferences
-					if err := current.Decode(&existing); err == nil {
+				var existing Preferences
+				if err := current.Decode(&existing); err == nil {
+					if onboardingCompletedAt == nil {
 						onboardingCompletedAt = existing.OnboardingCompletedAt
+					}
+					if quietHours == nil {
+						quietHours = existing.QuietHours
+					}
+					if proactivity == nil {
+						proactivity = existing.Proactivity
 					}
 				}
 			}
 			prefs := Preferences{
 				Revision: revision, Timezone: value.Timezone, Locale: value.Locale, WorkingHours: value.WorkingHours,
-				QuietHours: value.QuietHours, DefaultDestinationIDs: nonNil(value.DefaultDestinationIDs),
+				QuietHours: quietHours, DefaultDestinationIDs: nonNil(value.DefaultDestinationIDs),
 				AccountDefaults: value.AccountDefaults, Budgets: value.Budgets, Input: value.Input,
+				Proactivity:           proactivity,
 				OnboardingCompletedAt: onboardingCompletedAt,
 			}
 			if prefs.AccountDefaults == nil {
@@ -158,6 +330,7 @@ func (s *Service) SavePreferences(ctx context.Context, requestID string, expecte
 			now := time.Now().UTC()
 			prefs.DataResetAt = s.DataResetAt
 			prefs.UpdatedAt = &now
+			applyReadDefaults(&prefs)
 			data, _ := json.Marshal(prefs)
 			return state.MutationResult{Writes: []state.Resource{r}, Receipt: state.MutationReceipt{Status: "applied", Resource: data, HTTPStatus: 200}}, nil
 		},

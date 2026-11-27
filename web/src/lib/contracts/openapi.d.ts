@@ -1155,6 +1155,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/devices/push": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register or reassign a push notification device token */
+        post: operations["registerPushDevice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/devices/push/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Unregister a push notification device token */
+        delete: operations["unregisterPushDevice"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/settings/model-keys": {
         parameters: {
             query?: never;
@@ -1688,8 +1722,31 @@ export interface components {
         };
         WorkingHours: components["schemas"]["WorkingHoursSlot"][];
         QuietHours: {
+            enabled?: boolean;
             start: string;
             end: string;
+        };
+        /** @enum {string} */
+        PushPolicy: "urgent_and_approvals" | "include_brief" | "quiet_only";
+        ProactivityPreferences: {
+            push_policy?: components["schemas"]["PushPolicy"];
+            morning_brief_time?: string;
+            morning_brief_enabled?: boolean;
+            daily_proactive_budget_usd?: number;
+        };
+        RegisterPushDeviceRequest: {
+            token: string;
+            device_id?: string;
+            /** @enum {string} */
+            environment: "sandbox" | "production";
+        };
+        PushDevice: {
+            id: components["schemas"]["ID"];
+            device_id?: string;
+            /** @enum {string} */
+            environment: "sandbox" | "production";
+            created_at: components["schemas"]["Instant"];
+            updated_at: components["schemas"]["Instant"];
         };
         BudgetPreferences: {
             task_usd: number;
@@ -1710,6 +1767,7 @@ export interface components {
             };
             budgets: components["schemas"]["BudgetPreferences"];
             input?: components["schemas"]["InputPreferences"];
+            proactivity?: components["schemas"]["ProactivityPreferences"];
             onboarding_completed_at?: components["schemas"]["Instant"];
             data_reset_at?: components["schemas"]["Instant"];
             data_reset_pending?: boolean;
@@ -1726,6 +1784,7 @@ export interface components {
             };
             budgets: components["schemas"]["BudgetPreferences"];
             input?: components["schemas"]["InputPreferences"];
+            proactivity?: components["schemas"]["ProactivityPreferences"];
             onboarding_completed_at?: components["schemas"]["Instant"];
         };
         PreferencesChange: {
@@ -1876,8 +1935,15 @@ export interface components {
             models: components["schemas"]["ModelCost"][];
             buckets: components["schemas"]["CostBucket"][];
         };
+        BriefItem: {
+            title: string;
+            trailing?: string;
+            interaction_id?: components["schemas"]["ID"];
+            action_label?: string;
+        };
         Part: {
             type: string;
+            title?: string;
             text?: string;
             /** @enum {string} */
             display?: "page" | "bubble";
@@ -1888,6 +1954,9 @@ export interface components {
             size?: number;
             url?: string;
             scheduled_at?: string;
+            greeting?: string;
+            meta?: string;
+            items?: components["schemas"]["BriefItem"][];
             schema_version?: number;
             kind?: string;
             resource?: {
@@ -2460,6 +2529,10 @@ export interface components {
                 kind: "approve" | "decline";
                 action_digest: string;
                 remember_rule?: boolean;
+                edited_fields?: {
+                    subject?: string;
+                    body?: string;
+                };
             } | {
                 /** @enum {string} */
                 kind: "choose_account";
@@ -5412,6 +5485,52 @@ export interface operations {
             };
             400: components["responses"]["ErrorResponse"];
             409: components["responses"]["ErrorResponse"];
+        };
+    };
+    registerPushDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisterPushDeviceRequest"];
+            };
+        };
+        responses: {
+            /** @description Push device registered */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushDevice"];
+                };
+            };
+            400: components["responses"]["ErrorResponse"];
+        };
+    };
+    unregisterPushDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Push device unregistered */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["ErrorResponse"];
         };
     };
     listModelKeys: {

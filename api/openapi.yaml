@@ -1915,6 +1915,40 @@ paths:
         "409":
           $ref: "#/components/responses/ErrorResponse"
 
+  /v1/devices/push:
+    post:
+      operationId: registerPushDevice
+      tags: [Settings]
+      summary: Register or reassign a push notification device token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterPushDeviceRequest"
+      responses:
+        "200":
+          description: Push device registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushDevice"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v1/devices/push/{id}:
+    delete:
+      operationId: unregisterPushDevice
+      tags: [Settings]
+      summary: Unregister a push notification device token
+      parameters:
+        - $ref: "#/components/parameters/IdParam"
+      responses:
+        "204":
+          description: Push device unregistered
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+
   /v1/settings/model-keys:
     get:
       operationId: listModelKeys
@@ -2791,12 +2825,61 @@ components:
       type: object
       required: [start, end]
       properties:
+        enabled:
+          type: boolean
         start:
           type: string
           pattern: "^([01]\\d|2[0-3]):[0-5]\\d$"
         end:
           type: string
           pattern: "^([01]\\d|2[0-3]):[0-5]\\d$"
+
+    PushPolicy:
+      type: string
+      enum: [urgent_and_approvals, include_brief, quiet_only]
+
+    ProactivityPreferences:
+      type: object
+      properties:
+        push_policy:
+          $ref: "#/components/schemas/PushPolicy"
+        morning_brief_time:
+          type: string
+          pattern: "^([01]\\d|2[0-3]):[0-5]\\d$"
+        morning_brief_enabled:
+          type: boolean
+        daily_proactive_budget_usd:
+          type: number
+          minimum: 0
+
+    RegisterPushDeviceRequest:
+      type: object
+      required: [token, environment]
+      properties:
+        token:
+          type: string
+          minLength: 1
+        device_id:
+          type: string
+        environment:
+          type: string
+          enum: [sandbox, production]
+
+    PushDevice:
+      type: object
+      required: [id, environment, created_at, updated_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        device_id:
+          type: string
+        environment:
+          type: string
+          enum: [sandbox, production]
+        created_at:
+          $ref: "#/components/schemas/Instant"
+        updated_at:
+          $ref: "#/components/schemas/Instant"
 
     BudgetPreferences:
       type: object
@@ -2847,6 +2930,8 @@ components:
           $ref: "#/components/schemas/BudgetPreferences"
         input:
           $ref: "#/components/schemas/InputPreferences"
+        proactivity:
+          $ref: "#/components/schemas/ProactivityPreferences"
         onboarding_completed_at:
           $ref: "#/components/schemas/Instant"
         data_reset_at:
@@ -2885,6 +2970,8 @@ components:
           $ref: "#/components/schemas/BudgetPreferences"
         input:
           $ref: "#/components/schemas/InputPreferences"
+        proactivity:
+          $ref: "#/components/schemas/ProactivityPreferences"
         onboarding_completed_at:
           $ref: "#/components/schemas/Instant"
 
@@ -3240,11 +3327,26 @@ components:
     # -------------------------------------------------------------------------
     # Chat, Conversation, Streaming, Uploads & Results
     # -------------------------------------------------------------------------
+    BriefItem:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+        trailing:
+          type: string
+        interaction_id:
+          $ref: "#/components/schemas/ID"
+        action_label:
+          type: string
+
     Part:
       type: object
       required: [type]
       properties:
         type:
+          type: string
+        title:
           type: string
         text:
           type: string
@@ -3265,6 +3367,14 @@ components:
           type: string
         scheduled_at:
           type: string
+        greeting:
+          type: string
+        meta:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/BriefItem"
         schema_version:
           type: integer
         kind:
@@ -4586,6 +4696,14 @@ components:
                   type: string
                 remember_rule:
                   type: boolean
+                edited_fields:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    subject:
+                      type: string
+                    body:
+                      type: string
             - type: object
               required: [kind, connection_id]
               properties:

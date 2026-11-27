@@ -59,6 +59,10 @@ public enum OpenAPI {
         public static func conversationsAssistantUploadsByID(id: String) -> String {
             "/v1/conversations/assistant/uploads/\(encodeSegment(id))"
         }
+        public static let devicesPush = "/v1/devices/push"
+        public static func devicesPushByID(id: String) -> String {
+            "/v1/devices/push/\(encodeSegment(id))"
+        }
         public static let diagnostics = "/v1/diagnostics"
         public static let diagnosticsActions = "/v1/diagnostics/actions"
         public static let events = "/v1/events"
@@ -987,6 +991,32 @@ public enum OpenAPI {
         enum CodingKeys: String, CodingKey {
             case items
             case nextCursor = "next_cursor"
+        }
+    }
+
+    public struct BriefItem: Sendable, Codable, Hashable {
+        public var title: String
+        public var trailing: String?
+        public var interactionID: OpenAPI.ID?
+        public var actionLabel: String?
+
+        public init(
+            title: String,
+            trailing: String? = nil,
+            interactionID: OpenAPI.ID? = nil,
+            actionLabel: String? = nil
+        ) {
+            self.title = title
+            self.trailing = trailing
+            self.interactionID = interactionID
+            self.actionLabel = actionLabel
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case title
+            case trailing
+            case interactionID = "interaction_id"
+            case actionLabel = "action_label"
         }
     }
 
@@ -3564,24 +3594,41 @@ public enum OpenAPI {
                 }
             }
             public struct Variant2Payload: Sendable, Codable, Hashable {
+                public struct EditedFields: Sendable, Codable, Hashable {
+                    public var subject: String?
+                    public var body: String?
+
+                    public init(
+                        subject: String? = nil,
+                        body: String? = nil
+                    ) {
+                        self.subject = subject
+                        self.body = body
+                    }
+                }
+
                 public var kind: String
                 public var actionDigest: String
                 public var rememberRule: Bool?
+                public var editedFields: EditedFields?
 
                 public init(
                     kind: String,
                     actionDigest: String,
-                    rememberRule: Bool? = nil
+                    rememberRule: Bool? = nil,
+                    editedFields: EditedFields? = nil
                 ) {
                     self.kind = kind
                     self.actionDigest = actionDigest
                     self.rememberRule = rememberRule
+                    self.editedFields = editedFields
                 }
 
                 enum CodingKeys: String, CodingKey {
                     case kind
                     case actionDigest = "action_digest"
                     case rememberRule = "remember_rule"
+                    case editedFields = "edited_fields"
                 }
             }
             public struct Variant3Payload: Sendable, Codable, Hashable {
@@ -6265,6 +6312,7 @@ public enum OpenAPI {
         }
 
         public var type: String
+        public var title: String?
         public var text: String?
         public var display: String?
         public var fallback: String?
@@ -6274,6 +6322,9 @@ public enum OpenAPI {
         public var size: Int?
         public var url: String?
         public var scheduledAt: String?
+        public var greeting: String?
+        public var meta: String?
+        public var items: [OpenAPI.BriefItem]?
         public var schemaVersion: Int?
         public var kind: String?
         public var resource: Resource?
@@ -6281,6 +6332,7 @@ public enum OpenAPI {
 
         public init(
             type: String,
+            title: String? = nil,
             text: String? = nil,
             display: String? = nil,
             fallback: String? = nil,
@@ -6290,12 +6342,16 @@ public enum OpenAPI {
             size: Int? = nil,
             url: String? = nil,
             scheduledAt: String? = nil,
+            greeting: String? = nil,
+            meta: String? = nil,
+            items: [OpenAPI.BriefItem]? = nil,
             schemaVersion: Int? = nil,
             kind: String? = nil,
             resource: Resource? = nil,
             actions: [String]? = nil
         ) {
             self.type = type
+            self.title = title
             self.text = text
             self.display = display
             self.fallback = fallback
@@ -6305,6 +6361,9 @@ public enum OpenAPI {
             self.size = size
             self.url = url
             self.scheduledAt = scheduledAt
+            self.greeting = greeting
+            self.meta = meta
+            self.items = items
             self.schemaVersion = schemaVersion
             self.kind = kind
             self.resource = resource
@@ -6313,6 +6372,7 @@ public enum OpenAPI {
 
         enum CodingKeys: String, CodingKey {
             case type
+            case title
             case text
             case display
             case fallback
@@ -6322,6 +6382,9 @@ public enum OpenAPI {
             case size
             case url
             case scheduledAt = "scheduled_at"
+            case greeting
+            case meta
+            case items
             case schemaVersion = "schema_version"
             case kind
             case resource
@@ -6559,6 +6622,7 @@ public enum OpenAPI {
         public var accountDefaults: [String: OpenAPI.ID]
         public var budgets: OpenAPI.BudgetPreferences
         public var input: OpenAPI.InputPreferences?
+        public var proactivity: OpenAPI.ProactivityPreferences?
         public var onboardingCompletedAt: OpenAPI.Instant?
         public var dataResetAt: OpenAPI.Instant?
         public var dataResetPending: Bool?
@@ -6574,6 +6638,7 @@ public enum OpenAPI {
             accountDefaults: [String: OpenAPI.ID],
             budgets: OpenAPI.BudgetPreferences,
             input: OpenAPI.InputPreferences? = nil,
+            proactivity: OpenAPI.ProactivityPreferences? = nil,
             onboardingCompletedAt: OpenAPI.Instant? = nil,
             dataResetAt: OpenAPI.Instant? = nil,
             dataResetPending: Bool? = nil,
@@ -6588,6 +6653,7 @@ public enum OpenAPI {
             self.accountDefaults = accountDefaults
             self.budgets = budgets
             self.input = input
+            self.proactivity = proactivity
             self.onboardingCompletedAt = onboardingCompletedAt
             self.dataResetAt = dataResetAt
             self.dataResetPending = dataResetPending
@@ -6604,6 +6670,7 @@ public enum OpenAPI {
             case accountDefaults = "account_defaults"
             case budgets
             case input
+            case proactivity
             case onboardingCompletedAt = "onboarding_completed_at"
             case dataResetAt = "data_reset_at"
             case dataResetPending = "data_reset_pending"
@@ -6642,6 +6709,7 @@ public enum OpenAPI {
         public var accountDefaults: [String: OpenAPI.ID]
         public var budgets: OpenAPI.BudgetPreferences
         public var input: OpenAPI.InputPreferences?
+        public var proactivity: OpenAPI.ProactivityPreferences?
         public var onboardingCompletedAt: OpenAPI.Instant?
 
         public init(
@@ -6653,6 +6721,7 @@ public enum OpenAPI {
             accountDefaults: [String: OpenAPI.ID],
             budgets: OpenAPI.BudgetPreferences,
             input: OpenAPI.InputPreferences? = nil,
+            proactivity: OpenAPI.ProactivityPreferences? = nil,
             onboardingCompletedAt: OpenAPI.Instant? = nil
         ) {
             self.timezone = timezone
@@ -6663,6 +6732,7 @@ public enum OpenAPI {
             self.accountDefaults = accountDefaults
             self.budgets = budgets
             self.input = input
+            self.proactivity = proactivity
             self.onboardingCompletedAt = onboardingCompletedAt
         }
 
@@ -6675,7 +6745,34 @@ public enum OpenAPI {
             case accountDefaults = "account_defaults"
             case budgets
             case input
+            case proactivity
             case onboardingCompletedAt = "onboarding_completed_at"
+        }
+    }
+
+    public struct ProactivityPreferences: Sendable, Codable, Hashable {
+        public var pushPolicy: OpenAPI.PushPolicy?
+        public var morningBriefTime: String?
+        public var morningBriefEnabled: Bool?
+        public var dailyProactiveBudgetUSD: Double?
+
+        public init(
+            pushPolicy: OpenAPI.PushPolicy? = nil,
+            morningBriefTime: String? = nil,
+            morningBriefEnabled: Bool? = nil,
+            dailyProactiveBudgetUSD: Double? = nil
+        ) {
+            self.pushPolicy = pushPolicy
+            self.morningBriefTime = morningBriefTime
+            self.morningBriefEnabled = morningBriefEnabled
+            self.dailyProactiveBudgetUSD = dailyProactiveBudgetUSD
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case pushPolicy = "push_policy"
+            case morningBriefTime = "morning_brief_time"
+            case morningBriefEnabled = "morning_brief_enabled"
+            case dailyProactiveBudgetUSD = "daily_proactive_budget_usd"
         }
     }
 
@@ -6707,6 +6804,42 @@ public enum OpenAPI {
             case retrievedAt = "retrieved_at"
             case connectionStatus = "connection_status"
         }
+    }
+
+    public struct PushDevice: Sendable, Codable, Hashable {
+        public var id: OpenAPI.ID
+        public var deviceID: String?
+        public var environment: String
+        public var createdAt: OpenAPI.Instant
+        public var updatedAt: OpenAPI.Instant
+
+        public init(
+            id: OpenAPI.ID,
+            deviceID: String? = nil,
+            environment: String,
+            createdAt: OpenAPI.Instant,
+            updatedAt: OpenAPI.Instant
+        ) {
+            self.id = id
+            self.deviceID = deviceID
+            self.environment = environment
+            self.createdAt = createdAt
+            self.updatedAt = updatedAt
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case deviceID = "device_id"
+            case environment
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    public enum PushPolicy: String, Sendable, Codable, Hashable, CaseIterable {
+        case urgentAndApprovals = "urgent_and_approvals"
+        case includeBrief = "include_brief"
+        case quietOnly = "quiet_only"
     }
 
     public struct QuestionPayload: Sendable, Codable, Hashable {
@@ -6756,13 +6889,16 @@ public enum OpenAPI {
     }
 
     public struct QuietHours: Sendable, Codable, Hashable {
+        public var enabled: Bool?
         public var start: String
         public var end: String
 
         public init(
+            enabled: Bool? = nil,
             start: String,
             end: String
         ) {
+            self.enabled = enabled
             self.start = start
             self.end = end
         }
@@ -6802,6 +6938,28 @@ public enum OpenAPI {
         case instance = "instance"
         case following = "following"
         case series = "series"
+    }
+
+    public struct RegisterPushDeviceRequest: Sendable, Codable, Hashable {
+        public var token: String
+        public var deviceID: String?
+        public var environment: String
+
+        public init(
+            token: String,
+            deviceID: String? = nil,
+            environment: String
+        ) {
+            self.token = token
+            self.deviceID = deviceID
+            self.environment = environment
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case token
+            case deviceID = "device_id"
+            case environment
+        }
     }
 
     public struct Resource: Sendable, Codable, Hashable {
