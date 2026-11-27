@@ -4,7 +4,8 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Apply optional Nori Core settings to nori-core and nori-worker. Releases keep these settings;
-use this only when a setting changes. Each update starts a new revision with the live image.
+use this only when a setting changes. Each update starts a new revision with the live image
+and moves all traffic to it.
 
 Usage: scripts/configure-core.sh [--dry-run]
 
@@ -80,7 +81,11 @@ if [[ "${#remove_env_vars[@]}" -gt 0 ]]; then args+=(--remove-env-vars="$(IFS=,;
 
 for service in nori-core nori-worker; do
   echo "+ gcloud run services update $service ${args[*]}"
+  echo "+ gcloud run services update-traffic $service --to-revisions=<new revision>=100"
   if [[ "$dry_run" -eq 0 ]]; then
     gcloud run services update "$service" --project="$project" --region="$region" --quiet "${args[@]}"
+    # Releases pin traffic to one revision, so the new revision serves only after this move.
+    revision="$(gcloud run services describe "$service" --project="$project" --region="$region" --format='value(status.latestCreatedRevisionName)')"
+    gcloud run services update-traffic "$service" --project="$project" --region="$region" --quiet --to-revisions="$revision=100"
   fi
 done
