@@ -8,12 +8,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"nori/internal/api"
 	"nori/internal/computer"
 	"nori/internal/connections"
 	"nori/internal/homeai"
 	"nori/internal/observability"
 	"nori/internal/platform"
+	"nori/internal/push"
 	"nori/internal/settings"
 	"nori/internal/state/docstore"
 	"nori/internal/users"
@@ -35,6 +37,7 @@ type Service struct {
 	home          *homeai.Service
 	computer      *computer.Manager
 	closeComputer func()
+	pushStore     push.Store
 	storage       *platform.Storage
 	cfg           settings.Settings
 	waker         wake.Waker
@@ -86,13 +89,21 @@ func OpenServiceWithStorage(storage *platform.Storage, waker wake.Waker, cfg set
 		waker = platform.Waker(storage.Leases())
 	}
 	var dir users.Directory
+	var pushStore push.Store
 	if storage != nil {
 		dir = storage.Users()
+		if pp, ok := storage.Backend().(interface{ Pool() *pgxpool.Pool }); ok && pp.Pool() != nil {
+			pushStore = push.NewPostgresStore(pp.Pool())
+		}
+	}
+	if pushStore == nil {
+		pushStore = push.NewMemoryStore()
 	}
 	return &Service{
 		Users:         dir,
 		IdleTTL:       DefaultIdleTTL,
 		MaxCachedApps: DefaultMaxCachedApps,
+		pushStore:     pushStore,
 		storage:       storage,
 		cfg:           cfg,
 		waker:         waker,
@@ -360,6 +371,7 @@ func (s *Service) RepairUser(ctx context.Context, row users.User) error {
 		skipCollapseDuplicates: true,
 		home:                   s.home,
 		computer:               s.computer,
+		pushStore:              s.pushStore,
 	})
 	if err != nil {
 		return err
@@ -435,6 +447,7 @@ func (s *Service) openUserApp(ctx context.Context, row users.User, done chan str
 		skipCollapseDuplicates: alreadyCollapsed || row.ResetPending,
 		home:                   s.home,
 		computer:               s.computer,
+		pushStore:              s.pushStore,
 	})
 	if err != nil {
 		return nil, err

@@ -21,6 +21,8 @@ import (
 	"nori/internal/modelprofiles"
 	"nori/internal/permissions"
 	"nori/internal/platform"
+	"nori/internal/proactivity"
+	"nori/internal/push"
 	"nori/internal/scheduler"
 	"nori/internal/settings"
 	"nori/internal/state"
@@ -32,21 +34,23 @@ import (
 )
 
 type App struct {
-	UserID         string
-	Store          state.ConversationStore
-	Leases         docstore.LeaseStore
-	Features       settings.Features
-	Runner         *conversation.Runner
-	Tasks          *conversation.Tasks
-	TaskActivities *task.Activities
-	Waker          wake.Waker
-	WakeRepair     *wake.Repairer
-	Model          string
-	ModelProvider  string
-	handler        http.Handler
-	Assistant      *api.Assistant
-	Deltas         *api.DeltaBroker
-	Scheduler      *scheduler.Service
+	UserID          string
+	Store           state.ConversationStore
+	Leases          docstore.LeaseStore
+	Features        settings.Features
+	Runner          *conversation.Runner
+	Tasks           *conversation.Tasks
+	TaskActivities  *task.Activities
+	Waker           wake.Waker
+	WakeRepair      *wake.Repairer
+	Model           string
+	ModelProvider   string
+	handler         http.Handler
+	Assistant       *api.Assistant
+	Deltas          *api.DeltaBroker
+	Scheduler       *scheduler.Service
+	Discovery       *proactivity.DiscoveryService
+	ProactiveDrafts *task.ProactiveDraftService
 
 	guardWakeRepair func(context.Context) (func(), error)
 }
@@ -55,6 +59,7 @@ type openOptions struct {
 	skipCollapseDuplicates bool
 	home                   *homeai.Service
 	computer               *computer.Manager
+	pushStore              push.Store
 }
 
 type appModels struct {
@@ -157,6 +162,8 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 
 	toolSource := &agent.Service{Extensions: services.Tools}
 	result.Scheduler = services.Scheduler
+	result.Discovery = &proactivity.DiscoveryService{Store: store}
+	wireSchedulerProactivityHooks(services.Scheduler, store)
 	models := buildAppModels(&cfg, user, store, services, opts.home)
 
 	result.Assistant = &api.Assistant{
@@ -166,6 +173,9 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 		Features:      AssistantFeatures(services.Connections, cfg.Features.DisableBackgroundTasks),
 		NextScheduled: services.Scheduler.NextScheduled, InboxUnread: services.Scheduler.UnreadCount,
 		NormalizeMemory: newMemoryNormalizer(models.summarizer, models.outer, store, cfg),
+	}
+	if opts.pushStore != nil {
+		result.Assistant.PushDevices = &api.PushDevicesAPI{Store: opts.pushStore, UserID: user.ID}
 	}
 	if opts.home != nil && models.account != nil {
 		result.Assistant.HomeAI = &api.HomeAISettings{
@@ -238,6 +248,36 @@ func wireBackgroundRuntime(result *App, cfg settings.Settings, user users.User, 
 	if result.Assistant != nil {
 		runner.OnForget = result.Assistant.OnForget
 	}
+	if result.Discovery != nil {
+		discoverySvc := result.Discovery
+		conns := services.Connections
+		runner.DiscoveryHint = func(ctx context.Context, userMessage string) *proactivity.DiscoveryHint {
+			ds, err := discoverySvc.Get(ctx)
+			if err != nil {
+				return nil
+			}
+			prefs, _, _ := conns.Preferences(ctx)
+			records, _ := conns.List(ctx)
+			hasCalendar, hasExternal := false, false
+			for _, rec := range records {
+				if rec.Status == connections.StatusConnected {
+					hasExternal = true
+					for _, cap := range rec.Capabilities {
+						if cap == "calendar" || cap == "calendar.read" {
+							hasCalendar = true
+						}
+					}
+				}
+			}
+			return proactivity.NextDiscoveryHint(ds, proactivity.DiscoveryContext{
+				Now:                time.Now().UTC(),
+				Timezone:           prefs.Timezone,
+				UserMessage:        userMessage,
+				HasCalendar:        hasCalendar,
+				HasExternalSources: hasExternal,
+			})
+		}
+	}
 	if cfg.Models.BYOKRequired {
 		runner.AccountModel = models.outer.(*accountReplyModel).resolve
 		runner.AccountSelection = models.account.CurrentSelection
@@ -269,6 +309,22 @@ func wireBackgroundRuntime(result *App, cfg settings.Settings, user users.User, 
 			Permissions:  services.Permissions,
 			AutoReviewer: newAutoReviewer(models.outer, store, cfg),
 		},
+	}
+	result.ProactiveDrafts = &task.ProactiveDraftService{
+		Store:       store,
+		Permissions: services.Permissions,
+		Executor:    result.TaskActivities.Executor,
+	}
+	if result.Assistant != nil {
+		drafts := result.ProactiveDrafts
+		result.Assistant.OnProactiveDraftResponse = func(ctx context.Context, interactionID, kind string) error {
+			if kind == "approve" {
+				_, err := drafts.ExecuteApprovedDraft(ctx, interactionID)
+				return err
+			}
+			_, _, err := drafts.HandleDeclineOrSkip(ctx, interactionID, kind)
+			return err
+		}
 	}
 	if cfg.Models.BYOKRequired {
 		result.TaskActivities.AccountModel = models.defaultTaskModel.(*accountTaskModel).resolve
@@ -400,8 +456,45 @@ func (a *App) Schedule(ctx context.Context) error {
 	if a.Scheduler == nil || a.Scheduler.Accept == nil {
 		return nil
 	}
+	var expireErr error
+	if a.ProactiveDrafts != nil {
+		now := time.Now().UTC()
+		if a.Scheduler.Now != nil {
+			now = a.Scheduler.Now().UTC()
+		}
+		_, expireErr = a.ProactiveDrafts.ExpirePendingDrafts(ctx, now)
+	}
 	_, err := a.Scheduler.Tick(ctx)
-	return errors.Join(err, a.deliverAnswers(ctx))
+	return errors.Join(expireErr, err, a.deliverAnswers(ctx))
+}
+
+func wireSchedulerProactivityHooks(sched *scheduler.Service, store state.ConversationStore) {
+	if sched == nil || store == nil {
+		return
+	}
+	if appender, ok := store.(interface {
+		AppendProactiveMessage(context.Context, string, state.Message) (state.Message, error)
+	}); ok {
+		sched.AppendProactiveMessage = appender.AppendProactiveMessage
+	}
+	if enqueuer, ok := store.(interface {
+		EnqueueProactiveTaskEvent(context.Context, state.TaskEvent) error
+	}); ok {
+		sched.EnqueueProactiveEvent = enqueuer.EnqueueProactiveTaskEvent
+	}
+	sched.ReadPosition = store.ReadPosition
+	sched.LastUserTurnAt = func(ctx context.Context) (time.Time, error) {
+		msgs, _, err := store.ConversationMessages(ctx, "")
+		if err != nil {
+			return time.Time{}, err
+		}
+		for i := len(msgs) - 1; i >= 0; i-- {
+			if msgs[i].Role == "user" {
+				return msgs[i].CreatedAt, nil
+			}
+		}
+		return time.Time{}, nil
+	}
 }
 
 func AssistantFeatures(conns *connections.Service, disableBackgroundTasks bool) map[string]bool {

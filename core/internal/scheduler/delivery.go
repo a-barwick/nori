@@ -70,8 +70,9 @@ func (s *Service) deliver(
 			InteractionID: outcome.InteractionID,
 			CreatedAt:     &now,
 		}
-		// Hold non-Morning-Brief deliveries during Quiet Hours until quiet_end.
-		if inQuiet, quietEnd := s.quietHoursCheck(ctx, now); inQuiet && a.ID != MorningBriefAutomationID {
+		// Hold non-Morning-Brief background deliveries during Quiet Hours until quiet_end.
+		// Explicit manual run_now occurrences deliver immediately because the user requested them now.
+		if inQuiet, quietEnd := s.quietHoursCheck(ctx, now); inQuiet && a.ID != MorningBriefAutomationID && o.Source != "run_now" {
 			d.State = DeliveryStateHeld
 			d.ScheduledFor = &quietEnd
 			d.UpdatedAt = &now

@@ -431,11 +431,11 @@ type approval struct {
 // ApprovedReplacement holds the validated payload and recomputed digest stored
 // on an approved edited replacement record.
 type ApprovedReplacement struct {
-	InteractionID    string
-	OriginalDigest   string
+	InteractionID     string
+	OriginalDigest    string
 	ReplacementDigest string
-	EditedFields     map[string]string
-	EditedPayload    json.RawMessage
+	EditedFields      map[string]string
+	EditedPayload     json.RawMessage
 }
 
 func (s *Service) Check(ctx context.Context, req Request) (Decision, error) {

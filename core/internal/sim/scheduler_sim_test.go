@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"nori/internal/connections"
 	"nori/internal/permissions"
 	"nori/internal/scheduler"
 	"nori/internal/sim/env"
@@ -97,12 +98,24 @@ func newSchedulerSimHarness(t *testing.T, seed int64, userTZ string, start time.
 		tz := userTZ
 		tzFn = func(context.Context) string { return tz }
 	}
+	quietDisabled := false
 	h.sched = &scheduler.Service{
 		Store:       store,
 		Tasks:       store,
 		Permissions: perms,
 		Now:         clock.Now,
 		Timezone:    tzFn,
+		Preferences: func(context.Context) (connections.Preferences, error) {
+			return connections.Preferences{
+				Timezone:   u.TimeZone,
+				QuietHours: &connections.QuietHours{Enabled: &quietDisabled, Start: "21:00", End: "07:30"},
+				Proactivity: &connections.ProactivityPreferences{
+					PushPolicy:              connections.PushPolicyUrgentAndApprovals,
+					MorningBriefTime:        "08:00",
+					DailyProactiveBudgetUSD: 1000.0,
+				},
+			}, nil
+		},
 		Arm: func(_ context.Context, at time.Time) {
 			h.armed = append(h.armed, at)
 		},

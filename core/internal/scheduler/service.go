@@ -692,7 +692,7 @@ func (s *Service) newOccurrence(a stored, slot time.Time, revision int64, source
 			ID: occurrenceID(a.ID, a.Generation, slot, source), AutomationID: a.ID, AutomationRevision: revision, Generation: a.Generation,
 			ScheduledAt: slot.UTC(), SourceRevision: a.EventRevision, Status: OccurrencePending, TaskIDs: []string{}, DeliveryIDs: []string{},
 		},
-		Instruction: instruction, BudgetUSD: a.BudgetUSD, Monitor: monitor,
+		Instruction: instruction, BudgetUSD: a.BudgetUSD, Monitor: monitor, Source: source,
 	}
 }
 

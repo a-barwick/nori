@@ -28,11 +28,11 @@ const (
 )
 
 var allowedLockScreenBodies = map[string]struct{}{
-	DefaultBody:                    {},
-	"Approval ready to review":     {},
-	"Something needs your review":  {},
-	"Your morning brief is ready":  {},
-	"Your update is ready":         {},
+	DefaultBody:                   {},
+	"Approval ready to review":    {},
+	"Something needs your review": {},
+	"Your morning brief is ready": {},
+	"Your update is ready":        {},
 }
 
 // CopyForKind returns the lock-screen-safe generic title and body for kind.

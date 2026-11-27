@@ -39,29 +39,29 @@ var (
 // ProactiveDraft stores a non-blocking draft action produced by an unattended
 // automation run so the run can complete without holding a MaxActiveRuns slot.
 type ProactiveDraft struct {
-	ID              string          `json:"id"`
-	InteractionID   string          `json:"interaction_id"`
-	SourceRunID     string          `json:"source_run_id"`
-	Revision        int64           `json:"revision"`
-	AutomationID    string          `json:"automation_id,omitempty"`
-	ConversationID  string          `json:"conversation_id,omitempty"`
-	ActionDigest    string          `json:"action_digest"`
-	ToolName        string          `json:"tool_name"`
-	ToolID          string          `json:"tool_id"`
-	Exec            extensions.Exec `json:"exec"`
-	Args            map[string]any  `json:"args"`
-	ConnectionID    string          `json:"connection_id,omitempty"`
-	Summary         string          `json:"summary"`
-	Prompt          string          `json:"prompt"`
-	Effect          string          `json:"effect"`
-	Recipients      []string        `json:"recipients,omitempty"`
-	Status          string          `json:"status"`
-	ExecutionRunID  string          `json:"execution_run_id,omitempty"`
-	FoldReason      string          `json:"fold_reason,omitempty"`
-	FoldSignalID    string          `json:"fold_signal_id,omitempty"`
-	CreatedAt       time.Time       `json:"created_at"`
-	ExpiresAt       time.Time       `json:"expires_at"`
-	ResolvedAt      *time.Time      `json:"resolved_at,omitempty"`
+	ID             string          `json:"id"`
+	InteractionID  string          `json:"interaction_id"`
+	SourceRunID    string          `json:"source_run_id"`
+	Revision       int64           `json:"revision"`
+	AutomationID   string          `json:"automation_id,omitempty"`
+	ConversationID string          `json:"conversation_id,omitempty"`
+	ActionDigest   string          `json:"action_digest"`
+	ToolName       string          `json:"tool_name"`
+	ToolID         string          `json:"tool_id"`
+	Exec           extensions.Exec `json:"exec"`
+	Args           map[string]any  `json:"args"`
+	ConnectionID   string          `json:"connection_id,omitempty"`
+	Summary        string          `json:"summary"`
+	Prompt         string          `json:"prompt"`
+	Effect         string          `json:"effect"`
+	Recipients     []string        `json:"recipients,omitempty"`
+	Status         string          `json:"status"`
+	ExecutionRunID string          `json:"execution_run_id,omitempty"`
+	FoldReason     string          `json:"fold_reason,omitempty"`
+	FoldSignalID   string          `json:"fold_signal_id,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	ExpiresAt      time.Time       `json:"expires_at"`
+	ResolvedAt     *time.Time      `json:"resolved_at,omitempty"`
 }
 
 // BriefFoldSignal is a single-use signal recorded when a proactive draft
@@ -82,19 +82,19 @@ type BriefFoldSignal struct {
 // DigestExecutionRequest is passed to a coordinator-wired StartRun callback so
 // approving a non-blocking draft spawns a short, digest-scoped execution run.
 type DigestExecutionRequest struct {
-	DraftID        string
-	InteractionID  string
-	ActionDigest   string
-	SourceRunID    string
-	Revision       int64
-	AutomationID   string
-	ToolName       string
-	ToolID         string
-	Exec           extensions.Exec
-	Args           map[string]any
-	ConnectionID   string
-	Summary        string
-	EditedFields   map[string]string
+	DraftID       string
+	InteractionID string
+	ActionDigest  string
+	SourceRunID   string
+	Revision      int64
+	AutomationID  string
+	ToolName      string
+	ToolID        string
+	Exec          extensions.Exec
+	Args          map[string]any
+	ConnectionID  string
+	Summary       string
+	EditedFields  map[string]string
 }
 
 // DraftExecutionResult summarizes the outcome of approving and executing a

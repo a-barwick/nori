@@ -129,19 +129,19 @@ type RequestedAuthority struct {
 }
 
 type Editable struct {
-	Title                  string              `json:"title"`
-	Instruction            string              `json:"instruction"`
-	Trigger                Trigger             `json:"trigger"`
-	ConnectionIDs          []string            `json:"connection_ids"`
-	RequestedAuthority     *RequestedAuthority `json:"requested_authority,omitempty"`
-	BudgetUSD              float64             `json:"budget_usd"`
-	MaxActiveRuns          int                 `json:"max_active_runs"`
-	MissedRun              string              `json:"missed_run,omitempty"`
-	ExecutionWindowSeconds int64               `json:"execution_window_seconds"`
-	DestinationIDs         []string            `json:"destination_ids"`
-	EndAt                     *time.Time `json:"end_at,omitempty"`
-	MaxOccurrences            int        `json:"max_occurrences,omitempty"`
-	ConfirmationInteractionID string     `json:"confirmation_interaction_id,omitempty"`
+	Title                     string              `json:"title"`
+	Instruction               string              `json:"instruction"`
+	Trigger                   Trigger             `json:"trigger"`
+	ConnectionIDs             []string            `json:"connection_ids"`
+	RequestedAuthority        *RequestedAuthority `json:"requested_authority,omitempty"`
+	BudgetUSD                 float64             `json:"budget_usd"`
+	MaxActiveRuns             int                 `json:"max_active_runs"`
+	MissedRun                 string              `json:"missed_run,omitempty"`
+	ExecutionWindowSeconds    int64               `json:"execution_window_seconds"`
+	DestinationIDs            []string            `json:"destination_ids"`
+	EndAt                     *time.Time          `json:"end_at,omitempty"`
+	MaxOccurrences            int                 `json:"max_occurrences,omitempty"`
+	ConfirmationInteractionID string              `json:"confirmation_interaction_id,omitempty"`
 }
 
 type Automation struct {
@@ -234,6 +234,7 @@ type occurrenceDoc struct {
 	Instruction string  `json:"instruction"`
 	BudgetUSD   float64 `json:"budget_usd"`
 	Monitor     bool    `json:"monitor,omitempty"`
+	Source      string  `json:"source,omitempty"`
 }
 
 type Delivery struct {

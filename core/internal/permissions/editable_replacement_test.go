@@ -158,9 +158,9 @@ func TestEditableApprovalReplacementRejections(t *testing.T) {
 	env := newTestEnv(t)
 
 	disallowed := []struct {
-		name   string
-		resp   permissions.Response
-		errIs  error
+		name  string
+		resp  permissions.Response
+		errIs error
 	}{
 		{
 			name: "reject_remember_rule_with_edits",

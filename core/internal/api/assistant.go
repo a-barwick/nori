@@ -49,6 +49,7 @@ type Assistant struct {
 	Models      *modelprofiles.Account
 	HomeAI      *HomeAISettings
 	Computer    *ComputerAPI
+	PushDevices *PushDevicesAPI
 	AccountBYOK bool
 	UsageNow    func() time.Time
 
@@ -64,15 +65,16 @@ type Assistant struct {
 	Extra             []func(mux *http.ServeMux, a *Assistant)
 
 	// Task & interaction lifecycle callbacks
-	Answer              func(ctx context.Context, commandID, taskID, questionID, text string) error
-	Revise              func(ctx context.Context, taskID, resultID, instruction string) (state.Run, error)
-	DeliverAnswers      func(ctx context.Context) error
-	ScheduleAnswerRetry func(ctx context.Context)
-	Resume              func(ctx context.Context) error
-	Continue            func(ctx context.Context, taskID, previous, request string, budget float64) (state.Run, error)
-	Stop                func(ctx context.Context, commandID, taskID string) (state.Run, error)
-	OnLibraryDelete     func(ctx context.Context, resultIDs []string)
-	OnForget            func(ctx context.Context, tags []string)
+	Answer                   func(ctx context.Context, commandID, taskID, questionID, text string) error
+	OnProactiveDraftResponse func(ctx context.Context, interactionID, kind string) error
+	Revise                   func(ctx context.Context, taskID, resultID, instruction string) (state.Run, error)
+	DeliverAnswers           func(ctx context.Context) error
+	ScheduleAnswerRetry      func(ctx context.Context)
+	Resume                   func(ctx context.Context) error
+	Continue                 func(ctx context.Context, taskID, previous, request string, budget float64) (state.Run, error)
+	Stop                     func(ctx context.Context, commandID, taskID string) (state.Run, error)
+	OnLibraryDelete          func(ctx context.Context, resultIDs []string)
+	OnForget                 func(ctx context.Context, tags []string)
 }
 
 type apiError struct {
@@ -245,6 +247,9 @@ func (a *Assistant) register(mux *http.ServeMux) {
 	} else {
 		// Always register GET /v1/computer so clients cleanly detect enabled=false.
 		(&ComputerAPI{}).register(mux)
+	}
+	if a.PushDevices != nil {
+		a.PushDevices.Register(mux)
 	}
 	mux.HandleFunc("GET /v1/diagnostics", a.diagnostics)
 	mux.HandleFunc("POST /v1/diagnostics/actions", jsonBody(a.diagnosticsAction))
@@ -715,6 +720,11 @@ func (a *Assistant) respond(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 503, apiError{Error: "Your answer is saved; delivering it to the task failed. Retry to finish.", Code: "delivery_pending",
 				Retryable: true, Accepted: true, RequestID: requestID})
 			return
+		}
+	}
+	if a.OnProactiveDraftResponse != nil && (value.Kind == "approve" || value.Kind == "decline") {
+		if draftErr := a.OnProactiveDraftResponse(r.Context(), id, value.Kind); draftErr != nil && !errors.Is(draftErr, state.ErrNotFound) {
+			slog.WarnContext(r.Context(), "proactive draft response handling failed", "interaction_id", id, "kind", value.Kind, "err", draftErr)
 		}
 	}
 	writeReceipt(w, receipt)

@@ -47,7 +47,7 @@ func EstimateDailyRuns(t Trigger, zone string, now time.Time) float64 {
 		if err != nil || len(runs) == 0 {
 			return 1
 		}
-		horizon := runs[0].Add(24 * time.Hour)
+		horizon := runs[0].Add(7 * 24 * time.Hour)
 		count := 0
 		for _, r := range runs {
 			if r.Before(horizon) {
@@ -59,7 +59,7 @@ func EstimateDailyRuns(t Trigger, zone string, now time.Time) float64 {
 		if count == 0 {
 			return 1
 		}
-		return float64(count)
+		return float64(count) / 7.0
 	default:
 		return 1
 	}

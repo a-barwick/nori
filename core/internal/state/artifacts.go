@@ -82,6 +82,24 @@ func (s *composed) UsageWindowSummary(ctx context.Context, hourCutoff, dayCutoff
 	return 0, 0, 0, nil
 }
 
+func (s *composed) AppendProactiveMessage(ctx context.Context, deliveryID string, message Message) (Message, error) {
+	if r, ok := s.Database.(interface {
+		AppendProactiveMessage(context.Context, string, Message) (Message, error)
+	}); ok {
+		return r.AppendProactiveMessage(ctx, deliveryID, message)
+	}
+	return Message{}, fmt.Errorf("proactive message append not supported by store")
+}
+
+func (s *composed) EnqueueProactiveTaskEvent(ctx context.Context, event TaskEvent) error {
+	if r, ok := s.Database.(interface {
+		EnqueueProactiveTaskEvent(context.Context, TaskEvent) error
+	}); ok {
+		return r.EnqueueProactiveTaskEvent(ctx, event)
+	}
+	return fmt.Errorf("proactive task event enqueue not supported by store")
+}
+
 func (s *composed) OperationsByRuns(ctx context.Context, runIDs []string) (map[string][]OperationRecord, error) {
 	if r, ok := s.Database.(interface {
 		OperationsByRuns(context.Context, []string) (map[string][]OperationRecord, error)

@@ -162,6 +162,10 @@ func openAssistant(
 			}
 			return prefs.Timezone
 		},
+		Preferences: func(ctx context.Context) (connections.Preferences, error) {
+			prefs, _, err := conn.Preferences(ctx)
+			return prefs, err
+		},
 	}
 	nori.Register(adapters, nori.Adapter{Scheduler: sched, Unattended: s.Connections.UnattendedWrites})
 	servers := &mcp.Service{Store: store, Credentials: credentials, LocalProcesses: s.Cloud == "local", Commands: localCommands(s), RedirectURL: s.Connections.RedirectURL}
