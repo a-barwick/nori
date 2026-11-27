@@ -21,6 +21,7 @@ import (
 	"nori/internal/modelkeys"
 	"nori/internal/modelprofiles"
 	"nori/internal/observability"
+	"nori/internal/proactivity"
 	"nori/internal/prompts"
 	"nori/internal/state"
 )
@@ -41,7 +42,16 @@ func inputMessage(in state.ConversationInput) json.RawMessage {
 		})
 	}
 	if in.Event != nil {
-		data, _ := json.Marshal(in.Event)
+		ev := *in.Event
+		if proactivity.IsProactiveEvent(&ev) {
+			content := ev.Text
+			if proactivity.HasBriefPart(ev.Parts) {
+				content = proactivity.RenderBriefParts(ev.Parts, ev.Text)
+			}
+			ev.Text = proactivity.WrapUntrustedProactiveData(proactivity.ProactiveEventSource(&ev), content)
+			ev.Parts = nil
+		}
+		data, _ := json.Marshal(&ev)
 		return modelMessage(map[string]string{
 			"role":    "system",
 			"content": prompts.Runtime("task-notification", map[string]any{"Event": string(data)}),
@@ -368,10 +378,21 @@ func (r *Runner) appendAdvisoryContext(
 	if len(recalled) > 0 {
 		advisoryPayload["relevant_memory_logs"] = recalled
 	}
+	if r.DiscoveryHint != nil && slices.ContainsFunc(t.Inputs, state.ConversationInput.IsUser) && !isPureAckInputs(t.Inputs) {
+		var userParts []string
+		for _, in := range t.Inputs {
+			if in.IsUser() && strings.TrimSpace(in.Text) != "" {
+				userParts = append(userParts, in.Text)
+			}
+		}
+		if dh := r.DiscoveryHint(ctx, strings.Join(userParts, "\n")); dh != nil {
+			advisoryPayload["discovery_hint"] = dh
+		}
+	}
 	advice, _ := json.Marshal(advisoryPayload)
 	advisory := modelMessage(map[string]string{"role": "system", "content": prompts.Runtime("call-advisory-context-for-the-current-inputs", nil) + string(advice)})
 	for t.Attempt.ContextBytes+len(advisory) > state.OuterInputBytes && len(view.Turns) > 0 {
-		view.Turns, view.Truncated = view.Turns[1:], true
+		view.Turns, view.Truncated = dropLowestPriorityTurn(view.Turns), true
 		messages, breakpoints = buildMessages(t, visible, *view, next)
 	}
 	messages = append(messages, advisory)
@@ -711,8 +732,10 @@ func buildMessages(t *state.ConversationTurn, visible []Message, view historyVie
 	if view.Summary != nil {
 		since = view.Summary.Through
 	}
-	records := []Message{}
-	size := 0
+	// Collect non-turn visible records, prioritizing normal dialogue/task
+	// records ahead of low-priority historical PartBrief messages so old
+	// morning briefs compact away before user/assistant dialogue.
+	var normalCandidates, briefCandidates []Message
 	for i := len(visible) - 1; i >= 0; i-- {
 		m := visible[i]
 		if m.TurnID != "" || !m.CreatedAt.After(since) {
@@ -724,9 +747,20 @@ func buildMessages(t *state.ConversationTurn, visible []Message, view historyVie
 		if m.RunID != "" && m.ID == state.UserMessageID(m.RunID) {
 			continue
 		}
+		if proactivity.IsBriefMessage(m) {
+			rendered := proactivity.RenderBriefParts(m.Parts, m.Text)
+			m.Text = proactivity.WrapUntrustedProactiveData("brief", rendered)
+			briefCandidates = append(briefCandidates, m)
+			continue
+		}
 		if m.RunID != "" {
 			m.Text = "[Task " + m.RunID + prompts.Runtime("task-record-suffix", nil) + m.Text
 		}
+		normalCandidates = append(normalCandidates, m)
+	}
+	records := []Message{}
+	size := 0
+	for _, m := range normalCandidates {
 		p := modelMessage(map[string]string{"role": m.Role, "content": m.Text})
 		if size+len(p) > recordBytes {
 			truncated = true
@@ -735,6 +769,25 @@ func buildMessages(t *state.ConversationTurn, visible []Message, view historyVie
 		size += len(p)
 		records = append(records, m)
 	}
+	for _, m := range briefCandidates {
+		p := modelMessage(map[string]string{"role": m.Role, "content": m.Text})
+		if size+len(p) > recordBytes {
+			truncated = true
+			continue
+		}
+		size += len(p)
+		records = append(records, m)
+	}
+	// Restore newest-first order so recordIndex walks chronologically.
+	slices.SortStableFunc(records, func(a, b Message) int {
+		if a.CreatedAt.After(b.CreatedAt) {
+			return -1
+		}
+		if a.CreatedAt.Before(b.CreatedAt) {
+			return 1
+		}
+		return 0
+	})
 	recordIndex := len(records) - 1
 	appendRecord := func() {
 		m := records[recordIndex]
@@ -1075,4 +1128,21 @@ func userProvenanceMemories(memories []state.Memory) []state.Memory {
 		filtered = append(filtered, m)
 	}
 	return filtered
+}
+
+// dropLowestPriorityTurn removes the oldest low-priority proactive brief turn
+// first so historical morning briefs compact away before user/assistant dialogue.
+func dropLowestPriorityTurn(turns []state.ConversationTurn) []state.ConversationTurn {
+	if len(turns) == 0 {
+		return turns
+	}
+	for i, turn := range turns {
+		if proactivity.IsBriefTurn(turn) {
+			out := make([]state.ConversationTurn, 0, len(turns)-1)
+			out = append(out, turns[:i]...)
+			out = append(out, turns[i+1:]...)
+			return out
+		}
+	}
+	return turns[1:]
 }

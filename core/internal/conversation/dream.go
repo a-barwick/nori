@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"nori/internal/agent"
 	"nori/internal/llmguard"
+	"nori/internal/proactivity"
 	"nori/internal/prompts"
 	"nori/internal/state"
 	"nori/internal/state/docstore"
@@ -108,6 +109,9 @@ func (r *Runner) planDream(
 				continue
 			}
 			if entry.Provenance == state.ProvenanceTaskOutcome {
+				continue
+			}
+			if proactivity.IsUntrustedProactiveData(entry.Text) || proactivity.IsUntrustedProactiveData(entry.SourceText) {
 				continue
 			}
 			if !dreamThrough.IsZero() && !entry.CreatedAt.After(dreamThrough) {
@@ -297,6 +301,9 @@ func (r *Runner) dreamConsolidate(ctx context.Context, manual bool) (state.Conve
 		if m.EffectiveProvenance() == state.ProvenanceTaskOutcome {
 			continue
 		}
+		if proactivity.IsUntrustedProactiveData(m.Text) || proactivity.IsUntrustedProactiveData(m.SourceText) {
+			continue
+		}
 		addSource(m.SourceInputID, m.SourceText, maxTime(m.CreatedAt, m.UpdatedAt))
 	}
 
@@ -317,6 +324,9 @@ func (r *Runner) dreamConsolidate(ctx context.Context, manual bool) (state.Conve
 				continue
 			}
 			if entry.Provenance == state.ProvenanceTaskOutcome {
+				continue
+			}
+			if proactivity.IsUntrustedProactiveData(entry.Text) || proactivity.IsUntrustedProactiveData(entry.SourceText) {
 				continue
 			}
 			addSource(entry.SourceInputID, entry.SourceText, entry.CreatedAt)
@@ -458,7 +468,7 @@ func verifyDreamOutput(
 		supersedesID := strings.TrimSpace(c.SupersedesID)
 		sourceInputID := strings.TrimSpace(c.SourceInputID)
 
-		if text == "" || len(text) > state.MaxMemoryText || !utf8.ValidString(text) {
+		if text == "" || len(text) > state.MaxMemoryText || !utf8.ValidString(text) || proactivity.IsUntrustedProactiveData(text) {
 			continue
 		}
 		if !utf8.ValidString(about) || !utf8.ValidString(section) {
@@ -564,7 +574,7 @@ func verifyDreamOutput(
 		section := strings.TrimSpace(c.Section)
 		sourceInputID := strings.TrimSpace(c.SourceInputID)
 
-		if text == "" || len(text) > state.MaxMemoryText || !utf8.ValidString(text) {
+		if text == "" || len(text) > state.MaxMemoryText || !utf8.ValidString(text) || proactivity.IsUntrustedProactiveData(text) {
 			continue
 		}
 		if !utf8.ValidString(about) || !utf8.ValidString(section) {
