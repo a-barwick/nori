@@ -196,7 +196,7 @@ resource "google_cloud_run_v2_service" "nori_core" {
   }
 
   lifecycle {
-    ignore_changes = [client, client_version, traffic, template[0].revision, template[0].labels, template[0].containers[0].image]
+    ignore_changes = [client, client_version, traffic, template[0].labels, template[0].containers[0].image]
   }
 }
 
@@ -289,7 +289,7 @@ resource "google_cloud_run_v2_service" "nori_worker" {
   }
 
   lifecycle {
-    ignore_changes = [client, client_version, traffic, template[0].revision, template[0].labels, template[0].containers[0].image]
+    ignore_changes = [client, client_version, traffic, template[0].labels, template[0].containers[0].image]
   }
 }
 
@@ -488,7 +488,7 @@ resource "google_cloud_run_v2_service" "nori_web" {
   }
 
   lifecycle {
-    ignore_changes = [client, client_version, traffic, template[0].revision, template[0].labels, template[0].containers[0].image]
+    ignore_changes = [client, client_version, traffic, template[0].labels, template[0].containers[0].image]
   }
 }
 
@@ -577,7 +577,7 @@ resource "google_cloud_run_v2_service" "nori_web_mac" {
   }
 
   lifecycle {
-    ignore_changes = [client, client_version, traffic, template[0].revision, template[0].labels, template[0].containers[0].image]
+    ignore_changes = [client, client_version, traffic, template[0].labels, template[0].containers[0].image]
   }
 }
 
@@ -664,7 +664,7 @@ resource "google_cloud_run_v2_service" "nori_connector_relay" {
   }
 
   lifecycle {
-    ignore_changes = [client, client_version, traffic, template[0].revision, template[0].labels, template[0].containers[0].image]
+    ignore_changes = [client, client_version, traffic, template[0].labels, template[0].containers[0].image]
   }
 }
 
@@ -719,7 +719,7 @@ resource "google_cloud_run_v2_service" "nori_site" {
   }
 
   lifecycle {
-    ignore_changes = [client, client_version, traffic, template[0].revision, template[0].labels, template[0].containers[0].image]
+    ignore_changes = [client, client_version, traffic, template[0].labels, template[0].containers[0].image]
   }
 }
 
