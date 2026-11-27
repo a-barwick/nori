@@ -12,7 +12,7 @@ locals {
   sentry_core_dsn   = "https://773c0d8018d7fac6907eab4b67f6800d@o4507087334670336.ingest.us.sentry.io/4512349076389888"
   sentry_web_dsn    = "https://45c82826f97d90746eee0c98a9a365db@o4507087334670336.ingest.us.sentry.io/4512349065838592"
   home_ai_release   = "https://github.com/${local.github_repo}/releases/download/nori-v0.1.0"
-  computer_provider = "disabled"
+  computer_provider = "sprites"
 
   # Environment shared by Core, Worker and the migration job.
   runtime_env = {
@@ -49,6 +49,7 @@ locals {
       NORI_HOME_AI_DOWNLOAD_MACOS        = "${local.home_ai_release}/Nori-0.1.0-arm64.dmg"
       NORI_HOME_AI_VERIFY_URL            = "${local.web_origin}/connector/activate"
       NORI_HOME_AI_WORK_ENABLED          = "true"
+      NORI_SPRITES_ORG                   = "austin-barwick-davis"
     },
     # An empty tester list offers Google to every user.
     local.private.google_workspace_test_users == "" ? {} : {
