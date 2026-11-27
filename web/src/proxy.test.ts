@@ -206,32 +206,16 @@ describe("proxy auth gate and header stripping", () => {
     return csp;
   }
 
-  test("exempts /privacy and /terms from auth gating and applies security headers + per-request nonce CSP", async () => {
-    for (const pathname of ["/privacy", "/terms"]) {
-      const unauth = await proxy(new NextRequest(`https://app.nori.example${pathname}`));
-      assert.equal(unauth.headers.get("x-middleware-next"), "1");
-      const csp = assertBaselineHeaders(unauth, { expectHsts: true });
-      const nonce = unauth.headers.get("x-middleware-request-x-nonce");
-      assert.ok(nonce && nonce.length >= 16);
-      assert.ok(csp.includes(`'nonce-${nonce}'`));
-      assert.equal(unauth.headers.get("x-middleware-request-content-security-policy"), csp);
-
-      const signedOut = await proxy(new NextRequest(`https://app.nori.example${pathname}`, {
-        headers: { cookie: "nori_signed_out=1" },
-      }));
-      assert.equal(signedOut.headers.get("x-middleware-next"), "1");
-      const csp2 = assertBaselineHeaders(signedOut, { expectHsts: true });
-      assert.notEqual(signedOut.headers.get("x-middleware-request-x-nonce"), nonce);
-      assert.notEqual(csp2, csp);
-    }
-  });
-
   test("applies security headers on /signed-out, authenticated pages, and reconnecting page with matching script nonce", async () => {
     const signedOutRes = await proxy(new NextRequest("https://app.nori.example/signed-out", {
       headers: { cookie: "nori_signed_out=1" },
     }));
     assert.equal(signedOutRes.headers.get("x-middleware-next"), "1");
-    assertBaselineHeaders(signedOutRes, { expectHsts: true });
+    const signedOutCsp = assertBaselineHeaders(signedOutRes, { expectHsts: true });
+    const nonce = signedOutRes.headers.get("x-middleware-request-x-nonce");
+    assert.ok(nonce && nonce.length >= 16);
+    assert.ok(signedOutCsp.includes(`'nonce-${nonce}'`));
+    assert.equal(signedOutRes.headers.get("x-middleware-request-content-security-policy"), signedOutCsp);
 
     await mockResolve(() => new Response("", { status: 503 }));
     const downToken = await bearerFor("down-csp@example.test");
@@ -247,14 +231,14 @@ describe("proxy auth gate and header stripping", () => {
   });
 
   test("omits Strict-Transport-Security on loopback HTTP/localhost and non-production environments", async () => {
-    const loopbackHttp = await proxy(new NextRequest("http://127.0.0.1:3210/privacy"));
+    const loopbackHttp = await proxy(new NextRequest("http://127.0.0.1:3210/signed-out", { headers: { cookie: "nori_signed_out=1" } }));
     assertBaselineHeaders(loopbackHttp, { expectHsts: false });
 
-    const localhostHttps = await proxy(new NextRequest("https://localhost:3210/terms"));
+    const localhostHttps = await proxy(new NextRequest("https://localhost:3210/signed-out", { headers: { cookie: "nori_signed_out=1" } }));
     assertBaselineHeaders(localhostHttps, { expectHsts: false });
 
     env.NODE_ENV = "development";
-    const devHttps = await proxy(new NextRequest("https://app.nori.example/privacy"));
+    const devHttps = await proxy(new NextRequest("https://app.nori.example/signed-out", { headers: { cookie: "nori_signed_out=1" } }));
     assert.equal(devHttps.headers.get("strict-transport-security"), null);
     assert.match(devHttps.headers.get("content-security-policy") ?? "", /'unsafe-eval'/);
   });

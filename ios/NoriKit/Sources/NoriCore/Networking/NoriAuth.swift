@@ -11,7 +11,7 @@ public enum NoriConfig {
     }
 
     private static let defaultServerURL = makeSafeURL(host: "nori-core-8273801370.us-central1.run.app")
-    private static let defaultWebURL = makeSafeURL(host: "nori-docs-elaoqxqkuq-uc.a.run.app")
+    private static let defaultWebURL = makeSafeURL(host: "www.noribot.chat")
 
     private static func configuredURL(infoKey: String, fallback: URL) -> URL {
         if let raw = (Bundle.main.object(forInfoDictionaryKey: infoKey) as? String)?

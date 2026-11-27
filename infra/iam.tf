@@ -27,11 +27,6 @@ resource "google_service_account" "nori_site" {
   description  = "Runs the nori-site Cloud Run service. No roles."
 }
 
-resource "google_service_account" "nori_docs" {
-  account_id   = "nori-docs"
-  display_name = "Nori docs"
-}
-
 resource "google_service_account" "nori_ci_images" {
   account_id   = "nori-ci-images"
   display_name = "Nori CI image builds"

@@ -63,6 +63,6 @@ Migrations may only add schema, and `TestMigrationsOnlyAddSchema` fails on a dro
 
 For the release that introduces issuer-and-subject account binding, Web must ship first. Merge and release the Web change with `scripts/release.sh --web`, then merge the Core change. Keep the gap short, because the Web services bypass their account-resolution caches until Core confirms the binding. After the Core migration, bind existing users that require operator verification using [`nori-user bind-identity`](../README.md#users). Verify sign-in with a provisioned account on each deployed client.
 
-The Release workflow ships `nori-web-mac` with the `nori-web` image. [`scripts/deploy-home-ai-relay.sh`](../../scripts/deploy-home-ai-relay.sh) ships the Home AI relay image, and `docs/deploy.sh` builds the docs image. No workflow deploys the docs image.
+The Release workflow ships `nori-web-mac` with the `nori-web` image. [`scripts/deploy-home-ai-relay.sh`](../../scripts/deploy-home-ai-relay.sh) ships the Home AI relay image.
 
 The public site runs as `nori-site`, defined in `infra/run.tf`. It allows unauthenticated requests, has no IAP and runs as `nori-site@bot-111549.iam.gserviceaccount.com`, which has no project roles. Releases skip the site group until the service exists.

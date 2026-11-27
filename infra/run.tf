@@ -663,67 +663,6 @@ resource "google_cloud_run_v2_service" "nori_connector_relay" {
   }
 }
 
-# --- Docs ----------------------------------------------------------------------
-
-# Public docs at docs.noribot.chat. docs/deploy.sh builds its image.
-resource "google_cloud_run_v2_service" "nori_docs" {
-  name     = "nori-docs"
-  location = local.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
-
-  scaling {
-    max_instance_count = 20
-  }
-
-  template {
-    service_account                  = google_service_account.nori_docs.email
-    max_instance_request_concurrency = 80
-    timeout                          = "300s"
-
-    scaling {
-      max_instance_count = 1
-    }
-
-    containers {
-      image = "${local.registry}/nori-docs:bootstrap"
-
-      ports {
-        name           = "http1"
-        container_port = 8080
-      }
-
-      resources {
-        cpu_idle          = true
-        startup_cpu_boost = true
-        limits = {
-          cpu    = "1"
-          memory = "256Mi"
-        }
-      }
-
-      startup_probe {
-        failure_threshold = 1
-        period_seconds    = 240
-        timeout_seconds   = 240
-        tcp_socket {
-          port = 8080
-        }
-      }
-    }
-  }
-
-  lifecycle {
-    ignore_changes = [client, client_version, traffic, template[0].revision, template[0].labels, template[0].containers[0].image]
-  }
-}
-
-resource "google_cloud_run_v2_service_iam_member" "docs_public" {
-  name     = google_cloud_run_v2_service.nori_docs.name
-  location = local.region
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
-
 # --- Public site ---------------------------------------------------------------
 
 # Public site at www.noribot.chat, built from site/. Releases ship its image.
@@ -787,7 +726,7 @@ resource "google_cloud_run_v2_service_iam_member" "site_public" {
 }
 
 # --- Domains -------------------------------------------------------------------
-# DNS for noribot.chat is hosted at Porkbun: the apex, app, www and docs point at
+# DNS for noribot.chat is hosted at Porkbun: the apex, app and www point at
 # ghs.googlehosted.com, and relay points at the Home AI edge address.
 
 resource "google_cloud_run_domain_mapping" "noribot_chat" {
@@ -800,19 +739,6 @@ resource "google_cloud_run_domain_mapping" "noribot_chat" {
 
   spec {
     route_name = google_cloud_run_v2_service.nori_web.name
-  }
-}
-
-resource "google_cloud_run_domain_mapping" "docs_noribot_chat" {
-  name     = "docs.noribot.chat"
-  location = local.region
-
-  metadata {
-    namespace = local.project
-  }
-
-  spec {
-    route_name = google_cloud_run_v2_service.nori_docs.name
   }
 }
 
