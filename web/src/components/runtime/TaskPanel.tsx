@@ -1,137 +1,119 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Globe, Terminal, X } from "lucide-react";
-import { Medallion } from "@/components/mark/NoriMark";
-import { DebugBlock } from "@/components/dev/DebugBlock";
-import { Button, IconButton, SectionHeader } from "@/components/ui/primitives";
-import { MAX_MESSAGE_BYTES, messageTooLong } from "@/lib/submission";
-import type { Artifact, PendingTaskCommand, Run, Session, TaskCommand, SavedResult } from "@/lib/types";
-import { useBlobURL } from "@/lib/useBlobURL";
-import { clock } from "@/lib/time";
+import { ChevronRight, RefreshCw, Square, X } from "lucide-react";
+import { NoriMark } from "@/components/mark/NoriMark";
+import { Pill, Rows, type Tone } from "@/components/assistant/ui";
+import { Button, IconButton } from "@/components/ui/primitives";
+import { relative } from "@/lib/assistant/format";
+import type { PendingTaskCommand, Run, Session, TaskCommand } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const incomplete = (run: Run) => run.status === "failed" && /^incomplete\b/i.test(run.error || "");
+const RECENT_LIMIT = 5;
 
-function statusLabel(run: Run) {
-  if (run.cleanup_error) return "Cleanup pending";
-  if (run.finishing) return run.cancel_requested ? "Stopping owned work…" : "Finishing and cleaning up…";
-  if (incomplete(run)) return "Incomplete";
-  if (run.status === "running" && run.cancel_requested) return "Stopping…";
-  if (run.status === "running" && run.question?.resolved_by) return run.question.kind === "work" ? "Waiting for its subtasks" : "Answer accepted";
-  if (run.status === "running" && (run.question || run.waiting)) return run.question?.kind === "work" ? "Asking for separate work" : "Waiting for your answer";
-  if (run.status === "running" && run.progress) return "Running a long job";
-  return { running: "Working on your task", completed: "Completed", failed: "Failed", cancelled: "Stopped" }[run.status];
+const isPartial = (run: Run) => run.status === "failed" && /^incomplete\b/i.test(run.error || "");
+
+function taskTitle(run: Run, session?: Session): string {
+  const explicit = run.title?.trim();
+  if (explicit) return explicit;
+  const fallback = run.request || session?.messages.find((message) => message.run_id === run.id && message.role === "user")?.text || "";
+  const firstLine = fallback.trim().split("\n")[0]?.replace(/\s+/g, " ").trim() ?? "";
+  if (!firstLine) return "Task";
+  const sentenceEnd = firstLine.search(/[.!?]\s/);
+  const concise = sentenceEnd >= 8 ? firstLine.slice(0, sentenceEnd) : firstLine;
+  const cleaned = concise
+    .replace(/\s*\((?:the\s+)?user['’]s\s+words?\)/gi, "")
+    .replace(/,\s+the\s+user['’]s\s+[^.!?\n]+/gi, "")
+    .replace(/\bfor\s+the\s+user\b/gi, "")
+    .replace(/\s+/g, " ")
+    .replace(/[.\s]+$/, "");
+  const title = cleaned || concise;
+  return title.length > 80 ? `${title.slice(0, 79).trimEnd()}…` : title;
 }
 
-function SavedResults({ results }: { results: SavedResult[] }) {
-  if (!results.length) return null;
-  return <section className="mb-3 rounded-tile bg-fill-1 p-3 text-meta" aria-label="Saved results">
-    <h4 className="font-medium">Saved results</h4>
-    <ul className="mt-2 space-y-2">{results.map((result) => <li key={result.id} className="min-w-0">
-      <p className="break-words">{result.title}{result.version > 1 ? ` · version ${result.version}` : ""}</p>
-      <p className="text-caption text-ink-3">{[result.superseded_by ? "Replaced by a newer version" : "", result.checked_at ? "Checked" : "Not checked", result.delivered_at ? "Delivered" : result.reported_at ? "In a reply" : "Not reported yet"].filter(Boolean).join(" · ")}</p>
-      {result.kind === "file" && <a className="text-caption underline" href={`/api/v1/results/${result.id}/file`} download={result.name}>Download {result.name}</a>}
-      {result.kind === "link" && result.url && /^https?:\/\//.test(result.url) && <a className="text-caption underline" href={result.url} target="_blank" rel="noreferrer noopener">Open link</a>}
-    </li>)}</ul>
-  </section>;
+function durationLabel(start?: string, end?: string): string | undefined {
+  if (!start || !end) return undefined;
+  const ms = Date.parse(end) - Date.parse(start);
+  if (!Number.isFinite(ms) || ms < 1000) return undefined;
+  const sec = Math.round(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  const rem = sec % 60;
+  return rem ? `${min}m ${rem}s` : `${min}m`;
 }
 
-function Screenshot({
-  runId,
-  artifact,
-}: {
-  runId: string;
-  artifact: Artifact;
-}) {
-  const load = useCallback(async (signal: AbortSignal) => {
-    const response = await fetch("/api/artifact", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ run_id: runId, artifact_id: artifact.id }), signal,
-    });
-    if (!response.ok || !response.headers.get("content-type")?.startsWith("image/png")) {
-      throw new Error("Screenshot could not be loaded.");
-    }
-    return response.blob();
-  }, [runId, artifact.id]);
-  const screenshot = useBlobURL(load);
-  if (screenshot?.error !== undefined)
-    return (
-      <p role="status" className="text-meta text-ink-2">
-        {screenshot.error instanceof Error ? screenshot.error.message : "Screenshot unavailable."}
-      </p>
-    );
-  if (!screenshot?.url) return <p className="text-meta text-ink-3">Loading screenshot…</p>;
-  return (
-    <a
-      href={screenshot.url}
-      target="_blank"
-      rel="noreferrer"
-      className="block overflow-hidden rounded-tile bg-surface shadow-pill"
-    >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={screenshot.url}
-        alt="Screenshot captured by Nori during this task. Open full size."
-        className="w-full"
-      />
-      <span className="block p-3 text-meta text-accent-text">
-        Open screenshot ↗
-      </span>
-    </a>
-  );
+function activePill(run: Run, stopping: boolean): { tone: Tone; label: string } {
+  if (run.cancel_requested || stopping || (run.finishing && run.cancel_requested)) {
+    return { tone: "neutral", label: "Stopping" };
+  }
+  if (run.question && !run.question.resolved_by) {
+    return { tone: "warning", label: run.question.kind === "work" ? "Waiting" : "Waiting" };
+  }
+  if (!run.question && run.waiting) {
+    return { tone: "warning", label: "Waiting" };
+  }
+  return { tone: "working", label: "Working" };
+}
+
+function activeDetail(run: Run): string {
+  const started = run.started_at ? relative(run.started_at) : "";
+  if (run.cleanup_error) return run.cleanup_error;
+  if (run.cancel_requested) return "Stopping task…";
+  if (run.finishing) return "Wrapping up…";
+  if (run.question?.resolved_by) {
+    return run.question.kind === "work" ? "Waiting for subtasks" : "Continuing with your answer";
+  }
+  if (run.question || run.waiting) {
+    if (run.question?.kind === "work") return "Coordinating subtasks";
+    return "Needs a reply in chat";
+  }
+  if (run.progress?.trim()) {
+    return started ? `${run.progress.trim()} · ${started}` : run.progress.trim();
+  }
+  return started ? `Started ${started}` : "Working on it";
+}
+
+function recentPill(run: Run): { tone: Tone; label: string } {
+  if (run.status === "completed") return { tone: "ok", label: "Done" };
+  if (isPartial(run)) return { tone: "warning", label: "Partial" };
+  if (run.status === "failed") return { tone: "danger", label: "Failed" };
+  return { tone: "neutral", label: "Stopped" };
+}
+
+function recentDetail(run: Run): string {
+  const finished = run.finished_at || run.started_at;
+  const rel = finished ? relative(finished) : "";
+  const dur = durationLabel(run.started_at, run.finished_at);
+  return [rel, dur].filter(Boolean).join(" · ") || "Finished";
 }
 
 export function TaskPanel({
-  session, selected, pending, loading, error, unavailable, onSelect, onRefresh, onClose,
-  commands, drafts, onDraft, onCommand, onRetryCommand, onDismissCommand, debug,
+  session,
+  pending,
+  loading,
+  error,
+  unavailable,
+  onRefresh,
+  onClose,
+  onReplyInChat,
+  commands,
+  onCommand,
+  onRetryCommand,
+  onDismissCommand,
 }: {
-  debug: boolean;
   session?: Session;
-  selected?: Run;
   pending: boolean;
   loading: boolean;
   error: string;
   unavailable: boolean;
-  onSelect: (id: string) => void;
   onRefresh: () => void;
   onClose: () => void;
+  onReplyInChat: () => void;
   commands: PendingTaskCommand[];
-  drafts: Record<string, string>;
-  onDraft: (id: string, text: string) => void;
   onCommand: (id: string, kind: TaskCommand["kind"], text?: string, questionId?: string) => Promise<void>;
   onRetryCommand: (item: PendingTaskCommand) => Promise<void>;
   onDismissCommand: (id: string) => void;
 }) {
-  const [collapsedId, setCollapsedId] = useState<string>();
-  const selectedCard = useRef<HTMLElement>(null);
-  const scrollTarget = useRef<string>(undefined);
-  const answerInput = useRef<HTMLTextAreaElement>(null);
-  const focusAnswer = useRef<string>(undefined);
-  const expanded = !!selected && selected.id !== collapsedId;
-  useEffect(() => {
-    if (expanded && selected?.id === scrollTarget.current) {
-      selectedCard.current?.scrollIntoView({ block: "start" });
-      scrollTarget.current = undefined;
-    }
-    if (expanded && selected?.id === focusAnswer.current) {
-      answerInput.current?.focus();
-      focusAnswer.current = undefined;
-    }
-  }, [expanded, selected?.id]);
-  function selectTask(id: string) {
-    scrollTarget.current = selected?.id !== id || !expanded ? id : undefined;
-    setCollapsedId(selected?.id === id && expanded ? id : undefined);
-    onSelect(id);
-  }
-  function answerQuestion(id: string) {
-    if (selected?.id === id && expanded) answerInput.current?.focus();
-    else focusAnswer.current = id;
-    setCollapsedId(undefined);
-    onSelect(id);
-  }
-  const activeCount = session?.runs.filter((run) => run.status === "running").length ?? 0;
   const runs = session?.runs ?? [];
   const commandsByRun = new Map<string, PendingTaskCommand[]>();
   for (const item of commands) {
@@ -140,137 +122,230 @@ export function TaskPanel({
     if (existing) existing.push(item);
     else commandsByRun.set(runID, [item]);
   }
-  const visibleTasks: Run[] = [];
-  const recentTasks: Run[] = [];
+
+  const activeTasks: Run[] = [];
+  const finishedTasks: Run[] = [];
   for (const run of runs) {
-    const list = run.status === "running" || commandsByRun.has(run.id) ? visibleTasks : recentTasks;
-    list.push(run);
+    if (run.status === "running" || commandsByRun.has(run.id)) activeTasks.push(run);
+    else finishedTasks.push(run);
   }
-  const connection = error ? "Connection interrupted" : loading ? "Loading history…" : !session ? "Runtime unavailable"
-    : unavailable ? "Task execution paused" : activeCount ? `Working on ${activeCount} ${activeCount === 1 ? "task" : "tasks"}` : "Ready when you are";
-  const selectedCommand = selected && commandsByRun.has(selected.id);
-  const question = selected?.question;
-  const answerable = question?.kind === "input" || (question?.kind === "work" && !question.resolved_by);
-  const draft = selected ? drafts[selected.id] || "" : "";
-  const draftTooLong = messageTooLong(draft.trim());
-  const updateDisabled = unavailable || !!selectedCommand || !draft.trim() || draftTooLong;
-  const title = (run: Run) => run.request || session?.messages.find((message) => message.run_id === run.id && message.role === "user")?.text || "Task";
-  const selectedDetails = selected && <section key={selected.id} id={`task-details-${selected.id}`} aria-label="Selected task details" className="mt-3 border-t border-hairline pt-3">
-    <h4 className="mb-3 text-meta font-medium">Task details</h4>
-    {selected.status === "running" && (question?.text || selected.waiting) && <p className="mb-3 whitespace-pre-wrap break-words text-meta text-ink-2 [overflow-wrap:anywhere]">{question?.text || selected.waiting}</p>}
-    {selected.status === "running" && !question?.text && !selected.waiting && selected.progress && <p className="mb-3 whitespace-pre-wrap break-words text-meta text-ink-2 [overflow-wrap:anywhere]">{selected.progress}</p>}
-    {selected.cleanup_error && <p role="status" className="mb-3 rounded-tile bg-fill-1 p-3 text-meta text-ink-2">{selected.cleanup_error}</p>}
-    {selected.error && <p role="status" className={cn("mb-3 rounded-tile p-3 text-meta", selected.status === "failed" ? "bg-danger-bg text-danger" : "bg-fill-1 text-ink-2")}>
-      {selected.error}
-      {/more\s*(?:→|>)\s*models|model_key_required|missing_api_key/i.test(selected.error) && <> <Link href="/settings/models" className="font-semibold underline">Open Models</Link></>}
-    </p>}
-    {selected.status === "running" && !selected.cancel_requested && !selected.finishing && <form className="mb-4 space-y-2 px-2" onSubmit={(event) => {
-      event.preventDefault();
-      const text = drafts[selected.id]?.trim();
-      if (!text || updateDisabled || (answerable && question?.resolved_by)) return;
-      void onCommand(selected.id, answerable ? "answer" : "steer", text, answerable ? question?.id : undefined);
-    }}>
-      <label className="block text-meta font-medium" htmlFor={`update-${selected.id}`}>{answerable ? "Answer this question" : "Update this task"}</label>
-      <textarea ref={answerInput} id={`update-${selected.id}`} value={draft} onChange={(event) => onDraft(selected.id, event.target.value)}
-        maxLength={MAX_MESSAGE_BYTES} rows={2} disabled={unavailable || !!selectedCommand}
-        className="w-full resize-y rounded-tile bg-fill-1 p-3 text-meta text-ink" />
-      {draftTooLong && <p role="alert" className="text-meta text-danger">Keep this within 8,192 UTF-8 bytes.</p>}
-      <Button type="submit" size="sm" disabled={updateDisabled || (answerable && !!question?.resolved_by)}>
-        {answerable ? "Send answer" : "Send task update"}
-      </Button>
-      {answerable && <Button type="button" size="sm" variant="quiet" disabled={updateDisabled} onClick={() => void onCommand(selected.id, "steer", draft)}>Send task update</Button>}
-    </form>}
-    {!!selected.holds?.length && <section className="mb-3 rounded-tile bg-fill-1 p-3 text-meta" aria-label="Held questions">
-      <h4 className="font-medium">Follow-up questions</h4>
-      <ul className="mt-2 space-y-2">{selected.holds.map((hold) => <li key={hold.id}>
-        <p className="whitespace-pre-wrap break-words">{hold.question}</p>
-        <p className="text-caption text-ink-3">{hold.status === "answered" ? "Answered in chat" : hold.status === "failed" ? "Chat reply unavailable" : hold.status === "ready" ? "Preparing a chat reply" : "Waiting for the task result"}</p>
-      </li>)}</ul>
-    </section>}
-    {selected.result && <details className="mb-3 rounded-tile bg-fill-1 p-3 text-meta" open>
-      <summary className="cursor-pointer font-medium">{incomplete(selected) ? "Partial answer" : "Task result"}</summary>
-      <p className="mt-2 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{selected.result}</p>
-    </details>}
-    <SavedResults results={(session?.results ?? []).filter((result) => result.run_id === selected.id)} />
-    {!!selected.events?.length && <details className="mb-3" open>
-      <summary className="cursor-pointer px-2 py-2 text-meta font-medium">Task activity</summary>
-      <ol className="space-y-2" aria-label="Task events">{selected.events.map((event, index) => {
-        const Icon = /browser|web/.test(event.kind) || /^(browser|web|screenshot)/.test(event.text) ? Globe : /shell|command/.test(event.kind) || /^(shell|job)/.test(event.text) ? Terminal : Check;
-        return <li key={event.id || `${selected.id}-${index}`} className="flex items-start gap-3 rounded-tile px-2 py-2">
-          <span className="grid size-10 shrink-0 place-items-center rounded-tile bg-fill-1 text-ink"><Icon size={20} strokeWidth={1.5} /></span>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between gap-2"><span className="text-row-title font-medium capitalize">{event.kind.replaceAll("_", " ")}</span><time className="text-caption text-ink-3">{clock(Date.parse(event.created_at))}</time></div>
-            <p className="mt-1 whitespace-pre-wrap break-words text-meta text-ink-2 [overflow-wrap:anywhere]">{event.text}</p>
-          </div>
-        </li>;
-      })}</ol>
-    </details>}
-    {debug && <DebugBlock key={selected.id} info={{ run: selected }} />}
-    {!!selected.artifacts?.length && <section className="space-y-3"><SectionHeader>Screenshots</SectionHeader>{selected.artifacts.map((artifact) => <Screenshot key={`${selected.id}-${artifact.id}`} runId={selected.id} artifact={artifact} />)}</section>}
-  </section>;
-  function renderTask(run: Run, currentTask: boolean) {
-    const taskCommands = commandsByRun.get(run.id) ?? [];
-    const isSelected = selected?.id === run.id;
-    const showDetails = isSelected && expanded;
-    const stopping = taskCommands.some((item) => item.command.kind === "stop");
-    return <article key={run.id} ref={isSelected ? selectedCard : undefined} aria-label={title(run)} className={cn("scroll-mt-3 rounded-tile border border-hairline p-3", isSelected && "bg-fill-1", !currentTask && "my-1")}>
-      <button type="button" aria-expanded={showDetails} aria-controls={showDetails ? `task-details-${run.id}` : undefined} onClick={() => selectTask(run.id)} className="flex w-full items-center gap-2 rounded-tile text-left">
-        <span className="min-w-0 flex-1">
-          <span className="line-clamp-2 text-row-title font-medium">{title(run)}</span>
-          <small className="mt-1 block text-caption text-ink-3">{run.parent_id ? "Subtask · " : ""}{statusLabel(run)}</small>
-          {run.status === "running" && !showDetails && (run.question?.text || run.waiting) && <span className="mt-2 line-clamp-3 whitespace-pre-wrap break-words text-meta text-ink-2 [overflow-wrap:anywhere]">{run.question?.text || run.waiting}</span>}
-          {currentTask && <span className="mt-2 block text-caption font-medium text-accent-text">{showDetails ? "Hide task details" : "View task details"}</span>}
-        </span>
-        <ChevronDown size={14} aria-hidden className={cn("shrink-0 text-ink-3", !showDetails && "-rotate-90")} />
-      </button>
-      {run.question?.resolved_by && run.status === "running" && <p className="mt-2 text-caption text-ink-3">{run.question.kind === "work" ? "Subtasks are running." : "Answer accepted."} Waiting for the task to continue.</p>}
-      {(run.status === "running" || taskCommands.length > 0) && <div className="mt-2 space-y-2">
-        {run.status === "running" && <div className="flex flex-wrap gap-2">
-          {(run.question?.kind === "input" || run.question?.kind === "work") && !run.question.resolved_by && !run.cancel_requested && <Button size="sm" disabled={unavailable || taskCommands.length > 0} onClick={() => answerQuestion(run.id)}>Answer question</Button>}
-          <Button size="sm" variant="quiet" disabled={stopping || run.cancel_requested} onClick={() => void onCommand(run.id, "stop")}>
-            {run.cancel_requested || stopping ? "Stopping…" : "Stop task"}
-          </Button>
-        </div>}
-        {run.cancel_requested && run.status === "running" && <p className="text-caption text-ink-3">Waiting for owned tasks and jobs to stop.</p>}
-        {taskCommands.map((command) => <div key={command.command.id} role={command.error ? "alert" : "status"} className="text-meta text-ink-2">
-          <p>{command.sending ? "Sending task command…" : command.error || "Waiting for command acceptance…"}</p>
-          {command.command.text && <p className="mt-1 line-clamp-3 whitespace-pre-wrap">{command.command.text}</p>}
-          {!command.sending && command.error && (command.rejected ? <Button size="sm" variant="quiet" onClick={() => {
-            if (command.command.text) onDraft(run.id, command.command.text);
-            onDismissCommand(command.command.id);
-          }}>Edit task command</Button> : <Button size="sm" variant="quiet" disabled={loading} onClick={() => void onRetryCommand(command)}>Retry task command</Button>)}
-        </div>)}
-      </div>}
-      {showDetails && selectedDetails}
-    </article>;
-  }
+  finishedTasks.sort(
+    (a, b) => Date.parse(b.finished_at ?? b.started_at) - Date.parse(a.finished_at ?? a.started_at),
+  );
+  const recentTasks = finishedTasks.slice(0, RECENT_LIMIT);
+  const activeCount = activeTasks.filter((run) => run.status === "running").length;
+
+  const headerStatus = error
+    ? { tone: "danger" as Tone, label: "Reconnecting", pulse: false }
+    : !session
+      ? { tone: "neutral" as Tone, label: loading ? "Loading…" : "Offline", pulse: false }
+      : unavailable
+        ? { tone: "warning" as Tone, label: "Paused", pulse: false }
+        : activeCount > 0
+          ? { tone: "working" as Tone, label: `${activeCount} running`, pulse: true }
+          : { tone: "neutral" as Tone, label: "All quiet", pulse: false };
 
   return (
-    <div className="flex h-full flex-col bg-canvas px-4">
-      <header className="relative flex shrink-0 flex-col items-center pt-12 pb-4">
-        <IconButton size={36} label="Hide agent panel" tip={false} onClick={onClose} className="absolute top-3 right-0">
-          <X size={18} strokeWidth={1.5} />
-        </IconButton>
-        <Medallion size={96} state={activeCount ? "thinking" : "idle"} watch />
-        <h2 className="mt-3 text-title font-medium text-ink">Nori</h2>
-        <p className="mt-1 flex items-center gap-2 text-status text-ink-2" role="status">
-          <span aria-hidden className={cn("size-2 rounded-full", error || unavailable || !session ? "bg-ink-3" : "bg-accent-signal", activeCount > 0 && "pulse-dot")} />
-          {connection}
-        </p>
+    <div className="flex h-full flex-col bg-sheet text-ink">
+      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-hairline px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <NoriMark size={24} state={activeCount > 0 || pending ? "thinking" : "idle"} />
+          <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-ink">Activity</h2>
+          <span
+            role="status"
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-caption font-semibold",
+              headerStatus.tone === "working" && "bg-working-bg text-working",
+              headerStatus.tone === "warning" && "bg-warning-bg text-warning",
+              headerStatus.tone === "danger" && "bg-danger-bg text-danger",
+              headerStatus.tone === "neutral" && "bg-inactive-bg text-inactive",
+            )}
+          >
+            {headerStatus.pulse && (
+              <span aria-hidden className="pulse-dot size-1.5 rounded-full bg-accent-signal" />
+            )}
+            {headerStatus.label}
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <IconButton
+            size={32}
+            label="Refresh activity"
+            tip={false}
+            disabled={loading}
+            onClick={onRefresh}
+            className="bg-fill-1 text-ink-2 hover:bg-fill-2 hover:text-ink"
+          >
+            <RefreshCw size={14} strokeWidth={1.75} className={cn(loading && "animate-spin")} />
+          </IconButton>
+          <IconButton
+            size={32}
+            label="Close activity"
+            tip={false}
+            onClick={onClose}
+            className="bg-fill-1 text-ink-2 hover:bg-fill-2 hover:text-ink"
+          >
+            <X size={15} strokeWidth={1.75} />
+          </IconButton>
+        </div>
       </header>
-      <div className="scrollbar-quiet -mx-4 min-h-0 flex-1 overflow-y-auto px-4 pb-6">
-        {!runs.length ? <p className="px-2 py-5 text-meta text-ink-3">{pending ? "Sending your message to Nori…" : "Activity and screenshots from your tasks appear here."}</p> : (
-          <section aria-label="Tasks" className="space-y-2">
-            {visibleTasks.map((run) => renderTask(run, true))}
+
+      <div className="scrollbar-quiet min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4">
+        <section aria-label="Active tasks">
+          <div className="mb-2 flex items-center justify-between px-0.5">
+            <h3 className="text-caption font-semibold text-ink-3">Active</h3>
+            {activeTasks.length > 0 && (
+              <span className="text-caption font-semibold text-ink-3">{activeTasks.length}</span>
+            )}
+          </div>
+
+          {activeTasks.length === 0 ? (
+            <div className="rounded-card border border-card-border bg-surface px-4 py-3.5 text-meta text-ink-2">
+              {pending ? "Handling your latest message…" : "No background tasks running."}
+            </div>
+          ) : (
+            <Rows label="Active tasks">
+              {activeTasks.map((run) => {
+                const label = taskTitle(run, session);
+                const taskCommands = commandsByRun.get(run.id) ?? [];
+                const stopping = taskCommands.some((item) => item.command.kind === "stop");
+                const pill = activePill(run, stopping);
+                const waitingForChatReply =
+                  run.status === "running" &&
+                  !run.cancel_requested &&
+                  !stopping &&
+                  ((run.question?.kind === "input" && !run.question.resolved_by) ||
+                    (!run.question && Boolean(run.waiting)));
+                const failedCommands = taskCommands.filter((item) => !item.sending && item.error);
+
+                return (
+                  <li key={run.id} className="transition-colors">
+                    <div className="flex items-center gap-2 px-4 py-3 hover:bg-fill-1">
+                      <Link
+                        href={`/work/${encodeURIComponent(run.id)}`}
+                        onClick={onClose}
+                        className="min-w-0 flex-1 text-left focus-visible:outline-none"
+                      >
+                        <span className="block truncate text-row font-semibold text-ink">
+                          {run.parent_id ? `Subtask · ${label}` : label}
+                        </span>
+                        <span className="mt-0.5 line-clamp-2 block text-meta text-ink-2 [overflow-wrap:anywhere]">
+                          {activeDetail(run)}
+                        </span>
+                      </Link>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <Pill tone={pill.tone}>{pill.label}</Pill>
+                        {run.status === "running" && !run.cancel_requested && !stopping && (
+                          <button
+                            type="button"
+                            aria-label={`Stop ${label}`}
+                            title="Stop task"
+                            disabled={unavailable}
+                            onClick={() => void onCommand(run.id, "stop")}
+                            className="grid size-7 shrink-0 place-items-center rounded-full text-ink-3 transition-colors hover:bg-danger-bg hover:text-danger disabled:opacity-40"
+                          >
+                            <Square size={11} fill="currentColor" aria-hidden />
+                          </button>
+                        )}
+                        <Link
+                          href={`/work/${encodeURIComponent(run.id)}`}
+                          onClick={onClose}
+                          aria-label={`Open ${label}`}
+                          className="grid size-6 shrink-0 place-items-center text-ink-3 hover:text-ink"
+                        >
+                          <ChevronRight size={15} aria-hidden />
+                        </Link>
+                      </div>
+                    </div>
+
+                    {waitingForChatReply && (
+                      <div className="px-4 pb-3">
+                        <button
+                          type="button"
+                          onClick={onReplyInChat}
+                          className="inline-flex items-center gap-1 rounded-full bg-accent-subtle px-3 py-1 text-caption font-semibold text-accent-text transition-colors hover:brightness-105"
+                        >
+                          Reply in chat →
+                        </button>
+                      </div>
+                    )}
+
+                    {failedCommands.map((command) => (
+                      <div
+                        key={command.command.id}
+                        role="alert"
+                        className="flex items-center justify-between gap-2 px-4 pb-3 text-caption text-danger"
+                      >
+                        <span className="min-w-0 truncate">{command.error}</span>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          {!command.rejected && (
+                            <Button
+                              size="sm"
+                              variant="quiet"
+                              disabled={loading}
+                              onClick={() => void onRetryCommand(command)}
+                            >
+                              Retry
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="quiet"
+                            onClick={() => onDismissCommand(command.command.id)}
+                          >
+                            Dismiss
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </li>
+                );
+              })}
+            </Rows>
+          )}
+        </section>
+
+        {recentTasks.length > 0 && (
+          <section aria-label="Recent tasks">
+            <div className="mb-2 flex items-center justify-between px-0.5">
+              <h3 className="text-caption font-semibold text-ink-3">Recent</h3>
+            </div>
+            <Rows label="Recent tasks">
+              {recentTasks.map((run) => {
+                const label = taskTitle(run, session);
+                const pill = recentPill(run);
+                return (
+                  <li key={run.id}>
+                    <Link
+                      href={`/work/${encodeURIComponent(run.id)}`}
+                      onClick={onClose}
+                      className="flex min-h-14 items-center gap-3 px-4 py-3 transition-colors hover:bg-fill-1"
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-row font-semibold text-ink">{label}</span>
+                        <span className="mt-0.5 block text-meta text-ink-2">{recentDetail(run)}</span>
+                      </span>
+                      <Pill tone={pill.tone}>{pill.label}</Pill>
+                      <ChevronRight size={15} className="shrink-0 text-ink-3" aria-hidden />
+                    </Link>
+                  </li>
+                );
+              })}
+            </Rows>
           </section>
         )}
-
-        {!!recentTasks.length && <details className="mt-4" open={recentTasks.some((run) => run.id === selected?.id)}>
-          <summary className="cursor-pointer px-2 py-2 text-meta font-medium">Recent tasks ({recentTasks.length})</summary>
-          {recentTasks.map((run) => renderTask(run, false))}
-        </details>}
-        <Button size="sm" variant="quiet" onClick={onRefresh} disabled={loading} className="mt-4 w-full">{loading ? "Loading…" : "Refresh history"}</Button>
       </div>
+
+      <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-hairline px-4 py-3">
+        <span className="text-caption text-ink-3">Click any task for details &amp; steering</span>
+        <Link
+          href="/work"
+          onClick={onClose}
+          className="text-meta font-semibold text-accent-text hover:underline"
+        >
+          Open Work →
+        </Link>
+      </footer>
     </div>
   );
 }

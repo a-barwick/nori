@@ -3,8 +3,10 @@ package state
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"nori/internal/prompts"
@@ -27,6 +29,7 @@ const (
 
 type Run struct {
 	ID      string      `json:"id" firestore:"id"`
+	Title   string      `json:"title,omitempty" firestore:"title,omitempty"`
 	Request string      `json:"request,omitempty" firestore:"request,omitempty"`
 	Origin  *TaskOrigin `json:"origin,omitempty" firestore:"origin,omitempty"`
 
@@ -118,6 +121,60 @@ type TaskEvent struct {
 }
 
 func TaskPosition(r Run) int64 { return max(r.Position, r.Revision) }
+
+var (
+	taskWordsParenRE     = regexp.MustCompile(`(?i)\s*\((?:the\s+)?user['’]s\s+words?\)`)
+	taskForTheUserRE     = regexp.MustCompile(`(?i)\bfor\s+the\s+user\b`)
+	taskUserAppositiveRE = regexp.MustCompile(`(?i),\s+the\s+user['’]s\s+[^.!?\n]+`)
+)
+
+// TaskTitle returns a concise, human-readable title for a task run, preferring
+// the explicit Run.Title and falling back to a cleaned first sentence of Request.
+func TaskTitle(r Run) string {
+	if title := strings.Join(strings.Fields(strings.TrimSpace(r.Title)), " "); title != "" {
+		return clipTitle(title, 120)
+	}
+	return ShortTaskTitle(r.Request)
+}
+
+// ShortTaskTitle derives a concise plain-English task title from a raw delegation
+// request string when no explicit title was provided.
+func ShortTaskTitle(request string) string {
+	first := strings.TrimSpace(strings.SplitN(strings.TrimSpace(request), "\n", 2)[0])
+	first = strings.Join(strings.Fields(first), " ")
+	if first == "" {
+		return "Task"
+	}
+	// Take the first sentence when the request contains multi-sentence instructions.
+	for _, sep := range []string{". ", "! ", "? "} {
+		if idx := strings.Index(first, sep); idx >= 8 {
+			first = strings.TrimSpace(first[:idx])
+			break
+		}
+	}
+	first = taskWordsParenRE.ReplaceAllString(first, "")
+	first = taskUserAppositiveRE.ReplaceAllString(first, "")
+	first = taskForTheUserRE.ReplaceAllString(first, "")
+	first = strings.Join(strings.Fields(first), " ")
+	first = strings.TrimRight(first, ". ")
+	if first == "" {
+		return "Task"
+	}
+	return clipTitle(first, 80)
+}
+
+func clipTitle(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	cut := clipBytes(s, maxBytes)
+	cut = strings.TrimSuffix(cut, "...")
+	cut = strings.TrimRight(cut, " ,;:-")
+	if idx := strings.LastIndexByte(cut, ' '); idx >= maxBytes/2 {
+		cut = strings.TrimRight(cut[:idx], " ,;:-")
+	}
+	return cut + "…"
+}
 
 func GuardRun(r Run, revision int64) error {
 	if r.CancelRequested {
