@@ -47,7 +47,7 @@ async function initialize() {
       release: config.release,
       transportOptions: { fetchOptions: { credentials: "same-origin" } },
       ...privacyOptions(config.tracesSampleRate),
-      tracePropagationTargets: [/^\/api\/(?:input|cancel|command|artifact|trace)$/],
+      tracePropagationTargets: [/^\/api\/v1\//, /^\/api\/(?:input|cancel|command|artifact|trace)$/],
       propagateTraceparent: true,
       ignoreSpans: ignoredRequestSpans,
     });

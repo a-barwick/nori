@@ -430,6 +430,68 @@ describe("oidcIdentity and resolveUser", () => {
     assert.equal("userID" in cached && cached.userID, provisionedID);
   });
 
+  test("resolveUser deduplicates concurrent in-flight requests for the same identity", async () => {
+    const validUUID = "55555555-5555-4555-8555-555555555555";
+    let resolveCalls = 0;
+    let releaseFetch!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseFetch = resolve; });
+
+    await installOIDCFetch(async () => {
+      resolveCalls++;
+      await gate;
+      return Response.json({ id: validUUID }, { headers: { "X-Nori-Identity-Bound": "1" } });
+    });
+
+    const token = await signIDToken({ sub: "sf-1", email: "singleflight@example.test", email_verified: true });
+    const pending = Array.from({ length: 12 }, () =>
+      resolveUser(new Headers({ authorization: `Bearer ${token}` })),
+    );
+    // Let all concurrent callers pass identify() and converge on the singleflight map.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(resolveCalls, 1);
+
+    releaseFetch();
+    const results = await Promise.all(pending);
+    assert.equal(resolveCalls, 1);
+    for (const res of results) {
+      assert.equal("userID" in res && res.userID, validUUID);
+    }
+  });
+
+  test("resolveUser cleans up in-flight singleflight entries after errors so subsequent calls retry", async () => {
+    const validUUID = "66666666-6666-4666-8666-666666666666";
+    let resolveCalls = 0;
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+
+    await installOIDCFetch(async () => {
+      resolveCalls++;
+      if (resolveCalls === 1) {
+        await firstGate;
+        throw new Error("transient upstream failure");
+      }
+      return Response.json({ id: validUUID }, { headers: { "X-Nori-Identity-Bound": "1" } });
+    });
+
+    const token = await signIDToken({ sub: "sf-err-1", email: "singleflight-err@example.test", email_verified: true });
+    const firstBurst = Array.from({ length: 4 }, () =>
+      resolveUser(new Headers({ authorization: `Bearer ${token}` })),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(resolveCalls, 1);
+
+    releaseFirst();
+    const failedResults = await Promise.all(firstBurst);
+    for (const res of failedResults) {
+      assert.equal("status" in res && res.status, 503);
+    }
+
+    // After the failed in-flight entry is cleaned up, the next call issues a fresh fetch and succeeds.
+    const retried = await resolveUser(new Headers({ authorization: `Bearer ${token}` }));
+    assert.equal(resolveCalls, 2);
+    assert.equal("userID" in retried && retried.userID, validUUID);
+  });
+
   test("runtimeTarget enforces https in hosted mode and loopback http in local mode", () => {
     process.env.NORI_RUNTIME_URL = "http://insecure.example";
     const hostedHttp = runtimeTarget("hosted");

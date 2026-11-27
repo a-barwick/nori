@@ -21,7 +21,7 @@ export function parseDesktopWSPath(rawURL: string | undefined): ParsedDesktopWS 
     if (!match) return null;
     const sessionId = decodeURIComponent(match[1]);
     const token = (parsed.searchParams.get("token") ?? "").trim();
-    if (!SESSION_ID_RE.test(sessionId) || !token || token.length > 512) return null;
+    if (!SESSION_ID_RE.test(sessionId) || !token || token.length > 512 || /[\x00-\x1f\x7f]/.test(token)) return null;
     return { sessionId, token };
   } catch {
     return null;
@@ -47,7 +47,8 @@ function rejectSocket(socket: Duplex, statusCode: number, reason: string) {
 /**
  * Authenticated HTTP Upgrade tunnel from same-origin browser/Mac WebSocket
  * `/api/v1/computer/sessions/{id}/ws?token=...` to user-scoped `nori-core`
- * `/users/{userID}/v1/computer/sessions/{id}/ws?token=...` with Nori service auth.
+ * `/users/{userID}/v1/computer/sessions/{id}/ws` with Nori service auth and
+ * `X-Nori-Computer-Token`.
  */
 export async function handleDesktopWSUpgrade(
   req: IncomingMessage,
@@ -97,7 +98,7 @@ export async function handleDesktopWSUpgrade(
   if (socket.destroyed) return true;
 
   const upstreamURL = new URL(
-    `users/${encodeURIComponent(user.userID)}/v1/computer/sessions/${encodeURIComponent(parsed.sessionId)}/ws?token=${encodeURIComponent(parsed.token)}`,
+    `users/${encodeURIComponent(user.userID)}/v1/computer/sessions/${encodeURIComponent(parsed.sessionId)}/ws`,
     user.base,
   );
   const isTLS = upstreamURL.protocol === "https:";
@@ -135,6 +136,7 @@ export async function handleDesktopWSUpgrade(
       `Sec-WebSocket-Version: ${wsVersion}`,
       `Sec-WebSocket-Protocol: ${wsProto}`,
       "X-Nori-Client: web",
+      `X-Nori-Computer-Token: ${parsed.token}`,
     ];
     for (const [k, v] of Object.entries(authHeaders)) {
       lines.push(`${k}: ${v}`);

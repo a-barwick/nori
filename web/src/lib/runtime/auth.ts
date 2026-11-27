@@ -39,6 +39,7 @@ export function accessFailureResponse(failure: AccessFailure, plainText = false)
 
 const RESOLVED_TTL_MS = 5 * 60_000;
 const resolved = new Map<string, { userID: string; expires: number }>();
+const inFlight = new Map<string, Promise<ScopedRuntime | AccessFailure>>();
 
 function identityKey(target: RuntimeTarget, identity: Identity): string {
   return JSON.stringify([target.mode, target.base.toString(), identity.issuer ?? "local", identity.subject ?? identity.email, identity.email]);
@@ -83,42 +84,52 @@ async function requestUserAccount(
   if (options.useCache) {
     const known = resolved.get(key);
     if (known && known.expires > Date.now()) return { ...target, userID: known.userID, identity };
+    const pending = inFlight.get(key);
+    if (pending) return pending;
   }
-  try {
-    const payload: Record<string, string> = { email: identity.email, ...options.extraPayload };
-    if (identity.name) payload.name = identity.name;
-    const response = await fetch(new URL(options.endpoint, target.base), {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...await runtimeHeaders(target.mode), ...identityHeaders(identity) },
-      body: JSON.stringify(payload),
-      cache: "no-store",
-      redirect: "error",
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) {
-      rejected(options.stage, response.status);
-      if (response.status === 429) {
+  const run = async (): Promise<ScopedRuntime | AccessFailure> => {
+    try {
+      const payload: Record<string, string> = { email: identity.email, ...options.extraPayload };
+      if (identity.name) payload.name = identity.name;
+      const response = await fetch(new URL(options.endpoint, target.base), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...await runtimeHeaders(target.mode), ...identityHeaders(identity) },
+        body: JSON.stringify(payload),
+        cache: "no-store",
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) {
+        rejected(options.stage, response.status);
+        if (response.status === 429) {
+          void response.body?.cancel().catch(() => undefined);
+          const retryAfter = response.headers.get("retry-after") ?? "";
+          return { status: 429, error: "Nori is busy. Try again shortly.", retryAfter: /^\d{1,6}$/.test(retryAfter) ? retryAfter : undefined };
+        }
+        if (response.status === 400 || response.status === 403) {
+          return await options.onClientError(response);
+        }
         void response.body?.cancel().catch(() => undefined);
-        const retryAfter = response.headers.get("retry-after") ?? "";
-        return { status: 429, error: "Nori is busy. Try again shortly.", retryAfter: /^\d{1,6}$/.test(retryAfter) ? retryAfter : undefined };
+        return unavailable;
       }
-      if (response.status === 400 || response.status === 403) {
-        return options.onClientError(response);
+      const value = await response.json();
+      if (typeof value.id !== "string" || !(value.id === "owner" || USER_ID_PATTERN.test(value.id))) return unavailable;
+      if (resolved.size >= 1000) resolved.clear();
+      if (target.mode === "local" || response.headers.get("x-nori-identity-bound") === "1") {
+        resolved.set(key, { userID: value.id, expires: Date.now() + RESOLVED_TTL_MS });
       }
-      void response.body?.cancel().catch(() => undefined);
+      return { ...target, userID: value.id, identity };
+    } catch {
+      rejected(`${options.stage}_connection`);
       return unavailable;
     }
-    const value = await response.json();
-    if (typeof value.id !== "string" || !(value.id === "owner" || USER_ID_PATTERN.test(value.id))) return unavailable;
-    if (resolved.size >= 1000) resolved.clear();
-    if (target.mode === "local" || response.headers.get("x-nori-identity-bound") === "1") {
-      resolved.set(key, { userID: value.id, expires: Date.now() + RESOLVED_TTL_MS });
-    }
-    return { ...target, userID: value.id, identity };
-  } catch {
-    rejected(`${options.stage}_connection`);
-    return unavailable;
-  }
+  };
+  if (!options.useCache) return run();
+  const promise = run().finally(() => {
+    if (inFlight.get(key) === promise) inFlight.delete(key);
+  });
+  inFlight.set(key, promise);
+  return promise;
 }
 
 export async function resolveUser(headers: Headers, target = runtimeTarget(runtimeMode(headers))): Promise<ScopedRuntime | AccessFailure> {
