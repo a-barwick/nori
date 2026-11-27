@@ -70,12 +70,16 @@ func (s *server) canIntroduce(ctx context.Context) bool {
 	return false
 }
 
+const repairWakeTimeout = 5 * time.Second
+
 func (s *server) repairWake(ctx context.Context) {
 	if s.Ops == nil {
 		return
 	}
-	if err := s.Ops.RepairWake(ctx); err != nil {
-		slog.WarnContext(ctx, "saved work wake repair failed", "err", err)
+	repairCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), repairWakeTimeout)
+	defer cancel()
+	if err := s.Ops.RepairWake(repairCtx); err != nil {
+		slog.WarnContext(repairCtx, "saved work wake repair failed", "err", err)
 	}
 }
 

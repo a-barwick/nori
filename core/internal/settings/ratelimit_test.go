@@ -31,6 +31,9 @@ func TestLoadRateLimitFromEnvDefaults(t *testing.T) {
 	if cfg != want {
 		t.Fatalf("LoadRateLimitFromEnv() = %+v, want %+v", cfg, want)
 	}
+	if cfg.ResolvePerMinute != 120 || cfg.ResolveBurst != 30 {
+		t.Fatalf("unexpected default resolve rate limit: per_min=%d burst=%d, want 120/30", cfg.ResolvePerMinute, cfg.ResolveBurst)
+	}
 }
 
 func TestLoadRateLimitFromEnvOverrides(t *testing.T) {

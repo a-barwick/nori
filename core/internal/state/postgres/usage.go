@@ -21,7 +21,7 @@ FROM (
 	       coalesce(data->>'cost_status','') NOT IN ('provider', 'calculated', 'local')
 	         AND coalesce((data->>'cost_usd')::double precision, 0) <= 0 AS unknown
 	FROM nori_records
-	WHERE shard = $1 AND collection = $2 AND idx_created_at >= least($3::jsonb, $4::jsonb)
+	WHERE shard = $1 AND collection = $2 AND idx_created_at IS NOT NULL AND idx_created_at >= least($3::jsonb, $4::jsonb)
 	  AND data->>'request_status' IS DISTINCT FROM 'not_sent'
 ) usage
 `
@@ -58,6 +58,7 @@ SELECT idx_created_at #>> '{}', coalesce(data->>'model', ''),
        coalesce(data->>'request_status', '')
 FROM nori_records
 WHERE shard = $1 AND collection = $2
+  AND idx_created_at IS NOT NULL
   AND idx_created_at >= to_jsonb($3::text) AND idx_created_at < to_jsonb($4::text)
   AND data->>'request_status' IS DISTINCT FROM 'not_sent'
 `

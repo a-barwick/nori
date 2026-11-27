@@ -8,7 +8,7 @@ on:
       quick:
         description: "Skip Deep Deterministic Simulation and use a 60s bake"
         type: boolean
-        default: true
+        default: false
       allow_fallback:
         description: "Fall back to an older green commit if main HEAD is not ready"
         type: boolean
@@ -47,7 +47,7 @@ jobs:
       - name: Release commit
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_QUICK: ${{ github.event_name == 'workflow_dispatch' && inputs.quick != false }}
+          RELEASE_QUICK: ${{ github.event_name == 'workflow_dispatch' && inputs.quick == true }}
           RELEASE_LATEST_GREEN: ${{ github.event_name == 'schedule' || inputs.allow_fallback == true }}
         run: |
           args=()

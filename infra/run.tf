@@ -23,6 +23,7 @@ locals {
     NORI_CREDENTIAL_STORE        = "database"
     NORI_GOOGLE_OAUTH_CLIENT_IDS = "8273801370-im0dvqnf5v60e9djiba88uuvo5n52g9g.apps.googleusercontent.com"
     NORI_JEV_ENABLED             = "false"
+    NORI_LLM_MAX_USD             = "25"
     NORI_SERVICE_AUDIENCE        = "nori"
     NORI_STORE_BACKEND           = "postgres"
     SENTRY_DSN                   = local.sentry_core_dsn
@@ -102,6 +103,8 @@ locals {
         NORI_OIDC_ISSUER              = "https://accounts.google.com"
         NORI_RUNTIME_URL              = local.core_url
         NORI_SERVICE_AUDIENCE         = "nori"
+        SENTRY_ENVIRONMENT            = "production"
+        SENTRY_WEB_DSN                = local.sentry_web_dsn
       } : k => { value = v, secret = null } },
       {
         NORI_OIDC_IAP_ALLOWED_IDENTITIES = { value = null, secret = "nori-mac-google-identities:1" }
@@ -129,7 +132,7 @@ resource "google_cloud_run_v2_service" "nori_core" {
 
     scaling {
       min_instance_count = 1
-      max_instance_count = 2
+      max_instance_count = 3
     }
 
     containers {
@@ -277,16 +280,16 @@ resource "google_cloud_run_v2_service" "nori_web" {
   iap_enabled = true
 
   scaling {
-    max_instance_count = 1
+    max_instance_count = 4
   }
 
   template {
     service_account                  = google_service_account.nori_web.email
-    max_instance_request_concurrency = 10
+    max_instance_request_concurrency = 40
     timeout                          = "3600s"
 
     scaling {
-      max_instance_count = 2
+      max_instance_count = 4
     }
 
     containers {
@@ -316,7 +319,7 @@ resource "google_cloud_run_v2_service" "nori_web" {
 
       resources {
         cpu_idle          = true
-        startup_cpu_boost = false
+        startup_cpu_boost = true
         limits = {
           cpu    = "1"
           memory = "512Mi"

@@ -335,6 +335,11 @@ func wakeUserSQL(ctx context.Context, q executor, userID, lane string, wakeAt ti
 }
 
 func (t *transaction) WakeTask(ctx context.Context, userID, runID string, wakeAt time.Time) error {
+	if userID != "" {
+		if err := t.ensureTx(ctx, "owners/"+userID); err != nil {
+			return err
+		}
+	}
 	events, err := wakeTaskSQL(ctx, t.q, userID, runID, wakeAt)
 	if err != nil {
 		return err
@@ -352,6 +357,11 @@ func (t *transaction) WakeWaitingTasks(_ context.Context, userID, reason string)
 }
 
 func (t *transaction) WakeUser(ctx context.Context, userID, lane string, wakeAt time.Time) error {
+	if userID != "" {
+		if err := t.ensureTx(ctx, "owners/"+userID); err != nil {
+			return err
+		}
+	}
 	events, err := wakeUserSQL(ctx, t.q, userID, lane, wakeAt)
 	if err != nil {
 		return err

@@ -857,3 +857,28 @@ func TestTenantRLSMigrationEmbedded(t *testing.T) {
 		}
 	}
 }
+
+func TestPartialIndexEqualityClause(t *testing.T) {
+	cases := []struct {
+		field  string
+		val    any
+		want   string
+		wantOK bool
+	}{
+		{"status", "running", `idx_status = '"running"'::jsonb`, true},
+		{"status", "completed", "", false},
+		{"delivered", false, `idx_delivered = 'false'::jsonb`, true},
+		{"delivered", true, "", false},
+		{"cleanup_pending", true, `idx_cleanup_pending = 'true'::jsonb`, true},
+		{"cleanup_pending", false, "", false},
+		{"publication_pending", true, `idx_publication_pending = 'true'::jsonb`, true},
+		{"publication_pending", false, "", false},
+		{"run_id", "abc", "", false},
+	}
+	for _, tc := range cases {
+		got, ok := partialIndexEqualityClause(tc.field, tc.val)
+		if ok != tc.wantOK || got != tc.want {
+			t.Errorf("partialIndexEqualityClause(%q, %#v) = (%q, %v), want (%q, %v)", tc.field, tc.val, got, ok, tc.want, tc.wantOK)
+		}
+	}
+}

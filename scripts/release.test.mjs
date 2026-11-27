@@ -461,3 +461,28 @@ test("--quick excludes Deep Deterministic Simulation from CI status and defaults
   assert.match(quick.calls, /ci-status [0-9a-f]{40} --exclude-job Swift package and iOS app --exclude-job Deep Deterministic Simulation\n/);
   assert.match(quick.result.stdout, /Baking nori-web nori-web-mac for 60s/);
 });
+
+test("all release groups stage before any group is promoted", (t) => {
+  const { result, calls } = fixture(t, { change: "contracts/api.json" });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  const lastDeploy = calls.lastIndexOf("gcloud run deploy ");
+  const firstPromote = calls.indexOf("--to-revisions=");
+  assert.ok(lastDeploy !== -1 && firstPromote !== -1, calls);
+  assert.ok(lastDeploy < firstPromote, `expected all deploys before promotions:\n${calls}`);
+});
+
+test("a web staging failure prevents core promotion and untags all staged services", (t) => {
+  const { result, calls } = fixture(t, { change: "contracts/api.json", failDeploy: "nori-web" });
+  assert.equal(result.status, 1);
+  assert.doesNotMatch(calls, /--to-revisions=nori-core-new=100/);
+  assert.doesNotMatch(calls, /--to-revisions=nori-web-new=100/);
+  assert.match(calls, /update-traffic nori-core .*--remove-tags=release-/);
+  assert.match(calls, /update-traffic nori-web .*--remove-tags=release-/);
+  assert.match(calls, /update-traffic nori-web-mac .*--remove-tags=release-/);
+});
+
+test("bake filter checks stdout/stderr application ERROR logs alongside 5xx and crashes", (t) => {
+  const { result, calls } = fixture(t, { change: "web/page.tsx" });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.match(calls, /logging read .*logName:\("run\.googleapis\.com%2Fstdout" OR "run\.googleapis\.com%2Fstderr"\) AND \(severity>=ERROR OR jsonPayload\.level="ERROR"\)/);
+});

@@ -18,6 +18,7 @@ describe("Desktop WebSocket upgrade proxy", () => {
     assert.equal(parseDesktopWSPath("/api/v1/computer/sessions/csess_12345/ws"), null);
     assert.equal(parseDesktopWSPath("/api/v1/computer/sessions/../evil/ws?token=abc"), null);
     assert.equal(parseDesktopWSPath("/api/v1/computer/sessions/%zz/ws?token=abc"), null);
+    assert.equal(parseDesktopWSPath("/api/v1/computer/sessions/csess_12345/ws?token=abc%0d%0aX-Injected:1"), null);
     assert.equal(parseDesktopWSPath("/api/v1/work"), null);
   });
 
@@ -147,7 +148,9 @@ describe("Desktop WebSocket upgrade proxy", () => {
     assert.deepEqual(resolutions.map(req => req.headers.get("x-nori-identity-subject")), ["oidc-user", "oidc-user", "iap-user"]);
     for (const req of resolutions) assert.equal((await req.json()).email, "user@gmail.com");
     for (const request of upstream) {
-      assert.ok(request.startsWith(`GET /users/${userID}/v1/computer/sessions/csess_12345/ws?token=desktop_token HTTP/1.1`));
+      assert.ok(request.startsWith(`GET /users/${userID}/v1/computer/sessions/csess_12345/ws HTTP/1.1\r\n`));
+      assert.doesNotMatch(request, /\?token=/i);
+      assert.match(request, /^X-Nori-Computer-Token: desktop_token\r?$/im);
       assert.doesNotMatch(request, /Cookie:|X-Goog-IAP-/i);
       const auth = /^Authorization: Bearer (.+)$/im.exec(request);
       assert.ok(auth);

@@ -28,6 +28,7 @@ locals {
     "sprites-runtime"        = { secret = "nori-sprites-api-key", member = google_service_account.nori_runtime.member }
     "mac-identities-web-mac" = { secret = "nori-mac-google-identities", member = google_service_account.nori_web_mac.member }
     "mac-pilot-web-mac"      = { secret = "nori-mac-pilot-identities", member = google_service_account.nori_web_mac.member }
+    "sentry-auth-ci-images"  = { secret = "nori-sentry-auth-token", member = google_service_account.nori_ci_images.member }
     "service-token-web-mac"  = { secret = "nori-service-token-key", member = google_service_account.nori_web_mac.member }
   }
 }
