@@ -188,11 +188,17 @@ func (e httpFailure) HTTPStatusCode() int { return int(e) }
 
 func failedPollRoute(path string) string {
 	switch path {
-	case "/healthz", "/api/healthz", "/readyz", "/api/readyz", "/metrics", "/v1/snapshot", "/v1/events", "/api/trace", "/api/artifact", "/operation", "/operation/cancel", "/activity":
+	case "/healthz", "/api/healthz", "/readyz", "/api/readyz", "/metrics",
+		"/v1/events", "/v1/conversations/assistant/events",
+		"/api/trace", "/api/artifact", "/operation", "/operation/cancel", "/activity":
 		return path
-	default:
-		return "unknown"
 	}
+	if rest, ok := strings.CutPrefix(path, "/v1/computer/sessions/"); ok {
+		if id, suffix, found := strings.Cut(rest, "/"); found && id != "" && suffix == "ws" {
+			return "/v1/computer/sessions/{id}/ws"
+		}
+	}
+	return "unknown"
 }
 
 func flushRequest() {
@@ -205,18 +211,270 @@ func flushRequest() {
 
 func safeRoute(path string) string {
 	switch path {
-	case "/api/turn", "/api/process", "/api/resume", "/api/command", "/run", "/cancel", "/browser/close", "/exec", "/navigate", "/screenshot":
+	case "/api/turn", "/api/process", "/api/resume", "/api/retry", "/api/command",
+		"/api/delivered", "/api/seen",
+		"/api/users/resolve", "/api/users/redeem", "/api/oauth/google-workspace/callback",
+		"/run", "/cancel", "/browser/close", "/exec", "/navigate", "/screenshot":
 		return path
-	default:
+	}
+	return matchV1Route(path)
+}
+
+func matchV1Route(path string) string {
+	rest, ok := strings.CutPrefix(path, "/v1/")
+	if !ok || rest == "" {
 		return ""
 	}
+	segs := strings.Split(rest, "/")
+	for _, s := range segs {
+		if s == "" {
+			return ""
+		}
+	}
+	switch segs[0] {
+	case "capabilities", "snapshot", "operations", "search", "feedback", "preferences":
+		if len(segs) == 1 {
+			return path
+		}
+	case "assistant":
+		if len(segs) == 2 && segs[1] == "summary" {
+			return "/v1/assistant/summary"
+		}
+	case "conversations":
+		if len(segs) >= 2 && segs[1] == "assistant" {
+			switch len(segs) {
+			case 2:
+				return "/v1/conversations/assistant"
+			case 3:
+				switch segs[2] {
+				case "messages", "operations", "cancel", "retry", "uploads":
+					return "/v1/conversations/assistant/" + segs[2]
+				}
+			case 4:
+				if segs[2] == "uploads" {
+					return "/v1/conversations/assistant/uploads/{id}"
+				}
+			}
+		}
+	case "uploads":
+		switch len(segs) {
+		case 1:
+			return "/v1/uploads"
+		case 2:
+			return "/v1/uploads/{id}"
+		}
+	case "results":
+		switch len(segs) {
+		case 2:
+			return "/v1/results/{id}"
+		case 3:
+			if segs[2] == "file" {
+				return "/v1/results/{id}/file"
+			}
+		}
+	case "integrations":
+		switch len(segs) {
+		case 1:
+			return "/v1/integrations"
+		case 2:
+			return "/v1/integrations/{id}"
+		}
+	case "connections":
+		switch len(segs) {
+		case 1:
+			return "/v1/connections"
+		case 2:
+			return "/v1/connections/{id}"
+		case 3:
+			if segs[1] == "oauth" && segs[2] == "callback" {
+				return "/v1/connections/oauth/callback"
+			}
+			if segs[2] == "actions" || segs[2] == "resources" {
+				return "/v1/connections/{id}/" + segs[2]
+			}
+		case 4:
+			if segs[2] == "google-drive" && segs[3] == "picker" {
+				return "/v1/connections/{id}/google-drive/picker"
+			}
+		}
+	case "permissions":
+		switch len(segs) {
+		case 1:
+			return "/v1/permissions"
+		case 2:
+			return "/v1/permissions/{id}"
+		case 3:
+			if segs[2] == "actions" {
+				return "/v1/permissions/{id}/actions"
+			}
+		}
+	case "interactions":
+		switch len(segs) {
+		case 1:
+			return "/v1/interactions"
+		case 2:
+			return "/v1/interactions/{id}"
+		case 3:
+			if segs[2] == "responses" {
+				return "/v1/interactions/{id}/responses"
+			}
+		}
+	case "mutations":
+		if len(segs) == 2 {
+			return "/v1/mutations/{id}"
+		}
+	case "tools":
+		if len(segs) == 1 {
+			return "/v1/tools"
+		}
+		return "/v1/tools/{id}"
+	case "work":
+		switch len(segs) {
+		case 1:
+			return "/v1/work"
+		case 2:
+			return "/v1/work/{id}"
+		case 3:
+			if segs[2] == "operations" || segs[2] == "actions" {
+				return "/v1/work/{id}/" + segs[2]
+			}
+		}
+	case "library":
+		switch len(segs) {
+		case 1:
+			return "/v1/library"
+		case 2:
+			return "/v1/library/{id}"
+		case 3:
+			switch segs[2] {
+			case "versions", "file", "actions":
+				return "/v1/library/{id}/" + segs[2]
+			}
+		}
+	case "memory":
+		switch len(segs) {
+		case 1:
+			return "/v1/memory"
+		case 2:
+			switch segs[1] {
+			case "actions", "search", "logs", "working":
+				return "/v1/memory/" + segs[1]
+			default:
+				return "/v1/memory/{id}"
+			}
+		case 3:
+			if segs[1] == "logs" {
+				return "/v1/memory/logs/{date}"
+			}
+			if segs[2] == "actions" && segs[1] != "actions" && segs[1] != "search" && segs[1] != "working" {
+				return "/v1/memory/{id}/actions"
+			}
+		case 4:
+			if segs[1] == "working" && segs[3] == "actions" {
+				return "/v1/memory/working/{id}/actions"
+			}
+		case 5:
+			if segs[1] == "logs" && segs[4] == "actions" {
+				return "/v1/memory/logs/{date}/{id}/actions"
+			}
+		}
+	case "diagnostics":
+		switch len(segs) {
+		case 1:
+			return "/v1/diagnostics"
+		case 2:
+			if segs[1] == "actions" {
+				return "/v1/diagnostics/actions"
+			}
+		}
+	case "automations":
+		switch len(segs) {
+		case 1:
+			return "/v1/automations"
+		case 2:
+			if segs[1] == "preview" {
+				return "/v1/automations/preview"
+			}
+			return "/v1/automations/{id}"
+		case 3:
+			if segs[2] == "actions" || segs[2] == "occurrences" {
+				return "/v1/automations/{id}/" + segs[2]
+			}
+		}
+	case "inbox":
+		switch len(segs) {
+		case 1:
+			return "/v1/inbox"
+		case 3:
+			if segs[2] == "actions" {
+				return "/v1/inbox/{id}/actions"
+			}
+		}
+	case "mcp":
+		switch len(segs) {
+		case 1:
+			return "/v1/mcp"
+		case 2:
+			return "/v1/mcp/{id}"
+		case 3:
+			switch segs[2] {
+			case "actions", "tools", "credential":
+				return "/v1/mcp/{id}/" + segs[2]
+			}
+		}
+	case "computer":
+		switch len(segs) {
+		case 1:
+			return "/v1/computer"
+		case 2:
+			switch segs[1] {
+			case "wake", "sleep", "reset", "checkpoints", "restore", "sessions":
+				return "/v1/computer/" + segs[1]
+			}
+		case 3:
+			if segs[1] == "sessions" {
+				return "/v1/computer/sessions/{id}"
+			}
+		}
+	case "settings":
+		switch len(segs) {
+		case 2:
+			switch segs[1] {
+			case "reset", "models", "model-keys", "api-costs", "home-connectors":
+				return "/v1/settings/" + segs[1]
+			}
+		case 3:
+			switch segs[1] {
+			case "model-keys":
+				return "/v1/settings/model-keys/{id}"
+			case "home-connectors":
+				return "/v1/settings/home-connectors/{id}"
+			case "account":
+				if segs[2] == "delete" {
+					return "/v1/settings/account/delete"
+				}
+			}
+		case 4:
+			if segs[1] == "home-connectors" {
+				if segs[2] == "pairing" && (segs[3] == "lookup" || segs[3] == "approve") {
+					return "/v1/settings/home-connectors/pairing/" + segs[3]
+				}
+				if segs[3] == "test" {
+					return "/v1/settings/home-connectors/{id}/test"
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func safeMethod(method string) string {
-	if method == http.MethodPost || method == http.MethodGet || method == http.MethodHead {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
 		return method
+	default:
+		return "OTHER"
 	}
-	return "OTHER"
 }
 
 type traceLogHandler struct{ slog.Handler }

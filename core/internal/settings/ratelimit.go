@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	DefaultRateLimitResolvePerMin   = 30
-	DefaultRateLimitResolveBurst    = 10
+	DefaultRateLimitResolvePerMin   = 120
+	DefaultRateLimitResolveBurst    = 30
 	DefaultRateLimitWritePerMin     = 60
 	DefaultRateLimitWriteBurst      = 20
 	DefaultRateLimitUploadPerMin    = 20

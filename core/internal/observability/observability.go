@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"net"
@@ -49,7 +50,7 @@ func Init(ctx context.Context, service string, s settings.Settings) func(context
 		}
 	}
 	setPrivacyConfig(environment, cfg.CaptureContent, cfg.Credentials)
-	slog.SetDefault(slog.New(traceLogHandler{Handler: slog.NewJSONHandler(os.Stderr, nil)}))
+	slog.SetDefault(slog.New(newJSONLogHandler(os.Stderr)))
 	otel.SetTextMapPropagator(sentryTraceContext{})
 	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(error) {
 		now := time.Now().Unix()
@@ -192,6 +193,36 @@ func Init(ctx context.Context, service string, s settings.Settings) func(context
 }
 
 func TracingEnabled() bool { return tracingEnabled.Load() }
+
+func newJSONLogHandler(w io.Writer) slog.Handler {
+	return traceLogHandler{
+		Handler: slog.NewJSONHandler(w, &slog.HandlerOptions{
+			ReplaceAttr: gcpReplaceAttr,
+		}),
+	}
+}
+
+func gcpReplaceAttr(groups []string, a slog.Attr) slog.Attr {
+	if len(groups) == 0 && a.Key == slog.LevelKey {
+		level, ok := a.Value.Any().(slog.Level)
+		if !ok {
+			return slog.String("severity", a.Value.String())
+		}
+		var severity string
+		switch {
+		case level < slog.LevelInfo:
+			severity = "DEBUG"
+		case level < slog.LevelWarn:
+			severity = "INFO"
+		case level < slog.LevelError:
+			severity = "WARNING"
+		default:
+			severity = "ERROR"
+		}
+		return slog.String("severity", severity)
+	}
+	return a
+}
 
 func batch(exporter sdktrace.SpanExporter) sdktrace.TracerProviderOption {
 	return sdktrace.WithBatcher(exporter, sdktrace.WithMaxQueueSize(256), sdktrace.WithMaxExportBatchSize(32), sdktrace.WithBatchTimeout(2*time.Second), sdktrace.WithExportTimeout(2*time.Second))
