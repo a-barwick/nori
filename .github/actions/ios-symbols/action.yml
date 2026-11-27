@@ -12,6 +12,25 @@ inputs:
 runs:
   using: composite
   steps:
+    # GitHub's macOS images don't include sentry-cli. Install a pinned release and check
+    # it against the SHA-256 GitHub publishes for that asset before running it.
+    - name: Install sentry-cli
+      if: inputs.verify-only != 'true'
+      shell: bash
+      env:
+        SENTRY_CLI_VERSION: "3.8.2"
+        SENTRY_CLI_SHA256: "2d1b118fa46960ba5e8e0cca9a6e197366905776a0ddc5a89c7d05a3908b77db"
+      run: |
+        if command -v sentry-cli >/dev/null 2>&1; then sentry-cli --version; exit 0; fi
+        bin_dir="$RUNNER_TEMP/sentry-cli-bin"
+        mkdir -p "$bin_dir"
+        curl -fsSL --retry 3 -o "$bin_dir/sentry-cli" \
+          "https://github.com/getsentry/sentry-cli/releases/download/${SENTRY_CLI_VERSION}/sentry-cli-Darwin-universal"
+        echo "${SENTRY_CLI_SHA256}  $bin_dir/sentry-cli" | shasum -a 256 -c -
+        chmod +x "$bin_dir/sentry-cli"
+        echo "$bin_dir" >> "$GITHUB_PATH"
+        "$bin_dir/sentry-cli" --version
+
     - name: Process Nori iOS symbols
       shell: bash
       env:
