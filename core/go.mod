@@ -35,7 +35,7 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/go-openapi/jsonpointer v1.0.0 // indirect
 	github.com/gorilla/mux v1.8.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/gorilla/websocket v1.5.4-0.20240701034025-d67f41855da4 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/prometheus/client_golang v1.20.5 // indirect
