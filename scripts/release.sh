@@ -16,7 +16,7 @@ usage() {
   cat <<'USAGE'
 Release Nori Core, Web and the public site to Cloud Run. Scheduled Release runs use
 --latest-green every three hours; manual workflow_dispatch runs release main HEAD by
-default (with --quick) and fail if HEAD is not green and built.
+default and fail if HEAD is not green and built.
 
 Usage:
   scripts/release.sh [--latest-green] [--quick] [--dry-run] [--core] [--web] [--site] [--force-unverified]
@@ -32,9 +32,10 @@ Only groups whose code changed since the live release ship; --core / --web / --s
   web:  nori-web and nori-web-mac (same image)
   site: nori-site (public marketing site). Skipped when the commit has no nori-site image
         or the service doesn't exist yet.
-Each service is staged with no traffic and must pass its HTTP startup probe and checks
-before promotion. Promoted revisions are then watched for NORI_RELEASE_BAKE_SECONDS
-(default 600, or 60 with --quick); any 5xx or crash reverts that group to its previous revision.
+Each service in every releasing group is staged with no traffic and must pass its HTTP
+startup probe and checks before any group is promoted. Promoted revisions are then
+watched for NORI_RELEASE_BAKE_SECONDS (default 600, or 60 with --quick); any 5xx, crash,
+or application error log reverts that group to its previous revision.
 USAGE
 }
 
@@ -359,7 +360,8 @@ stage() {
   set_for STAGED "$svc" "$revision"
 }
 
-release_group() {
+STAGED_CANDIDATES=()
+stage_group() {
   local group="$1" image svc services
   image="$(group_image "$group")"
   read -r -a services <<< "$(group_services "$group")"
@@ -368,12 +370,18 @@ release_group() {
     run cloud_run jobs update "$MIGRATION_JOB" --image="$image" --quiet || return 1
     run cloud_run jobs execute "$MIGRATION_JOB" --wait --quiet || return 1
   fi
+  STAGED_CANDIDATES+=("${services[@]}")
   for svc in "${services[@]}"; do
     if ! stage "$svc" "$image"; then
-      untag_all "${services[@]}"
+      untag_all "${STAGED_CANDIDATES[@]}"
       return 1
     fi
   done
+}
+
+promote_group() {
+  local group="$1" svc services
+  read -r -a services <<< "$(group_services "$group")"
   for svc in "${services[@]}"; do
     log "Promoting $svc to $(get_for STAGED "$svc")"
     if ! run cloud_run services update-traffic "$svc" --to-revisions="$(get_for STAGED "$svc")=100" --remove-tags="$TAG" --quiet; then
@@ -388,7 +396,7 @@ bake_failures() {
   local since="$1" revisions filter attempt output
   revisions="$(for svc in "${PROMOTED[@]}"; do printf '"%s" OR ' "$(get_for STAGED "$svc")"; done)"
   revisions="${revisions% OR }"
-  filter="resource.type=\"cloud_run_revision\" AND resource.labels.revision_name=($revisions) AND timestamp>=\"$since\" AND ((logName:\"run.googleapis.com%2Frequests\" AND httpRequest.status>=500) OR (logName:\"run.googleapis.com%2Fvarlog%2Fsystem\" AND textPayload=~\"probe failed|Container called exit|Container terminated|Memory limit\"))"
+  filter="resource.type=\"cloud_run_revision\" AND resource.labels.revision_name=($revisions) AND timestamp>=\"$since\" AND ((logName:\"run.googleapis.com%2Frequests\" AND httpRequest.status>=500) OR (logName:\"run.googleapis.com%2Fvarlog%2Fsystem\" AND textPayload=~\"probe failed|Container called exit|Container terminated|Memory limit\") OR (logName:(\"run.googleapis.com%2Fstdout\" OR \"run.googleapis.com%2Fstderr\") AND (severity>=ERROR OR jsonPayload.level=\"ERROR\")))"
   for attempt in 1 2 3; do
     if output="$(gcloud logging read "$filter" --project="$PROJECT" --limit=20 --format='value(resource.labels.revision_name)')"; then
       printf '%s\n' "$output" | awk 'NF' | sort -u
@@ -400,16 +408,32 @@ bake_failures() {
 }
 
 FAILED=0
-STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 for group in "${RELEASE_GROUPS[@]}"; do
-  if ! release_group "$group"; then
-    printf 'release: %s group failed; its previous revisions keep serving.\n' "$group" >&2
+  if ! stage_group "$group"; then
+    printf 'release: %s group failed to stage; no groups were promoted.\n' "$group" >&2
     FAILED=1
     break
   fi
 done
 
-if [[ "${#PROMOTED[@]}" -gt 0 && "$DRY_RUN" -eq 0 ]]; then
+STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+if [[ "$FAILED" -eq 0 ]]; then
+  PROMOTED_GROUPS=()
+  for group in "${RELEASE_GROUPS[@]}"; do
+    if ! promote_group "$group"; then
+      printf 'release: %s group failed to promote; reverting promoted groups.\n' "$group" >&2
+      for prev_group in "${PROMOTED_GROUPS[@]}"; do
+        revert_group "$prev_group"
+      done
+      untag_all "${STAGED_CANDIDATES[@]}"
+      FAILED=1
+      break
+    fi
+    PROMOTED_GROUPS+=("$group")
+  done
+fi
+
+if [[ "$FAILED" -eq 0 && "${#PROMOTED[@]}" -gt 0 && "$DRY_RUN" -eq 0 ]]; then
   log "Baking ${PROMOTED[*]} for ${BAKE_SECONDS}s"
   elapsed=0
   bad=""
