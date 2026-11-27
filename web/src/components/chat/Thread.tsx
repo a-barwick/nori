@@ -213,12 +213,12 @@ function ErrorCard({
   );
 }
 
-function latestNoriMessageId(units: Unit[]): string | undefined {
+function latestNoriUnitKey(units: Unit[]): string | undefined {
   for (let i = units.length - 1; i >= 0; i -= 1) {
     const unit = units[i];
     if (unit.type === "group" && unit.sender === "nori") {
       const last = unit.units.at(-1);
-      if (last) return last.item.id;
+      if (last) return last.key;
     }
   }
   return undefined;
@@ -226,7 +226,7 @@ function latestNoriMessageId(units: Unit[]): string | undefined {
 
 function UnitView({
   unit,
-  activeNoriMessageId,
+  activeNoriUnitKey,
   justSentIds,
   onOpenDocument,
   onRetryMessage,
@@ -234,7 +234,7 @@ function UnitView({
   onInteractionResolved,
 }: {
   unit: Unit;
-  activeNoriMessageId?: string;
+  activeNoriUnitKey?: string;
   justSentIds: ReadonlySet<string>;
   onOpenDocument: OpenDocument;
   onRetryMessage?: (item: TextItem) => void;
@@ -286,7 +286,7 @@ function UnitView({
                 unit={u}
                 pos={posOf(i, unit.units.length)}
                 sender={unit.sender}
-                showAvatar={unit.sender === "nori" && u.item.id === activeNoriMessageId}
+                showAvatar={unit.sender === "nori" && u.key === activeNoriUnitKey}
                 animateSend={unit.sender === "me" && (u.item.receipt === "sending" || justSentIds.has(u.item.id))}
               />
             </div>
@@ -341,8 +341,8 @@ export function Thread({
   const thread = conversation;
   const items = thread.items;
   const units = useMemo(() => buildUnits(items, interactions), [items, interactions]);
-  const activeNoriMessageId = useMemo(
-    () => (thinking || !!streamingText ? undefined : latestNoriMessageId(units)),
+  const activeNoriUnitKey = useMemo(
+    () => (thinking || !!streamingText ? undefined : latestNoriUnitKey(units)),
     [thinking, streamingText, units],
   );
   const scroller = useRef<HTMLDivElement>(null);
@@ -558,7 +558,7 @@ export function Thread({
           )}
           {units.map((u) => (
             <UnitView
-              activeNoriMessageId={activeNoriMessageId}
+              activeNoriUnitKey={activeNoriUnitKey}
               justSentIds={justSentIds}
               onOpenDocument={onOpenDocument}
               onRetryMessage={onRetryMessage}

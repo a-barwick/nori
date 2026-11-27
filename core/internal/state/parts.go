@@ -30,25 +30,202 @@ type Part struct {
 }
 
 const (
-	pageWordThreshold   = 150
-	maxBubbleListItems  = 5
-	maxBubbleCodeLines  = 3
 	defaultFallbackNote = "Here's the full write-up."
 )
 
 var (
 	replyHint           = regexp.MustCompile(`<!--\s*nori:([a-z]+)[\s\S]*?-->`)
 	unfinishedComment   = regexp.MustCompile(`<!--[\s\S]*$`)
+	cardOpenTagRe       = regexp.MustCompile(`(?i)<card(?:\s+[^>]*?)?>`)
+	cardCloseTagRe      = regexp.MustCompile(`(?i)</card\s*>`)
+	cardTitleAttrRe     = regexp.MustCompile(`(?i)\btitle\s*=\s*(?:"([^"]*)"|'([^']*)')`)
 	thematicBreakRe     = regexp.MustCompile(`^\s*(?:[-*_]\s*){3,}$`)
 	headingLineRe       = regexp.MustCompile(`^#{1,6}\s+\S`)
 	listItemLineRe      = regexp.MustCompile(`^(?:[-*+]|\d+[.)])\s+`)
 	nestedListLineRe    = regexp.MustCompile(`^(?: {2,}|\t)(?:[-*+]|\d+[.)])\s+`)
 	tableSepLineRe      = regexp.MustCompile(`^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$`)
-	sourceLeadRe        = regexp.MustCompile(`(?i)^(?:sources?|references|links)\b`)
-	markdownLinkItemRe  = regexp.MustCompile(`^(?:[-*+]|\d+[.)])\s+\[[^\]]+\]\([^)]+\)`)
 	conversationalStart = regexp.MustCompile(`(?i)^(?:want\b|would you\b|should i\b|do you want\b|let me know\b|also,\s|by the way\b|quick note\b|happy to\b|if you(?:'d| would)? like\b|if you want\b|feel free\b)`)
 	sentenceEndRe       = regexp.MustCompile(`^[^\n]*?[.!?](?:\s|$)`)
 )
+
+// StripCardMarkupForStream removes <card ...> / </card> tags and holds back
+// any incomplete trailing card tag prefix so raw markup never flashes mid-stream.
+func StripCardMarkupForStream(s string) string {
+	if s == "" {
+		return ""
+	}
+	cleaned := cardOpenTagRe.ReplaceAllString(s, "")
+	cleaned = cardCloseTagRe.ReplaceAllString(cleaned, "")
+	if idx := strings.LastIndexByte(cleaned, '<'); idx >= 0 {
+		tail := strings.ToLower(cleaned[idx:])
+		if !strings.Contains(tail, ">") {
+			if strings.HasPrefix("<card", tail) ||
+				strings.HasPrefix("</card", tail) ||
+				strings.HasPrefix(tail, "<card ") ||
+				strings.HasPrefix(tail, "<card\t") ||
+				strings.HasPrefix(tail, "<card\n") ||
+				strings.HasPrefix(tail, "</card") {
+				cleaned = cleaned[:idx]
+			}
+		}
+	}
+	return strings.TrimRight(cleaned, " \t")
+}
+
+// parseCardBlocks extracts explicit <card title="...">...</card> blocks outside
+// fenced code blocks, preserving surrounding conversational text in order.
+// Returns (parts, true) when at least one card block was found.
+func parseCardBlocks(markdown string) ([]Part, bool) {
+	if !cardOpenTagRe.MatchString(markdown) {
+		return nil, false
+	}
+
+	// Build byte spans of fenced code blocks so <card> examples inside code
+	// blocks are never treated as real cards.
+	type span struct{ start, end int }
+	var codeSpans []span
+	{
+		pos := 0
+		inFence := false
+		fenceMarker := ""
+		fenceStart := 0
+		for pos <= len(markdown) {
+			nl := strings.IndexByte(markdown[pos:], '\n')
+			var line string
+			var nextPos int
+			if nl < 0 {
+				line = markdown[pos:]
+				nextPos = len(markdown) + 1
+			} else {
+				line = markdown[pos : pos+nl]
+				nextPos = pos + nl + 1
+			}
+			trimmed := strings.TrimSpace(line)
+			if !inFence {
+				if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+					inFence = true
+					fenceMarker = trimmed[:3]
+					fenceStart = pos
+				}
+			} else if strings.HasPrefix(trimmed, fenceMarker) {
+				inFence = false
+				codeSpans = append(codeSpans, span{start: fenceStart, end: min(nextPos, len(markdown))})
+			}
+			pos = nextPos
+		}
+		if inFence {
+			codeSpans = append(codeSpans, span{start: fenceStart, end: len(markdown)})
+		}
+	}
+	inCode := func(offset int) bool {
+		for _, sp := range codeSpans {
+			if offset >= sp.start && offset < sp.end {
+				return true
+			}
+		}
+		return false
+	}
+
+	var out []Part
+	cursor := 0
+	found := false
+	for cursor < len(markdown) {
+		loc := cardOpenTagRe.FindStringIndex(markdown[cursor:])
+		if loc == nil {
+			break
+		}
+		openStart := cursor + loc[0]
+		openEnd := cursor + loc[1]
+		if inCode(openStart) {
+			// Skip past this tag inside a code fence; keep searching later text
+			// without advancing cursor so surrounding text stays intact.
+			nextLoc := cardOpenTagRe.FindStringIndex(markdown[openEnd:])
+			if nextLoc == nil {
+				break
+			}
+			// Advance search offset carefully via a local scan loop.
+			searchFrom := openEnd
+			matched := false
+			for searchFrom < len(markdown) {
+				nl := cardOpenTagRe.FindStringIndex(markdown[searchFrom:])
+				if nl == nil {
+					break
+				}
+				os := searchFrom + nl[0]
+				oe := searchFrom + nl[1]
+				if !inCode(os) {
+					openStart, openEnd = os, oe
+					matched = true
+					break
+				}
+				searchFrom = oe
+			}
+			if !matched {
+				break
+			}
+		}
+
+		if lead := strings.TrimSpace(markdown[cursor:openStart]); lead != "" {
+			out = append(out, Part{Type: PartText, Text: lead})
+		}
+
+		openTag := markdown[openStart:openEnd]
+		title := ""
+		if m := cardTitleAttrRe.FindStringSubmatch(openTag); len(m) == 3 {
+			if m[1] != "" {
+				title = strings.TrimSpace(m[1])
+			} else {
+				title = strings.TrimSpace(m[2])
+			}
+		}
+
+		// Find matching </card> outside code fences.
+		closeStart, closeEnd := -1, -1
+		searchClose := openEnd
+		for searchClose < len(markdown) {
+			cl := cardCloseTagRe.FindStringIndex(markdown[searchClose:])
+			if cl == nil {
+				break
+			}
+			cs := searchClose + cl[0]
+			ce := searchClose + cl[1]
+			if !inCode(cs) {
+				closeStart, closeEnd = cs, ce
+				break
+			}
+			searchClose = ce
+		}
+
+		var body string
+		if closeStart >= 0 {
+			body = strings.TrimSpace(markdown[openEnd:closeStart])
+			cursor = closeEnd
+		} else {
+			// Gracefully handle truncated replies that omitted </card>.
+			body = strings.TrimSpace(markdown[openEnd:])
+			cursor = len(markdown)
+		}
+
+		if body != "" || title != "" {
+			if title == "" {
+				title = DocumentTitle(body, "")
+				if title == "" {
+					title = clipBytes(PlainExcerpt(body, 64), 64)
+				}
+			}
+			out = append(out, Part{Type: PartPage, Display: "page", Title: title, Text: body})
+			found = true
+		}
+	}
+
+	if !found {
+		return nil, false
+	}
+	if tail := strings.TrimSpace(markdown[cursor:]); tail != "" {
+		out = append(out, Part{Type: PartText, Text: tail})
+	}
+	return out, true
+}
 
 // TextParts parses a reply's optional <!-- nori:page|bubble --> hint and, when
 // the reply contains a structured or long-form document, splits it into ordered
@@ -215,45 +392,6 @@ func splitMarkdownBlocks(markdown string) []mdBlock {
 	return blocks
 }
 
-func isStructuredBlocks(blocks []mdBlock) bool {
-	for i, b := range blocks {
-		switch b.kind {
-		case blockHeading, blockTable:
-			return true
-		case blockCode:
-			contentLines := max(0, len(b.lines)-2)
-			if contentLines > maxBubbleCodeLines {
-				return true
-			}
-		case blockList:
-			items := 0
-			allLinks := true
-			for _, line := range b.lines {
-				if nestedListLineRe.MatchString(line) {
-					return true
-				}
-				t := strings.TrimSpace(line)
-				if listItemLineRe.MatchString(t) {
-					items++
-					if !markdownLinkItemRe.MatchString(t) {
-						allLinks = false
-					}
-				}
-			}
-			if items > maxBubbleListItems {
-				return true
-			}
-			if items >= 2 && allLinks {
-				return true
-			}
-			if i > 0 && sourceLeadRe.MatchString(strings.TrimSpace(blocks[i-1].text)) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func countWords(s string) int {
 	n := 0
 	for _, field := range strings.Fields(s) {
@@ -321,10 +459,13 @@ func segmentTextParts(markdown, forced string) []Part {
 	if forced == "bubble" {
 		return []Part{{Type: PartText, Text: markdown, Display: "bubble"}}
 	}
-	blocks := splitMarkdownBlocks(markdown)
-	if forced != "page" && !isStructuredBlocks(blocks) && countWords(markdown) <= pageWordThreshold {
+	if cardParts, ok := parseCardBlocks(markdown); ok {
+		return cardParts
+	}
+	if forced != "page" {
 		return []Part{{Type: PartText, Text: markdown}}
 	}
+	blocks := splitMarkdownBlocks(markdown)
 	if len(blocks) == 0 {
 		return []Part{{Type: PartText, Text: markdown}}
 	}

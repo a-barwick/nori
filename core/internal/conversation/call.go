@@ -402,8 +402,8 @@ func (r *Runner) invokeOuterModel(
 		turnID := t.ID
 		onDelta := r.OnDelta
 		request.Stream = func(visibleText string) error {
-			if visibleText != "" {
-				onDelta(turnID, visibleText)
+			if cleaned := state.StripCardMarkupForStream(visibleText); cleaned != "" {
+				onDelta(turnID, cleaned)
 			}
 			return nil
 		}

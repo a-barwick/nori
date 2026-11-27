@@ -63,6 +63,39 @@ describe("Area A: Chat UI audit fixes (Web)", () => {
     assert.match(html, /bg-fill-2 text-accent-text/); // Button variant="tonal"
   });
 
+  test("Segmented cover + page card + trailing follow-up renders only one active Nori avatar", () => {
+    const html = renderToStaticMarkup(
+      <AssistantProvider localMode>
+        <Thread
+          conversation={{
+            title: "Nori",
+            items: [
+              {
+                id: "m_split",
+                sender: "nori",
+                at: Date.now(),
+                text: "",
+                parts: [
+                  { type: "text", text: "Here is the comparison:" },
+                  { type: "page", display: "page", title: "Standing Desks", text: "| Desk | Price |" },
+                  { type: "text", text: "Want me to check sale prices?" },
+                ],
+              },
+            ],
+          }}
+          emptyMessage="Ask Nori anything…"
+          hasOlder={false}
+          loadingOlder={false}
+          onLoadOlder={() => {}}
+          onOpenDocument={() => {}}
+          onUnread={() => {}}
+        />
+      </AssistantProvider>,
+    );
+
+    assert.equal((html.match(/data-active-avatar="true"/g) ?? []).length, 1);
+  });
+
   test("Thread streaming reply renders parsed Markdown with 26px active NoriMark", () => {
     const html = renderToStaticMarkup(
       <AssistantProvider localMode>
