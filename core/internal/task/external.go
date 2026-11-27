@@ -48,6 +48,7 @@ type externalPlan struct {
 	prepared  invoke.Prepared
 	digest    string
 	authority permissions.Decision
+	permReq   permissions.Request
 }
 
 func denial(in ToolInput, effect, outcome, message string, extra map[string]any) map[string]any {
@@ -58,11 +59,26 @@ func denial(in ToolInput, effect, outcome, message string, extra map[string]any)
 	return output
 }
 
-func taskOrigin(run state.Run) (origin, automationID string) {
-	if run.Origin != nil && run.Origin.AutomationID != "" {
-		return "automation", run.Origin.AutomationID
+func isUnattendedOrigin(run state.Run) bool {
+	if run.Origin == nil {
+		return false
 	}
-	return "user", ""
+	return run.Origin.AutomationID != "" || run.Origin.ConversationID == AutomationConversationID
+}
+
+func taskOrigin(run state.Run) (origin, automationID string) {
+	if isUnattendedOrigin(run) {
+		return invoke.OriginAutomation, run.Origin.AutomationID
+	}
+	return invoke.OriginUser, ""
+}
+
+func isPersonalComputerTool(exec *extensions.Exec) bool {
+	if exec == nil {
+		return false
+	}
+	return strings.HasPrefix(exec.Tool.ID, "nori/computer/") ||
+		strings.HasPrefix(exec.Binding.Target, "nori.computer/")
 }
 
 func interactionID(prefix, operationID, digest string) string {
@@ -73,16 +89,24 @@ func interactionID(prefix, operationID, digest string) string {
 func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *state.OperationRecord) (*externalPlan, map[string]any, error) {
 	recovering := saved != nil
 	effect := string(in.Exec.Policy.Effect)
-	adapter, ok := a.Executor.adapter(in)
-	if !ok {
-		return nil, denial(in, effect, "failed", "This tool's implementation is not available in this worker version, so it did not run.", nil), nil
-	}
 	run, err := a.Store.GetRun(ctx, in.RunID)
 	if err != nil {
 		return nil, nil, err
 	}
+	origin, automationID := taskOrigin(run)
+	unattended := isUnattendedOrigin(run)
+	proactiveComputer := unattended && isPersonalComputerTool(in.Exec)
+	readOnly := run.ReadOnly || in.ReadOnly || proactiveComputer
+
+	adapter, lookupErr := a.Executor.adapterForOrigin(in, origin)
+	if errors.Is(lookupErr, invoke.ErrToolForbiddenForOrigin) {
+		return nil, denial(in, effect, "denied", "Automations cannot create or modify automations or permission rules.", nil), nil
+	}
+	if adapter == nil {
+		return nil, denial(in, effect, "failed", "This tool's implementation is not available in this worker version, so it did not run.", nil), nil
+	}
 	if checker, ok := adapter.(invoke.SignInChecker); ok && !recovering && a.Executor.Permissions != nil {
-		start, err := checker.SignInNeeded(ctx, invoke.Call{RunID: in.RunID, Revision: in.Revision, OperationID: in.OperationID, Exec: *in.Exec, Args: in.Call.Args}, "/work/"+in.RunID)
+		start, err := checker.SignInNeeded(ctx, invoke.Call{RunID: in.RunID, Revision: in.Revision, OperationID: in.OperationID, Origin: origin, Exec: *in.Exec, Args: in.Call.Args}, "/work/"+in.RunID)
 		if err != nil {
 			return nil, denial(in, effect, "failed", "The server needs sign-in, which could not start: "+err.Error(), map[string]any{"recovery": "sign_in"}), nil
 		}
@@ -99,8 +123,8 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 	}
 	userSources := a.verifiedUserSources(ctx, in.RunID, run)
 	call := invoke.Call{
-		RunID: in.RunID, Revision: in.Revision, OperationID: in.OperationID, Exec: *in.Exec, Args: in.Call.Args,
-		TimeZone: zone, ReadOnly: run.ReadOnly || in.ReadOnly, UserSources: userSources,
+		RunID: in.RunID, Revision: in.Revision, OperationID: in.OperationID, Origin: origin, Exec: *in.Exec, Args: in.Call.Args,
+		TimeZone: zone, ReadOnly: readOnly, UserSources: userSources,
 		Upload: func(ctx context.Context, id string) (string, string, []byte, error) {
 			attachment, data, err := a.Agent.TaskUpload(ctx, in.RunID, id)
 			return attachment.Name, attachment.MediaType, data, err
@@ -132,6 +156,9 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 			return nil, denial(in, effect, "failed", "Desktop takeover could not start: "+err.Error(), nil), nil
 		}
 		if req != nil {
+			if proactiveComputer {
+				return nil, denial(in, effect, "denied", "Proactive computer runs are read-only and cannot request desktop takeover.", nil), nil
+			}
 			out, err := a.requestTakeover(ctx, in, run, *req)
 			return nil, out, err
 		}
@@ -218,23 +245,44 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 	if recovering {
 		return plan, nil, nil
 	}
-	origin, automationID := taskOrigin(run)
+	// If the user edited and approved this exact action via replacement, apply
+	// ONLY the allowlisted edited fields from the approved replacement record
+	// and re-prepare so execution uses the approved replacement payload.
+	if a.Executor.Permissions != nil {
+		if repl, replErr := a.Executor.Permissions.FindApprovedReplacement(ctx, in.RunID, in.Revision, plan.digest); replErr == nil && repl != nil && len(repl.EditedFields) > 0 {
+			editedCall := call
+			editedCall.Args = cloneArgsMap(call.Args)
+			applyAllowlistedEditsToArgs(editedCall.Args, repl.EditedFields)
+			editedPrepared, prepErr := adapter.Prepare(ctx, editedCall)
+			if prepErr != nil {
+				return nil, denial(in, effect, "failed", "The approved edited action could not be prepared: "+prepErr.Error(), nil), nil
+			}
+			if editedPrepared.Effect == "" {
+				editedPrepared.Effect = in.Exec.Policy.Effect
+			}
+			plan.call = editedCall
+			plan.prepared = editedPrepared
+			plan.digest = repl.ReplacementDigest
+			prepared = editedPrepared
+		}
+	}
 	resourceIDs := make([]string, 0, len(prepared.Resources))
 	for _, r := range prepared.Resources {
 		resourceIDs = append(resourceIDs, r.ProviderID)
 	}
+	permReq := permissions.Request{
+		RunID: in.RunID, Revision: in.Revision, Origin: origin, AutomationID: automationID, ReadOnly: readOnly,
+		ToolID: in.Exec.Tool.ID, Effect: string(prepared.Effect), ConnectionID: connectionID, Epoch: epoch,
+		ResourceIDs: resourceIDs, Recipients: prepared.Recipients, Digest: plan.digest,
+		RequireExplicitApproval: prepared.RequireExplicitApproval, OperationID: in.OperationID,
+	}
 	decision := permissions.Decision{Result: "allow", Source: "user_request"}
 	if a.Executor.Permissions != nil {
-		decision, err = a.Executor.Permissions.Check(ctx, permissions.Request{
-			RunID: in.RunID, Revision: in.Revision, Origin: origin, AutomationID: automationID, ReadOnly: run.ReadOnly || in.ReadOnly,
-			ToolID: in.Exec.Tool.ID, Effect: string(prepared.Effect), ConnectionID: connectionID, Epoch: epoch,
-			ResourceIDs: resourceIDs, Recipients: prepared.Recipients, Digest: plan.digest,
-			RequireExplicitApproval: prepared.RequireExplicitApproval, OperationID: in.OperationID,
-		})
+		decision, err = a.Executor.Permissions.Check(ctx, permReq)
 		if err != nil {
 			return nil, nil, err
 		}
-	} else if (run.ReadOnly || in.ReadOnly) && prepared.Effect != extensions.EffectRead {
+	} else if readOnly && prepared.Effect != extensions.EffectRead {
 		decision = permissions.Decision{Result: "deny", Reason: "This task is read-only and cannot change external or computer state."}
 	} else if prepared.Effect != "read" {
 		decision = permissions.Decision{Result: "needs_interaction", Reason: "Permission checks are not configured; nothing may change without them."}
@@ -301,6 +349,7 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 		}
 	}
 	plan.authority = decision
+	plan.permReq = permReq
 	return plan, nil, nil
 }
 
@@ -370,6 +419,30 @@ func (e *Executor) adapter(in ToolInput) (invoke.Adapter, bool) {
 	return e.Adapters.Lookup(in.Exec.Binding)
 }
 
+func (e *Executor) adapterForOrigin(in ToolInput, origin string) (invoke.Adapter, error) {
+	if e == nil || e.Adapters == nil {
+		return nil, nil
+	}
+	return e.Adapters.LookupForOrigin(in.Exec.Binding, origin, in.Exec.Tool.ID, in.Call.Name)
+}
+
+func extractEditableFields(args map[string]any) map[string]string {
+	if len(args) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	if s, ok := args["subject"].(string); ok {
+		out["subject"] = s
+	}
+	if b, ok := args["body"].(string); ok {
+		out["body"] = b
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func (a *Activities) requestApproval(ctx context.Context, in ToolInput, run state.Run, plan *externalPlan, connectionID, reason string) (map[string]any, error) {
 	label := ""
 	if plan.call.Grant != nil {
@@ -406,9 +479,28 @@ func (a *Activities) requestApproval(ctx context.Context, in ToolInput, run stat
 	if plan.prepared.RequireExplicitApproval {
 		payload["approval_once"] = true
 	}
+	if editable := extractEditableFields(plan.call.Args); len(editable) > 0 {
+		payload["editable_fields"] = editable
+	}
+	unattended := isUnattendedOrigin(run)
+	now := a.externalNow().UTC()
+	expires := now.Add(ApprovalExpiry).UTC()
+	interID := interactionID("int_", in.OperationID, plan.digest)
+	draftID := ""
+	if unattended {
+		var prefsPtr *connections.Preferences
+		if a.Executor.Connections != nil {
+			if prefs, _, err := a.Executor.Connections.Preferences(ctx); err == nil {
+				prefsPtr = &prefs
+			}
+		}
+		expires = ProactiveDraftExpiry(now, prefsPtr)
+		draftID = proactiveDraftID(interID)
+		payload["non_blocking"] = true
+		payload["draft_id"] = draftID
+	}
 	data, _ := json.Marshal(payload)
 	revision := in.Revision
-	expires := a.externalNow().Add(ApprovalExpiry).UTC()
 	toolTitle := in.Call.Name
 	if toolTitle == "" {
 		toolTitle = toolID
@@ -417,13 +509,49 @@ func (a *Activities) requestApproval(ctx context.Context, in ToolInput, run stat
 	if title := strings.TrimSpace(plan.prepared.PromptTitle); title != "" {
 		prompt = title
 	}
+	convID, autoID := "", ""
+	if run.Origin != nil {
+		convID = run.Origin.ConversationID
+		autoID = run.Origin.AutomationID
+	}
 	interaction, err := a.Executor.Permissions.Open(ctx, permissions.Interaction{
-		ID: interactionID("int_", in.OperationID, plan.digest), TaskID: in.RunID, InstructionRevision: &revision, Kind: "approval",
+		ID: interID, TaskID: in.RunID, InstructionRevision: &revision, ConversationID: convID, AutomationID: autoID, Kind: "approval",
 		Prompt: prompt, Payload: data, ActionDigest: plan.digest, ExpiresAt: &expires, TaskTitle: state.TaskTitle(run),
 		ConnectionID: connectionID, ToolID: toolID, ToolTitle: toolTitle, ActionClass: string(plan.prepared.Effect), Recipients: plan.prepared.Recipients,
 	}, "")
 	if err != nil {
 		return nil, err
+	}
+	if unattended {
+		draft := ProactiveDraft{
+			ID:             draftID,
+			InteractionID:  interaction.ID,
+			SourceRunID:    in.RunID,
+			Revision:       in.Revision,
+			AutomationID:   autoID,
+			ConversationID: convID,
+			ActionDigest:   plan.digest,
+			ToolName:       in.Call.Name,
+			ToolID:         toolID,
+			Exec:           *in.Exec,
+			Args:           cloneArgsMap(plan.call.Args),
+			ConnectionID:   connectionID,
+			Summary:        plan.prepared.Summary,
+			Prompt:         prompt,
+			Effect:         string(plan.prepared.Effect),
+			Recipients:     append([]string(nil), plan.prepared.Recipients...),
+			Status:         DraftStatusPending,
+			CreatedAt:      now,
+			ExpiresAt:      expires,
+		}
+		if _, err := saveProactiveDraft(ctx, a.Executor.Permissions.Store, draft, now); err != nil {
+			return nil, err
+		}
+		// Return non-blocking draft_saved outcome so the unattended automation run
+		// & occurrence complete cleanly without holding MaxActiveRuns overnight.
+		return denial(in, string(plan.prepared.Effect), "draft_saved", "Saved as a pending draft for approval. This automation run can finish without waiting.", map[string]any{
+			"draft_saved": true, "draft_id": draftID, "interaction_id": interaction.ID, "prompt": prompt, "expires_at": expires.Format(time.RFC3339),
+		}), nil
 	}
 	return denial(in, string(plan.prepared.Effect), "needs_interaction", "This action waits for the user's approval.", map[string]any{
 		"interaction_id": interaction.ID, "interaction_kind": "approval", "prompt": prompt,
@@ -606,6 +734,17 @@ func (a *Activities) runExternal(ctx context.Context, in ToolInput, op *state.Op
 			return nil, saveErr
 		}
 		return nil, err
+	}
+	// Re-check standing permission rules at execution time (not only plan time).
+	if !recovering && a.Executor.Permissions != nil &&
+		plan.prepared.Effect != extensions.EffectRead && plan.prepared.Effect != extensions.EffectControl {
+		recheck, err := a.Executor.Permissions.RecheckStandingRules(ctx, plan.permReq, plan.authority)
+		if err != nil {
+			return nil, err
+		}
+		if recheck.Result != "allow" {
+			return persist("denied", map[string]any{"admitted": false, "rechecked": true}, errors.New(recheck.Reason))
+		}
 	}
 	op.Attempt++
 	if err := a.Store.PutOperation(ctx, in.RunID, *op); err != nil {

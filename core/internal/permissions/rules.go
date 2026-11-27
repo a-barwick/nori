@@ -115,11 +115,12 @@ func Summarize(r RuleEditable) string {
 }
 
 type Service struct {
-	Store            state.ResourceStore
-	UnattendedWrites string
-	UserSends        string
-	Now              func() time.Time
-	OnDecline        func(ctx context.Context, i Interaction) string
+	Store                 state.ResourceStore
+	UnattendedWrites      string
+	UserSends             string
+	Now                   func() time.Time
+	OnDecline             func(ctx context.Context, i Interaction) string
+	ValidateEditedPayload func(toolID string, edited map[string]string, originalPayload json.RawMessage) error
 }
 
 func (s *Service) now() time.Time {
@@ -415,13 +416,26 @@ func ApprovalKey(runID string, revision int64, digest string) string {
 }
 
 type approval struct {
-	RunID       string    `json:"run_id"`
-	Revision    int64     `json:"revision"`
-	Digest      string    `json:"digest"`
-	Decision    string    `json:"decision"`
-	Interaction string    `json:"interaction_id"`
-	At          time.Time `json:"at"`
-	UsedBy      string    `json:"used_by,omitempty"`
+	RunID            string            `json:"run_id"`
+	Revision         int64             `json:"revision"`
+	Digest           string            `json:"digest"`
+	Decision         string            `json:"decision"`
+	Interaction      string            `json:"interaction_id"`
+	At               time.Time         `json:"at"`
+	UsedBy           string            `json:"used_by,omitempty"`
+	EditedFields     map[string]string `json:"edited_fields,omitempty"`
+	EditedPayload    json.RawMessage   `json:"edited_payload,omitempty"`
+	SupersedesDigest string            `json:"supersedes_digest,omitempty"`
+}
+
+// ApprovedReplacement holds the validated payload and recomputed digest stored
+// on an approved edited replacement record.
+type ApprovedReplacement struct {
+	InteractionID    string
+	OriginalDigest   string
+	ReplacementDigest string
+	EditedFields     map[string]string
+	EditedPayload    json.RawMessage
 }
 
 func (s *Service) Check(ctx context.Context, req Request) (Decision, error) {
@@ -501,6 +515,70 @@ func (s *Service) Check(ctx context.Context, req Request) (Decision, error) {
 		return Decision{Result: "deny", Reason: "This automation has no standing permission for this action."}, nil
 	}
 	return Decision{Result: "needs_interaction", Reason: "This action needs the user's approval."}, nil
+}
+
+// RecheckStandingRules re-evaluates standing permission rules at execution time
+// (not only plan time) so newly added deny/ask rules, revocations, or expiries
+// are enforced right before the external adapter executes.
+func (s *Service) RecheckStandingRules(ctx context.Context, req Request, planned Decision) (Decision, error) {
+	if req.ReadOnly && req.Effect != "read" {
+		return Decision{Result: "deny", Reason: "This task may only read."}, nil
+	}
+	rules, err := s.Rules(ctx)
+	if err != nil {
+		return Decision{}, err
+	}
+	sort.Slice(rules, func(i, j int) bool { return rules[i].ID < rules[j].ID })
+	for _, rule := range rules {
+		if rule.Effect == "deny" && s.applies(rule, req) {
+			return Decision{Result: "deny", Reason: "A permission rule forbids this: " + rule.Summary, RuleIDs: []string{rule.ID}, RuleSummaries: []string{rule.Summary}}, nil
+		}
+	}
+	if planned.Source == "approval" || planned.ApprovedByHuman {
+		if req.Digest != "" && req.RunID != "" {
+			r, err := s.Store.Resource(ctx, CollectionApprovals, ApprovalKey(req.RunID, req.Revision, req.Digest))
+			if err != nil {
+				if errors.Is(err, state.ErrNotFound) {
+					return Decision{Result: "deny", Reason: "Approval record is no longer available."}, nil
+				}
+				return Decision{}, err
+			}
+			var a approval
+			if err := r.Decode(&a); err != nil {
+				return Decision{}, err
+			}
+			if a.Decision != "approve" {
+				return Decision{Result: "deny", Reason: "The user declined this exact action."}, nil
+			}
+		}
+		return planned, nil
+	}
+	for _, rule := range rules {
+		if rule.Effect == "ask" && s.applies(rule, req) {
+			return Decision{Result: "needs_interaction", Reason: "A custom rule requires your approval: " + rule.Summary, RuleIDs: []string{rule.ID}, RuleSummaries: []string{rule.Summary}}, nil
+		}
+	}
+	if planned.Source == "permission_rule" {
+		stillAllowed := false
+		for _, rule := range rules {
+			if rule.Effect != "allow" {
+				continue
+			}
+			// Check rule applicability without re-failing on the operation already consumed at plan time.
+			checkRule := rule
+			if checkRule.MaxOperations > 0 && slices.Contains(planned.RuleIDs, checkRule.ID) && checkRule.Used == checkRule.MaxOperations {
+				checkRule.Used--
+			}
+			if s.applies(checkRule, req) {
+				stillAllowed = true
+				break
+			}
+		}
+		if !stillAllowed {
+			return Decision{Result: "deny", Reason: "The standing permission rule for this action is no longer active."}, nil
+		}
+	}
+	return planned, nil
 }
 
 func (s *Service) useApproval(ctx context.Context, r state.Resource, stored approval, operationID string) (bool, error) {

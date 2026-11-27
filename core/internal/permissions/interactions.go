@@ -2,11 +2,16 @@ package permissions
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime"
+	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"nori/internal/state"
@@ -52,26 +57,151 @@ type Resolution struct {
 
 type stored struct {
 	Interaction
-	ConnectionID    string   `json:"private_connection_id,omitempty"`
-	ToolID          string   `json:"private_tool_id,omitempty"`
-	ToolTitle       string   `json:"private_tool_title,omitempty"`
-	ActionClass     string   `json:"private_action_class,omitempty"`
-	Recipients      []string `json:"private_recipients,omitempty"`
-	CommandAccepted bool     `json:"command_accepted,omitempty"`
-	AnswerText      string   `json:"answer_text,omitempty"`
-	AnswerID        string   `json:"answer_command_id,omitempty"`
-	RememberDefault bool     `json:"remember_default,omitempty"`
-	Purpose         string   `json:"purpose,omitempty"`
+	ConnectionID    string            `json:"private_connection_id,omitempty"`
+	ToolID          string            `json:"private_tool_id,omitempty"`
+	ToolTitle       string            `json:"private_tool_title,omitempty"`
+	ActionClass     string            `json:"private_action_class,omitempty"`
+	Recipients      []string          `json:"private_recipients,omitempty"`
+	EditedFields    map[string]string `json:"edited_fields,omitempty"`
+	CommandAccepted bool              `json:"command_accepted,omitempty"`
+	AnswerText      string            `json:"answer_text,omitempty"`
+	AnswerID        string            `json:"answer_command_id,omitempty"`
+	RememberDefault bool              `json:"remember_default,omitempty"`
+	Purpose         string            `json:"purpose,omitempty"`
 }
 
 type Response struct {
-	Kind              string   `json:"kind"`
-	Text              string   `json:"text,omitempty"`
-	OptionIDs         []string `json:"option_ids,omitempty"`
-	ActionDigest      string   `json:"action_digest,omitempty"`
-	RememberRule      bool     `json:"remember_rule,omitempty"`
-	ConnectionID      string   `json:"connection_id,omitempty"`
-	RememberAsDefault bool     `json:"remember_as_default,omitempty"`
+	Kind              string            `json:"kind"`
+	Text              string            `json:"text,omitempty"`
+	OptionIDs         []string          `json:"option_ids,omitempty"`
+	ActionDigest      string            `json:"action_digest,omitempty"`
+	RememberRule      bool              `json:"remember_rule,omitempty"`
+	EditedFields      map[string]string `json:"edited_fields,omitempty"`
+	ConnectionID      string            `json:"connection_id,omitempty"`
+	RememberAsDefault bool              `json:"remember_as_default,omitempty"`
+}
+
+const (
+	maxEditedSubjectRunes = 980
+	maxEditedBodyRunes    = 12_000
+)
+
+// ValidateEditedFields enforces the strict allowlist (only "subject" and "body")
+// and field-level safety constraints for editable approval replacements.
+func ValidateEditedFields(edited map[string]string) error {
+	if len(edited) == 0 {
+		return nil
+	}
+	for k, v := range edited {
+		switch k {
+		case "subject":
+			if strings.ContainsAny(v, "\r\n\x00") {
+				return fmt.Errorf("%w: edited subject must not contain newlines or control characters", state.ErrInvalidResource)
+			}
+			if utf8.RuneCountInString(v) > maxEditedSubjectRunes {
+				return fmt.Errorf("%w: edited subject exceeds %d characters", state.ErrInvalidResource, maxEditedSubjectRunes)
+			}
+			for _, word := range strings.Fields(mime.QEncoding.Encode("UTF-8", v)) {
+				if len(word) > maxEditedSubjectRunes {
+					return fmt.Errorf("%w: edited subject has an overlong word", state.ErrInvalidResource)
+				}
+			}
+		case "body":
+			if strings.ContainsRune(v, '\x00') {
+				return fmt.Errorf("%w: edited body must not contain null bytes", state.ErrInvalidResource)
+			}
+			if utf8.RuneCountInString(v) > maxEditedBodyRunes {
+				return fmt.Errorf("%w: edited body exceeds %d characters", state.ErrInvalidResource, maxEditedBodyRunes)
+			}
+		default:
+			return fmt.Errorf("%w: field %q cannot be edited; only subject and body are allowed", state.ErrInvalidResource, k)
+		}
+	}
+	return nil
+}
+
+// RecomputeEditedDigest deterministically derives a new action digest bound to
+// the original digest, immutable target metadata, and the allowlisted edited fields.
+func RecomputeEditedDigest(originalDigest, toolID, connectionID string, recipients []string, edited map[string]string) string {
+	recips := append([]string(nil), recipients...)
+	sort.Strings(recips)
+	keys := make([]string, 0, len(edited))
+	for k := range edited {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	pairs := make([][2]string, 0, len(keys))
+	for _, k := range keys {
+		pairs = append(pairs, [2]string{k, edited[k]})
+	}
+	data, _ := json.Marshal([]any{"edited_v1", originalDigest, toolID, connectionID, recips, pairs})
+	sum := sha256.Sum256(data)
+	return "act_" + hex.EncodeToString(sum[:20])
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func applyEditedPayload(original json.RawMessage, edited map[string]string) (json.RawMessage, error) {
+	payload := map[string]any{}
+	if len(original) > 0 {
+		if err := json.Unmarshal(original, &payload); err != nil {
+			return nil, fmt.Errorf("%w: original interaction payload is invalid", state.ErrInvalidResource)
+		}
+	}
+	editedCopy := cloneStringMap(edited)
+	payload["edited_fields"] = editedCopy
+
+	editable, _ := payload["editable_fields"].(map[string]any)
+	if editable == nil {
+		editable = map[string]any{}
+	}
+	for k, v := range editedCopy {
+		editable[k] = v
+	}
+	payload["editable_fields"] = editable
+
+	if summary, ok := payload["summary"].(string); ok && summary != "" {
+		payload["summary"] = applyEditsToSummary(summary, editedCopy)
+	}
+	return json.Marshal(payload)
+}
+
+func applyEditsToSummary(summary string, edited map[string]string) string {
+	updated := summary
+	if subj, ok := edited["subject"]; ok {
+		lines := strings.Split(updated, "\n")
+		replaced := false
+		for idx, line := range lines {
+			if strings.HasPrefix(line, "Subject: ") {
+				lines[idx] = "Subject: " + subj
+				replaced = true
+				break
+			}
+		}
+		if replaced {
+			updated = strings.Join(lines, "\n")
+		}
+	}
+	if body, ok := edited["body"]; ok {
+		if header, _, found := strings.Cut(updated, "\n\n"); found && strings.Contains(header, "Subject: ") {
+			updated = header + "\n\n" + body
+		}
+	}
+	return updated
+}
+
+func replacementInteractionID(originalID, requestID string) string {
+	sum := sha256.Sum256([]byte("edit-replacement:" + originalID + "\x00" + requestID))
+	return "int_" + hex.EncodeToString(sum[:16])
 }
 
 func interactionSurface(kind string, payload json.RawMessage) string {
@@ -225,11 +355,15 @@ type Answer struct {
 	Text                              string
 	DefaultPurpose, DefaultConnection string
 	Recheck                           bool
+	ReplacementInteractionID          string
+	ActionDigest                      string
+	EditedFields                      map[string]string
 }
 
 func (s *Service) Respond(ctx context.Context, id, requestID string, expected int64, response Response) (state.MutationReceipt, *Answer, error) {
 	var answer *Answer
 	var declined *Interaction
+	var replacementForLink *Interaction
 	var appliedResource json.RawMessage
 	receipt, err := s.Store.Mutate(ctx, state.Mutation{
 		RequestID: requestID, Method: "POST", Target: "/v1/interactions/" + id + "/responses", ExpectedRevision: expected,
@@ -237,6 +371,7 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 		Apply: func(current *state.Resource, read func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
 			answer = nil
 			declined = nil
+			replacementForLink = nil
 			appliedResource = nil
 			if current == nil {
 				return state.MutationResult{}, state.ErrNotFound
@@ -250,6 +385,9 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 			}
 			if current.Revision != expected {
 				return state.MutationResult{}, state.ErrRevisionConflict
+			}
+			if len(response.EditedFields) > 0 && (response.Kind != "approve" || i.Kind != "approval") {
+				return state.MutationResult{}, fmt.Errorf("%w: edited_fields is only allowed when approving an approval interaction", state.ErrInvalidResource)
 			}
 			now := s.now()
 			resolution := Resolution{Kind: response.Kind, At: now}
@@ -285,6 +423,127 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 				revision := int64(0)
 				if i.InstructionRevision != nil {
 					revision = *i.InstructionRevision
+				}
+				if len(response.EditedFields) > 0 {
+					if response.RememberRule {
+						return state.MutationResult{}, fmt.Errorf("%w: remember_rule cannot be combined with edited_fields", state.ErrInvalidResource)
+					}
+					if err := ValidateEditedFields(response.EditedFields); err != nil {
+						return state.MutationResult{}, err
+					}
+					if s.ValidateEditedPayload != nil {
+						if err := s.ValidateEditedPayload(body.ToolID, cloneStringMap(response.EditedFields), i.Payload); err != nil {
+							return state.MutationResult{}, fmt.Errorf("%w: %v", state.ErrInvalidResource, err)
+						}
+					}
+					editedCopy := cloneStringMap(response.EditedFields)
+					editedPayload, err := applyEditedPayload(i.Payload, editedCopy)
+					if err != nil {
+						return state.MutationResult{}, err
+					}
+					newDigest := RecomputeEditedDigest(i.ActionDigest, body.ToolID, body.ConnectionID, body.Recipients, editedCopy)
+					replID := replacementInteractionID(id, requestID)
+
+					// Atomically supersede the original interaction and link it to the replacement.
+					origInteraction := i
+					origInteraction.Status = "superseded"
+					origInteraction.SupersededBy = replID
+					origInteraction.ResolvedAt = &now
+					origBody := body
+					origBody.Interaction = origInteraction
+					origBody.AnswerID = uuid.NewSHA1(uuid.NameSpaceOID, []byte("interaction-answer:"+requestID)).String()
+					text = "The user edited and approved this action; execute using the approved replacement payload (" + replID + "): " + i.Prompt
+					origBody.AnswerText = text
+
+					origRes, err := state.NewResource(CollectionInteractions, id, current.Revision+1, origBody, map[string]string{
+						"task_id": i.TaskID, "status": "superseded", "kind": i.Kind,
+					}, now)
+					if err != nil {
+						return state.MutationResult{}, err
+					}
+
+					// Open & approve the replacement interaction atomically.
+					replInteraction := i
+					replInteraction.ID = replID
+					replInteraction.Revision = 1
+					replInteraction.Payload = editedPayload
+					replInteraction.ActionDigest = newDigest
+					replInteraction.Status = "resolved"
+					replInteraction.Resolution = &resolution
+					replInteraction.ResolvedAt = &now
+					replInteraction.SupersededBy = ""
+					replInteraction.Surface = interactionSurface(replInteraction.Kind, replInteraction.Payload)
+
+					replBody := body
+					replBody.Interaction = replInteraction
+					replBody.EditedFields = editedCopy
+					replBody.AnswerID = origBody.AnswerID
+					replBody.AnswerText = text
+
+					replRes, err := state.NewResource(CollectionInteractions, replID, 1, replBody, map[string]string{
+						"task_id": replInteraction.TaskID, "status": "resolved", "kind": replInteraction.Kind,
+					}, now)
+					if err != nil {
+						return state.MutationResult{}, err
+					}
+
+					// Record the approval under the recomputed digest with the approved edited payload.
+					record := approval{
+						RunID:            i.TaskID,
+						Revision:         revision,
+						Digest:           newDigest,
+						Decision:         "approve",
+						Interaction:      replID,
+						At:               now,
+						EditedFields:     editedCopy,
+						EditedPayload:    editedPayload,
+						SupersedesDigest: i.ActionDigest,
+					}
+					approvalKey := ApprovalKey(i.TaskID, revision, newDigest)
+					approvalRevision := int64(1)
+					if payload.ApprovalOnce {
+						previous, err := read(CollectionApprovals, approvalKey)
+						if err != nil {
+							return state.MutationResult{}, err
+						}
+						if previous != nil {
+							var consumed approval
+							if err := previous.Decode(&consumed); err != nil {
+								return state.MutationResult{}, err
+							}
+							if consumed.UsedBy == "" {
+								return state.MutationResult{}, ErrInteractionStale
+							}
+							approvalRevision = previous.Revision + 1
+						}
+					}
+					approvalResource, err := state.NewResource(CollectionApprovals, approvalKey, approvalRevision, record, map[string]string{
+						"task_id":           i.TaskID,
+						"supersedes_digest": i.ActionDigest,
+					}, now)
+					if err != nil {
+						return state.MutationResult{}, err
+					}
+
+					replCopy := replInteraction
+					replacementForLink = &replCopy
+					data, _ := json.Marshal(replInteraction)
+					appliedResource = data
+					if i.TaskID != "" {
+						answer = &Answer{
+							CommandID:                origBody.AnswerID,
+							TaskID:                   i.TaskID,
+							Question:                 questionID(i),
+							Text:                     text,
+							ReplacementInteractionID: replID,
+							ActionDigest:             newDigest,
+							EditedFields:             editedCopy,
+						}
+					}
+					return state.MutationResult{
+						Writes:  []state.Resource{origRes, replRes, approvalResource},
+						Receipt: state.MutationReceipt{Status: "applied", Resource: data, HTTPStatus: 200},
+					}, nil
 				}
 				record := approval{RunID: i.TaskID, Revision: revision, Digest: i.ActionDigest, Decision: response.Kind, Interaction: i.ID, At: now}
 				approvalKey := ApprovalKey(i.TaskID, revision, i.ActionDigest)
@@ -398,6 +657,10 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 	if !transitioned {
 		answer = nil
 		declined = nil
+		replacementForLink = nil
+	}
+	if transitioned && replacementForLink != nil && replacementForLink.TaskID != "" {
+		s.linkSuperseded(ctx, *replacementForLink)
 	}
 	if transitioned && declined != nil && s.OnDecline != nil {
 		if declineNote := s.OnDecline(ctx, *declined); declineNote != "" {
@@ -424,6 +687,15 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 					cmdID = uuid.NewSHA1(uuid.NameSpaceOID, []byte("interaction-answer:"+requestID)).String()
 				}
 				answer = &Answer{CommandID: cmdID, TaskID: saved.TaskID, Question: questionID(saved), Text: body.AnswerText}
+				if saved.SupersededBy != "" {
+					answer.ReplacementInteractionID = saved.SupersededBy
+					if replRes, replErr := s.Store.Resource(ctx, CollectionInteractions, saved.SupersededBy); replErr == nil {
+						if repl, replBody, decErr := s.decodeInteraction(replRes); decErr == nil {
+							answer.ActionDigest = repl.ActionDigest
+							answer.EditedFields = cloneStringMap(replBody.EditedFields)
+						}
+					}
+				}
 				if body.RememberDefault {
 					connID := response.ConnectionID
 					if saved.Resolution != nil && saved.Resolution.ConnectionID != "" {
@@ -527,18 +799,97 @@ func (s *Service) MarkDelivered(ctx context.Context, id string) error {
 	if err := r.Decode(&body); err != nil {
 		return err
 	}
-	if body.CommandAccepted {
-		return nil
+	if !body.CommandAccepted {
+		body.CommandAccepted = true
+		next, err := state.NewResource(CollectionInteractions, id, 0, body, r.Index, s.now())
+		if err != nil {
+			return err
+		}
+		if _, err := s.Store.PutResource(ctx, next, r.Revision); err != nil && !errors.Is(err, state.ErrRevisionConflict) {
+			return err
+		}
 	}
-	body.CommandAccepted = true
-	next, err := state.NewResource(CollectionInteractions, id, 0, body, r.Index, s.now())
-	if err != nil {
-		return err
-	}
-	if _, err := s.Store.PutResource(ctx, next, r.Revision); err != nil && !errors.Is(err, state.ErrRevisionConflict) {
-		return err
+	if body.SupersededBy != "" && body.SupersededBy != id {
+		_ = s.MarkDelivered(ctx, body.SupersededBy)
 	}
 	return nil
+}
+
+// FindApprovedReplacement looks up an approved edited replacement record for
+// (runID, revision, originalDigest) so execution uses the approved replacement payload.
+func (s *Service) FindApprovedReplacement(ctx context.Context, runID string, revision int64, originalDigest string) (*ApprovedReplacement, error) {
+	if runID == "" || originalDigest == "" {
+		return nil, nil
+	}
+	page, _, err := s.Store.Resources(ctx, CollectionApprovals, map[string]string{
+		"task_id":           runID,
+		"supersedes_digest": originalDigest,
+	}, "", 20)
+	if err != nil {
+		return nil, err
+	}
+	var latest *approval
+	for _, r := range page {
+		var a approval
+		if r.Decode(&a) != nil {
+			continue
+		}
+		if a.Revision != revision || a.Decision != "approve" || a.SupersedesDigest != originalDigest {
+			continue
+		}
+		if latest == nil || a.At.After(latest.At) {
+			cp := a
+			latest = &cp
+		}
+	}
+	if latest == nil {
+		return nil, nil
+	}
+	return &ApprovedReplacement{
+		InteractionID:     latest.Interaction,
+		OriginalDigest:    latest.SupersedesDigest,
+		ReplacementDigest: latest.Digest,
+		EditedFields:      cloneStringMap(latest.EditedFields),
+		EditedPayload:     append(json.RawMessage(nil), latest.EditedPayload...),
+	}, nil
+}
+
+// ApprovedReplacementByInteraction resolves an interaction ID (following
+// SupersededBy if the original was replaced by an edited approval) and returns
+// the replacement record if it was edited and approved.
+func (s *Service) ApprovedReplacementByInteraction(ctx context.Context, interactionID string) (*ApprovedReplacement, error) {
+	if interactionID == "" {
+		return nil, nil
+	}
+	r, err := s.Store.Resource(ctx, CollectionInteractions, interactionID)
+	if err != nil {
+		return nil, err
+	}
+	i, body, err := s.decodeInteraction(r)
+	if err != nil {
+		return nil, err
+	}
+	origDigest := i.ActionDigest
+	if i.Status == "superseded" && i.SupersededBy != "" {
+		replRes, err := s.Store.Resource(ctx, CollectionInteractions, i.SupersededBy)
+		if err != nil {
+			return nil, err
+		}
+		i, body, err = s.decodeInteraction(replRes)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if i.Status != "resolved" || i.Resolution == nil || i.Resolution.Kind != "approve" || len(body.EditedFields) == 0 {
+		return nil, nil
+	}
+	return &ApprovedReplacement{
+		InteractionID:     i.ID,
+		OriginalDigest:    origDigest,
+		ReplacementDigest: i.ActionDigest,
+		EditedFields:      cloneStringMap(body.EditedFields),
+		EditedPayload:     append(json.RawMessage(nil), i.Payload...),
+	}, nil
 }
 
 func (s *Service) UnperformedApprovals(ctx context.Context, runID string, revision int64, attempted map[string]bool) ([]string, error) {
