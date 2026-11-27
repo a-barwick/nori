@@ -115,7 +115,7 @@ export function OnboardingFlow({
 
   const [name, setName] = useState("");
   const [replyStyle, setReplyStyle] = useState<string>(REPLY_STYLE_OPTIONS[0]);
-  const [focus, setFocus] = useState<string[]>(["Engineering", "Daily planning"]);
+  const [focus, setFocus] = useState<string[]>([]);
   const [workingOn, setWorkingOn] = useState("");
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState<string | null>(null);
@@ -150,7 +150,9 @@ export function OnboardingFlow({
   const byokRequired = !!keys.data?.byok_required;
   const keyConfigured = !!primaryProvider?.configured && !isReplacingKey;
   const canContinueStep3 =
-    (!byokRequired || !!keys.data?.providers.some((provider) => provider.configured) || hasSelectedHomeChat(models.data)) &&
+    (!byokRequired ||
+      ((!!keys.data?.providers.some((provider) => provider.configured) || hasSelectedHomeChat(models.data)) &&
+        !isReplacingKey)) &&
     !savedProvider;
 
   const goStep = (next: OnboardingStep) => {
@@ -301,22 +303,33 @@ export function OnboardingFlow({
 
   const step3MarkState: MarkState = validatingKey ? "thinking" : !keyConfigured && keyFocused ? "attentive" : "idle";
   const mascot = { mood, moodKey, happy, sparkleKey };
+  const showRightAction = (step === 3 && !keyConfigured) || step === 4;
 
   return (
     <div className="fixed inset-0 z-40 flex flex-col bg-canvas text-ink">
-      <header className="mx-auto flex w-full max-w-[600px] shrink-0 items-center justify-between px-5 pt-5 pb-2">
+      <header className="mx-auto grid w-full max-w-[600px] shrink-0 grid-cols-[1fr_auto_1fr] items-center px-5 pt-5 pb-2">
         <button
           type="button"
+          disabled={step === 1}
+          aria-hidden={step === 1}
+          tabIndex={step === 1 ? -1 : undefined}
           onClick={() => step > 1 && goStep((step - 1) as OnboardingStep)}
           className={cn(
-            "t-fast rounded-lg px-2.5 py-1.5 text-meta font-medium text-ink-2 hover:bg-fill-1 hover:text-ink",
+            "t-fast justify-self-start rounded-full px-2.5 py-1.5 text-meta font-medium text-ink-2 hover:bg-fill-1 hover:text-ink",
             step === 1 && "invisible pointer-events-none",
           )}
         >
           Back
         </button>
 
-        <div className="flex items-center gap-1.5" aria-label={`Step ${step} of 4`}>
+        <div
+          role="progressbar"
+          aria-valuenow={step}
+          aria-valuemin={1}
+          aria-valuemax={4}
+          aria-label={`Step ${step} of 4`}
+          className="flex items-center gap-1.5"
+        >
           {([1, 2, 3, 4] as const).map((idx) => (
             <span
               key={idx}
@@ -325,7 +338,7 @@ export function OnboardingFlow({
                 idx === step
                   ? "w-8 bg-accent"
                   : idx < step
-                    ? "w-[18px] bg-accent-subtle dark:bg-accent-text/35"
+                    ? "w-[18px] bg-accent-text/35"
                     : "w-[18px] bg-fill-1",
               )}
             />
@@ -334,19 +347,24 @@ export function OnboardingFlow({
 
         <button
           type="button"
-          disabled={finishing}
+          disabled={finishing || !showRightAction}
+          aria-hidden={!showRightAction}
+          tabIndex={!showRightAction ? -1 : undefined}
           onClick={() => {
-            if (step < 4) goStep((step + 1) as OnboardingStep);
-            else void finishOnboarding(false);
+            if (step === 3) goStep(4);
+            else if (step === 4) void finishOnboarding(false);
           }}
-          className="t-fast rounded-lg px-2.5 py-1.5 text-meta font-medium text-ink-2 hover:bg-fill-1 hover:text-ink"
+          className={cn(
+            "t-fast justify-self-end rounded-full px-2.5 py-1.5 text-meta font-medium text-ink-2 hover:bg-fill-1 hover:text-ink",
+            !showRightAction && "invisible pointer-events-none",
+          )}
         >
           {step === 3 ? "Set up later" : "Skip"}
         </button>
       </header>
 
-      <main className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-5 pt-3 pb-10">
-        <div className="w-full max-w-[480px]">
+      <main className="flex flex-1 flex-col items-center overflow-y-auto px-5 pt-3 pb-10">
+        <div className="my-auto w-full max-w-[480px]">
           {step === 1 && (
             <WelcomeStep
               mascot={mascot}
@@ -370,6 +388,7 @@ export function OnboardingFlow({
               mascot={mascot}
               markState={step3MarkState}
               homeEnabled={!!home.data?.enabled}
+              byokRequired={byokRequired}
               providers={keys.data?.providers ?? []}
               primaryProvider={primaryProvider}
               keyConfigured={keyConfigured}

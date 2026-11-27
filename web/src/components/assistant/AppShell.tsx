@@ -35,7 +35,7 @@ import type { Preferences } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
 import { OnboardingFlow, shouldShowOnboarding } from "./OnboardingFlow";
 import { SignOutForm } from "./SignOutForm";
-import { Badge, Failure, Loading, Notice } from "./ui";
+import { Badge, Failure, inputClass, Loading, Notice } from "./ui";
 
 type NavItem = {
   href: string;
@@ -150,13 +150,17 @@ function AccountStateGate({ scope, localMode, children }: { scope: string; local
     }
   };
 
-  if (state.status === "error") return <main className="mx-auto max-w-xl space-y-4 p-6">
-    <Failure error={state.error} onRetry={() => beginCheck(lastCheck.current)} />
-    {!localMode && <SignOutForm />}
+  if (state.status === "error") return <main className="h-full overflow-y-auto bg-canvas p-6">
+    <div className="mx-auto max-w-xl space-y-4">
+      <Failure error={state.error} onRetry={() => beginCheck(lastCheck.current)} />
+      {!localMode && <SignOutForm />}
+    </div>
   </main>;
-  if (state.status === "checking") return <main className="mx-auto max-w-xl p-6"><Loading /></main>;
-  if (state.status === "resetting") return <main className="mx-auto max-w-xl p-6">
-    <div role="status" className="flex items-center gap-3 text-body text-ink">
+  if (state.status === "checking") return <main className="h-full overflow-y-auto bg-canvas p-6">
+    <div className="mx-auto max-w-xl"><Loading /></div>
+  </main>;
+  if (state.status === "resetting") return <main className="h-full overflow-y-auto bg-canvas p-6">
+    <div role="status" className="mx-auto flex max-w-xl items-center gap-3 text-body text-ink">
       <LoaderCircle className="size-5 animate-spin motion-reduce:animate-none" aria-hidden />Resetting data…
     </div>
   </main>;
@@ -178,37 +182,62 @@ function AccountStateGate({ scope, localMode, children }: { scope: string; local
     }
   };
 
-  if (state.status === "delete-pending") return <main className="mx-auto max-w-xl space-y-4 p-6">
-    <h1 className="text-section font-semibold text-ink">Finish deleting your account</h1>
-    <p className="text-body text-ink-2">Your account deletion was interrupted. Enter your account email to finish removing your account and data.</p>
-    {resumeError && <Notice tone="danger">{resumeError}</Notice>}
-    <input
-      type="email"
-      value={deleteEmail}
-      onChange={(event) => setDeleteEmail(event.target.value)}
-      placeholder="Account email"
-      className="w-full rounded-input border border-hairline bg-surface px-3 py-2 text-body text-ink"
-      autoComplete="email"
-    />
-    <Button variant="danger" disabled={finishing} onClick={() => void finishAccountDelete()}>
-      {finishing ? "Deleting…" : "Finish deleting account"}
-    </Button>
+  if (state.status === "delete-pending") return <main className="h-full overflow-y-auto bg-canvas p-6">
+    <div className="mx-auto max-w-xl space-y-4">
+      <h1 className="text-section font-semibold text-ink">Finish deleting your account</h1>
+      <p className="text-body text-ink-2">Your account deletion was interrupted. Enter your account email to finish removing your account and data.</p>
+      {resumeError && <Notice tone="danger">{resumeError}</Notice>}
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void finishAccountDelete();
+        }}
+        className="space-y-4"
+      >
+        <div>
+          <label htmlFor="delete-account-email" className="sr-only">Account email</label>
+          <input
+            id="delete-account-email"
+            type="email"
+            value={deleteEmail}
+            onChange={(event) => setDeleteEmail(event.target.value)}
+            placeholder="Account email"
+            className={inputClass}
+            autoComplete="email"
+            disabled={finishing}
+          />
+        </div>
+        <Button type="submit" variant="danger" disabled={finishing}>
+          {finishing ? "Deleting…" : "Finish deleting account"}
+        </Button>
+      </form>
+      {!localMode && <SignOutForm />}
+    </div>
   </main>;
-  if (state.status === "pending") return <main className="mx-auto max-w-xl space-y-4 p-6">
-    <h1 className="text-section font-semibold text-ink">Finish your data reset</h1>
-    <p className="text-body text-ink-2">Your data reset is waiting to finish.</p>
-    {resumeError && <Notice tone="danger">{resumeError}</Notice>}
-    <Button variant="primary" disabled={finishing} onClick={() => void finishReset()}>{finishing ? "Finishing…" : "Finish reset"}</Button>
+  if (state.status === "pending") return <main className="h-full overflow-y-auto bg-canvas p-6">
+    <div className="mx-auto max-w-xl space-y-4">
+      <h1 className="text-section font-semibold text-ink">Finish your data reset</h1>
+      <p className="text-body text-ink-2">Your data reset is waiting to finish.</p>
+      {resumeError && <Notice tone="danger">{resumeError}</Notice>}
+      <Button variant="primary" disabled={finishing} onClick={() => void finishReset()}>{finishing ? "Finishing…" : "Finish reset"}</Button>
+      {!localMode && <SignOutForm />}
+    </div>
   </main>;
-  if (state.status === "complete") return <main className="mx-auto max-w-xl space-y-4 p-6">
-    <h1 className="text-section font-semibold text-ink">Data reset complete</h1>
-    <p className="text-body text-ink-2">Your previous saved API keys and model choices were cleared. Continue to set up Nori.</p>
-    <Button variant="primary" onClick={() => { acknowledgeResetCompletion(scope); setState({ status: "ready" }); }}>Continue</Button>
+  if (state.status === "complete") return <main className="h-full overflow-y-auto bg-canvas p-6">
+    <div className="mx-auto max-w-xl space-y-4">
+      <h1 className="text-section font-semibold text-ink">Data reset complete</h1>
+      <p className="text-body text-ink-2">Your previous saved API keys and model choices were cleared. Continue to set up Nori.</p>
+      <Button variant="primary" onClick={() => { acknowledgeResetCompletion(scope); setState({ status: "ready" }); }}>Continue</Button>
+      {!localMode && <SignOutForm />}
+    </div>
   </main>;
-  if (state.status === "reset-error") return <main className="mx-auto max-w-xl space-y-4 p-6">
-    <h1 className="text-section font-semibold text-ink">Data reset could not start</h1>
-    <p className="text-body text-ink-2">Return to Reset data to try again.</p>
-    <Button variant="primary" onClick={() => window.location.replace("/settings/reset")}>Return to Reset data</Button>
+  if (state.status === "reset-error") return <main className="h-full overflow-y-auto bg-canvas p-6">
+    <div className="mx-auto max-w-xl space-y-4">
+      <h1 className="text-section font-semibold text-ink">Data reset could not start</h1>
+      <p className="text-body text-ink-2">Return to Reset data to try again.</p>
+      <Button variant="primary" onClick={() => window.location.replace("/settings/reset")}>Return to Reset data</Button>
+      {!localMode && <SignOutForm />}
+    </div>
   </main>;
   return children;
 }
@@ -291,7 +320,7 @@ function Frame({ scope, children }: { scope: string; children: ReactNode }) {
       label: "Work",
       renderIcon: (_active, size) => <ListChecks size={size} strokeWidth={1.85} aria-hidden />,
       badge: pending,
-      badgeLabel: "items needing action",
+      badgeLabel: pending === 1 ? "item needing action" : "items needing action",
       match: (p) =>
         p.startsWith("/work") ||
         p.startsWith("/library") ||
@@ -303,12 +332,13 @@ function Frame({ scope, children }: { scope: string; children: ReactNode }) {
       label: "More",
       renderIcon: (_active, size) => <MoreHorizontal size={size} strokeWidth={1.85} aria-hidden />,
       dot: appsAttention > 0,
-      dotLabel: `${appsAttention} apps require attention`,
+      dotLabel: appsAttention === 1 ? "1 app requires attention" : `${appsAttention} apps require attention`,
       match: (p) =>
         p.startsWith("/more") ||
         p.startsWith("/apps") ||
         p.startsWith("/memory") ||
-        p.startsWith("/settings"),
+        p.startsWith("/settings") ||
+        p.startsWith("/connector"),
     },
   ];
 

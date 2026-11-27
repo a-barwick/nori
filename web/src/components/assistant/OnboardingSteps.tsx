@@ -32,7 +32,7 @@ const SPARKLES: readonly { className: string; style: CSSProperties }[] = [
     style: { "--tx": "-16px", "--ty": "-14px" } as CSSProperties,
   },
   {
-    className: "top-1.5 right-2.5 bg-[var(--ok-text)]",
+    className: "top-1.5 right-2.5 bg-ok",
     style: { "--tx": "16px", "--ty": "-12px", animationDelay: "40ms" } as CSSProperties,
   },
   {
@@ -133,21 +133,21 @@ export function WelcomeStep({ mascot, onTap, onNext }: { mascot: MascotProps; on
 
       <div className="mt-6 flex flex-col gap-2.5">
         <div className="flex items-center gap-3.5 rounded-card border border-card-border bg-surface px-4 py-3.5">
-          <span className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-accent-subtle text-accent-text">
+          <span className="grid size-9 shrink-0 place-items-center rounded-chip bg-accent-subtle text-accent-text">
             <MessageSquare size={18} strokeWidth={1.9} aria-hidden />
           </span>
           <span className="text-row font-semibold text-ink">Chat through ideas, drafts, and questions</span>
         </div>
 
         <div className="flex items-center gap-3.5 rounded-card border border-card-border bg-surface px-4 py-3.5">
-          <span className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-[var(--scheduled-bg)] text-[var(--scheduled-text)]">
+          <span className="grid size-9 shrink-0 place-items-center rounded-chip bg-scheduled-bg text-scheduled">
             <CheckSquare size={18} strokeWidth={1.9} aria-hidden />
           </span>
           <span className="text-row font-semibold text-ink">Hand off tasks and approve before anything sends</span>
         </div>
 
         <div className="flex items-center gap-3.5 rounded-card border border-card-border bg-surface px-4 py-3.5">
-          <span className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-[var(--ok-bg)] text-[var(--ok-text)]">
+          <span className="grid size-9 shrink-0 place-items-center rounded-chip bg-ok-bg text-ok">
             <Lightbulb size={18} strokeWidth={1.9} aria-hidden />
           </span>
           <span className="text-row font-semibold text-ink">Remembers your preferences and context</span>
@@ -236,6 +236,7 @@ export function ModelSetupStep({
   mascot,
   markState,
   homeEnabled,
+  byokRequired = false,
   providers,
   primaryProvider,
   keyConfigured,
@@ -258,6 +259,7 @@ export function ModelSetupStep({
   mascot: MascotProps;
   markState: MarkState;
   homeEnabled: boolean;
+  byokRequired?: boolean;
   providers: ModelKeyProvider[];
   primaryProvider?: ModelKeyProvider;
   keyConfigured: boolean;
@@ -277,6 +279,14 @@ export function ModelSetupStep({
   onShowModelsChange: (open: boolean) => void;
   onNext: () => void;
 }) {
+  const statusPill = validatingKey
+    ? { tone: "working" as const, label: "Saving" }
+    : keyConfigured
+      ? { tone: "ok" as const, label: "Configured" }
+      : byokRequired && !homeEnabled
+        ? { tone: "warning" as const, label: "Required" }
+        : null;
+
   return (
     <section className="anim-fade flex flex-col">
       <MascotStage size={72} state={markState} {...mascot} onTap={onTap} />
@@ -287,7 +297,7 @@ export function ModelSetupStep({
       <div className="mt-6 rounded-card border border-card-border bg-surface p-4">
         <div className="mb-3.5 flex items-center justify-between gap-2.5">
           <div className="flex items-center gap-2.5">
-            <span className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-accent-subtle text-accent-text">
+            <span className="grid size-9 shrink-0 place-items-center rounded-chip bg-accent-subtle text-accent-text">
               <KeyRound size={17} strokeWidth={1.9} aria-hidden />
             </span>
             <label className="sr-only" htmlFor="onboarding-provider">
@@ -298,7 +308,7 @@ export function ModelSetupStep({
               value={primaryProvider?.provider ?? ""}
               disabled={validatingKey || !providers.length}
               onChange={(event) => onSelectProvider(event.target.value)}
-              className="rounded-[10px] border border-card-border bg-fill-1 px-3 py-2 text-row font-semibold text-ink"
+              className="rounded-chip border border-card-border bg-fill-1 px-3 py-2 text-row font-semibold text-ink"
             >
               {!primaryProvider && <option value="">Providers unavailable</option>}
               {providers.map((provider) => (
@@ -308,9 +318,7 @@ export function ModelSetupStep({
               ))}
             </select>
           </div>
-          <Pill tone={validatingKey ? "working" : keyConfigured ? "ok" : "neutral"}>
-            {validatingKey ? "Saving" : keyConfigured ? "Configured" : "Not configured"}
-          </Pill>
+          {statusPill && <Pill tone={statusPill.tone}>{statusPill.label}</Pill>}
         </div>
 
         {!keyConfigured ? (
@@ -318,12 +326,12 @@ export function ModelSetupStep({
             <label htmlFor="onboarding-api-key" className="mb-1.5 block text-meta font-semibold text-ink-2">
               API key
             </label>
-            <div className="relative flex items-center">
+            <div className="flex h-11 items-center gap-2 rounded-tile border border-card-border bg-fill-1 pr-2 pl-3.5 transition-colors focus-within:border-accent-signal">
               <input
                 id="onboarding-api-key"
                 type="password"
                 value={draftKey}
-                disabled={validatingKey}
+                disabled={validatingKey || !primaryProvider}
                 onFocus={() => onKeyFocusChange(true)}
                 onBlur={() => onKeyFocusChange(false)}
                 onChange={(e) => onDraftKeyChange(e.target.value)}
@@ -335,20 +343,20 @@ export function ModelSetupStep({
                 }}
                 placeholder="Paste API key"
                 autoComplete="off"
-                className="h-11 w-full rounded-[12px] border border-card-border bg-fill-1 pr-24 pl-3.5 font-mono text-[13px] text-ink placeholder:text-ink-3 focus:border-accent-signal focus:outline-none"
+                className="min-w-0 flex-1 bg-transparent font-mono text-[13px] text-ink placeholder:text-ink-3 focus:outline-none"
               />
               <button
                 type="button"
-                disabled={validatingKey}
+                disabled={validatingKey || !primaryProvider}
                 onClick={onVerifyKey}
-                className="t-fast absolute right-2 rounded-lg bg-surface px-2.5 py-1.5 text-[12px] font-semibold text-accent-text hover:bg-fill-2 disabled:opacity-50"
+                className="t-fast shrink-0 rounded-chip bg-surface px-2.5 py-1.5 text-[12px] font-semibold text-accent-text hover:bg-fill-2 disabled:bg-disabled-bg disabled:text-disabled"
               >
                 {validatingKey ? "Saving…" : "Save"}
               </button>
             </div>
           </div>
         ) : (
-          <div className="flex items-center justify-between rounded-[12px] bg-[var(--ok-bg)] px-3.5 py-2.5 text-meta text-[var(--ok-text)]">
+          <div className="flex items-center justify-between rounded-tile bg-ok-bg px-3.5 py-2.5 text-meta text-ok">
             <span>
               Key saved
               {primaryProvider?.last4 && (
@@ -381,9 +389,18 @@ export function ModelSetupStep({
         </div>
       )}
 
+      <div className="mt-3">
+        <Notice tone="neutral">
+          <span className="inline-flex items-center gap-2">
+            <Lock size={14} className="shrink-0" aria-hidden />
+            <span>Encrypted at rest and never displayed again after saving.</span>
+          </span>
+        </Notice>
+      </div>
+
       {homeEnabled && (
         <div className="mt-3">
-          <Button variant="tonal" onClick={() => onShowModelsChange(true)}>
+          <Button variant="tonal" className="w-full" onClick={() => onShowModelsChange(true)}>
             Use a home AI server
           </Button>
         </div>
@@ -403,15 +420,6 @@ export function ModelSetupStep({
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
-
-      <div className="mt-3">
-        <Notice tone="neutral">
-          <span className="inline-flex items-center gap-2">
-            <Lock size={14} className="shrink-0" aria-hidden />
-            <span>Encrypted at rest and never displayed again after saving.</span>
-          </span>
-        </Notice>
-      </div>
 
       <div className="mt-6">
         <Button
@@ -474,19 +482,23 @@ export function AboutYouStep({
             value={name}
             onChange={(e) => onNameChange(e.target.value)}
             placeholder="Your name"
-            className="h-11 w-full rounded-[12px] border border-card-border bg-fill-1 px-3.5 text-body text-ink placeholder:text-ink-3 focus:border-accent-signal focus:outline-none"
+            className="h-11 w-full rounded-tile border border-card-border bg-fill-1 px-3.5 text-body text-ink placeholder:text-ink-3 focus:border-accent-signal focus:outline-none"
           />
         </div>
 
         <div>
-          <span className="mb-1.5 block text-meta font-semibold text-ink-2">Reply style</span>
-          <div className="flex flex-wrap gap-2">
+          <span id="onboarding-reply-style-label" className="mb-1.5 block text-meta font-semibold text-ink-2">
+            Reply style
+          </span>
+          <div className="flex flex-wrap gap-2" role="radiogroup" aria-labelledby="onboarding-reply-style-label">
             {REPLY_STYLE_OPTIONS.map((option) => {
               const selected = replyStyle === option;
               return (
                 <button
                   key={option}
                   type="button"
+                  role="radio"
+                  aria-checked={selected}
                   onClick={() => onReplyStyleChange(option)}
                   className={cn(
                     "t-fast rounded-full border px-3.5 py-1.5 text-meta font-medium",
@@ -503,14 +515,17 @@ export function AboutYouStep({
         </div>
 
         <div>
-          <span className="mb-1.5 block text-meta font-semibold text-ink-2">Focus</span>
-          <div className="flex flex-wrap gap-2">
+          <span id="onboarding-focus-label" className="mb-1.5 block text-meta font-semibold text-ink-2">
+            Focus
+          </span>
+          <div className="flex flex-wrap gap-2" role="group" aria-labelledby="onboarding-focus-label">
             {FOCUS_OPTIONS.map((option) => {
               const selected = focus.includes(option);
               return (
                 <button
                   key={option}
                   type="button"
+                  aria-pressed={selected}
                   onClick={() => onToggleFocus(option)}
                   className={cn(
                     "t-fast rounded-full border px-3.5 py-1.5 text-meta font-medium",
@@ -536,7 +551,7 @@ export function AboutYouStep({
             value={workingOn}
             onChange={(e) => onWorkingOnChange(e.target.value)}
             placeholder="e.g. Building a mobile app"
-            className="h-11 w-full rounded-[12px] border border-card-border bg-fill-1 px-3.5 text-body text-ink placeholder:text-ink-3 focus:border-accent-signal focus:outline-none"
+            className="h-11 w-full rounded-tile border border-card-border bg-fill-1 px-3.5 text-body text-ink placeholder:text-ink-3 focus:border-accent-signal focus:outline-none"
           />
         </div>
       </div>

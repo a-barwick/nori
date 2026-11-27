@@ -589,7 +589,7 @@
   .arrive, .anim-pop, .nori-send-arrive { animation-name: fade-in; }
   .sheet-right[data-state="open"] { animation: fade-in var(--dur-fast) var(--ease-standard); }
   .sheet-right[data-state="closed"] { animation: fade-out var(--dur-fast) var(--ease-standard); }
-  .mark *, .mark .mark-eye, .nori-sparkle-dot { animation: none !important; transition: none !important; }
+  .mark *, .mark .mark-eye, .nori-sparkle-dot, .pulse-dot { animation: none !important; transition: none !important; }
   .mark[data-blink="true"] .mark-eye { transform: none; }
 }
 
@@ -706,7 +706,7 @@
   padding-bottom: env(safe-area-inset-bottom);
 }
 
-@media (max-width: 640px) {
+@media (max-width: 639px) {
   .nori-topbar {
     height: 56px;
     padding: 0 18px;

@@ -4,6 +4,7 @@ extension NoriStore {
     public func bootstrapIfNeeded() async {
         guard !hasBootstrapped else { return }
         hasBootstrapped = true
+        isCheckingSavedSession = true
         let generation = sessionGeneration
         let savedSession: AuthSession?
         if let devLocalEmail {
@@ -11,6 +12,7 @@ extension NoriStore {
         } else {
             savedSession = await authProvider.loadSession()
         }
+        isCheckingSavedSession = false
         guard generation == sessionGeneration else { return }
         guard let savedSession else {
             authState = .signedOut
@@ -154,12 +156,9 @@ extension NoriStore {
         focus: [String],
         workingOn: String,
         saveAboutYou: Bool
-    ) async {
+    ) async throws {
         let generation = sessionGeneration
-        if let key = onboardingDoneKey {
-            UserDefaults.standard.set(true, forKey: key)
-        }
-        isShowingOnboardingReplay = false
+        var firstFailure: Error?
 
         if saveAboutYou {
             var seeds: [(section: String, text: String)] = []
@@ -180,6 +179,8 @@ extension NoriStore {
                 seeds.append(("Context", "Currently working on: \(trimmedWorking)"))
             }
             for seed in seeds {
+                let factKey = "\(seed.section):\(seed.text)"
+                if onboardingSavedFactKeys.contains(factKey) { continue }
                 do {
                     let receipt = try await transport.createMemory(
                         text: seed.text,
@@ -189,32 +190,52 @@ extension NoriStore {
                         requestID: UUID().uuidString.lowercased()
                     )
                     guard generation == sessionGeneration else { return }
+                    onboardingSavedFactKeys.insert(factKey)
                     if !coreMemories.contains(where: { $0.id == receipt.resource.id }) {
                         coreMemories.insert(receipt.resource, at: 0)
                     }
                 } catch {
                     guard generation == sessionGeneration else { return }
                     if await handleAuthFailureIfNeeded(error) { return }
+                    if firstFailure == nil {
+                        firstFailure = error
+                    }
                 }
             }
         }
 
-        var nextPrefs = preferences
-        nextPrefs.timezone = TimeZone.current.identifier
-        nextPrefs.onboardingCompletedAt = ISO8601DateFormatter().string(from: Date())
-        do {
-            let receipt = try await transport.savePreferences(
-                nextPrefs,
-                requestID: UUID().uuidString.lowercased()
-            )
-            guard generation == sessionGeneration else { return }
-            appliedPreferencesRead = nextPreferencesRead()
-            preferences = receipt.resource
-        } catch {
-            guard generation == sessionGeneration else { return }
-            if await handleAuthFailureIfNeeded(error) { return }
-            preferences = nextPrefs
+        if !onboardingSavedPreferences {
+            var nextPrefs = preferences
+            nextPrefs.timezone = TimeZone.current.identifier
+            nextPrefs.onboardingCompletedAt = ISO8601DateFormatter().string(from: Date())
+            do {
+                let receipt = try await transport.savePreferences(
+                    nextPrefs,
+                    requestID: UUID().uuidString.lowercased()
+                )
+                guard generation == sessionGeneration else { return }
+                appliedPreferencesRead = nextPreferencesRead()
+                preferences = receipt.resource
+                onboardingSavedPreferences = true
+            } catch {
+                guard generation == sessionGeneration else { return }
+                if await handleAuthFailureIfNeeded(error) { return }
+                if firstFailure == nil {
+                    firstFailure = error
+                }
+            }
         }
+
+        if let firstFailure {
+            throw firstFailure
+        }
+
+        onboardingSavedFactKeys.removeAll()
+        onboardingSavedPreferences = false
+        if let key = onboardingDoneKey {
+            UserDefaults.standard.set(true, forKey: key)
+        }
+        isShowingOnboardingReplay = false
     }
 
     public func deleteAccount(confirmation: String, resumePending: Bool = false) async throws {

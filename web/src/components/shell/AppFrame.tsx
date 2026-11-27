@@ -33,7 +33,7 @@ export function AppFrame({
         <div aria-hidden />
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-clip">{children}</div>
+      <div id="content" className="flex min-h-0 flex-1 flex-col overflow-clip">{children}</div>
       {footer}
     </div>
   );

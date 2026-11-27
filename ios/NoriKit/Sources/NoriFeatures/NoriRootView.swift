@@ -52,6 +52,8 @@ public struct NoriRootView: View {
                 } else {
                     signedInBody
                 }
+            } else if store.isBootstrappingAuth {
+                bootstrapLoadingView
             } else {
                 SignInView(store: store)
             }
@@ -118,6 +120,16 @@ public struct NoriRootView: View {
             scheduleRefresh(for: nextTab)
         }
         .preferredColorScheme(appearance.colorScheme)
+    }
+
+    private var bootstrapLoadingView: some View {
+        VStack {
+            Spacer()
+            NoriMark(size: 56, state: .idle)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(NoriColors.canvas.ignoresSafeArea())
     }
 
     private func clearNavigation() {
@@ -263,7 +275,6 @@ public struct NoriRootView: View {
                 .tabItem {
                     Label("More", systemImage: "ellipsis")
                 }
-                .badge(store.appsAttentionCount > 0 ? "•" : nil)
                 .tag(NoriTab.more)
             }
             .tint(NoriColors.accent)
