@@ -41,11 +41,6 @@ if command -v apt-get >/dev/null 2>&1; then
     tesseract-ocr ffmpeg imagemagick \
     fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji fonts-liberation
 
-  # Chromium browser
-  if ! command -v chromium >/dev/null 2>&1 && ! command -v chromium-browser >/dev/null 2>&1 && ! command -v google-chrome >/dev/null 2>&1; then
-    ${SUDO} apt-get install -y --no-install-recommends chromium || \
-      ${SUDO} apt-get install -y --no-install-recommends chromium-browser || true
-  fi
 fi
 
 # Node.js LTS (if missing)
@@ -84,7 +79,27 @@ fi
 # Playwright (for nori-browser CDP control)
 mkdir -p /home/nori/.nori/browser
 if [[ ! -f /home/nori/.nori/browser/node_modules/playwright-core/package.json ]]; then
-  (cd /home/nori/.nori/browser && npm init -y >/dev/null 2>&1 && npm install --no-audit --no-fund playwright-core >/dev/null 2>&1) || true
+  (cd /home/nori/.nori/browser && npm install --no-audit --no-fund playwright-core@1.65.1)
+fi
+
+# Ubuntu's chromium-browser package is a Snap launcher. Use Playwright's headed
+# browser when the image does not already have a runnable Chromium.
+has_chromium() {
+  local candidate
+  for candidate in chromium chromium-browser google-chrome; do
+    if "${candidate}" --version >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+  return 1
+}
+if ! has_chromium; then
+  (
+    cd /home/nori/.nori/browser
+    export PLAYWRIGHT_BROWSERS_PATH=0
+    ./node_modules/.bin/playwright-core install chromium --no-shell
+    ln -sfn "$(node -p "require('playwright-core').chromium.executablePath()")" /home/nori/.local/bin/chromium
+  )
 fi
 
 # Ensure PATH includes ~/.nori/bin, ~/.local/bin, and ~/.local/venv/bin for login shells.
@@ -102,13 +117,13 @@ fi
 
 # Verify required capabilities are installed before writing the completion marker.
 export PATH="/home/nori/.nori/bin:/home/nori/.local/bin:/home/nori/.local/venv/bin:${PATH}"
-for bin in Xvfb x11vnc websockify node python3; do
+for bin in Xvfb x11vnc websockify node python3 typst; do
   if ! command -v "${bin}" >/dev/null 2>&1; then
     echo "bootstrap capability check failed: missing ${bin}" >&2
     exit 1
   fi
 done
-if ! command -v chromium >/dev/null 2>&1 && ! command -v chromium-browser >/dev/null 2>&1 && ! command -v google-chrome >/dev/null 2>&1; then
+if ! has_chromium; then
   echo "bootstrap capability check failed: missing chromium browser" >&2
   exit 1
 fi

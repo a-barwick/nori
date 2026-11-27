@@ -130,7 +130,6 @@ func (p *Provider) Ensure(ctx context.Context, spec computer.Spec) (computer.Ins
 			// Block cloud metadata SSRF hosts at container /etc/hosts level.
 			"--add-host", "metadata.google.internal:127.0.0.1",
 			"--add-host", "metadata:127.0.0.1",
-			"-e", "NORI_REQUIRE_DESKTOP_TOKEN=1",
 			"-e", fmt.Sprintf("NORI_DISPLAY_WIDTH=%d", max(spec.DisplayWidth, computer.DefaultDisplayWidth)),
 			"-e", fmt.Sprintf("NORI_DISPLAY_HEIGHT=%d", max(spec.DisplayHeight, computer.DefaultDisplayHeight)),
 			"-e", fmt.Sprintf("NORI_COMPUTER_MEMORY_WATCHDOG_MB=%d", memMB),

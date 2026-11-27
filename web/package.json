@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -H 127.0.0.1",
-    "build": "next build",
+    "build": "next build && bun build --production --target=node --format=esm --outfile=.next/standalone/ws-server.mjs ws-server.mjs",
     "start": "next start -H 127.0.0.1",
     "lint": "eslint",
     "test": "bun test src",

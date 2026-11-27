@@ -279,7 +279,8 @@ async function main() {
   let payload = {};
   if (args[1]) {
     try {
-      payload = JSON.parse(args[1]);
+      const parsed = JSON.parse(args[1]);
+      payload = parsed && typeof parsed === 'object' ? parsed : { arg: args[1] };
     } catch {
       payload = { arg: args[1] };
     }

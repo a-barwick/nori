@@ -151,8 +151,9 @@ function createAppController({
     const context = { browser };
     isolateBrowser(browser);
     browser.webRequest.onBeforeSendHeaders((details, callback) => {
-      const { requestHeaders, url, initiatorOrigin, webContentsId } = details;
-      const sameOrigin = isSameOrigin(url, config.webOrigin);
+      const { requestHeaders, url, initiatorOrigin, webContentsId, resourceType } = details;
+      const requestURL = resourceType === "webSocket" ? url.replace(/^ws(s?):/i, "http$1:") : url;
+      const sameOrigin = isSameOrigin(requestURL, config.webOrigin);
       if (!sameOrigin) {
         for (const header of Object.keys(requestHeaders)) {
           if (/^(authorization|proxy-authorization)$/i.test(header)) delete requestHeaders[header];

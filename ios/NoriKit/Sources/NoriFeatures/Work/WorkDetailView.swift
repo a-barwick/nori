@@ -189,12 +189,11 @@ public struct WorkDetailView: View {
 
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                VStack(alignment: .leading, spacing: 8) {
                     Text(item.title)
                         .font(.system(size: 20, weight: .bold))
                         .foregroundStyle(NoriColors.ink)
                         .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
 
                     HStack(spacing: 8) {
                         Text(relativeTime)
@@ -203,30 +202,26 @@ public struct WorkDetailView: View {
                             .lineLimit(1)
                             .fixedSize()
 
+                        Spacer(minLength: 0)
+
                         if isRunning {
                             if store.isComputerEnabled {
                                 Button {
                                     showingWatchDesktop = true
                                 } label: {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "desktopcomputer")
-                                            .font(.system(size: 10.5, weight: .semibold))
-                                        Text("Watch")
-                                    }
+                                    Label("Watch desktop", systemImage: "desktopcomputer")
                                 }
                                 .buttonStyle(NoriButtonStyle(.neutral, compact: true))
+                                .fixedSize()
                             }
 
                             Button {
                                 stopCurrentTask()
                             } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "stop.fill")
-                                        .font(.system(size: 9.5))
-                                    Text(isStopping ? "Stopping…" : "Stop")
-                                }
+                                Label(isStopping ? "Stopping…" : "Stop", systemImage: "stop.fill")
                             }
                             .buttonStyle(NoriButtonStyle(.danger, compact: true))
+                            .fixedSize()
                             .disabled(isStopping)
                         }
                     }

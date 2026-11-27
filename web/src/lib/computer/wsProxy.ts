@@ -2,9 +2,9 @@ import type { IncomingMessage } from "node:http";
 import net from "node:net";
 import tls from "node:tls";
 import type { Duplex } from "node:stream";
-import { resolveUser } from "@/lib/runtime/auth";
+import { resolveUser, sameOrigin } from "@/lib/runtime/auth";
 import { runtimeHeaders } from "@/lib/runtime/credentials";
-import { localDevelopment, runtimeMode, runtimeTarget } from "@/lib/runtime/target";
+import { runtimeMode, runtimeTarget } from "@/lib/runtime/target";
 
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{4,128}$/;
 
@@ -15,20 +15,17 @@ export interface ParsedDesktopWS {
 
 export function parseDesktopWSPath(rawURL: string | undefined): ParsedDesktopWS | null {
   if (!rawURL) return null;
-  let parsed: URL;
   try {
-    parsed = new URL(rawURL, "http://localhost");
+    const parsed = new URL(rawURL, "http://localhost");
+    const match = /^\/api\/v1\/computer\/sessions\/([^/]+)\/ws$/.exec(parsed.pathname);
+    if (!match) return null;
+    const sessionId = decodeURIComponent(match[1]);
+    const token = (parsed.searchParams.get("token") ?? "").trim();
+    if (!SESSION_ID_RE.test(sessionId) || !token || token.length > 512) return null;
+    return { sessionId, token };
   } catch {
     return null;
   }
-  const match = /^\/api\/v1\/computer\/sessions\/([^/]+)\/ws$/.exec(parsed.pathname);
-  if (!match) return null;
-  const sessionId = decodeURIComponent(match[1]);
-  const token = (parsed.searchParams.get("token") ?? "").trim();
-  if (!SESSION_ID_RE.test(sessionId) || !token || token.length > 512) {
-    return null;
-  }
-  return { sessionId, token };
 }
 
 function incomingToHeaders(rawHeaders: IncomingMessage["headers"]): Headers {
@@ -43,23 +40,8 @@ function incomingToHeaders(rawHeaders: IncomingMessage["headers"]): Headers {
   return out;
 }
 
-function isSameOriginUpgrade(headers: Headers): boolean {
-  const origin = headers.get("origin");
-  if (!origin) return false;
-  const host = headers.get("x-forwarded-host") || headers.get("host");
-  if (!host) return false;
-  try {
-    const parsed = new URL(origin);
-    const expectedHost = host.split(",")[0]?.trim().toLowerCase();
-    return parsed.host.toLowerCase() === expectedHost;
-  } catch {
-    return false;
-  }
-}
-
 function rejectSocket(socket: Duplex, statusCode: number, reason: string) {
-  socket.write(`HTTP/1.1 ${statusCode} ${reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
-  socket.destroy();
+  socket.end(`HTTP/1.1 ${statusCode} ${reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`, () => socket.destroy());
 }
 
 /**
@@ -76,16 +58,13 @@ export async function handleDesktopWSUpgrade(
   if (!parsed) {
     return false;
   }
+  socket.pause();
   const headers = incomingToHeaders(req.headers);
-  if (!isSameOriginUpgrade(headers)) {
+  if (!sameOrigin({ headers })) {
     rejectSocket(socket, 403, "Forbidden");
     return true;
   }
   const mode = runtimeMode(headers);
-  if (mode === "local" && !localDevelopment(headers)) {
-    rejectSocket(socket, 403, "Forbidden");
-    return true;
-  }
   const target = runtimeTarget(mode);
   if (target instanceof Response) {
     rejectSocket(socket, target.status, "Service Unavailable");
@@ -104,6 +83,7 @@ export async function handleDesktopWSUpgrade(
     rejectSocket(socket, 503, "Service Unavailable");
     return true;
   }
+  if (socket.destroyed) return true;
 
   const upstreamURL = new URL(
     `users/${encodeURIComponent(user.userID)}/v1/computer/sessions/${encodeURIComponent(parsed.sessionId)}/ws?token=${encodeURIComponent(parsed.token)}`,
@@ -111,18 +91,22 @@ export async function handleDesktopWSUpgrade(
   );
   const isTLS = upstreamURL.protocol === "https:";
   const port = Number(upstreamURL.port || (isTLS ? 443 : 80));
-  const upstreamSocket: Duplex = isTLS
-    ? tls.connect({ host: upstreamURL.hostname, port, servername: upstreamURL.hostname })
-    : net.connect({ host: upstreamURL.hostname, port });
+  const host = upstreamURL.hostname.replace(/^\[|\]$/g, "");
+  const upstreamSocket = isTLS
+    ? tls.connect({ host, port, servername: net.isIP(host) ? undefined : host })
+    : net.connect({ host, port });
 
-  upstreamSocket.once("error", () => {
-    rejectSocket(socket, 502, "Bad Gateway");
+  let connected = false;
+  upstreamSocket.setTimeout(15_000, () => upstreamSocket.destroy(new Error("Runtime connection timed out")));
+  upstreamSocket.on("error", () => {
+    if (connected) socket.destroy();
+    else rejectSocket(socket, 502, "Bad Gateway");
   });
-  socket.once("error", () => {
-    upstreamSocket.destroy();
-  });
+  socket.once("close", () => upstreamSocket.destroy());
 
   const onConnect = () => {
+    connected = true;
+    upstreamSocket.setTimeout(0);
     const wsKey = headers.get("sec-websocket-key") ?? "";
     const wsVersion = headers.get("sec-websocket-version") ?? "13";
     const wsProto = headers.get("sec-websocket-protocol") ?? "binary";

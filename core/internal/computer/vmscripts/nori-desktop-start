@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Starts the persistent desktop stack inside the user's computer:
 #   Xvfb :99 -> fluxbox -> x11vnc (127.0.0.1:5900) -> websockify (127.0.0.1:5901)
-#   -> authenticated desktop WS gate (:8080, checking per-container X-Nori-Desktop-Token when configured)
+#   -> authenticated desktop WS gate (:8080, checking per-computer X-Nori-Desktop-Token)
 #   + headed Chromium with persistent /home/nori/.config/chromium & CDP on 127.0.0.1:9222
 #   + nori-watchdog RSS guard.
 # Idempotent: safe to call repeatedly on wake or session start. Fails non-zero if any required listener is down.
@@ -28,10 +28,12 @@ is_listening() {
   fi
 }
 
-# Generate a per-computer desktop token if not already present (used by Docker adapter for per-container auth).
+# Publish the token atomically so concurrent desktop starts see the same value.
 if [[ ! -f "${TOKEN_FILE}" ]]; then
-  python3 -c 'import secrets; print(secrets.token_urlsafe(32), end="")' > "${TOKEN_FILE}"
-  chmod 600 "${TOKEN_FILE}"
+  token_tmp="$(mktemp "${TOKEN_FILE}.XXXXXX")"
+  python3 -c 'import secrets; print(secrets.token_urlsafe(32), end="")' > "${token_tmp}"
+  ln "${token_tmp}" "${TOKEN_FILE}" 2>/dev/null || test -f "${TOKEN_FILE}"
+  rm -f "${token_tmp}"
 fi
 
 # 1. Xvfb
@@ -79,16 +81,12 @@ const crypto = require("crypto");
 const tokenFile = process.argv[1];
 const listenPort = Number(process.argv[2]);
 const targetPort = Number(process.argv[3]);
-const requireToken = process.env.NORI_REQUIRE_DESKTOP_TOKEN === "1";
 
 function validToken(req) {
-  if (!requireToken) return true;
-  let expected = "";
-  try { expected = fs.readFileSync(tokenFile, "utf8").trim(); } catch { return false; }
-  if (!expected) return false;
-  const got = String(req.headers["x-nori-desktop-token"] || "").trim();
-  if (got.length !== expected.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(got), Buffer.from(expected));
+  let expected;
+  try { expected = fs.readFileSync(tokenFile); } catch { return false; }
+  const got = Buffer.from(String(req.headers["x-nori-desktop-token"] || "").trim());
+  return expected.length > 0 && got.length === expected.length && crypto.timingSafeEqual(got, expected);
 }
 
 const srv = http.createServer((req, res) => {
@@ -97,8 +95,7 @@ const srv = http.createServer((req, res) => {
 });
 srv.on("upgrade", (req, socket, head) => {
   if (!validToken(req)) {
-    socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
-    socket.destroy();
+    socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
     return;
   }
   const upstream = net.connect(targetPort, "127.0.0.1", () => {
@@ -128,7 +125,7 @@ fi
 if ! is_listening "${CDP_PORT}"; then
   CHROME_BIN=""
   for candidate in chromium chromium-browser google-chrome; do
-    if command -v "${candidate}" >/dev/null 2>&1; then
+    if "${candidate}" --version >/dev/null 2>&1; then
       CHROME_BIN="${candidate}"
       break
     fi

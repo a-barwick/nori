@@ -21,6 +21,7 @@ func TestSpritesProviderEnsurePolicyDesktopAndDestroy(t *testing.T) {
 		urlAuth      string
 		networkRules []map[string]any
 		destroyed    bool
+		checkpointed bool
 	)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -33,6 +34,8 @@ func TestSpritesProviderEnsurePolicyDesktopAndDestroy(t *testing.T) {
 
 		path := r.URL.Path
 		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/fs/read"):
+			_, _ = w.Write([]byte(strings.Repeat("A", 43)))
 		case r.Method == http.MethodGet && strings.HasPrefix(path, "/v1/sprites/nori-cmp-1") && !strings.Contains(path, "/checkpoints"):
 			if !created || destroyed {
 				w.WriteHeader(http.StatusNotFound)
@@ -80,13 +83,20 @@ func TestSpritesProviderEnsurePolicyDesktopAndDestroy(t *testing.T) {
 			networkRules = body.Rules
 			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodPost && strings.HasSuffix(path, "/checkpoint"):
+			checkpointed = true
 			w.Header().Set("Content-Type", "application/x-ndjson")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"type":"info","data":"checkpoint created"}` + "\n"))
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/checkpoints"):
-			_ = json.NewEncoder(w).Encode([]map[string]any{
-				{"id": "v1", "comment": "baseline", "create_time": time.Now().UTC().Format(time.RFC3339)},
-			})
+			w.Header().Set("Content-Type", "application/json")
+			now := time.Now().UTC()
+			checkpoints := []map[string]any{
+				{"id": "Current", "create_time": now.Format(time.RFC3339)},
+			}
+			if checkpointed {
+				checkpoints = append(checkpoints, map[string]any{"id": "v1", "comment": "baseline", "create_time": now.Add(-time.Minute).Format(time.RFC3339)})
+			}
+			_ = json.NewEncoder(w).Encode(checkpoints)
 		case r.Method == http.MethodDelete && strings.HasPrefix(path, "/v1/sprites/"):
 			destroyed = true
 			w.WriteHeader(http.StatusNoContent)
@@ -116,6 +126,9 @@ func TestSpritesProviderEnsurePolicyDesktopAndDestroy(t *testing.T) {
 	if inst.ProviderID != "nori-cmp-1" {
 		t.Fatalf("ProviderID = %q", inst.ProviderID)
 	}
+	if inst.BaselineCheckpointID != "v1" {
+		t.Fatalf("BaselineCheckpointID = %q", inst.BaselineCheckpointID)
+	}
 	if urlAuth != "sprite" {
 		t.Fatalf("expected private URL auth=sprite, got %q", urlAuth)
 	}
@@ -131,6 +144,15 @@ func TestSpritesProviderEnsurePolicyDesktopAndDestroy(t *testing.T) {
 	if last["domain"] != "*" || last["action"] != "allow" {
 		t.Fatalf("expected trailing allow * rule, got %+v", last)
 	}
+	foundFlycastDeny := false
+	for _, rule := range networkRules {
+		if rule["domain"] == "*.flycast" && rule["action"] == "deny" {
+			foundFlycastDeny = true
+		}
+	}
+	if !foundFlycastDeny {
+		t.Fatal("missing deny rule for private Flycast hosts")
+	}
 
 	// DesktopEndpoint returns wss://.../websockify with internal Bearer auth header.
 	target, err := p.DesktopEndpoint(ctx, inst.ProviderID)
@@ -142,6 +164,9 @@ func TestSpritesProviderEnsurePolicyDesktopAndDestroy(t *testing.T) {
 	}
 	if target.Headers.Get("Authorization") != "Bearer test-sprites-token" {
 		t.Fatalf("expected Authorization header on DesktopTarget")
+	}
+	if target.Headers.Get("X-Nori-Desktop-Token") != strings.Repeat("A", 43) {
+		t.Fatalf("expected desktop token header on DesktopTarget")
 	}
 
 	// Destroy removes Sprite cleanly.

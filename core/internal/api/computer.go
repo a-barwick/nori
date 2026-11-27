@@ -359,8 +359,8 @@ func (c *ComputerAPI) proxyDesktopWS(w http.ResponseWriter, r *http.Request) {
 	proxyCtx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	var currentMode atomic.Value
-	currentMode.Store(sess.Mode)
+	var currentMode atomic.Pointer[computer.SessionMode]
+	currentMode.Store(&sess.Mode)
 	var lastTouch atomic.Int64
 	lastTouch.Store(sess.LastActivityAt.Unix())
 	idleCap := c.Manager.SessionIdleCap()
@@ -368,7 +368,7 @@ func (c *ComputerAPI) proxyDesktopWS(w http.ResponseWriter, r *http.Request) {
 	// Subscribe synchronously so PATCH mode downgrades ("control" -> "view") and DELETE
 	// revocations take effect IMMEDIATELY before the HTTP call returns (zero 300ms window).
 	unsub := c.Manager.SubscribeSession(sessionID, func(ev computer.SessionEvent) {
-		currentMode.Store(ev.Mode)
+		currentMode.Store(&ev.Mode)
 		if ev.Revoked {
 			cancel()
 		}
@@ -384,13 +384,15 @@ func (c *ComputerAPI) proxyDesktopWS(w http.ResponseWriter, r *http.Request) {
 			case <-proxyCtx.Done():
 				return
 			case <-ticker.C:
+				modeBeforeRead := currentMode.Load()
 				cur, gErr := c.Manager.GetSession(proxyCtx, c.UserID, sessionID)
 				now := time.Now().UTC()
 				if gErr != nil || cur.EndedAt != nil || !cur.ExpiresAt.After(now) || now.Sub(cur.LastActivityAt) > idleCap {
 					cancel()
 					return
 				}
-				currentMode.Store(cur.Mode)
+				// A local PATCH or revocation may have arrived while the store read was in flight.
+				currentMode.CompareAndSwap(modeBeforeRead, &cur.Mode)
 			}
 		}
 	}()
@@ -423,7 +425,7 @@ func (c *ComputerAPI) proxyDesktopWS(w http.ResponseWriter, r *http.Request) {
 			if rErr != nil {
 				return
 			}
-			mode, _ := currentMode.Load().(computer.SessionMode)
+			mode := *currentMode.Load()
 			filtered, _, hadHumanInput, parseErr := parser.Feed(mode, data)
 			if parseErr != nil {
 				return

@@ -371,7 +371,7 @@ resource "google_cloud_run_v2_service" "nori_web_mac" {
   template {
     service_account                  = google_service_account.nori_web_mac.email
     max_instance_request_concurrency = 80
-    timeout                          = "300s"
+    timeout                          = local.computer_provider == "sprites" ? "420s" : "300s"
 
     scaling {
       max_instance_count = 2

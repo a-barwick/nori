@@ -59,6 +59,7 @@ public actor LiveNoriTransport: NoriTransport {
     public let baseURL: URL
     private let router: NoriEndpointRouter
     private let session: URLSession
+    private let computerProvisioningSession: URLSession
     private let streamSession: URLSession
     private let authProvider: AuthTokenProvider
     private let encoder: JSONEncoder
@@ -83,6 +84,7 @@ public actor LiveNoriTransport: NoriTransport {
         self.router = NoriEndpointRouter(baseURL: baseURL)
         if let urlSession {
             self.session = urlSession
+            self.computerProvisioningSession = urlSession
             self.streamSession = urlSession
         } else {
             let apiConfig = URLSessionConfiguration.default
@@ -90,6 +92,12 @@ public actor LiveNoriTransport: NoriTransport {
             apiConfig.timeoutIntervalForResource = 90
             apiConfig.requestCachePolicy = .reloadIgnoringLocalCacheData
             self.session = URLSession(configuration: apiConfig)
+
+            let computerConfig = URLSessionConfiguration.default
+            computerConfig.timeoutIntervalForRequest = 405
+            computerConfig.timeoutIntervalForResource = 420
+            computerConfig.requestCachePolicy = .reloadIgnoringLocalCacheData
+            self.computerProvisioningSession = URLSession(configuration: computerConfig)
 
             let sseConfig = URLSessionConfiguration.default
             sseConfig.timeoutIntervalForRequest = 185
@@ -270,9 +278,12 @@ public actor LiveNoriTransport: NoriTransport {
     private func authenticatedData(
         _ request: URLRequest,
         contentType: String? = nil,
+        using requestSession: URLSession? = nil,
         span: any NoriTelemetrySpan
     ) async throws -> Data {
-        let (data, response) = try await performAuthenticated(request, contentType: contentType, traceContext: span.traceContext)
+        let (data, response) = try await performAuthenticated(
+            request, contentType: contentType, using: requestSession, traceContext: span.traceContext
+        )
         if let http = response as? HTTPURLResponse {
             span.setTag("http.response.status_code", value: String(http.statusCode))
         }
@@ -290,8 +301,10 @@ public actor LiveNoriTransport: NoriTransport {
     private func performAuthenticated(
         _ baseRequest: URLRequest,
         contentType: String? = nil,
+        using requestSession: URLSession? = nil,
         traceContext: NoriTraceContext
     ) async throws -> (Data, URLResponse) {
+        let requestSession = requestSession ?? session
         let generation = identityGeneration
         var req = baseRequest
         req.setValue("no-store", forHTTPHeaderField: "Cache-Control")
@@ -304,7 +317,7 @@ public actor LiveNoriTransport: NoriTransport {
             req.setValue(contentType, forHTTPHeaderField: "Content-Type")
         }
         applyTraceHeaders(to: &req, traceContext: traceContext)
-        let (data, response) = try await session.data(for: req)
+        let (data, response) = try await requestSession.data(for: req)
         guard generation == identityGeneration else { throw CancellationError() }
         if localEmail == nil, let http = response as? HTTPURLResponse, http.statusCode == 401 {
             NoriLogger.auth.warning("auth.token_refresh_retry", attributes: ["http.status_code": "401"], remote: false)
@@ -317,7 +330,7 @@ public actor LiveNoriTransport: NoriTransport {
                 retryReq.setValue(contentType, forHTTPHeaderField: "Content-Type")
             }
             applyTraceHeaders(to: &retryReq, traceContext: traceContext)
-            let result = try await session.data(for: retryReq)
+            let result = try await requestSession.data(for: retryReq)
             guard generation == identityGeneration else { throw CancellationError() }
             return result
         }
@@ -412,7 +425,8 @@ public actor LiveNoriTransport: NoriTransport {
     private func sendJSON<Body: Encodable, Response: Decodable>(
         _ path: String,
         method: String = "POST",
-        body: Body
+        body: Body,
+        using requestSession: URLSession? = nil
     ) async throws -> Response {
         try await withRequestSpan(route: normalizedRoute(for: path), method: method) { span in
             let userID = try await ensureUserID()
@@ -421,7 +435,7 @@ public actor LiveNoriTransport: NoriTransport {
             var req = URLRequest(url: url)
             req.httpMethod = method
             req.httpBody = try encoder.encode(body)
-            let data = try await authenticatedData(req, contentType: "application/json", span: span)
+            let data = try await authenticatedData(req, contentType: "application/json", using: requestSession, span: span)
             return try decoder.decode(Response.self, from: data)
         }
     }
@@ -1625,7 +1639,7 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func wakeComputer() async throws -> ComputerStatus {
-        try await sendJSON(OpenAPI.Path.computerWake, method: "POST", body: EmptyBody())
+        try await sendJSON(OpenAPI.Path.computerWake, body: EmptyBody(), using: computerProvisioningSession)
     }
 
     public func sleepComputer() async throws {
@@ -1633,27 +1647,27 @@ public actor LiveNoriTransport: NoriTransport {
     }
 
     public func resetComputer() async throws -> ComputerStatus {
-        try await sendJSON(OpenAPI.Path.computerReset, method: "POST", body: EmptyBody())
+        try await sendJSON(OpenAPI.Path.computerReset, body: EmptyBody(), using: computerProvisioningSession)
     }
 
     public func createComputerCheckpoint(label: String?) async throws -> ComputerCheckpoint {
         try await sendJSON(
             OpenAPI.Path.computerCheckpoints,
-            method: "POST",
-            body: CreateComputerCheckpointRequest(label: label)
+            body: CreateComputerCheckpointRequest(label: label),
+            using: computerProvisioningSession
         )
     }
 
     public func restoreComputerCheckpoint(checkpointID: String?) async throws -> ComputerStatus {
         try await sendJSON(
             OpenAPI.Path.computerRestore,
-            method: "POST",
-            body: RestoreComputerRequest(checkpointID: checkpointID)
+            body: RestoreComputerRequest(checkpointID: checkpointID),
+            using: computerProvisioningSession
         )
     }
 
     public func createComputerSession(_ request: CreateComputerSessionRequest) async throws -> CreateComputerSessionResponse {
-        try await sendJSON(OpenAPI.Path.computerSessions, method: "POST", body: request)
+        try await sendJSON(OpenAPI.Path.computerSessions, body: request, using: computerProvisioningSession)
     }
 
     public func updateComputerSessionMode(sessionID: String, mode: ComputerSessionMode) async throws -> ComputerSessionSummary {

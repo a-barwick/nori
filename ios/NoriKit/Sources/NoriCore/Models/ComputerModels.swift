@@ -3,8 +3,9 @@ import Foundation
 public enum ComputerState: String, Sendable, Codable, Hashable {
     case notProvisioned = "not_provisioned"
     case provisioning
-    case running
+    case running = "ready"
     case sleeping
+    case resetting
     case error
     case deleting
     case deleted
@@ -17,6 +18,8 @@ public enum ComputerState: String, Sendable, Codable, Hashable {
             return "Asleep"
         case .provisioning:
             return "Starting…"
+        case .resetting:
+            return "Resetting"
         case .notProvisioned:
             return "Ready to start"
         case .error:

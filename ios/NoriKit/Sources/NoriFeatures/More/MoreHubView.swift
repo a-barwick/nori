@@ -208,7 +208,7 @@ public struct MoreHubView: View {
     private func computerStateTone(_ state: ComputerState) -> NoriTone {
         switch state {
         case .running: return .ok
-        case .provisioning: return .warning
+        case .provisioning, .resetting: return .working
         case .error: return .danger
         default: return .neutral
         }

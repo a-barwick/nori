@@ -24,7 +24,7 @@ public struct ComputerView: View {
     private var stateTone: NoriTone {
         switch status?.status {
         case .running: return .ok
-        case .provisioning: return .warning
+        case .provisioning, .resetting: return .working
         case .error: return .danger
         default: return .neutral
         }

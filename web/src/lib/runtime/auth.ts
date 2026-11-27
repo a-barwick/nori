@@ -181,7 +181,7 @@ export async function redeemInvite(
   });
 }
 
-export function sameOrigin(request: Request) {
+export function sameOrigin(request: Pick<Request, "headers">) {
   const origin = request.headers.get("origin");
   if (!origin) return false;
   const site = request.headers.get("sec-fetch-site");

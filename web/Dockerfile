@@ -28,7 +28,6 @@ ENV NODE_ENV=production \
 COPY --from=build --chown=node:node /app/web/.next/standalone ./
 COPY --from=build --chown=node:node /app/web/.next/static ./.next/static
 COPY --from=build --chown=node:node /app/web/public ./public
-COPY --from=build --chown=node:node /app/web/ws-server.mjs ./ws-server.mjs
 USER node
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

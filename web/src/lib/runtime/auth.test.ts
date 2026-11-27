@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, test } from "node:test";
-import { exportJWK, generateKeyPair, SignJWT } from "jose";
+import { SignJWT } from "jose";
+import { testIdentityKeys } from "./test-keys";
 import { asFetch } from "@/lib/test-fetch";
 import { accessFailureResponse, redeemInvite, resolveUser, sameOrigin, sameOriginRead } from "./auth";
 import { oidcIdentity } from "./oidc";
@@ -32,18 +33,8 @@ const ENV_KEYS = [
   "IAP_AUDIENCE",
 ] as const;
 
-let keypairPromise: Promise<{ privateKey: CryptoKey; jwks: { keys: Record<string, unknown>[] } }> | undefined;
-function getKeys() {
-  keypairPromise ??= (async () => {
-    const { privateKey, publicKey } = await generateKeyPair("ES256");
-    const jwk = await exportJWK(publicKey);
-    return { privateKey, jwks: { keys: [{ ...jwk, kid: "auth-k1", alg: "ES256", use: "sig" }] } };
-  })();
-  return keypairPromise;
-}
-
 async function signIDToken(claims: Record<string, unknown>, opts: { issuer?: string; audience?: string | string[]; expiresIn?: string } = {}) {
-  const { privateKey } = await getKeys();
+  const { privateKey } = await testIdentityKeys();
   return new SignJWT(claims)
     .setProtectedHeader({ alg: "ES256", kid: "auth-k1" })
     .setIssuer(opts.issuer ?? ISSUER)
@@ -167,7 +158,7 @@ describe("oidcIdentity and resolveUser", () => {
   });
 
   async function installOIDCFetch(onResolve?: (req: Request) => Response | Promise<Response>, issuer = ISSUER) {
-    const { jwks } = await getKeys();
+    const { jwks } = await testIdentityKeys();
     globalThis.fetch = asFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url === `${issuer}/.well-known/openid-configuration`) {
@@ -280,7 +271,7 @@ describe("oidcIdentity and resolveUser", () => {
   test("normalizes signed IAP Google subjects without trusting external identities as Google", async () => {
     const audience = "/projects/example/global/backendServices/example";
     env.IAP_AUDIENCE = audience;
-    const { privateKey, jwks } = await getKeys();
+    const { privateKey, jwks } = await testIdentityKeys();
     globalThis.fetch = asFetch(async () => Response.json(jwks));
     async function signedIap(claims: Record<string, unknown>) {
       const token = await new SignJWT(claims)

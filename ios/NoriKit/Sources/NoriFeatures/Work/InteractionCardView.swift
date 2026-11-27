@@ -409,30 +409,9 @@ public struct InteractionCardView: View {
                         .foregroundStyle(NoriColors.ink3)
                 }
 
-                HStack(spacing: 8) {
-                    Button {
-                        showingTakeoverDesktop = true
-                    } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: "desktopcomputer")
-                                .font(.system(size: 12, weight: .semibold))
-                            Text("Open Desktop")
-                        }
-                    }
-                    .buttonStyle(NoriButtonStyle(.primary, compact: true))
-                    .disabled(isSubmitting)
-
-                    Button(submittingAction == "resume" ? "Resuming…" : "Done, continue") {
-                        submitResumeTakeover()
-                    }
-                    .buttonStyle(NoriButtonStyle(.neutral, compact: true))
-                    .disabled(isSubmitting)
-
-                    Button("Cancel") {
-                        submitCancelTakeover()
-                    }
-                    .buttonStyle(NoriButtonStyle(.quiet, compact: true))
-                    .disabled(isSubmitting)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { takeoverActions }
+                    VStack(alignment: .leading, spacing: 8) { takeoverActions }
                 }
             }
         case .unknown:
@@ -446,6 +425,32 @@ public struct InteractionCardView: View {
                 .buttonStyle(NoriButtonStyle(.neutral, compact: true))
             }
         }
+    }
+
+    @ViewBuilder
+    private var takeoverActions: some View {
+        Button {
+            showingTakeoverDesktop = true
+        } label: {
+            Label("Open desktop", systemImage: "desktopcomputer")
+        }
+        .buttonStyle(NoriButtonStyle(.primary, compact: true))
+        .fixedSize()
+        .disabled(isSubmitting)
+
+        Button(submittingAction == "resume" ? "Resuming…" : "Done, continue") {
+            submitResumeTakeover()
+        }
+        .buttonStyle(NoriButtonStyle(.neutral, compact: true))
+        .fixedSize()
+        .disabled(isSubmitting)
+
+        Button("Cancel") {
+            submitCancelTakeover()
+        }
+        .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+        .fixedSize()
+        .disabled(isSubmitting)
     }
 
     private func resetLocalState() {

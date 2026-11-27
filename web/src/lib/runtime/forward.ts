@@ -8,6 +8,8 @@ import { MAX_FILE_BYTES } from "../submission";
 import { readBytesLimited, readTextLimited } from "./read-body";
 
 const READ_TIMEOUT_MS = 170_000;
+const COMPUTER_PROVISIONING_TIMEOUT_MS = 405_000;
+const COMPUTER_PROVISIONING_PATH = /^v1\/computer\/(wake|reset|checkpoints|restore|sessions)(\?|$)/;
 const MAX_CONCURRENT_UPLOADS = 10;
 let activeUploads = 0;
 const RELAYED = ["content-disposition", "content-security-policy", "content-length"];
@@ -123,7 +125,10 @@ async function forwardForUser(request: Request, user: ScopedRuntime, path: strin
   const { mode } = user;
   const read = !init.method || init.method === "GET";
   if (read && mode === "hosted" && SHARED_READS.has(path)) return sharedRead(request, user, path, allowed);
-  const response = await relay(request, user, path, init, { timeout: READ_TIMEOUT_MS, allowed });
+  const timeout = init.method === "POST" && COMPUTER_PROVISIONING_PATH.test(path)
+    ? COMPUTER_PROVISIONING_TIMEOUT_MS
+    : READ_TIMEOUT_MS;
+  const response = await relay(request, user, path, init, { timeout, allowed });
   if (!read) forgetSharedReads(user.userID);
   if (init.method === "POST" && path.split("?")[0] === "v1/settings/account/delete" && (response.status === 204 || response.status === 200)) {
     evictResolvedUser(user.userID);

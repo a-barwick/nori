@@ -2,12 +2,14 @@ package sprites
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -18,12 +20,15 @@ import (
 	"nori/internal/computer/vmscripts"
 )
 
+var checkpointIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
 const (
 	// Conservative per-second compute rate for active 2 vCPU / 4 GB Sprite execution
 	// (~$0.054/active-hour = $0.000015/sec). Reported into Nori's task budget.
 	defaultComputeRatePerSecUSD = 0.000015
 	defaultCPUs                 = 2
 	defaultRamMB                = 4096
+	bootstrapTimeout            = 6 * time.Minute
 )
 
 // Config configures the Fly.io Sprites provider adapter.
@@ -206,10 +211,10 @@ func (p *Provider) installScriptsAndBootstrap(ctx context.Context, providerID st
 	if memLimit <= 0 {
 		memLimit = computer.DefaultMemoryLimitMB
 	}
-	res, err := p.Exec(ctx, providerID, computer.ExecRequest{
-		Command: fmt.Sprintf("NORI_BOOTSTRAP_VERSION=%s NORI_COMPUTER_MEMORY_WATCHDOG_MB=%d /home/nori/.nori/bootstrap.sh", vmscripts.Version, memLimit),
+	res, err := p.exec(ctx, providerID, computer.ExecRequest{
+		Command: fmt.Sprintf("NORI_BOOTSTRAP_VERSION=%s NORI_COMPUTER_MEMORY_WATCHDOG_MB=%d flock /home/nori/.nori/bootstrap.lock /home/nori/.nori/bootstrap.sh", vmscripts.Version, memLimit),
 		WorkDir: computer.HomeDir,
-		Timeout: 90 * time.Second,
+		Timeout: bootstrapTimeout,
 	})
 	if err != nil {
 		return fmt.Errorf("bootstrap sprite %s: %w", providerID, err)
@@ -258,6 +263,9 @@ func (p *Provider) Status(ctx context.Context, providerID string) (computer.Inst
 	if ckpts, cErr := p.client.ListCheckpoints(ctx, providerID, ""); cErr == nil {
 		out.Checkpoints = make([]computer.CheckpointInfo, 0, len(ckpts))
 		for _, c := range ckpts {
+			if !restorableCheckpoint(c.ID) {
+				continue
+			}
 			out.Checkpoints = append(out.Checkpoints, computer.CheckpointInfo{
 				ID:        c.ID,
 				Label:     c.Comment,
@@ -289,11 +297,14 @@ func mapSpriteStatus(raw string) computer.Status {
 }
 
 func (p *Provider) Exec(ctx context.Context, providerID string, req computer.ExecRequest) (computer.ExecResult, error) {
-	timeout := req.Timeout
-	if timeout <= 0 || timeout > computer.MaxExecTimeout {
-		timeout = computer.DefaultExecTimeout
+	if req.Timeout <= 0 || req.Timeout > computer.MaxExecTimeout {
+		req.Timeout = computer.DefaultExecTimeout
 	}
-	execCtx, cancel := context.WithTimeout(ctx, timeout)
+	return p.exec(ctx, providerID, req)
+}
+
+func (p *Provider) exec(ctx context.Context, providerID string, req computer.ExecRequest) (computer.ExecResult, error) {
+	execCtx, cancel := context.WithTimeout(ctx, req.Timeout)
 	defer cancel()
 
 	const noriPathPrefix = `export PATH="/home/nori/.nori/bin:/home/nori/.local/bin:/home/nori/.local/venv/bin:$PATH"; `
@@ -477,6 +488,15 @@ func (p *Provider) DesktopEndpoint(ctx context.Context, providerID string) (comp
 
 	headers := make(http.Header)
 	headers.Set("Authorization", "Bearer "+strings.TrimSpace(p.cfg.Token))
+	rawToken, err := p.ReadFile(ctx, providerID, "/home/nori/.nori/desktop.token", 256)
+	if err != nil {
+		return computer.DesktopTarget{}, fmt.Errorf("read desktop token for sprite %s: %w", providerID, err)
+	}
+	desktopToken := strings.TrimSpace(string(rawToken))
+	if _, err := base64.RawURLEncoding.DecodeString(desktopToken); err != nil || len(desktopToken) != 43 {
+		return computer.DesktopTarget{}, fmt.Errorf("invalid desktop token for sprite %s", providerID)
+	}
+	headers.Set("X-Nori-Desktop-Token", desktopToken)
 	return computer.DesktopTarget{
 		WSURL:   u.String(),
 		Headers: headers,
@@ -498,6 +518,9 @@ func (p *Provider) SetNetworkPolicy(ctx context.Context, providerID string, poli
 		for _, d := range computer.DefaultNetworkPolicy().DenyDomains {
 			addDeny(d)
 		}
+		// Fly enforces these rules on egress from the VM. Guest-local
+		// loopback remains available to Chromium and the desktop stack.
+		addDeny("*.flycast")
 	}
 	for _, d := range policy.DenyDomains {
 		addDeny(d)
@@ -516,6 +539,14 @@ func (p *Provider) SetNetworkPolicy(ctx context.Context, providerID string, poli
 }
 
 func (p *Provider) Checkpoint(ctx context.Context, providerID, label string) (string, error) {
+	previous, err := p.client.ListCheckpoints(ctx, providerID, "")
+	if err != nil {
+		return "", err
+	}
+	existing := make(map[string]bool, len(previous))
+	for _, checkpoint := range previous {
+		existing[checkpoint.ID] = true
+	}
 	stream, err := p.client.CreateCheckpointWithComment(ctx, providerID, label)
 	if err != nil {
 		return "", err
@@ -537,20 +568,29 @@ func (p *Provider) Checkpoint(ctx context.Context, providerID, label string) (st
 	if err != nil {
 		return "", err
 	}
-	if len(ckpts) == 0 {
-		return "", errors.New("checkpoint created but not listed")
-	}
-	// Pick the newest checkpoint matching label if available, otherwise latest.
-	newest := ckpts[0]
-	for _, c := range ckpts[1:] {
-		if c.CreateTime.After(newest.CreateTime) {
+	var newest *sdk.Checkpoint
+	for _, c := range ckpts {
+		if !restorableCheckpoint(c.ID) || existing[c.ID] || (label != "" && c.Comment != label) {
+			continue
+		}
+		if newest == nil || c.CreateTime.After(newest.CreateTime) {
 			newest = c
 		}
+	}
+	if newest == nil {
+		return "", errors.New("checkpoint created but not listed")
 	}
 	return newest.ID, nil
 }
 
+func restorableCheckpoint(id string) bool {
+	return !strings.EqualFold(id, "Current") && checkpointIDPattern.MatchString(id)
+}
+
 func (p *Provider) Restore(ctx context.Context, providerID, checkpointID string) error {
+	if !restorableCheckpoint(checkpointID) {
+		return computer.ErrNotFound
+	}
 	stream, err := p.client.RestoreCheckpoint(ctx, providerID, checkpointID)
 	if err != nil {
 		return err
@@ -572,7 +612,7 @@ func (p *Provider) Sleep(ctx context.Context, providerID string) error {
 	// Sprites auto-sleep when no active exec or HTTP/WS services hold the machine awake.
 	// Closing Chromium via CDP commits session cookies cleanly before stopping desktop daemons.
 	_, err := p.Exec(ctx, providerID, computer.ExecRequest{
-		Command: "nori-browser close >/dev/null 2>&1 || true; sleep 1; pkill -f websockify >/dev/null 2>&1 || true; pkill -f x11vnc >/dev/null 2>&1 || true",
+		Command: "nori-browser close >/dev/null 2>&1 || true; sleep 1; pkill -x websockify >/dev/null 2>&1 || true; pkill -x x11vnc >/dev/null 2>&1 || true",
 		WorkDir: computer.HomeDir,
 		Timeout: 15 * time.Second,
 	})

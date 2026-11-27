@@ -174,7 +174,7 @@ function ComputerDesktopDrawerBody({
           : "Starting desktop…";
 
   return (
-    <Dialog.Content className="fixed inset-4 z-50 mx-auto flex max-w-6xl flex-col overflow-hidden rounded-[28px] border border-card-border bg-sheet-bg shadow-2xl outline-none">
+    <Dialog.Content className="fixed inset-4 z-[51] mx-auto flex max-w-6xl flex-col overflow-hidden rounded-[28px] border border-card-border bg-sheet-bg shadow-2xl outline-none">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-hairline px-5 py-3.5">
         <div className="flex items-center gap-2.5">
           <span className="grid size-8 place-items-center rounded-[10px] bg-accent-subtle text-accent-text">

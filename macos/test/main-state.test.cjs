@@ -14,6 +14,7 @@ function createFakeElectron() {
   const clearedStorage = [];
   const externalURLs = [];
   const errorBoxes = [];
+  const requestListeners = [];
 
   class FakeBrowserWindow extends EventEmitter {
     constructor(options) {
@@ -62,7 +63,7 @@ function createFakeElectron() {
         setPermissionRequestHandler() {},
         setDisplayMediaRequestHandler() {},
         protocol: { handle() {} },
-        webRequest: { onBeforeSendHeaders() {} },
+        webRequest: { onBeforeSendHeaders(listener) { requestListeners.push(listener); } },
         async clearStorageData(options) {
           clearedStorage.push({ partition: name, ...options });
         },
@@ -96,8 +97,36 @@ function createFakeElectron() {
     },
   };
 
-  return { electron, windows, ipcHandlers, clearedStorage, externalURLs, errorBoxes };
+  return { electron, windows, ipcHandlers, clearedStorage, externalURLs, errorBoxes, requestListeners };
 }
+
+test("desktop WebSocket authentication stays scoped to the signed-in Nori origin", async () => {
+  const { electron, requestListeners, windows } = createFakeElectron();
+  const webOrigin = "https://nori.example";
+  const controller = createAppController({
+    electron,
+    config: { webOrigin, browserOrigin: webOrigin, relayOrigin: webOrigin, local: false,
+      googleClientId: "desktop.apps.googleusercontent.com", googleClientSecret: "secret" },
+    account: { accountID: () => "user", restore: async () => true, token: async () => "test-id-token" },
+    home: { retryRevocation: async () => ({ revocationPending: false }) },
+  });
+  try {
+    await controller.start();
+    const inspect = (url, initiatorOrigin = webOrigin) => new Promise(resolve => {
+      requestListeners.at(-1)({
+        url, initiatorOrigin, webContentsId: windows.at(-1).webContents.id, resourceType: "webSocket",
+        requestHeaders: { authorization: "untrusted" },
+      }, resolve);
+    });
+    assert.deepEqual(await inspect("wss://nori.example/api/v1/computer/sessions/csess_123/ws"),
+      { requestHeaders: { Authorization: "Bearer test-id-token" } });
+    assert.deepEqual(await inspect("wss://other.example/"), { requestHeaders: {} });
+    assert.deepEqual(await inspect("ws://nori.example/"), { requestHeaders: {} });
+    assert.deepEqual(await inspect("wss://nori.example/", "https://other.example"), { cancel: true });
+  } finally {
+    controller.dispose();
+  }
+});
 
 test("start() restore and concurrent signIn() share the transition lock without double sign-in", async () => {
   const { electron, windows } = createFakeElectron();

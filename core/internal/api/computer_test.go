@@ -150,6 +150,16 @@ func TestComputerAPIAndDesktopWebSocketProxy(t *testing.T) {
 	}
 	patchResp.Body.Close()
 
+	_ = clientConn.Write(ctx, websocket.MessageBinary, keyEv)
+	select {
+	case got := <-receivedCh:
+		if !bytes.Equal(got, keyEv) {
+			t.Fatalf("expected control mode to forward KeyEvent, got %x", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for KeyEvent after taking control")
+	}
+
 	// Switch back to view mode and verify synchronous handback takes effect IMMEDIATELY (no 300ms wait!).
 	patchView, _ := http.NewRequest(http.MethodPatch, apiSrv.URL+"/v1/computer/sessions/"+created.ID, strings.NewReader(`{"mode":"view"}`))
 	patchView.Header.Set("Content-Type", "application/json")

@@ -37,6 +37,13 @@ struct ComputerTests {
         #expect(ComputerState.error.displayLabel == "Needs attention")
     }
 
+    @Test("Computer status accepts the Core ready and resetting values")
+    func decodesReadyAndResetting() throws {
+        let decoder = JSONDecoder()
+        #expect(try decoder.decode(ComputerState.self, from: Data(#""ready""#.utf8)) == .running)
+        #expect(try decoder.decode(ComputerState.self, from: Data(#""resetting""#.utf8)) == .resetting)
+    }
+
     @Test("computer_takeover interaction decodes payload and encodes resume/cancel answers")
     func decodesTakeoverInteractionAndEncodesAnswers() throws {
         let json = """
