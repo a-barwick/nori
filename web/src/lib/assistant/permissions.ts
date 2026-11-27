@@ -67,7 +67,7 @@ const ACTION_PHRASE: Record<Effect, string> = {
   read: "read",
   reversible_write: "make undoable changes",
   sensitive_send: "send",
-  unknown: "use tools that don’t say what they do",
+  unknown: "use tools with custom actions",
   control: "run control actions",
 };
 

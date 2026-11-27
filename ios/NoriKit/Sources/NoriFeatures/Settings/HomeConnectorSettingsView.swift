@@ -4,55 +4,73 @@ import NoriDesign
 
 struct HomeConnectorSettingsView: View {
     @Bindable var store: NoriStore
+    var loadError: String?
+    var onRetry: (() -> Void)?
+
     @State private var showingPairing = false
     @State private var showingDownloads = false
     @State private var selectedDevice: HomeConnector?
     @State private var busyDeviceID: String?
-    @State private var errorMessage: String?
-    @State private var statusMessage: String?
+    @State private var deviceErrors: [String: String] = [:]
+    @State private var deviceStatuses: [String: String] = [:]
 
     var body: some View {
         Group {
-          if let connectors = store.homeConnectors, connectors.enabled {
-            NoriSectionHeader("Home AI Server")
-            NoriCard(padding: 14) {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "server.rack")
-                            .foregroundStyle(NoriColors.accent)
-                            .frame(width: 36, height: 36)
-                            .background(NoriColors.accentSubtle, in: RoundedRectangle(cornerRadius: 10))
-                        Text("Connect a computer")
-                            .font(NoriTypography.rowTitle)
-                        Spacer()
+            if let connectors = store.homeConnectors, connectors.enabled {
+                NoriSectionHeader("Home AI Server")
+                if let loadError {
+                    NoriNotice(title: "Could not refresh Home AI Server", detail: loadError, tone: .danger) {
+                        if let onRetry {
+                            Button("Retry", action: onRetry)
+                                .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                        }
                     }
-                    HStack {
-                        Button("Get connector") { showingDownloads = true }
-                            .buttonStyle(NoriButtonStyle(.tonal, compact: true))
-                        Button("Enter code") { showingPairing = true }
-                            .buttonStyle(NoriButtonStyle(.neutral, compact: true))
+                }
+                NoriCard(padding: 14) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "server.rack")
+                                .foregroundStyle(NoriColors.accent)
+                                .frame(width: 36, height: 36)
+                                .background(NoriColors.accentSubtle, in: RoundedRectangle(cornerRadius: 10))
+                            Text("Connect a computer")
+                                .font(NoriTypography.rowTitle)
+                                .foregroundStyle(NoriColors.ink)
+                            Spacer()
+                        }
+                        HStack {
+                            Button("Get connector") { showingDownloads = true }
+                                .buttonStyle(NoriButtonStyle(.tonal, compact: true))
+                            Button("Enter code") { showingPairing = true }
+                                .buttonStyle(NoriButtonStyle(.neutral, compact: true))
+                        }
+                    }
+                }
+
+                ForEach(connectors.devices) { device in
+                    deviceCard(device)
+                }
+            } else if let loadError {
+                NoriSectionHeader("Home AI Server")
+                NoriNotice(title: "Could not load Home AI Server", detail: loadError, tone: .danger) {
+                    if let onRetry {
+                        Button("Retry", action: onRetry)
+                            .buttonStyle(NoriButtonStyle(.quiet, compact: true))
                     }
                 }
             }
-
-            ForEach(connectors.devices) { device in
-                deviceCard(device)
-            }
-            if let errorMessage {
-                NoriNotice(title: errorMessage, tone: .danger)
-            }
-            if let statusMessage {
-                Text(statusMessage).font(NoriTypography.meta).foregroundStyle(NoriColors.ink2)
-            }
-          }
         }
         .sheet(isPresented: $showingPairing) {
             NavigationStack { HomePairingView(store: store) }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
                 .presentationBackground(NoriColors.sheetBackground)
                 .presentationCornerRadius(NoriRadius.sheet)
         }
         .sheet(isPresented: $showingDownloads) {
             NavigationStack { HomeDownloadsView(downloads: store.homeConnectors?.downloads) }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
                 .presentationBackground(NoriColors.sheetBackground)
                 .presentationCornerRadius(NoriRadius.sheet)
         }
@@ -63,7 +81,9 @@ struct HomeConnectorSettingsView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(device.name).font(NoriTypography.rowTitle)
+                        Text(device.name)
+                            .font(NoriTypography.rowTitle)
+                            .foregroundStyle(NoriColors.ink)
                         if device.status != "online", let lastSeenAt = device.lastSeenAt {
                             Text("Last seen \(NoriDateFormatting.relative(lastSeenAt))")
                                 .font(NoriTypography.meta)
@@ -71,10 +91,23 @@ struct HomeConnectorSettingsView: View {
                         }
                     }
                     Spacer()
-                    NoriPill(statusLabel(device.status), tone: device.status == "online" ? .ok : .danger)
+                    if device.status != "online" {
+                        NoriPill(
+                            statusLabel(device.status),
+                            tone: device.status == "ollama_unavailable" ? .warning : .danger
+                        )
+                    }
                 }
                 if !device.models.isEmpty {
-                    Text(device.models.map(\.name).joined(separator: " · "))
+                    Text(formattedModels(device.models))
+                        .font(NoriTypography.meta)
+                        .foregroundStyle(NoriColors.ink2)
+                }
+                if let error = deviceErrors[device.id] {
+                    NoriNotice(title: error, tone: .danger)
+                }
+                if let status = deviceStatuses[device.id] {
+                    Text(status)
                         .font(NoriTypography.meta)
                         .foregroundStyle(NoriColors.ink2)
                 }
@@ -95,8 +128,16 @@ struct HomeConnectorSettingsView: View {
             Button("Disconnect", role: .destructive) { Task { await revoke(device) } }
             Button("Cancel", role: .cancel) { selectedDevice = nil }
         } message: {
-            Text("Choose another model for any route using this computer.")
+            Text("Choose another model for Chat or Work before disconnecting.")
         }
+    }
+
+    private func formattedModels(_ models: [HomeConnectorModel]) -> String {
+        let names = models.map(\.name)
+        if names.count <= 6 {
+            return names.joined(separator: " · ")
+        }
+        return "\(names.prefix(6).joined(separator: " · ")) · +\(names.count - 6) more"
     }
 
     private func statusLabel(_ status: String) -> String {
@@ -109,26 +150,26 @@ struct HomeConnectorSettingsView: View {
 
     private func test(_ device: HomeConnector) async {
         busyDeviceID = device.id
-        errorMessage = nil
-        statusMessage = nil
+        deviceErrors.removeValue(forKey: device.id)
+        deviceStatuses.removeValue(forKey: device.id)
         defer { busyDeviceID = nil }
         do {
             try await store.testHomeConnector(device.id)
-            statusMessage = "Connection test passed."
+            deviceStatuses[device.id] = "Connection test passed."
         } catch {
-            errorMessage = error.localizedDescription
+            deviceErrors[device.id] = error.localizedDescription
         }
     }
 
     private func revoke(_ device: HomeConnector) async {
         busyDeviceID = device.id
-        errorMessage = nil
-        statusMessage = nil
+        deviceErrors.removeValue(forKey: device.id)
+        deviceStatuses.removeValue(forKey: device.id)
         defer { busyDeviceID = nil; selectedDevice = nil }
         do {
             try await store.revokeHomeConnector(device.id)
         } catch {
-            errorMessage = error.localizedDescription
+            deviceErrors[device.id] = error.localizedDescription
         }
     }
 }
@@ -147,6 +188,7 @@ private struct HomePairingView: View {
                 if let pairing {
                     Text("Pair \(pairing.name)?")
                         .font(NoriTypography.section)
+                        .foregroundStyle(NoriColors.ink)
                     Text("Confirm that \(pairing.userCode) matches the code on your computer. Nori sends model requests to this computer when you select a home model.")
                         .font(NoriTypography.body)
                         .foregroundStyle(NoriColors.ink2)
@@ -162,12 +204,19 @@ private struct HomePairingView: View {
                         .foregroundStyle(NoriColors.ink2)
                     TextField("Device code", text: $code)
                         .textFieldStyle(.plain)
+                        .foregroundStyle(NoriColors.ink)
+                        .tint(NoriColors.accent)
                         .autocorrectionDisabled()
                         #if os(iOS)
                         .textInputAutocapitalization(.characters)
                         #endif
-                        .padding(12)
-                        .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: 12))
+                        .padding(.horizontal, 12)
+                        .frame(height: 44)
+                        .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+                                .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
+                        )
                     Button(pending ? "Checking…" : "Continue") { Task { await lookup() } }
                         .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
                         .disabled(pending || code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -180,7 +229,11 @@ private struct HomePairingView: View {
         }
         .background(NoriColors.sheetBackground)
         .navigationTitle("Pair a computer")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() }.disabled(pending) } }
+        .interactiveDismissDisabled(pending)
     }
 
     private func lookup() async {
@@ -233,6 +286,9 @@ private struct HomeDownloadsView: View {
         }
         .background(NoriColors.sheetBackground)
         .navigationTitle("Get Nori Connector")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
     }
 

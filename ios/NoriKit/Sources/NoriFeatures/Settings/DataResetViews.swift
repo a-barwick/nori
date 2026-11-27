@@ -52,6 +52,12 @@ struct DataResetRecoveryView: View {
                     }
                     .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
                     .disabled(isSubmitting)
+
+                    Button("Sign out") {
+                        Task { await store.signOut() }
+                    }
+                    .buttonStyle(NoriButtonStyle(.quiet, fullWidth: true))
+                    .disabled(isSubmitting)
                 }
                 .padding(24)
                 .frame(maxWidth: 480)
@@ -83,11 +89,13 @@ struct DataResetStatusView: View {
             Text("Reset status")
                 .font(.system(size: 26, weight: .bold))
                 .foregroundStyle(NoriColors.ink)
-            Text("The reset is no longer pending. To start a reset, use More → Reset data.")
+            Text("Reset isn’t active right now. Start a reset from More → Account.")
                 .font(NoriTypography.body)
                 .foregroundStyle(NoriColors.ink2)
             Button("Continue") { store.acknowledgeDataResetStatus() }
                 .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
+            Button("Sign out") { Task { await store.signOut() } }
+                .buttonStyle(NoriButtonStyle(.quiet, fullWidth: true))
         }
         .padding(24)
         .frame(maxWidth: 480)

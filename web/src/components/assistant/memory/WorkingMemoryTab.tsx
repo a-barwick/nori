@@ -8,7 +8,7 @@ import type { useResource } from "@/lib/assistant/useResource";
 import type { WorkingMemory, WorkingMemoryItem, WorkingMemoryItemAction } from "@/lib/contracts/assistant";
 import { Empty, Failure, Loading, Notice, Pill, Rows, Section, type Tone } from "../ui";
 import { useVersionedMemoryMutation } from "./MemoryFactForm";
-import { formatByteBudget, messageJumpHref, WORKING_KIND_META, workingMemoryWatermarks } from "./memoryHelpers";
+import { messageJumpHref, WORKING_KIND_META, workingMemoryWatermarks } from "./memoryHelpers";
 
 export function WorkingMemoryTab({ working }: { working: ReturnType<typeof useResource<WorkingMemory>> }) {
   const mutation = useVersionedMemoryMutation();
@@ -51,7 +51,7 @@ export function WorkingMemoryTab({ working }: { working: ReturnType<typeof useRe
       {mutation.error && <Notice tone="danger">{mutation.error}</Notice>}
 
       <Section
-        title="Session gist"
+        title="Session summary"
         actions={
           <Button
             size="sm"
@@ -65,7 +65,7 @@ export function WorkingMemoryTab({ working }: { working: ReturnType<typeof useRe
         }
       >
         {data.gist ? (
-          <div className="rounded-card border border-hairline bg-surface p-4 text-body text-ink whitespace-pre-wrap [overflow-wrap:anywhere]">
+          <div className="rounded-card border border-card-border bg-surface p-4 text-body text-ink whitespace-pre-wrap [overflow-wrap:anywhere]">
             {data.gist}
           </div>
         ) : (
@@ -73,7 +73,7 @@ export function WorkingMemoryTab({ working }: { working: ReturnType<typeof useRe
         )}
       </Section>
 
-      <Section title={`Quote-verified items${data.items.length ? ` (${data.items.length})` : ""}`}>
+      <Section title={`Active notes${data.items.length ? ` (${data.items.length})` : ""}`}>
         {data.items.length ? (
           <Rows label="Working memory items">
             {data.items.map((item) => {
@@ -90,10 +90,9 @@ export function WorkingMemoryTab({ working }: { working: ReturnType<typeof useRe
                     {item.note && <p className="text-meta text-ink-2 [overflow-wrap:anywhere]">{item.note}</p>}
                     <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
                       <span className="flex flex-wrap items-center gap-x-2 text-caption text-ink-3">
-                        <span className="font-mono">{item.input_id}</span>
                         {jumpToChat && (
                           <Link href={jumpToChat} className="inline-flex items-center gap-0.5 text-accent-text hover:underline">
-                            Jump to message
+                            Source message
                             <ArrowUpRight size={12} aria-hidden />
                           </Link>
                         )}
@@ -123,30 +122,27 @@ export function WorkingMemoryTab({ working }: { working: ReturnType<typeof useRe
             })}
           </Rows>
         ) : (
-          <Empty>No active quote-verified items in working memory.</Empty>
+          <Empty>Working memory is clear. Active constraints, open questions, and commitments from your current chat appear here.</Empty>
         )}
       </Section>
 
-      <Section title="Watermarks & status">
-        <div className="rounded-card border border-hairline bg-surface p-4">
+      <Section title="Details">
+        <div className="rounded-card border border-card-border bg-surface p-4">
           <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-meta">
             <dt className="text-ink-3">Turns</dt>
             <dd className="text-ink">{data.turns}</dd>
 
-            <dt className="text-ink-3">Extracted through</dt>
+            <dt className="text-ink-3">Last extracted</dt>
             <dd className="text-ink">{watermarks.extractedThrough}</dd>
 
-            <dt className="text-ink-3">Flushed through</dt>
+            <dt className="text-ink-3">Last saved to logs</dt>
             <dd className="text-ink">{watermarks.flushedThrough}</dd>
 
-            <dt className="text-ink-3">Window through</dt>
+            <dt className="text-ink-3">Summary window</dt>
             <dd className="text-ink">{watermarks.windowThrough}</dd>
 
-            <dt className="text-ink-3">Last dream</dt>
+            <dt className="text-ink-3">Last consolidated</dt>
             <dd className="text-ink">{watermarks.lastDream}</dd>
-
-            <dt className="text-ink-3">Core budget</dt>
-            <dd className="text-ink">{formatByteBudget(data.core_bytes, data.core_budget_bytes)}</dd>
 
             {data.model && (
               <>
@@ -156,7 +152,7 @@ export function WorkingMemoryTab({ working }: { working: ReturnType<typeof useRe
             )}
           </dl>
           <p className="mt-3 border-t border-hairline pt-2.5 text-caption text-ink-3">
-            Nori extracts durable memories after 20 minutes idle (even on short 1–5 turn chats) and compacts older turns past the newest 5 verbatim turns.
+            Nori extracts durable memories after 20 minutes idle and compacts older turns automatically.
           </p>
         </div>
       </Section>

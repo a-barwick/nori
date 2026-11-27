@@ -32,11 +32,8 @@ public struct AccountSettingsView: View {
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Legal")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(NoriColors.ink3)
-                        .padding(.leading, 4)
+                VStack(alignment: .leading, spacing: 0) {
+                    NoriSectionHeader("Legal")
 
                     NoriRows {
                         Link(destination: legalURL(path: "/privacy")) {
@@ -73,11 +70,8 @@ public struct AccountSettingsView: View {
                 }
                 .buttonStyle(NoriButtonStyle(.quiet, fullWidth: true, compact: true))
 
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Delete account")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(NoriColors.ink3)
-                        .padding(.leading, 4)
+                VStack(alignment: .leading, spacing: 0) {
+                    NoriSectionHeader("Delete account")
 
                     NoriCard {
                         VStack(alignment: .leading, spacing: 12) {
@@ -154,24 +148,32 @@ struct ResetDataSheet: View {
                     }
 
                     if let errorMessage {
-                        Text(errorMessage)
-                            .font(NoriTypography.meta)
-                            .foregroundStyle(NoriTone.danger.foreground)
+                        NoriNotice(title: "Could not reset data", detail: errorMessage, tone: .danger)
                     }
 
-                    Button("Reset data") {
+                    Button {
                         let confirmed = confirmation
                         isResetting = true
                         errorMessage = nil
-                        dismiss()
                         Task {
                             do {
                                 try await store.resetUserData(confirmation: confirmed)
+                                isResetting = false
+                                dismiss()
                             } catch {
-                                if !store.dataResetRecoveryRequired {
-                                    store.showToast(error.localizedDescription)
+                                isResetting = false
+                                if store.dataResetRecoveryRequired {
+                                    dismiss()
+                                } else {
+                                    errorMessage = error.localizedDescription
                                 }
                             }
+                        }
+                    } label: {
+                        if isResetting {
+                            ProgressView().tint(NoriColors.danger)
+                        } else {
+                            Text("Reset data")
                         }
                     }
                     .buttonStyle(NoriButtonStyle(.danger, fullWidth: true))

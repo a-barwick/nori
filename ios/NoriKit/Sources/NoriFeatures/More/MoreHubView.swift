@@ -67,14 +67,6 @@ public struct MoreHubView: View {
         return "\(configuredCount) configured"
     }
 
-    private var diagnosticsDetail: String? {
-        switch store.connectionState {
-        case .reconnecting: return "Reconnecting"
-        case .offline: return "Offline"
-        case .connected, .connecting: return nil
-        }
-    }
-
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
@@ -109,7 +101,9 @@ public struct MoreHubView: View {
             async let memoryTask: Void = store.refreshMemory()
             async let permsPrefsTask: Void = store.refreshPermissionsAndPreferences()
             async let modelKeysTask: Void = store.refreshModelKeys()
-            _ = await (summaryTask, appsTask, memoryTask, permsPrefsTask, modelKeysTask)
+            async let modelSettingsTask: Void = { _ = try? await store.refreshModelSettings() }()
+            async let homeConnectorsTask: Void = { _ = try? await store.refreshHomeConnectors() }()
+            _ = await (summaryTask, appsTask, memoryTask, permsPrefsTask, modelKeysTask, modelSettingsTask, homeConnectorsTask)
         }
         .background(NoriColors.canvas.ignoresSafeArea())
         .sheet(isPresented: $showingResetData) {
@@ -187,7 +181,7 @@ public struct MoreHubView: View {
 
             NavigationLink(value: MoreRoute.apiCosts) {
                 NoriRow(
-                    title: "API costs",
+                    title: "API Costs",
                     systemImage: "chart.bar",
                     iconTone: .neutral,
                     showChevron: true,
@@ -228,7 +222,7 @@ public struct MoreHubView: View {
                 showingResetData = true
             } label: {
                 NoriRow(
-                    title: "Reset data",
+                    title: "Reset Data",
                     systemImage: "arrow.counterclockwise",
                     iconTone: .danger,
                     showChevron: true,
@@ -250,13 +244,7 @@ public struct MoreHubView: View {
                     iconTone: .neutral,
                     showChevron: true,
                     showDivider: true
-                ) {
-                    if store.connectionState == .reconnecting {
-                        NoriPill("Reconnecting", tone: .warning)
-                    } else if store.connectionState == .offline {
-                        NoriPill("Offline", tone: .danger)
-                    }
-                }
+                )
             }
             .buttonStyle(.plain)
 
@@ -274,12 +262,17 @@ public struct MoreHubView: View {
             NavigationLink(value: MoreRoute.diagnostics) {
                 NoriRow(
                     title: "Diagnostics",
-                    detail: diagnosticsDetail,
                     systemImage: "waveform.path.ecg",
                     iconTone: .neutral,
                     showChevron: true,
                     showDivider: false
-                )
+                ) {
+                    if store.connectionState == .reconnecting {
+                        NoriPill("Reconnecting", tone: .warning)
+                    } else if store.connectionState == .offline {
+                        NoriPill("Offline", tone: .danger)
+                    }
+                }
             }
             .buttonStyle(.plain)
         }

@@ -16,7 +16,10 @@ private struct DiagnosticLogReport: Transferable {
 }
 
 public struct DiagnosticsSettingsView: View {
+    private static let isoFormatter = ISO8601DateFormatter()
+
     @Bindable private var store: NoriStore
+    @AppStorage("nori.diagnostics.debug") private var showChatDebugDetails = false
     @State private var isPingingServer = false
 
     public init(store: NoriStore) {
@@ -27,11 +30,20 @@ public struct DiagnosticsSettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 NoriCard {
+                    Toggle(isOn: $showChatDebugDetails) {
+                        Text("Show model and tool details in Chat")
+                            .font(NoriTypography.body)
+                            .foregroundStyle(NoriColors.ink)
+                    }
+                    .tint(NoriColors.brandPrimary)
+                }
+
+                NoriCard {
                     VStack(alignment: .leading, spacing: 10) {
                         diagRow("Status", value: store.connectionState.rawValue.capitalized)
                         diagRow("Server", value: store.serverHost)
                         if let ping = store.lastPing {
-                            let pingTime = NoriDateFormatting.shortTime(ISO8601DateFormatter().string(from: ping.checkedAt))
+                            let pingTime = NoriDateFormatting.shortTime(Self.isoFormatter.string(from: ping.checkedAt))
                             let pingSummary = ping.ok
                                 ? "Healthy · \(ping.latencyMs) ms · \(pingTime)"
                                 : "\(ping.errorMessage ?? ping.status) · \(ping.latencyMs) ms · \(pingTime)"
@@ -51,13 +63,7 @@ public struct DiagnosticsSettingsView: View {
                             if let features = caps.assistantFeatures {
                                 let enabled = features.filter(\.value).map(\.key).sorted()
                                 if !enabled.isEmpty {
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        Text("Connected capabilities")
-                                            .font(.system(size: 12, weight: .medium))
-                                            .foregroundStyle(NoriColors.ink3)
-                                        FlowCapabilitiesView(items: enabled)
-                                    }
-                                    .padding(.top, 2)
+                                    diagRow("Available", value: enabled.joined(separator: ", "))
                                 }
                             }
                         }
@@ -132,7 +138,7 @@ public struct DiagnosticsSettingsView: View {
 
                 diagRow("Build", value: "com.nori.ios@\(version)+\(build)", monospaced: true)
                 diagRow(
-                    "Sentry",
+                    "Crash reporting",
                     value: telemetry.isEnabled ? "Enabled (\(telemetry.environmentName))" : "Disabled (\(telemetry.environmentName))"
                 )
                 if let uid = telemetry.currentUserID, !uid.isEmpty {
@@ -148,9 +154,8 @@ public struct DiagnosticsSettingsView: View {
                         preview: SharePreview("Nori iOS Diagnostics")
                     ) {
                         Label("Export Diagnostic Logs", systemImage: "square.and.arrow.up")
-                            .font(.system(size: 13.5, weight: .semibold))
-                            .foregroundStyle(NoriColors.accent)
                     }
+                    .buttonStyle(NoriButtonStyle(.tonal, compact: true))
 
                     Spacer()
 
@@ -167,9 +172,8 @@ public struct DiagnosticsSettingsView: View {
                         testSpan.finish(status: .ok)
                         store.showToast("Test event queued")
                     }
+                    .buttonStyle(NoriButtonStyle(.quiet, compact: true))
                     .disabled(!telemetry.isEnabled)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(NoriColors.ink2)
                     #endif
                 }
                 .padding(.top, 4)
@@ -183,24 +187,13 @@ public struct DiagnosticsSettingsView: View {
             Text(label)
                 .font(.system(size: 12.5, weight: .medium))
                 .foregroundStyle(NoriColors.ink3)
-                .frame(width: 76, alignment: .leading)
+                .frame(width: 108, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
             Text(value)
                 .font(monospaced ? NoriTypography.monoSmall : .system(size: 13, weight: .medium))
                 .foregroundStyle(NoriColors.ink)
                 .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
-private struct FlowCapabilitiesView: View {
-    let items: [String]
-
-    var body: some View {
-        let columns = [GridItem(.adaptive(minimum: 82), spacing: 6)]
-        LazyVGrid(columns: columns, alignment: .leading, spacing: 6) {
-            ForEach(items, id: \.self) { name in
-                NoriPill(name, tone: .accent)
-            }
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

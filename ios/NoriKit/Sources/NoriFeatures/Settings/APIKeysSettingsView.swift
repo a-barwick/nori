@@ -15,6 +15,7 @@ public struct ModelsSettingsView: View {
     @State private var isSaving = false
     @State private var modelLoadError: String?
     @State private var keyLoadError: String?
+    @State private var homeLoadError: String?
     @State private var saveError: String?
     @State private var hasConflict = false
     @State private var suggestedProvider: String?
@@ -45,10 +46,14 @@ public struct ModelsSettingsView: View {
                     }
                 }
 
-                HomeConnectorSettingsView(store: store)
+                HomeConnectorSettingsView(
+                    store: store,
+                    loadError: homeLoadError,
+                    onRetry: { Task { await reloadHomeConnectors() } }
+                )
 
                 NoriSectionHeader("API Keys")
-                if store.needsModelKeySetup && store.homeConnectors?.enabled != true {
+                if store.needsModelKeySetup && !hasPairedHomeDevice {
                     NoriNotice(
                         title: "API key required",
                         detail: "Add a provider API key to use Chat and Work.",
@@ -129,6 +134,10 @@ public struct ModelsSettingsView: View {
         draftRevision != nil && selection != draftBase
     }
 
+    private var hasPairedHomeDevice: Bool {
+        store.homeConnectors?.enabled == true && !(store.homeConnectors?.devices.isEmpty ?? true)
+    }
+
     private var recommendationSummary: String {
         guard let settings = store.modelSettings, let provider = suggestedProvider,
               let recommendation = settings.recommendations[provider] else {
@@ -172,13 +181,15 @@ public struct ModelsSettingsView: View {
                             }
                         }
                     ))
-                    if let chatProfile {
+                    if let chatProfile, !(chatProfile.supportedReasoning?.isEmpty ?? true) {
                         reasoningPicker("Chat reasoning", profile: chatProfile, effort: Binding(
                             get: { selection.chatReasoning ?? "" },
                             set: { selection.chatReasoning = $0.isEmpty ? nil : $0 }
                         ))
                     }
-                    Divider()
+                    Rectangle()
+                        .fill(NoriColors.hairline)
+                        .frame(height: 1)
                     profilePicker("Work model", lane: "task", profiles: profiles, selectedID: Binding(
                         get: { selection.taskProfileID ?? "" },
                         set: { id in
@@ -196,7 +207,7 @@ public struct ModelsSettingsView: View {
                             }
                         }
                     ))
-                    if let taskProfile {
+                    if let taskProfile, !(taskProfile.supportedReasoning?.isEmpty ?? true) {
                         reasoningPicker("Work reasoning", profile: taskProfile, effort: Binding(
                             get: { selection.taskReasoning ?? "" },
                             set: { selection.taskReasoning = $0.isEmpty ? nil : $0 }
@@ -217,7 +228,8 @@ public struct ModelsSettingsView: View {
                         .tint(NoriColors.brandPrimary)
                         .disabled(isSaving || (selection.homeOnly != true && chatProfile?.backend != "home"))
                     }
-                    if selection.homeOnly == true, selection.taskProfileID != nil, taskProfile?.backend != "home" {
+                    let homeWorkInvalid = selection.homeOnly == true && selection.taskProfileID != nil && taskProfile?.backend != "home"
+                    if homeWorkInvalid {
                         NoriNotice(title: "Choose a home Work model or clear the Work model before saving.", tone: .warning)
                     }
                     if let saveError {
@@ -232,7 +244,7 @@ public struct ModelsSettingsView: View {
                         Task { await saveSelection() }
                     }
                     .buttonStyle(NoriButtonStyle(.primary, fullWidth: true, compact: true))
-                    .disabled(isSaving || !hasUnsavedDraft || hasConflict)
+                    .disabled(isSaving || !hasUnsavedDraft || hasConflict || homeWorkInvalid)
                 }
             }
         }
@@ -246,7 +258,7 @@ public struct ModelsSettingsView: View {
         let homeOnly = selection.homeOnly == true
         let selectedLabel: String = {
             if selectedID.wrappedValue.isEmpty {
-                return isWork ? "No Work model" : "Select model"
+                return isWork ? "No Work model" : "Choose a model"
             }
             if let match = available.first(where: { $0.id == selectedID.wrappedValue }) {
                 return profileLabel(match)
@@ -319,7 +331,13 @@ public struct ModelsSettingsView: View {
     }
 
     private func reasoningPicker(_ title: String, profile: ModelProfile, effort: Binding<String>) -> some View {
-        let selectedLabel = effort.wrappedValue.isEmpty ? "Default" : effort.wrappedValue.capitalized
+        let defaultLabel: String = {
+            if let def = profile.defaultReasoning, !def.isEmpty {
+                return "Default (\(def.capitalized))"
+            }
+            return "Default"
+        }()
+        let selectedLabel = effort.wrappedValue.isEmpty ? defaultLabel : effort.wrappedValue.capitalized
         return VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(NoriTypography.metaSemibold)
@@ -329,9 +347,9 @@ public struct ModelsSettingsView: View {
                     effort.wrappedValue = ""
                 } label: {
                     if effort.wrappedValue.isEmpty {
-                        Label("Default", systemImage: "checkmark")
+                        Label(defaultLabel, systemImage: "checkmark")
                     } else {
-                        Text("Default")
+                        Text(defaultLabel)
                     }
                 }
                 ForEach(profile.supportedReasoning ?? [], id: \.self) { value in
@@ -382,6 +400,7 @@ public struct ModelsSettingsView: View {
         defer { isLoading = false }
         modelLoadError = nil
         keyLoadError = nil
+        homeLoadError = nil
         async let keys: Void = store.refreshModelKeysThrowing()
         async let models: Void = store.refreshModelSettings()
         async let home: Void = store.refreshHomeConnectors()
@@ -396,7 +415,24 @@ public struct ModelsSettingsView: View {
         } catch {
             keyLoadError = error.localizedDescription
         }
-        _ = try? await home
+        do {
+            try await home
+        } catch is CancellationError {
+            return
+        } catch {
+            homeLoadError = error.localizedDescription
+        }
+    }
+
+    private func reloadHomeConnectors() async {
+        homeLoadError = nil
+        do {
+            try await store.refreshHomeConnectors()
+        } catch is CancellationError {
+            return
+        } catch {
+            homeLoadError = error.localizedDescription
+        }
     }
 
     private func reloadModels() async {
@@ -471,6 +507,7 @@ private struct ModelKeyProviderCard: View {
     let onSaved: (String) -> Void
     let onRemoved: () -> Void
 
+    @State private var isEditing = false
     @State private var keyInput = ""
     @State private var isSaving = false
     @State private var isRemoving = false
@@ -505,19 +542,24 @@ private struct ModelKeyProviderCard: View {
                         Text(provider.label)
                             .font(NoriTypography.rowTitle)
                             .foregroundStyle(NoriColors.ink)
-                        if let masked = provider.maskedKeyDisplay {
-                            Text(masked)
-                                .font(NoriTypography.monoSmall)
-                                .foregroundStyle(NoriColors.ink2)
+                        if provider.configured {
+                            if let masked = provider.maskedKeyDisplay {
+                                Text(masked)
+                                    .font(NoriTypography.monoSmall)
+                                    .foregroundStyle(NoriColors.ink2)
+                            } else {
+                                Text("Configured")
+                                    .font(NoriTypography.meta)
+                                    .foregroundStyle(NoriColors.ink2)
+                            }
                         }
                     }
 
                     Spacer(minLength: 8)
 
-                    NoriPill(
-                        provider.configured ? "Configured" : "Not set",
-                        tone: provider.configured ? .ok : .neutral
-                    )
+                    if !provider.configured {
+                        NoriPill("Not set", tone: .neutral)
+                    }
                 }
 
                 if provider.configured, let timestampSummary {
@@ -526,81 +568,112 @@ private struct ModelKeyProviderCard: View {
                         .foregroundStyle(NoriColors.ink3)
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(provider.configured ? "Replace API key" : "API key")
-                        .font(NoriTypography.metaSemibold)
-                        .foregroundStyle(NoriColors.ink2)
+                if isEditing {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(provider.configured ? "New \(provider.label) API key" : "\(provider.label) API key")
+                            .font(NoriTypography.metaSemibold)
+                            .foregroundStyle(NoriColors.ink2)
 
-                    SecureField(
-                        provider.configured ? "Paste new key to replace" : "Paste API key",
-                        text: $keyInput
-                    )
-                    .textFieldStyle(.plain)
-                    .font(NoriTypography.mono)
-                    .foregroundStyle(NoriColors.ink)
-                    .tint(NoriColors.accent)
-                    .autocorrectionDisabled()
-                    #if os(iOS)
-                    .textInputAutocapitalization(.never)
-                    #endif
-                    .focused($isInputFocused)
-                    .disabled(isBusy)
-                    .padding(.horizontal, 12)
-                    .frame(height: 40)
-                    .background(
-                        NoriColors.elevated,
-                        in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                            .strokeBorder(
-                                isInputFocused ? NoriColors.accentSignal : NoriColors.cardBorder,
-                                lineWidth: isInputFocused ? 1.5 : 1
-                            )
-                    )
-                    .onSubmit {
-                        if !trimmedKey.isEmpty && !isBusy {
-                            saveKey()
-                        }
-                    }
-                }
-
-                if let errorMessage, !errorMessage.isEmpty {
-                    NoriNotice(
-                        title: "Could not update key",
-                        detail: errorMessage,
-                        tone: .danger,
-                        systemImage: "exclamationmark.triangle.fill"
-                    )
-                }
-
-                HStack(spacing: 8) {
-                    Button {
-                        saveKey()
-                    } label: {
-                        if isSaving {
-                            ProgressView()
-                                .tint(NoriColors.onAccent)
-                        } else {
-                            Text(provider.configured ? "Replace key" : "Save key")
-                        }
-                    }
-                    .buttonStyle(NoriButtonStyle(.primary, fullWidth: true, compact: true))
-                    .disabled(trimmedKey.isEmpty || isBusy)
-
-                    if provider.configured {
-                        Button {
-                            showingRemoveConfirmation = true
-                        } label: {
-                            if isRemoving {
-                                ProgressView()
-                                    .tint(NoriColors.danger)
-                            } else {
-                                Text("Remove")
+                        SecureField(
+                            provider.configured ? "Paste new key to replace" : "Paste your API key",
+                            text: $keyInput
+                        )
+                        .textFieldStyle(.plain)
+                        .font(NoriTypography.mono)
+                        .foregroundStyle(NoriColors.ink)
+                        .tint(NoriColors.accent)
+                        .autocorrectionDisabled()
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
+                        .focused($isInputFocused)
+                        .disabled(isBusy)
+                        .padding(.horizontal, 12)
+                        .frame(height: 40)
+                        .background(
+                            NoriColors.elevated,
+                            in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
+                                .strokeBorder(
+                                    isInputFocused ? NoriColors.accentSignal : NoriColors.cardBorder,
+                                    lineWidth: isInputFocused ? 1.5 : 1
+                                )
+                        )
+                        .onSubmit {
+                            if !trimmedKey.isEmpty && !isBusy {
+                                saveKey()
                             }
                         }
-                        .buttonStyle(NoriButtonStyle(.danger, compact: true))
+                    }
+
+                    if let errorMessage, !errorMessage.isEmpty {
+                        NoriNotice(
+                            title: "Could not update key",
+                            detail: errorMessage,
+                            tone: .danger,
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                    }
+
+                    HStack(spacing: 8) {
+                        Button {
+                            saveKey()
+                        } label: {
+                            if isSaving {
+                                ProgressView()
+                                    .tint(NoriColors.onAccent)
+                            } else {
+                                Text("Save")
+                            }
+                        }
+                        .buttonStyle(NoriButtonStyle(.primary, fullWidth: true, compact: true))
+                        .disabled(trimmedKey.isEmpty || isBusy)
+
+                        Button("Cancel") {
+                            isEditing = false
+                            keyInput = ""
+                            errorMessage = nil
+                            isInputFocused = false
+                        }
+                        .buttonStyle(NoriButtonStyle(.quiet, compact: true))
                         .disabled(isBusy)
+                    }
+                } else {
+                    if let errorMessage, !errorMessage.isEmpty {
+                        NoriNotice(
+                            title: "Could not update key",
+                            detail: errorMessage,
+                            tone: .danger,
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                    }
+
+                    HStack(spacing: 8) {
+                        Button(provider.configured ? "Replace" : "Add key") {
+                            errorMessage = nil
+                            keyInput = ""
+                            isEditing = true
+                            isInputFocused = true
+                        }
+                        .buttonStyle(NoriButtonStyle(provider.configured ? .neutral : .primary, compact: true))
+                        .disabled(isBusy)
+
+                        if provider.configured {
+                            Button {
+                                showingRemoveConfirmation = true
+                            } label: {
+                                if isRemoving {
+                                    ProgressView()
+                                        .tint(NoriColors.danger)
+                                } else {
+                                    Text("Remove")
+                                }
+                            }
+                            .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                            .disabled(isBusy)
+                        }
                     }
                 }
             }
@@ -630,6 +703,7 @@ private struct ModelKeyProviderCard: View {
             do {
                 _ = try await store.saveModelKey(provider: provider.provider, apiKey: keyToSave)
                 keyInput = ""
+                isEditing = false
                 triggerNotificationHaptic(.success)
                 onSaved(provider.provider)
             } catch {

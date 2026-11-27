@@ -12,6 +12,7 @@ public struct MCPDetailView: View {
 
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
     @State private var isBusy = false
+    @State private var isLoadingServer = false
     @State private var authError: String?
     @State private var accessToken = ""
     @State private var isTokenVisible = false
@@ -54,22 +55,14 @@ public struct MCPDetailView: View {
 
                     NoriCard {
                         VStack(alignment: .leading, spacing: 10) {
-                            metadataRow("Transport", value: server.transport == .http ? "Streamable HTTP" : "Managed stdio")
+                            metadataRow("Type", value: server.transport == .http ? "Remote server" : "Local server")
 
                             if let endpoint = server.endpoint, !endpoint.isEmpty {
-                                metadataRow("Endpoint", value: endpoint, monospaced: true)
-                            }
-
-                            if let protocolVersion = server.observed.protocolVersion, !protocolVersion.isEmpty {
-                                metadataRow("Protocol", value: protocolVersion, monospaced: true)
+                                metadataRow("Server URL", value: endpoint, monospaced: true)
                             }
 
                             if let lastSuccess = server.observed.lastSuccessAt, !lastSuccess.isEmpty {
                                 metadataRow("Last call", value: NoriDateFormatting.shortDateTime(lastSuccess))
-                            }
-
-                            if let capabilities = server.observed.capabilities, !capabilities.isEmpty {
-                                metadataRow("Supports", value: capabilities.joined(separator: ", "))
                             }
 
                             HStack(spacing: 8) {
@@ -135,11 +128,11 @@ public struct MCPDetailView: View {
 
                                         Menu {
                                             exposureMenuButton(serverID: server.id, tool: tool, exposure: .direct, title: "Always", subtitle: "Always in Nori's tool list")
-                                            exposureMenuButton(serverID: server.id, tool: tool, exposure: .discoverable, title: "Relevant", subtitle: "Loaded when relevant")
+                                            exposureMenuButton(serverID: server.id, tool: tool, exposure: .discoverable, title: "When relevant", subtitle: "Loaded when relevant")
                                             exposureMenuButton(serverID: server.id, tool: tool, exposure: .disabled, title: "Off", subtitle: "Hidden from Nori")
                                         } label: {
                                             HStack(spacing: 4) {
-                                                Text(tool.exposure.displayLabel)
+                                                Text(exposureLabel(for: tool.exposure))
                                                     .font(.system(size: 12, weight: .semibold))
                                                 Image(systemName: "chevron.up.chevron.down")
                                                     .font(.system(size: 10, weight: .semibold))
@@ -150,7 +143,7 @@ public struct MCPDetailView: View {
                                             .background(NoriColors.fill1, in: Capsule())
                                             .overlay(
                                                 Capsule()
-                                                    .strokeBorder(NoriColors.hairlineStrong, lineWidth: 1)
+                                                    .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
                                             )
                                         }
                                     }
@@ -167,10 +160,36 @@ public struct MCPDetailView: View {
                             }
                         }
                     }
+                    let hasDetails = (server.observed.protocolVersion?.isEmpty == false)
+                        || (server.observed.capabilities?.isEmpty == false)
+                    if hasDetails {
+                        NoriSectionHeader("Details")
+                        NoriCard {
+                            VStack(alignment: .leading, spacing: 10) {
+                                if let protocolVersion = server.observed.protocolVersion, !protocolVersion.isEmpty {
+                                    metadataRow("Protocol", value: protocolVersion, monospaced: true)
+                                }
+                                if let capabilities = server.observed.capabilities, !capabilities.isEmpty {
+                                    metadataRow("Supports", value: capabilities.joined(separator: ", "))
+                                }
+                            }
+                        }
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 10)
                 .padding(.bottom, 28)
+            } else if isLoadingServer {
+                NoriCard {
+                    HStack(spacing: 10) {
+                        ProgressView().tint(NoriColors.accent)
+                        Text("Loading server…")
+                            .font(NoriTypography.meta)
+                            .foregroundStyle(NoriColors.ink2)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(16)
             } else {
                 NoriEmptyState(
                     title: "MCP server not found",
@@ -179,12 +198,22 @@ public struct MCPDetailView: View {
             }
         }
         .background(NoriColors.canvas)
+        .task {
+            if server == nil {
+                isLoadingServer = true
+                await store.refreshApps()
+                isLoadingServer = false
+            }
+        }
+        .refreshable {
+            await store.refreshApps()
+        }
         .navigationTitle(server?.name ?? "MCP Server")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .toolbar {
-            if let server {
+            if let server, server.observed.status != .connected {
                 ToolbarItem(placement: .primaryAction) {
                     NoriPill(server.observed.status.displayLabel, tone: statusTone(for: server.observed.status))
                 }
@@ -192,9 +221,19 @@ public struct MCPDetailView: View {
         }
     }
 
+    private func exposureLabel(for exposure: MCPToolExposure) -> String {
+        switch exposure {
+        case .direct: return "Always"
+        case .discoverable: return "When relevant"
+        case .disabled: return "Off"
+        case .programmatic: return exposure.displayLabel
+        }
+    }
+
     @ViewBuilder
     private func credentialCard(for server: MCPServer) -> some View {
         let hasExistingToken = server.observed.status == .connected
+            || server.observed.credential == "present"
             || server.observed.credential == "configured"
             || server.observed.credential == "set"
         let trimmedToken = accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -210,7 +249,9 @@ public struct MCPDetailView: View {
                     if server.observed.status.needsAttention {
                         NoriPill("Required", tone: .warning)
                     } else if hasExistingToken {
-                        NoriPill("Configured", tone: .ok)
+                        Text("Saved")
+                            .font(NoriTypography.caption)
+                            .foregroundStyle(NoriColors.ink2)
                     }
                 }
 
@@ -257,7 +298,7 @@ public struct MCPDetailView: View {
                 .background(NoriColors.fill1, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
-                        .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                        .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
                 )
 
                 Button {

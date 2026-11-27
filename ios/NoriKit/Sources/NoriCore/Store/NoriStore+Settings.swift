@@ -64,14 +64,52 @@ extension NoriStore {
         }
     }
 
-    public func updatePreferences(_ updated: Preferences) async {
+    public func refreshPermissionsThrowing() async throws {
+        let generation = sessionGeneration
+        do {
+            let latest = try await transport.fetchPermissions()
+            guard generation == sessionGeneration, !Task.isCancelled else { throw CancellationError() }
+            permissions = latest
+        } catch {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            _ = await handleAuthFailureIfNeeded(error)
+            throw error
+        }
+    }
+
+    public func refreshPreferencesThrowing() async throws {
+        let generation = sessionGeneration
+        let preferencesReadID = nextPreferencesRead()
+        do {
+            let latest = try await transport.fetchPreferences()
+            guard generation == sessionGeneration, !Task.isCancelled else { throw CancellationError() }
+            applyPreferences(latest, readID: preferencesReadID)
+        } catch {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            _ = await handleAuthFailureIfNeeded(error)
+            throw error
+        }
+    }
+
+    public func savePreferences(_ updated: Preferences) async throws {
         let generation = sessionGeneration
         do {
             let receipt = try await transport.savePreferences(updated, requestID: UUID().uuidString.lowercased())
-            guard generation == sessionGeneration else { return }
+            guard generation == sessionGeneration else { throw CancellationError() }
             appliedPreferencesRead = nextPreferencesRead()
             preferences = receipt.resource
             showToast("Preferences saved")
+        } catch {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            _ = await handleAuthFailureIfNeeded(error)
+            throw error
+        }
+    }
+
+    public func updatePreferences(_ updated: Preferences) async {
+        let generation = sessionGeneration
+        do {
+            try await savePreferences(updated)
         } catch {
             guard generation == sessionGeneration else { return }
             _ = await handleOperationError(error)

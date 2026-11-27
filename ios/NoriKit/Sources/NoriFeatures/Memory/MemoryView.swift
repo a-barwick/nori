@@ -24,7 +24,7 @@ private enum MemorySearchLayerFilter: String, CaseIterable, Hashable, Sendable {
     var apiLayer: String? {
         switch self {
         case .all: return nil
-        case .logs: return "logs"
+        case .logs: return "log"
         case .core: return "core"
         }
     }
@@ -46,6 +46,7 @@ public struct MemoryView: View {
     @State private var searchHits: [MemorySearchHit] = []
     @State private var showingAddSheet = false
     @State private var pendingForgetFact: MemoryFact?
+    @State private var pendingForgetLogEntry: PromoteCandidate?
     @State private var pendingPromoteEntry: PromoteCandidate?
 
     public init(store: NoriStore) {
@@ -107,10 +108,17 @@ public struct MemoryView: View {
 
                     VStack(alignment: .leading, spacing: 14) {
                         if let error = store.memoryRefreshError {
-                            Text("Couldn’t refresh all memory. \(error)")
-                                .font(.footnote)
-                                .foregroundStyle(NoriColors.warning)
-                                .accessibilityAddTraits(.updatesFrequently)
+                            NoriNotice(
+                                title: "Couldn’t refresh all memory",
+                                detail: error,
+                                tone: .warning,
+                                systemImage: "exclamationmark.triangle.fill"
+                            ) {
+                                Button("Retry") {
+                                    Task { await store.refreshMemory() }
+                                }
+                                .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                            }
                         }
                         switch selectedTab {
                         case .core:
@@ -169,7 +177,7 @@ public struct MemoryView: View {
         }
         .sheet(item: $pendingPromoteEntry) { candidate in
             PromoteTaskOutcomeSheet(store: store, candidate: candidate)
-                .presentationDetents([.medium])
+                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
                 .presentationBackground(NoriColors.sheetBackground)
                 .presentationCornerRadius(NoriRadius.sheet)
@@ -188,6 +196,21 @@ public struct MemoryView: View {
             Button("Cancel", role: .cancel) {}
         } message: { _ in
             Text("Nori stops using this fact in future conversations. Existing chats stay untouched.")
+        }
+        .alert(
+            "Forget this log entry?",
+            isPresented: Binding(
+                get: { pendingForgetLogEntry != nil },
+                set: { if !$0 { pendingForgetLogEntry = nil } }
+            ),
+            presenting: pendingForgetLogEntry
+        ) { candidate in
+            Button("Forget", role: .destructive) {
+                Task { await store.forgetLogEntry(date: candidate.date, entryID: candidate.entry.id) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("Removes this entry from the daily log and search index.")
         }
     }
 
@@ -538,7 +561,7 @@ public struct MemoryView: View {
         if !store.workingMemory.gist.isEmpty {
             NoriCard(backgroundColor: NoriColors.surfaceTinted, borderColor: NoriColors.cardBorder) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Active session gist")
+                    Text("Session summary")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(NoriColors.ink2)
                     Text(store.workingMemory.gist)
@@ -614,6 +637,9 @@ public struct MemoryView: View {
             hasSegment = true
         }
 
+        if fact.pinned {
+            append("Pinned", color: NoriColors.accent, weight: .semibold)
+        }
         if let section = fact.section, !section.isEmpty {
             append(section)
         }
@@ -670,9 +696,15 @@ public struct MemoryView: View {
     private func coreFactMenu(for fact: MemoryFact) -> some View {
         Menu {
             Button {
+                Task { await store.togglePinMemory(memoryID: fact.id) }
+            } label: {
+                Label(fact.pinned ? "Unpin" : "Pin", systemImage: fact.pinned ? "pin.slash" : "pin")
+            }
+
+            Button {
                 Task { await store.demoteMemory(memoryID: fact.id) }
             } label: {
-                Label("Demote to Daily Logs", systemImage: "arrow.down.to.line")
+                Label("Move to Daily Logs", systemImage: "arrow.down.to.line")
             }
 
             Divider()
@@ -710,11 +742,9 @@ public struct MemoryView: View {
             }
 
             Button(role: .destructive) {
-                Task {
-                    await store.forgetLogEntry(date: date, entryID: entry.id)
-                }
+                pendingForgetLogEntry = PromoteCandidate(date: date, entry: entry)
             } label: {
-                Label("Remove from log", systemImage: "trash")
+                Label("Forget", systemImage: "trash")
             }
         } label: {
             rowMenuLabel
@@ -785,7 +815,7 @@ private struct PromoteTaskOutcomeSheet: View {
                         systemImage: "exclamationmark.shield.fill"
                     )
 
-                    NoriCard {
+                    NoriCard(backgroundColor: NoriColors.elevated) {
                         Text(candidate.entry.text)
                             .font(.system(size: 14))
                             .foregroundStyle(NoriColors.ink)
@@ -863,7 +893,7 @@ private struct AddMemorySheet: View {
                             .font(NoriTypography.metaSemibold)
                             .foregroundStyle(NoriColors.ink)
                         Spacer()
-                        Text("\(byteCount) / \(maxBytes) B")
+                        Text("\(byteCount) / \(maxBytes)")
                             .font(NoriTypography.monoSmall)
                             .foregroundStyle(byteCount > maxBytes ? NoriColors.danger : NoriColors.ink3)
                     }
