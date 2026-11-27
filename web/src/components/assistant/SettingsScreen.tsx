@@ -46,6 +46,7 @@ import { cn } from "@/lib/utils";
 import { ApiCosts } from "./ApiCosts";
 import { AppBrandIcon } from "./BrandIcons";
 import { ModelsSettings } from "./ModelsSettings";
+import { ProactivitySection } from "./ProactivitySettings";
 import { SignOutForm } from "./SignOutForm";
 import { OperationRows, shownOperations } from "./WorkScreen";
 import {
@@ -401,6 +402,8 @@ function PreferencesEditor({ current, onSaved }: { current: Preferences; onSaved
           {renderTextRow("locale", "Language & region", base.locale ?? "", "en-US")}
         </Rows>
       </Section>
+
+      <ProactivitySection current={current} onSaved={onSaved} />
 
       <Section title="Schedule">
         <Rows label="Schedule">

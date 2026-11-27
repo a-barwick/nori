@@ -86,6 +86,42 @@ export function eventTime(time: CalendarTime) {
 
 const DAYS: Record<string, string> = { MO: "Mon", TU: "Tue", WE: "Wed", TH: "Thu", FR: "Fri", SA: "Sat", SU: "Sun" };
 
+export function formatTime12h(hhmm?: string): string {
+  if (!hhmm) return "";
+  const match = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim());
+  if (!match) return hhmm;
+  const hour24 = Number(match[1]);
+  const minute = match[2];
+  if (!Number.isFinite(hour24) || hour24 < 0 || hour24 > 23) return hhmm;
+  const period = hour24 >= 12 ? "PM" : "AM";
+  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+  return `${hour12}:${minute} ${period}`;
+}
+
+export function compactCadence(trigger: Trigger): string {
+  if (trigger.kind === "once") return when(trigger.at);
+  if (trigger.kind === "event_relative") {
+    const minutes = Math.round(Math.abs(trigger.offset_seconds) / 60);
+    const span = minutes >= 60 && minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
+    return `${span} ${trigger.offset_seconds <= 0 ? "before" : "after"}`;
+  }
+  if (trigger.kind === "watch") {
+    const minutes = Math.max(1, Math.round(trigger.min_interval_seconds / 60));
+    if (minutes >= 60 && minutes % 60 === 0) return `Every ${minutes / 60}h`;
+    return `Every ${minutes}m`;
+  }
+  const time = trigger.local_start.split("T")[1]?.slice(0, 5) ?? "";
+  const rule = Object.fromEntries(trigger.rrule.split(";").map((part) => part.split("=")));
+  const days = (rule.BYDAY as string | undefined)?.split(",");
+  const weekdays = days?.length === 5 && ["MO", "TU", "WE", "TH", "FR"].every((d) => days.includes(d));
+  const freq = rule.FREQ as string;
+  const at = time ? ` ${formatTime12h(time)}` : "";
+  if (freq === "DAILY") return `Daily${at}`;
+  if (freq === "WEEKLY") return weekdays ? `Weekdays${at}` : days ? `${days.map((d) => DAYS[d] ?? d).join(", ")}${at}` : `Weekly${at}`;
+  if (freq === "MONTHLY") return `Monthly${at}`;
+  return `${trigger.rrule}${at}`;
+}
+
 export function cadence(trigger: Trigger) {
   if (trigger.kind === "once") return `Once, ${when(trigger.at)}`;
   if (trigger.kind === "event_relative") {

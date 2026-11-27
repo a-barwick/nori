@@ -3,12 +3,12 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Pause, Play, Plus, TimerReset, Zap } from "lucide-react";
+import { Clock, Pause, Play, Plus, TimerReset, X, Zap } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
 import { Button } from "@/components/ui/primitives";
 import { APIError, mutate, newRequestID } from "@/lib/assistant/api";
 import { useAssistantConfig } from "@/lib/assistant/context";
-import { cadence, money, relative, when } from "@/lib/assistant/format";
+import { cadence, compactCadence, money, when } from "@/lib/assistant/format";
 import { RULE_EFFECT_META } from "@/lib/assistant/permissions";
 import { useAction, useResource, useResourceInvalidation } from "@/lib/assistant/useResource";
 import type { Automation, Occurrence, PermissionRule } from "@/lib/contracts/assistant";
@@ -18,7 +18,6 @@ import {
   Empty,
   Failure,
   Loading,
-  NoriLine,
   Notice,
   NotYet,
   Pill,
@@ -88,44 +87,129 @@ function stateOf(item: Automation, long = false) {
   return STATUS[item.status];
 }
 
+export function AutomationRows({
+  items,
+  confirmingId,
+  onAskConfirm,
+  onCancelConfirm,
+  onRemove,
+}: {
+  items: Automation[];
+  confirmingId: string | null;
+  onAskConfirm: (id: string) => void;
+  onCancelConfirm: () => void;
+  onRemove: (item: Automation) => void;
+}) {
+  return (
+    <ul
+      aria-label="Automations"
+      className="divide-y divide-hairline overflow-hidden rounded-card border border-card-border bg-surface"
+    >
+      {items.map((item) => {
+        const isEnabled = item.status === "enabled" && !spent(item);
+        const isConfirming = confirmingId === item.id;
+        return (
+          <li key={item.id} data-automation-row={item.id}>
+            <div className="group flex min-h-[50px] items-center gap-3 px-4 py-3 transition-colors hover:bg-fill-1">
+              <span className="grid size-5 shrink-0 place-items-center">
+                <Clock size={15} strokeWidth={2} className="text-scheduled" aria-hidden />
+              </span>
+              <Link
+                href={`/routines/${encodeURIComponent(item.id)}`}
+                className={cn(
+                  "min-w-0 flex-1 truncate text-row font-semibold hover:opacity-80",
+                  isEnabled ? "text-ink" : "text-ink-2",
+                )}
+              >
+                {item.title}
+              </Link>
+              <div className="flex shrink-0 items-center gap-2" onClick={(event) => event.stopPropagation()}>
+                {isConfirming ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => onRemove(item)}
+                      className="inline-flex h-7 items-center rounded-full bg-danger-bg px-2.5 text-caption font-semibold text-danger transition-opacity hover:opacity-90"
+                    >
+                      Remove
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onCancelConfirm}
+                      className="inline-flex h-7 items-center rounded-full bg-fill-1 px-2.5 text-caption font-semibold text-ink-2 hover:bg-fill-2 hover:text-ink"
+                    >
+                      Keep
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-caption font-medium whitespace-nowrap text-scheduled">
+                      {compactCadence(item.trigger)}
+                    </span>
+                    <button
+                      type="button"
+                      title="Remove automation"
+                      aria-label={`Remove ${item.title}`}
+                      onClick={() => onAskConfirm(item.id)}
+                      className="grid size-[26px] place-items-center rounded-full text-ink-3 opacity-60 transition-[opacity,background-color,color] hover:bg-danger-bg hover:text-danger hover:opacity-100 focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+                    >
+                      <X size={14} strokeWidth={2.1} aria-hidden />
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 export function RoutinesContent() {
   const invalidate = useResourceInvalidation();
   const { has } = useAssistantConfig();
   const list = useResource<List<Automation>>(has("automations") ? "/automations" : null, { poll: 30_000 });
   const action = useAction();
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => new Set());
 
   if (!has("automations")) return <NotYet what="Automations" />;
 
   const items = list.data?.items ?? [];
   const active = items
-    .filter((item) => item.status !== "cancelled" && item.trigger.kind !== "once")
+    .filter((item) => item.status !== "cancelled" && item.trigger.kind !== "once" && !dismissedIds.has(item.id))
     .sort((a, b) => Date.parse(a.next_at ?? "9999") - Date.parse(b.next_at ?? "9999"));
-  const next = active.find((item) => item.status === "enabled" && item.next_at);
 
-  const quickAct = (item: Automation, kind: "run_now" | "pause" | "resume") =>
-    action.run(
-      `${kind}:${item.id}`,
+  const removeAutomation = (item: Automation) => {
+    setConfirmingId(null);
+    setDismissedIds((prev) => new Set(prev).add(item.id));
+    void action.run(
+      `cancel:${item.id}`,
       async () => {
-        await mutate<Automation>(`/automations/${encodeURIComponent(item.id)}/actions`, {
-          request_id: newRequestID(),
-          expected_revision: item.revision,
-          value: { action: kind },
-        });
-        invalidate("/automations", "/work", "/assistant/summary");
+        try {
+          await mutate<Automation>(`/automations/${encodeURIComponent(item.id)}/actions`, {
+            request_id: newRequestID(),
+            expected_revision: item.revision,
+            value: { action: "cancel" },
+          });
+          invalidate("/automations", "/work", "/assistant/summary");
+        } catch (err) {
+          setDismissedIds((prev) => {
+            const next = new Set(prev);
+            next.delete(item.id);
+            return next;
+          });
+          throw err;
+        }
       },
-      kind === "run_now" ? `Started ${item.title}.` : kind === "pause" ? `Paused ${item.title}.` : `Resumed ${item.title}.`,
+      `Removed ${item.title}.`,
     );
+  };
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        {next ? (
-          <NoriLine>Next up: {next.title}, {relative(next.next_at)}.</NoriLine>
-        ) : active.length ? (
-          <NoriLine>All automations are paused.</NoriLine>
-        ) : (
-          <div />
-        )}
+    <div className="space-y-4" onClick={() => confirmingId && setConfirmingId(null)}>
+      <div className="flex items-center justify-end">
         <Link
           href="/routines/new"
           className="inline-flex h-8 items-center gap-1.5 rounded-full bg-accent px-3.5 text-meta font-semibold text-on-accent transition-colors hover:bg-accent-hover"
@@ -141,54 +225,13 @@ export function RoutinesContent() {
       {list.loading ? (
         <Loading />
       ) : active.length ? (
-        <Rows label="Automations">
-          {active.map((item) => {
-            const state = stateOf(item);
-            const isEnabled = item.status === "enabled" && !spent(item);
-            const busy = action.pending?.endsWith(`:${item.id}`);
-            return (
-              <li key={item.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-                <Link href={`/routines/${encodeURIComponent(item.id)}`} className="min-w-0 flex-1 hover:opacity-80">
-                  <div className="flex items-center gap-2">
-                    <span className={cn("truncate text-row font-semibold", isEnabled ? "text-ink" : "text-ink-2")}>
-                      {item.title}
-                    </span>
-                    {item.last_occurrence?.status === "failed" ? (
-                      <Pill tone="danger">Last run failed</Pill>
-                    ) : !isEnabled ? (
-                      <Pill tone={state.tone}>{state.label}</Pill>
-                    ) : null}
-                  </div>
-                  <p className="mt-0.5 text-meta text-ink-2">{cadence(item.trigger)}</p>
-                  {isEnabled && item.next_at && (
-                    <p className="mt-0.5 text-caption font-medium text-accent-text">Next {relative(item.next_at)}</p>
-                  )}
-                </Link>
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <button
-                    type="button"
-                    disabled={!!busy}
-                    onClick={() => void quickAct(item, "run_now")}
-                    className="t-fast inline-flex h-8 items-center gap-1.5 rounded-full bg-fill-2 px-3 text-caption font-semibold text-accent-text hover:bg-accent-muted disabled:cursor-not-allowed disabled:bg-disabled-bg disabled:text-disabled"
-                  >
-                    <Play size={10} fill="currentColor" aria-hidden />
-                    Run
-                  </button>
-                  {!spent(item) && (
-                    <button
-                      type="button"
-                      disabled={!!busy}
-                      onClick={() => void quickAct(item, isEnabled ? "pause" : "resume")}
-                      className="t-fast inline-flex h-8 items-center rounded-full bg-fill-1 px-3 text-caption font-medium text-ink-2 hover:bg-fill-2 hover:text-ink disabled:cursor-not-allowed disabled:bg-disabled-bg disabled:text-disabled"
-                    >
-                      {isEnabled ? "Pause" : "Resume"}
-                    </button>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </Rows>
+        <AutomationRows
+          items={active}
+          confirmingId={confirmingId}
+          onAskConfirm={setConfirmingId}
+          onCancelConfirm={() => setConfirmingId(null)}
+          onRemove={removeAutomation}
+        />
       ) : (
         <Empty title="No automations yet">
           Ask Nori in Chat to set up recurring briefs, monitors, or scheduled checks.

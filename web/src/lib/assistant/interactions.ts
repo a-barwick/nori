@@ -24,6 +24,26 @@ export function buildApprovalResponse(decision: ApprovalDecision, actionDigest: 
   }
 }
 
+export function buildReviewApprovalResponse(
+  action: "send" | "skip",
+  actionDigest: string,
+  originalBody: string,
+  currentBody: string,
+): ApprovalResponseValue {
+  if (action === "skip") {
+    return { kind: "decline", action_digest: actionDigest };
+  }
+  const modified = currentBody !== originalBody;
+  if (modified) {
+    return {
+      kind: "approve",
+      action_digest: actionDigest,
+      edited_fields: { body: currentBody },
+    };
+  }
+  return { kind: "approve", action_digest: actionDigest };
+}
+
 export function invalidationPrefixesForResponse(value: InteractionResponse["value"]): string[] {
   const prefixes = ["/interactions", "/work", "/assistant/summary", "/inbox"];
   if (value.kind === "approve" && value.remember_rule) {
