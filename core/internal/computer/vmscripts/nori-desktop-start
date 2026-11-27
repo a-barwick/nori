@@ -30,6 +30,10 @@ is_listening() {
   fi
 }
 
+is_rfb_ready() {
+  python3 -c "import socket,sys; s=socket.socket(); s.settimeout(1.5); s.connect(('127.0.0.1', 5900)); banner=s.recv(12); s.close(); sys.exit(0 if banner.startswith(b'RFB ') else 1)" >/dev/null 2>&1
+}
+
 # Publish the token atomically so concurrent desktop starts see the same value.
 if [[ ! -f "${TOKEN_FILE}" ]]; then
   token_tmp="$(mktemp "${TOKEN_FILE}.XXXXXX")"
@@ -40,6 +44,9 @@ fi
 
 # 1. Xvfb
 if ! pgrep -f "Xvfb :99" >/dev/null 2>&1; then
+  # Any x11vnc/fluxbox left over from a previous Xvfb instance is wedged on a dead display.
+  pkill -9 -x x11vnc >/dev/null 2>&1 || true
+  pkill -x fluxbox >/dev/null 2>&1 || true
   rm -f /tmp/.X99-lock
   nohup Xvfb :99 -screen 0 "${WIDTH}x${HEIGHT}x24" -ac +extension RANDR >"${LOG_DIR}/xvfb.log" 2>&1 </dev/null &
   for _ in $(seq 1 30); do
@@ -54,12 +61,14 @@ if ! pgrep -x fluxbox >/dev/null 2>&1; then
   sleep 0.2
 fi
 
-# 3. x11vnc bound strictly to loopback (127.0.0.1:5900)
-if ! is_listening 5900; then
+# 3. x11vnc bound strictly to loopback (127.0.0.1:5900); probe actual RFB banner so wedged processes are replaced
+if ! is_rfb_ready; then
+  pkill -9 -x x11vnc >/dev/null 2>&1 || true
+  sleep 0.1
   nohup x11vnc -display :99 -localhost -rfbport 5900 -nopw -forever -shared -noxdamage -wait 10 -defer 10 \
     >"${LOG_DIR}/x11vnc.log" 2>&1 </dev/null &
   for _ in $(seq 1 30); do
-    if is_listening 5900; then break; fi
+    if is_rfb_ready; then break; fi
     sleep 0.1
   done
 fi
@@ -162,11 +171,11 @@ if [[ -x /home/nori/.nori/bin/nori-watchdog ]] && ! pgrep -f "nori-watchdog" >/d
   nohup /home/nori/.nori/bin/nori-watchdog >"${LOG_DIR}/watchdog.log" 2>&1 </dev/null &
 fi
 
-# 7. Verify all required services are actually listening before reporting ok.
-if [[ ! -S /tmp/.X11-unix/X99 ]] || ! is_listening 5900 || ! is_listening "${WS_INTERNAL_PORT}" || ! is_listening "${DESKTOP_PORT}" || ! is_listening "${CDP_PORT}"; then
+# 7. Verify all required services are actually listening and x11vnc answers RFB before reporting ok.
+if [[ ! -S /tmp/.X11-unix/X99 ]] || ! is_rfb_ready || ! is_listening "${WS_INTERNAL_PORT}" || ! is_listening "${DESKTOP_PORT}" || ! is_listening "${CDP_PORT}"; then
   printf '{"ok":false,"error":"desktop services failed readiness check","xvfb":%s,"vnc":%s,"ws":%s,"gate":%s,"cdp":%s}\n' \
     "$([[ -S /tmp/.X11-unix/X99 ]] && echo true || echo false)" \
-    "$(is_listening 5900 && echo true || echo false)" \
+    "$(is_rfb_ready && echo true || echo false)" \
     "$(is_listening "${WS_INTERNAL_PORT}" && echo true || echo false)" \
     "$(is_listening "${DESKTOP_PORT}" && echo true || echo false)" \
     "$(is_listening "${CDP_PORT}" && echo true || echo false)" >&2
