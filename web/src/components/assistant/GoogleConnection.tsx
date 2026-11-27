@@ -5,12 +5,12 @@ import { useSearchParams } from "next/navigation";
 import { ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { APIError, mutate, newRequestID, startGoogleDrivePicker } from "@/lib/assistant/api";
+import { safeAuthorizeURL, startSignIn } from "@/lib/assistant/signIn";
 import { useAction, useResource, useResourceInvalidation } from "@/lib/assistant/useResource";
 import { useStripSearchParams } from "@/lib/browser";
 import type { Connection, Integration, Resource } from "@/lib/contracts/assistant";
-import { startSignIn, connectionState } from "./AppsScreen";
+import { connectionState } from "./AppsScreen";
 import { AppBrandIcon } from "./BrandIcons";
-import { safeAuthorizeURL } from "./InteractionCard";
 import { Confirm, Failure, Loading, Notice, Pill, Row, Rows, Section, Switch } from "./ui";
 
 type List<T> = { items: T[] };

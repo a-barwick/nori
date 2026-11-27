@@ -33,12 +33,13 @@ type Order struct {
 	Direction Direction
 }
 type QuerySpec struct {
-	Collection string
-	Filters    []Filter
-	Orders     []Order
-	Fields     []string
-	Count      int
-	After      *Record
+	Collection  string
+	Collections []string
+	Filters     []Filter
+	Orders      []Order
+	Fields      []string
+	Count       int
+	After       *Record
 }
 type Record struct {
 	Path   string

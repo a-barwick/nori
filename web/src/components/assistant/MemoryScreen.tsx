@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
@@ -41,14 +41,21 @@ type List<T> = { items: T[] };
 export function MemoryScreen() {
   const { has } = useAssistantConfig();
   const params = useSearchParams();
-  const router = useRouter();
   const enabled = has("memory");
 
   const initialQuery = params.get("q") ?? "";
-  const selectedTopicParam = params.get("topic") ?? undefined;
-  const selectedId = params.get("id") ?? undefined;
-  const selectedDate = params.get("date") ?? undefined;
-  const selectedEntry = params.get("entry") ?? undefined;
+  const urlSubViewKey = `${params.get("topic") ?? ""}\0${params.get("id") ?? ""}\0${params.get("date") ?? ""}\0${params.get("entry") ?? ""}`;
+  const [optimisticSubView, setOptimisticSubView] = useState<{
+    from: string;
+    topic?: string;
+    closed?: boolean;
+  } | null>(null);
+  const activeOverride = optimisticSubView?.from === urlSubViewKey ? optimisticSubView : null;
+
+  const selectedTopicParam = activeOverride ? activeOverride.topic : (params.get("topic") ?? undefined);
+  const selectedId = activeOverride?.closed ? undefined : (params.get("id") ?? undefined);
+  const selectedDate = activeOverride?.closed ? undefined : (params.get("date") ?? undefined);
+  const selectedEntry = activeOverride?.closed ? undefined : (params.get("entry") ?? undefined);
 
   const [query, setQuery] = useState(initialQuery);
   const [settledQuery, setSettledQuery] = useState(initialQuery.trim());
@@ -132,12 +139,14 @@ export function MemoryScreen() {
 
   const openTopic = (topic: string) => {
     setConfirmId(null);
-    router.replace(`/memory?topic=${encodeURIComponent(topic)}`, { scroll: false });
+    setOptimisticSubView({ from: urlSubViewKey, topic });
+    window.history.replaceState(null, "", `/memory?topic=${encodeURIComponent(topic)}`);
   };
 
   const closeSubView = () => {
     setConfirmId(null);
-    router.replace("/memory", { scroll: false });
+    setOptimisticSubView({ from: urlSubViewKey, closed: true });
+    window.history.replaceState(null, "", "/memory");
   };
 
   if (selectedDate && !query.trim()) {

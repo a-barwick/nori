@@ -82,6 +82,37 @@ func (d *Database) RecentRuns(ctx context.Context, limit int) ([]state.Run, erro
 	return documents[state.Run](d.runs().OrderBy("started_at", docstore.Desc).Limit(limit).Documents(ctx))
 }
 
+func (d *Database) GetRuns(ctx context.Context, ids []string) (map[string]state.Run, error) {
+	out := make(map[string]state.Run, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	seen := make(map[string]struct{}, len(ids))
+	unique := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	const chunkSize = 200
+	for start := 0; start < len(unique); start += chunkSize {
+		end := min(start+chunkSize, len(unique))
+		runs, err := documents[state.Run](d.runs().Where(docstore.DocumentID, "in", unique[start:end]).Documents(ctx))
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range runs {
+			out[r.ID] = r
+		}
+	}
+	return out, nil
+}
+
 func (d *Database) MarkDelivered(ctx context.Context, ids []string) error {
 	return d.logged(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		results := []*state.Result{}

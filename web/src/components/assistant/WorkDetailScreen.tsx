@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -35,10 +36,14 @@ import type { LibraryItem, OperationProjection, RunEvent, WorkItem } from "@/lib
 import { MAX_MESSAGE_BYTES, messageTooLong } from "@/lib/submission";
 import { cn } from "@/lib/utils";
 import { InteractionCard } from "./InteractionCard";
-import { ComputerDesktopDrawer } from "./ComputerDesktopDrawer";
 import { groupOperations, operationOutcomePill, shownOperations, stepName, type OperationRowItem } from "./WorkOperations";
 import { statusPill } from "./WorkScreen";
 import { Empty, Failure, Loading, Notice, Pill, Row, Rows, Screen, Section } from "./ui";
+
+const ComputerDesktopDrawer = dynamic(
+  () => import("./ComputerDesktopDrawer").then((mod) => mod.ComputerDesktopDrawer),
+  { ssr: false },
+);
 
 const SPENDING_LIMIT = /spending limit/i;
 const MAX_TRANSIENT_RETRIES = 3;
@@ -1051,7 +1056,7 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
       <StepsDisclosure steps={steps} running={running} />
 
       <PlainDetailsSection item={item} continuedBy={continuedBy} />
-      {has("computer") && (
+      {has("computer") && desktopOpen && (
         <ComputerDesktopDrawer
           open={desktopOpen}
           onOpenChange={setDesktopOpen}

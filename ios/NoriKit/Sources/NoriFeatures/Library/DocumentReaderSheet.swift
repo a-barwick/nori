@@ -583,6 +583,14 @@ public struct DocumentReaderSheet: View {
         }
     }
 
+    private struct ProcessedDocumentPayload: @unchecked Sendable {
+        let decodedImage: DocumentPlatformImage?
+        let pdfPageCount: Int?
+        let pdfThumbnail: DocumentPlatformImage?
+        let tempDir: URL?
+        let tempFileURL: URL?
+    }
+
     private func loadDocument() async {
         if loadedItemID != activeItemID {
             loadedItemID = activeItemID
@@ -599,14 +607,30 @@ public struct DocumentReaderSheet: View {
             hasAttemptedLoad = false
         }
 
-        isLoadingItem = (item == nil)
+        let initialItem = self.item
+        let shouldPreloadFile = initialItem != nil && !hasStructuredData
+        isLoadingItem = (initialItem == nil)
+        isLoadingFile = shouldPreloadFile
         fileLoadError = nil
 
-        async let fetchedTask = store.loadLibraryItem(id: activeItemID)
-        async let versionsTask = store.loadLibraryVersions(itemID: activeItemID)
+        let targetItemID = activeItemID
+        async let fetchedTask = store.loadLibraryItem(id: targetItemID)
+        async let versionsTask = store.loadLibraryVersions(itemID: targetItemID)
+        async let preloadedFileTask: Result<LibraryFilePayload, Error>? = {
+            guard shouldPreloadFile else { return nil }
+            do {
+                return .success(try await store.loadLibraryItemFile(id: targetItemID, format: nil))
+            } catch {
+                return .failure(error)
+            }
+        }()
+
         let fetched = await fetchedTask
         let loadedVersions = await versionsTask
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled else {
+            isLoadingFile = false
+            return
+        }
 
         if let fetched {
             hydratedItem = fetched
@@ -617,22 +641,54 @@ public struct DocumentReaderSheet: View {
         hasAttemptedLoad = true
         isLoadingItem = false
 
-        guard let resolvedItem = self.item else { return }
+        guard let resolvedItem = self.item else {
+            isLoadingFile = false
+            return
+        }
         if DocumentStructuredDataCard.canRender(dataKind: resolvedItem.dataKind, data: resolvedItem.data) {
+            isLoadingFile = false
             return
         }
 
         isLoadingFile = true
         defer { isLoadingFile = false }
 
-        do {
-            let payload = try await store.loadLibraryItemFile(id: resolvedItem.id, format: nil)
-            guard !Task.isCancelled else { return }
+        let fileResult: Result<LibraryFilePayload, Error>
+        if let preloaded = await preloadedFileTask {
+            fileResult = preloaded
+        } else {
+            do {
+                fileResult = .success(try await store.loadLibraryItemFile(id: resolvedItem.id, format: nil))
+            } catch {
+                fileResult = .failure(error)
+            }
+        }
+        guard !Task.isCancelled else { return }
+
+        switch fileResult {
+        case .success(let payload):
             loadedPayload = payload
             fileLoadError = nil
-            processLoadedPayload(payload, for: resolvedItem)
-        } catch {
-            guard !Task.isCancelled else { return }
+            let processed = await Task.detached(priority: .userInitiated) {
+                Self.processLoadedPayloadOffMain(payload, for: resolvedItem)
+            }.value
+            guard !Task.isCancelled else {
+                if let tempDir = processed.tempDir {
+                    try? FileManager.default.removeItem(at: tempDir)
+                }
+                return
+            }
+            decodedImage = processed.decodedImage
+            pdfPageCount = processed.pdfPageCount
+            pdfThumbnail = processed.pdfThumbnail
+            if let tempDir = processed.tempDir, let fileURL = processed.tempFileURL {
+                tempFileCleanup.replace(with: tempDir)
+                tempFileURL = fileURL
+            } else {
+                tempFileCleanup.clearAll()
+                tempFileURL = nil
+            }
+        case .failure(let error):
             fileLoadError = error.localizedDescription
         }
     }
@@ -667,50 +723,67 @@ public struct DocumentReaderSheet: View {
         }
     }
 
-    private func processLoadedPayload(_ payload: LibraryFilePayload, for item: NoriCore.LibraryItem) {
+    private nonisolated static func processLoadedPayloadOffMain(
+        _ payload: LibraryFilePayload,
+        for item: NoriCore.LibraryItem
+    ) -> ProcessedDocumentPayload {
         let mime = DocumentFileUtilities.normalizedMediaType(payload.mediaType)
         let effective = (!mime.isEmpty && mime != "application/octet-stream")
             ? mime
             : DocumentFileUtilities.normalizedMediaType(item.mediaType)
 
-        decodedImage = nil
-        pdfPageCount = nil
-        pdfThumbnail = nil
+        var image: DocumentPlatformImage?
+        var pageCount: Int?
+        var thumbnail: DocumentPlatformImage?
 
         if effective.hasPrefix("image/") || item.kind == .screenshot {
-            decodedImage = DocumentPlatformImage(data: payload.data)
+            image = DocumentPlatformImage(data: payload.data)
         }
 
         #if canImport(PDFKit)
         if effective == "application/pdf" || (payload.filename ?? item.name ?? item.title).lowercased().hasSuffix(".pdf") {
             if let pdf = PDFDocument(data: payload.data) {
-                pdfPageCount = pdf.pageCount
-                pdfThumbnail = pdf.page(at: 0)?.thumbnail(of: CGSize(width: 720, height: 960), for: .mediaBox)
+                pageCount = pdf.pageCount
+                thumbnail = pdf.page(at: 0)?.thumbnail(of: CGSize(width: 720, height: 960), for: .mediaBox)
             }
         }
         #endif
 
-        let needsTempFile = decodedImage != nil
+        let needsTempFile = image != nil
             || effective == "application/pdf"
             || effective.hasPrefix("image/")
             || item.kind == .file
             || item.kind == .screenshot
             || !DocumentFileUtilities.isTextMediaType(effective)
 
+        var tempDir: URL?
+        var fileURL: URL?
         if needsTempFile, !payload.data.isEmpty {
-            writeTempFile(data: payload.data, payloadFilename: payload.filename, mediaType: effective, item: item)
-        } else {
-            tempFileCleanup.clearAll()
-            tempFileURL = nil
+            let written = writeTempFileOffMain(
+                data: payload.data,
+                payloadFilename: payload.filename,
+                mediaType: effective,
+                item: item
+            )
+            tempDir = written?.dir
+            fileURL = written?.fileURL
         }
+
+        return ProcessedDocumentPayload(
+            decodedImage: image,
+            pdfPageCount: pageCount,
+            pdfThumbnail: thumbnail,
+            tempDir: tempDir,
+            tempFileURL: fileURL
+        )
     }
 
-    private func writeTempFile(
+    private nonisolated static func writeTempFileOffMain(
         data: Data,
         payloadFilename: String?,
         mediaType: String,
         item: NoriCore.LibraryItem
-    ) {
+    ) -> (dir: URL, fileURL: URL)? {
         let filename = DocumentFileUtilities.resolvedFilename(
             payloadFilename: payloadFilename,
             itemName: item.name,
@@ -723,10 +796,9 @@ public struct DocumentReaderSheet: View {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let fileURL = dir.appendingPathComponent(filename)
             try data.write(to: fileURL, options: .atomic)
-            tempFileCleanup.replace(with: dir)
-            tempFileURL = fileURL
+            return (dir: dir, fileURL: fileURL)
         } catch {
-            tempFileURL = nil
+            return nil
         }
     }
 

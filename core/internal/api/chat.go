@@ -164,10 +164,19 @@ func (s *server) assistantConversationRetry(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *server) assistantConversationHistory(w http.ResponseWriter, r *http.Request) {
-	view, err := s.assistantSnapshot(r.Context(), r.URL.Query().Get("before"))
+	before := r.URL.Query().Get("before")
+	if len(before) > 256 || strings.Contains(before, "/") {
+		writeError(w, state.ErrCommandInvalid)
+		return
+	}
+	messages, next, err := s.Tasks.Store.ConversationMessages(r.Context(), before)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"messages": view.Messages, "nextCursor": view.NextCursor})
+	views := make([]messageView, 0, len(messages))
+	for _, m := range messages {
+		views = append(views, assistantMessage(m))
+	}
+	writeJSON(w, 200, map[string]any{"messages": views, "nextCursor": next})
 }

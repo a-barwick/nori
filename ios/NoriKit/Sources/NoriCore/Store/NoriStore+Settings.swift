@@ -1,7 +1,8 @@
 import Foundation
 
 extension NoriStore {
-    public func refreshPermissionsAndPreferences() async {
+    public func refreshPermissionsAndPreferences(force: Bool = true) async {
+        guard !isRefreshFresh(.permissionsAndPreferences, force: force) else { return }
         let generation = sessionGeneration
         let preferencesReadID = nextPreferencesRead()
         let activeTransport = transport
@@ -24,6 +25,9 @@ extension NoriStore {
         }
         if case .success(let prefs) = prefsRes {
             applyPreferences(prefs, readID: preferencesReadID)
+        }
+        if case .success = permsRes, case .success = prefsRes {
+            markRefreshed(.permissionsAndPreferences)
         }
     }
 
@@ -116,10 +120,13 @@ extension NoriStore {
         }
     }
 
-    public func refreshModelKeys() async {
+    public func refreshModelKeys(force: Bool = true) async {
+        guard !isRefreshFresh(.modelKeys, force: force) else { return }
         let generation = sessionGeneration
         do {
             try await refreshModelKeysThrowing()
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
+            markRefreshed(.modelKeys)
             if modelSettings == nil && modelKeys.byokRequired && !hasConfiguredModelKey {
                 try? await refreshModelSettings()
             }

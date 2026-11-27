@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import * as Sentry from "@sentry/nextjs";
 import { fetchSnapshot, getJSON, postRuntimeOperation } from "@/lib/assistant/api";
 import { browserResetChanged, syncBrowserReset } from "@/lib/assistant/resetState";
-import { useResourceInvalidation } from "@/lib/assistant/useResource";
+import { ResourceCacheContext, useResourceInvalidation } from "@/lib/assistant/useResource";
 import type { Preferences } from "@/lib/contracts/assistant";
 import { hasSubmission, messageTooLong } from "@/lib/submission";
 import type { DraftFile, PendingTaskCommand, Session, TaskCommand } from "@/lib/types";
@@ -15,6 +15,7 @@ import {
   DRAFT_KEY,
   MAX_PENDING,
   mergeById,
+  mergeMessages,
   mergeReadPosition,
   mergeRuns,
   NO_RUNTIME_ERROR,
@@ -41,6 +42,7 @@ function readSavedDraft(scope: string): string {
 }
 
 export function useRuntime(localMode = false, scope = "local", refreshCapabilities?: () => void) {
+  const cache = useContext(ResourceCacheContext);
   const invalidate = useResourceInvalidation();
   const [session, setSession] = useState<Session>();
   const hydrated = useSyncExternalStore(subscribeHydration, () => true, () => false);
@@ -113,9 +115,7 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
         ? data
         : {
             ...data,
-            messages: mergeById(current?.messages ?? [], data.messages).sort(
-              (a, b) => Date.parse(a.created_at) - Date.parse(b.created_at),
-            ),
+            messages: mergeMessages(current?.messages ?? [], data.messages),
             runs: mergeRuns(current?.runs ?? [], data.runs),
             traces: mergeById(current?.traces ?? [], data.traces ?? []),
             read_position: mergeReadPosition(current?.read_position, data.read_position),
@@ -230,9 +230,14 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
   }, [clearStreamError]);
 
   const refreshAndRetry = useCallback(
-    async (signal: AbortSignal) => {
-      const preferences = await getJSON<Preferences>("/preferences", signal);
+    async (signal: AbortSignal, { reuseCachedPreferences = false }: { reuseCachedPreferences?: boolean } = {}) => {
+      const cachedPrefs =
+        reuseCachedPreferences && cache.isFresh("/preferences")
+          ? (cache.snapshot("/preferences")?.data as Preferences | undefined)
+          : undefined;
+      const preferences = cachedPrefs ?? (await getJSON<Preferences>("/preferences", signal));
       if (signal.aborted) return;
+      if (!cachedPrefs) cache.seed("/preferences", preferences, false);
       if (browserResetChanged(scope, preferences.data_reset_at)) {
         for (const request of controllers.current) request.abort();
         syncBrowserReset(scope, preferences.data_reset_at);
@@ -249,7 +254,7 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
         if (!item.retryManually && !item.rejected && !commandApplied(item, data.runs)) void submitTaskCommand(item);
       }
     },
-    [scope, refresh, submit, submitTaskCommand, pendingRef, taskCommandsRef],
+    [cache, scope, refresh, submit, submitTaskCommand, pendingRef, taskCommandsRef],
   );
 
   useEffect(() => {
@@ -270,7 +275,7 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
     const currentTimings = replyTimings.current;
     for (const item of [...restoredTimings(scope), ...pendingRef.current]) beginTiming(item);
     const controller = new AbortController();
-    void refreshAndRetry(controller.signal)
+    void refreshAndRetry(controller.signal, { reuseCachedPreferences: true })
       .catch((err) => {
         if (!controller.signal.aborted) setErrorState(toRuntimeError(err, "Unable to reach Nori."));
       })
@@ -339,9 +344,7 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
           current
             ? {
                 ...current,
-                messages: mergeById(data.messages, current.messages).sort(
-                  (a, b) => Date.parse(a.created_at) - Date.parse(b.created_at),
-                ),
+                messages: mergeMessages(data.messages, current.messages),
                 runs: mergeRuns(data.runs, current.runs),
                 traces: mergeById(data.traces ?? [], current.traces ?? []),
                 next_cursor: data.next_cursor,
@@ -517,6 +520,14 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
     ],
   );
 
+  const draftState = useMemo(
+    () => ({
+      draft,
+      draftFiles,
+    }),
+    [draft, draftFiles],
+  );
+
   const live = useMemo(
     () => ({
       draft,
@@ -526,8 +537,10 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
     [draft, draftFiles, streamingDelta],
   );
 
-  return useMemo(() => ({ ...core, ...live, core, live }), [core, live]);
+  return useMemo(() => ({ ...core, ...live, core, live, draftState }), [core, live, draftState]);
 }
 
 export type RuntimeCore = ReturnType<typeof useRuntime>["core"];
+export type RuntimeDraft = ReturnType<typeof useRuntime>["draftState"];
 export type RuntimeLive = ReturnType<typeof useRuntime>["live"];
+export type StreamingDelta = ReturnType<typeof useRuntime>["streamingDelta"];

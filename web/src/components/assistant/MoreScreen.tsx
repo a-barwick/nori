@@ -4,13 +4,12 @@ import Link from "next/link";
 import { BarChart3, Brain, LayoutGrid, Monitor, Moon, ShieldCheck, SlidersHorizontal, Sparkles, Sun, UserCircle } from "lucide-react";
 import { useAppearance, type NoriAppearance } from "@/lib/appearance";
 import type { ModelKeysResponse, ModelSettings } from "@/lib/assistant/api";
+import { computerStatusPill } from "@/lib/assistant/computerStatus";
 import { useAssistant } from "@/lib/assistant/context";
+import { hasSelectedHomeChat, needsByokSetup } from "@/lib/assistant/modelSetup";
 import { useSummary } from "@/lib/assistant/sources";
 import { useResource } from "@/lib/assistant/useResource";
 import type { ComputerStatus } from "@/lib/contracts/assistant";
-import { needsByokSetup } from "./ApiKeysSettings";
-import { computerStatusPill } from "./ComputerScreen";
-import { hasSelectedHomeChat } from "./ModelsSettings";
 import { Notice, Pill, Row, Rows, Screen, Section } from "./ui";
 
 const APPEARANCE_ICON: Record<NoriAppearance, typeof Monitor> = {

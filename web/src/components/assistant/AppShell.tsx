@@ -1,17 +1,18 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { MotionConfig } from "motion/react";
+import { Suspense, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Tooltip } from "radix-ui";
 import { ListChecks, LoaderCircle, MoreHorizontal } from "lucide-react";
 import { NoriTabIcon } from "@/components/mark/NoriMark";
 import { AppFrame } from "@/components/shell/AppFrame";
 import { Button } from "@/components/ui/primitives";
 import { useAppearance } from "@/lib/appearance";
-import { AssistantProvider, useAssistant } from "@/lib/assistant/context";
+import { AssistantProvider, ResourceCacheProvider, useAssistant } from "@/lib/assistant/context";
 import { ACCOUNT_DELETED_REDIRECT, APIError, deleteAccount, errorText, getJSON, resetUserData } from "@/lib/assistant/api";
+import { shouldShowOnboarding } from "@/lib/assistant/onboarding";
 import { useHydrated } from "@/lib/hooks";
 import {
   acknowledgeResetCompletion,
@@ -29,13 +30,17 @@ import {
 } from "@/lib/assistant/resetState";
 import { isActionableInteraction } from "@/lib/assistant/interactions";
 import { usePendingInteractions, useSummary } from "@/lib/assistant/sources";
-import { useResource } from "@/lib/assistant/useResource";
+import { ResourceCacheContext, useResource } from "@/lib/assistant/useResource";
 import { SIGNED_OUT_EVENT_KEY } from "@/lib/runtime/session";
 import type { Preferences } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
-import { OnboardingFlow, shouldShowOnboarding } from "./OnboardingFlow";
 import { SignOutForm } from "./SignOutForm";
 import { Badge, Failure, inputClass, Loading, Notice } from "./ui";
+
+const OnboardingFlow = dynamic(
+  () => import("./OnboardingFlow").then((mod) => mod.OnboardingFlow),
+  { ssr: false },
+);
 
 type NavItem = {
   href: string;
@@ -52,7 +57,7 @@ export function AppShell({ localMode, scope, children }: { localMode: boolean; s
   useAppearance();
   return (
     <Tooltip.Provider delayDuration={500}>
-      <MotionConfig reducedMotion="user">
+      <ResourceCacheProvider scope={scope}>
         <AccountStateGate scope={scope} localMode={localMode}>
           <AssistantProvider localMode={localMode} scope={scope}>
             <Suspense fallback={null}>
@@ -60,7 +65,7 @@ export function AppShell({ localMode, scope, children }: { localMode: boolean; s
             </Suspense>
           </AssistantProvider>
         </AccountStateGate>
-      </MotionConfig>
+      </ResourceCacheProvider>
     </Tooltip.Provider>
   );
 }
@@ -69,6 +74,7 @@ const ONBOARDING_STORAGE_PREFIX = "nori.onboarding.done:";
 type AccountGateState = { status: "checking" | "ready" | "resetting" | "pending" | "delete-pending" | "complete" | "reset-error" | "error"; error?: Error };
 
 function AccountStateGate({ scope, localMode, children }: { scope: string; localMode: boolean; children: ReactNode }) {
+  const cache = useContext(ResourceCacheContext);
   const [state, setState] = useState<AccountGateState>({ status: "checking" });
   const [finishing, setFinishing] = useState(false);
   const [resumeError, setResumeError] = useState("");
@@ -83,6 +89,7 @@ function AccountStateGate({ scope, localMode, children }: { scope: string; local
     lastCheck.current = options;
     void getJSON<Preferences>("/preferences", controller.signal).then((preferences) => {
       if (controller.signal.aborted) return;
+      cache.seed("/preferences", preferences, false);
       syncBrowserReset(scope, preferences.data_reset_at);
       if (preferences.data_reset_pending) {
         setState({ status: "pending" });
@@ -104,7 +111,7 @@ function AccountStateGate({ scope, localMode, children }: { scope: string; local
       }
       setState({ status: "error", error });
     });
-  }, [scope]);
+  }, [cache, scope]);
 
   const beginCheck = useCallback((options: ResetCheckOptions = {}) => {
     setState({ status: "checking" });

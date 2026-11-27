@@ -1,7 +1,8 @@
 import Foundation
 
 extension NoriStore {
-    public func refreshApps() async {
+    public func refreshApps(force: Bool = true) async {
+        guard !isRefreshFresh(.apps, force: force) else { return }
         let generation = sessionGeneration
         let activeTransport = transport
         async let serversResult: Result<[MCPServer], Error> = {
@@ -55,6 +56,9 @@ extension NoriStore {
         }
         if assistantSummary != nil {
             assistantSummary?.appsAttention = computedAppsAttentionCount
+        }
+        if case .success = serversRes, case .success = connsRes {
+            markRefreshed(.apps)
         }
     }
 
@@ -410,12 +414,14 @@ extension NoriStore {
 
     // MARK: - Library
 
-    public func refreshLibrary() async {
+    public func refreshLibrary(force: Bool = true) async {
+        guard !isRefreshFresh(.library, force: force) else { return }
         let generation = sessionGeneration
         do {
             let latest = try await transport.fetchLibrary()
             guard generation == sessionGeneration else { return }
             libraryItems = latest
+            markRefreshed(.library)
         } catch {
             guard generation == sessionGeneration else { return }
             _ = await handleOperationError(error, showToast: false)

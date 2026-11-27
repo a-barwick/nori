@@ -78,6 +78,17 @@ var (
 )
 
 func (b *backend) readCommitted(ctx context.Context, readOnly bool, fn func(q executor) error) error {
+	return b.readCommittedRaw(ctx, readOnly, func(tx pgx.Tx) error {
+		if ownerID := users.ID(ctx); ownerID != "" {
+			if _, err := tx.Exec(ctx, "SELECT set_config('app.current_owner', $1, true)", ownerID); err != nil {
+				return err
+			}
+		}
+		return fn(tx)
+	})
+}
+
+func (b *backend) readCommittedRaw(ctx context.Context, readOnly bool, fn func(tx pgx.Tx) error) error {
 	opts := pgx.TxOptions{IsoLevel: pgx.ReadCommitted}
 	if readOnly {
 		opts.AccessMode = pgx.ReadOnly
@@ -96,17 +107,12 @@ func (b *backend) readCommitted(ctx context.Context, readOnly bool, fn func(q ex
 	return err
 }
 
-func (b *backend) runReadCommittedAttempt(ctx context.Context, opts pgx.TxOptions, fn func(q executor) error) error {
+func (b *backend) runReadCommittedAttempt(ctx context.Context, opts pgx.TxOptions, fn func(tx pgx.Tx) error) error {
 	tx, err := b.pool.BeginTx(ctx, opts)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(context.WithoutCancel(ctx))
-	if ownerID := users.ID(ctx); ownerID != "" {
-		if _, err := tx.Exec(ctx, "SELECT set_config('app.current_owner', $1, true)", ownerID); err != nil {
-			return err
-		}
-	}
 	if err := fn(tx); err != nil {
 		return err
 	}

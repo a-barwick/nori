@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useState } from "react";
 import { Bookmark, Monitor, Moon, Play, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
@@ -11,11 +12,18 @@ import {
   sleepComputer,
   wakeComputer,
 } from "@/lib/assistant/computer";
+import { computerStatusPill } from "@/lib/assistant/computerStatus";
 import { relative } from "@/lib/assistant/format";
 import { useAction, useResource, useResourceInvalidation } from "@/lib/assistant/useResource";
 import type { ComputerCheckpoint, ComputerStatus } from "@/lib/contracts/assistant";
-import { ComputerDesktopDrawer } from "./ComputerDesktopDrawer";
 import { Loading, Notice, Pill, Row, Rows, Screen, Section } from "./ui";
+
+export { computerStatusPill };
+
+const ComputerDesktopDrawer = dynamic(
+  () => import("./ComputerDesktopDrawer").then((mod) => mod.ComputerDesktopDrawer),
+  { ssr: false },
+);
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 MB";
@@ -23,25 +31,6 @@ function formatBytes(bytes: number): string {
   if (gb >= 1) return `${gb.toFixed(1)} GB`;
   const mb = bytes / (1024 * 1024);
   return `${Math.max(1, Math.round(mb))} MB`;
-}
-
-export function computerStatusPill(status: ComputerStatus["status"]): { tone: "ok" | "working" | "neutral" | "danger" | "warning"; label: string } {
-  switch (status) {
-    case "ready":
-      return { tone: "ok", label: "Active" };
-    case "sleeping":
-      return { tone: "neutral", label: "Asleep" };
-    case "provisioning":
-    case "resetting":
-      return { tone: "working", label: status === "provisioning" ? "Starting" : "Resetting" };
-    case "deleting":
-    case "deleted":
-      return { tone: "neutral", label: "Removing" };
-    case "error":
-      return { tone: "danger", label: "Needs attention" };
-    default:
-      return { tone: "neutral", label: "Ready to start" };
-  }
 }
 
 export function ComputerScreen() {
@@ -282,11 +271,13 @@ export function ComputerScreen() {
             </div>
           </Section>
 
-          <ComputerDesktopDrawer
-            open={drawerOpen}
-            onOpenChange={setDrawerOpen}
-            initialMode="control"
-          />
+          {drawerOpen && (
+            <ComputerDesktopDrawer
+              open={drawerOpen}
+              onOpenChange={setDrawerOpen}
+              initialMode="control"
+            />
+          )}
         </div>
       ) : null}
     </Screen>

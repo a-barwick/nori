@@ -295,10 +295,10 @@ public struct WorkView: View {
         let isAllClear = actionable.isEmpty && rows.isEmpty
 
         return ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: 0) {
                 if !actionable.isEmpty {
                     NoriSectionHeader(actionable.count > 1 ? "Action needed · \(actionable.count)" : "Action needed")
-                    VStack(spacing: 12) {
+                    LazyVStack(spacing: 12) {
                         ForEach(actionable) { interaction in
                             InteractionCardView(
                                 store: store,

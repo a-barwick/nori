@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"nori/internal/state"
 	"nori/internal/state/docstore"
@@ -186,6 +187,56 @@ func (d *Database) Operations(ctx context.Context, runID string) ([]state.Operat
 		operations = append(operations, op)
 	}
 	return operations, nil
+}
+
+func (d *Database) OperationsByRuns(ctx context.Context, runIDs []string) (map[string][]state.OperationRecord, error) {
+	out := make(map[string][]state.OperationRecord, len(runIDs))
+	if len(runIDs) == 0 {
+		return out, nil
+	}
+	seen := make(map[string]struct{}, len(runIDs))
+	collections := make([]string, 0, len(runIDs))
+	runsPrefix := d.runs().Path + "/"
+	for _, runID := range runIDs {
+		if _, ok := seen[runID]; ok {
+			continue
+		}
+		if !state.ValidEvidenceID(runID) {
+			return nil, errors.New("invalid task operation task")
+		}
+		seen[runID] = struct{}{}
+		collections = append(collections, d.runs().Doc(runID).Collection("operations").Path)
+	}
+	records, err := d.db.Backend.Query(ctx, docstore.QuerySpec{
+		Collections: collections,
+		Orders:      []docstore.Order{{Field: docstore.DocumentID, Direction: docstore.Asc}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, rec := range records {
+		rest, ok := strings.CutPrefix(rec.Path, runsPrefix)
+		if !ok {
+			continue
+		}
+		runID, tail, ok := strings.Cut(rest, "/operations/")
+		if !ok || runID == "" || tail == "" {
+			continue
+		}
+		if err = state.CheckOperationCapacity(int64(len(out[runID]))); err != nil {
+			return nil, err
+		}
+		var op state.OperationRecord
+		if err = docstore.Decode(rec.Fields, &op); err != nil {
+			return nil, err
+		}
+		recorded, _ := rec.Fields["evidence_recorded"].(bool)
+		if op, err = state.ReadOperation(op, recorded, tail); err != nil {
+			return nil, err
+		}
+		out[runID] = append(out[runID], op)
+	}
+	return out, nil
 }
 
 func (d *Database) PutCompletionCheck(ctx context.Context, runID string, check state.CompletionCheck) error {

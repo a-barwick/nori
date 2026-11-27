@@ -284,4 +284,240 @@ describe("useResource", () => {
     cache.invalidate(path);
     assert.equal(requests, 2);
   });
+
+  test("unmount then remount within stale window serves cached data immediately with 0 extra fetches", async () => {
+    let clock = 1_000;
+    cache = createResourceCache({ now: () => clock, staleTimeMs: 10_000, ttlMs: 300_000 });
+    const path = `/work/cache-hit-${crypto.randomUUID()}`;
+    let fetches = 0;
+    globalThis.fetch = asFetch(async () => {
+      fetches++;
+      return Response.json({ revision: fetches, value: `v${fetches}` });
+    });
+
+    const first = mountHook(() => useResource<{ revision: number; value: string }>(path, { poll: 0 }));
+    await settleTestDOM();
+    assert.equal(fetches, 1);
+    assert.deepEqual(first.current.data, { revision: 1, value: "v1" });
+    assert.equal(first.current.loading, false);
+    first.unmount();
+
+    clock += 5_000;
+    const second = mountHook(() => useResource<{ revision: number; value: string }>(path, { poll: 0 }));
+    try {
+      assert.equal(second.current.loading, false);
+      assert.equal(second.current.refreshing, false);
+      assert.deepEqual(second.current.data, { revision: 1, value: "v1" });
+      await settleTestDOM();
+      assert.equal(fetches, 1);
+    } finally {
+      second.unmount();
+    }
+  });
+
+  test("unmount then remount after staleTimeMs serves cached data immediately and revalidates in background; expires after ttlMs", async () => {
+    let clock = 1_000;
+    cache = createResourceCache({ now: () => clock, staleTimeMs: 10_000, ttlMs: 60_000 });
+    const path = `/work/cache-swr-${crypto.randomUUID()}`;
+    const secondResp = deferred<Response>();
+    let fetches = 0;
+    globalThis.fetch = asFetch(() => {
+      fetches++;
+      if (fetches === 1) return Promise.resolve(Response.json({ revision: 1, value: "v1" }));
+      if (fetches === 2) return secondResp.promise;
+      return Promise.resolve(Response.json({ revision: 3, value: "v3" }));
+    });
+
+    const first = mountHook(() => useResource<{ revision: number; value: string }>(path, { poll: 0 }));
+    await settleTestDOM();
+    assert.equal(fetches, 1);
+    first.unmount();
+
+    clock += 15_000;
+    const second = mountHook(() => useResource<{ revision: number; value: string }>(path, { poll: 0 }));
+    try {
+      assert.equal(second.current.loading, false);
+      assert.deepEqual(second.current.data, { revision: 1, value: "v1" });
+      assert.equal(fetches, 2);
+      assert.equal(second.current.refreshing, true);
+
+      await act(async () => {
+        secondResp.resolve(Response.json({ revision: 2, value: "v2" }));
+      });
+      assert.deepEqual(second.current.data, { revision: 2, value: "v2" });
+      assert.equal(second.current.refreshing, false);
+    } finally {
+      second.unmount();
+    }
+
+    clock += 61_000;
+    const third = mountHook(() => useResource<{ revision: number; value: string }>(path, { poll: 0 }));
+    try {
+      await settleTestDOM();
+      assert.equal(fetches, 3);
+      assert.deepEqual(third.current.data, { revision: 3, value: "v3" });
+    } finally {
+      third.unmount();
+    }
+  });
+
+  test("refreshVisible skips unmounted cached entries and only refetches active subscribers", async () => {
+    let clock = 1_000;
+    cache = createResourceCache({ now: () => clock, staleTimeMs: 10_000 });
+    const activePath = `/work/active-${crypto.randomUUID()}`;
+    const idlePath = `/work/idle-${crypto.randomUUID()}`;
+    const fetched: string[] = [];
+    globalThis.fetch = asFetch(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      fetched.push(url);
+      return Response.json({ revision: fetched.length });
+    });
+
+    const activeHook = mountHook(() => useResource<{ revision: number }>(activePath, { poll: 0 }));
+    const idleHook = mountHook(() => useResource<{ revision: number }>(idlePath, { poll: 0 }));
+    try {
+      await settleTestDOM();
+      assert.equal(fetched.length, 2);
+
+      idleHook.unmount();
+      clock += 2_000;
+
+      await act(async () => {
+        window.dispatchEvent(new window.Event("focus"));
+      });
+      await settleTestDOM();
+
+      assert.equal(fetched.filter((u) => u.endsWith(activePath)).length, 2);
+      assert.equal(fetched.filter((u) => u.endsWith(idlePath)).length, 1);
+    } finally {
+      activeHook.unmount();
+    }
+  });
+
+  test("invalidate marks unmounted cached entries stale without immediate fetch and revalidates lazily on remount", async () => {
+    let clock = 1_000;
+    cache = createResourceCache({ now: () => clock, staleTimeMs: 60_000 });
+    const path = `/work/lazy-inval-${crypto.randomUUID()}`;
+    let fetches = 0;
+    globalThis.fetch = asFetch(async () => {
+      fetches++;
+      return Response.json({ revision: fetches, value: `v${fetches}` });
+    });
+
+    const first = mountHook(() => useResource<{ revision: number; value: string }>(path, { poll: 0 }));
+    await settleTestDOM();
+    assert.equal(fetches, 1);
+    first.unmount();
+
+    cache.invalidate("/work/lazy-inval");
+    await settleTestDOM();
+    assert.equal(fetches, 1);
+
+    clock += 1_000;
+    const second = mountHook(() => useResource<{ revision: number; value: string }>(path, { poll: 0 }));
+    try {
+      assert.equal(second.current.loading, false);
+      assert.deepEqual(second.current.data, { revision: 1, value: "v1" });
+      await settleTestDOM();
+      assert.equal(fetches, 2);
+      assert.deepEqual(second.current.data, { revision: 2, value: "v2" });
+    } finally {
+      second.unmount();
+    }
+  });
+
+  test("LRU cap evicts oldest idle entries while retaining recently used ones", async () => {
+    const clock = 1_000;
+    cache = createResourceCache({ now: () => clock, maxEntries: 2, staleTimeMs: 60_000 });
+    const fetches: string[] = [];
+    globalThis.fetch = asFetch(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      fetches.push(url);
+      return Response.json({ revision: fetches.length, url });
+    });
+
+    const p1 = `/work/lru-1-${crypto.randomUUID()}`;
+    const p2 = `/work/lru-2-${crypto.randomUUID()}`;
+    const p3 = `/work/lru-3-${crypto.randomUUID()}`;
+
+    const h1 = mountHook(() => useResource<{ url: string }>(p1, { poll: 0 }));
+    await settleTestDOM();
+    h1.unmount();
+
+    const h2 = mountHook(() => useResource<{ url: string }>(p2, { poll: 0 }));
+    await settleTestDOM();
+    h2.unmount();
+
+    // Touch p1 so p2 becomes least-recently-used.
+    const h1Again = mountHook(() => useResource<{ url: string }>(p1, { poll: 0 }));
+    await settleTestDOM();
+    h1Again.unmount();
+    assert.equal(fetches.filter((u) => u.endsWith(p1)).length, 1);
+
+    // Adding p3 should evict p2 (LRU) and keep p1 + p3.
+    const h3 = mountHook(() => useResource<{ url: string }>(p3, { poll: 0 }));
+    await settleTestDOM();
+    h3.unmount();
+
+    assert.ok(cache.snapshot(p1));
+    assert.equal(cache.snapshot(p2), undefined);
+    assert.ok(cache.snapshot(p3));
+  });
+
+  test("clear() removes cached entries and isolates separate cache scopes", async () => {
+    const path = `/work/scope-${crypto.randomUUID()}`;
+    let fetches = 0;
+    globalThis.fetch = asFetch(async () => {
+      fetches++;
+      return Response.json({ revision: fetches, account: fetches === 1 ? "acct-a" : "acct-b" });
+    });
+
+    const first = mountHook(() => useResource<{ account: string }>(path, { poll: 0 }));
+    await settleTestDOM();
+    assert.deepEqual(first.current.data, { revision: 1, account: "acct-a" });
+    first.unmount();
+    assert.ok(cache.snapshot(path));
+
+    cache.clear();
+    assert.equal(cache.snapshot(path), undefined);
+
+    // Fresh cache (as created when AssistantProvider scope changes) must not see prior scope data.
+    cache = createResourceCache();
+    assert.equal(cache.snapshot(path), undefined);
+    const second = mountHook(() => useResource<{ account: string }>(path, { poll: 0 }));
+    try {
+      await settleTestDOM();
+      assert.equal(fetches, 2);
+      assert.deepEqual(second.current.data, { revision: 2, account: "acct-b" });
+    } finally {
+      second.unmount();
+    }
+  });
+
+  test("seed() populates cache before first subscriber and prevents redundant fetch within stale window", async () => {
+    let clock = 1_000;
+    cache = createResourceCache({ now: () => clock, staleTimeMs: 10_000 });
+    const path = "/preferences";
+    let fetches = 0;
+    globalThis.fetch = asFetch(async () => {
+      fetches++;
+      return Response.json({ timezone: "UTC", revision: 2 });
+    });
+
+    cache.seed(path, { timezone: "America/Los_Angeles", revision: 1 }, false);
+    assert.equal(cache.isFresh(path), true);
+
+    const hook = mountHook(() => useResource<{ timezone: string; revision: number }>(path, { poll: 0, versioned: false }));
+    try {
+      assert.equal(hook.current.loading, false);
+      assert.deepEqual(hook.current.data, { timezone: "America/Los_Angeles", revision: 1 });
+      await settleTestDOM();
+      assert.equal(fetches, 0);
+    } finally {
+      hook.unmount();
+    }
+
+    clock += 15_000;
+    assert.equal(cache.isFresh(path), false);
+  });
 });

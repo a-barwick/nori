@@ -1,8 +1,8 @@
 "use client";
 
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useHydrated } from "@/lib/hooks";
-import { useRuntime, type RuntimeCore, type RuntimeLive } from "@/lib/runtime/useRuntime";
+import { useRuntime, type RuntimeCore, type RuntimeDraft, type RuntimeLive, type StreamingDelta } from "@/lib/runtime/useRuntime";
 import type { AssistantFeature, Capabilities } from "@/lib/contracts/assistant";
 import { createResourceCache, ResourceCacheContext, useResource } from "./useResource";
 
@@ -22,21 +22,40 @@ type Assistant = AssistantConfig & {
   runtime: RuntimeCore;
 };
 
+const ScopedResourceCacheContext = createContext(false);
 const AssistantConfigContext = createContext<AssistantConfig | null>(null);
 const AssistantContext = createContext<Assistant | null>(null);
-const ChatLiveContext = createContext<RuntimeLive | null>(null);
+const ChatDraftContext = createContext<RuntimeDraft | null>(null);
+const StreamingDeltaContext = createContext<StreamingDelta | undefined>(undefined);
 const DEBUG_KEY = "nori-diagnostics-debug";
+
+export function ResourceCacheProvider({ scope = "local", children }: { scope?: string; children: ReactNode }) {
+  return <ScopedResourceCacheProvider key={scope}>{children}</ScopedResourceCacheProvider>;
+}
+
+function ScopedResourceCacheProvider({ children }: { children: ReactNode }) {
+  const [cache] = useState(() => createResourceCache());
+  useEffect(() => () => cache.clear(), [cache]);
+  return (
+    <ScopedResourceCacheContext.Provider value={true}>
+      <ResourceCacheContext.Provider value={cache}>{children}</ResourceCacheContext.Provider>
+    </ScopedResourceCacheContext.Provider>
+  );
+}
 
 export function AssistantProvider({ localMode, scope = "local", children }: { localMode: boolean; scope?: string; children: ReactNode }) {
   return <ScopedAssistantProvider key={scope} localMode={localMode} scope={scope}>{children}</ScopedAssistantProvider>;
 }
 
 function ScopedAssistantProvider({ localMode, scope, children }: { localMode: boolean; scope: string; children: ReactNode }) {
-  const [cache] = useState(createResourceCache);
+  const hasScopedCache = useContext(ScopedResourceCacheContext);
+  if (hasScopedCache) {
+    return <AssistantSession localMode={localMode} scope={scope}>{children}</AssistantSession>;
+  }
   return (
-    <ResourceCacheContext.Provider value={cache}>
+    <ScopedResourceCacheProvider>
       <AssistantSession localMode={localMode} scope={scope}>{children}</AssistantSession>
-    </ResourceCacheContext.Provider>
+    </ScopedResourceCacheProvider>
   );
 }
 
@@ -93,7 +112,9 @@ function AssistantSession({ localMode, scope, children }: { localMode: boolean; 
   return (
     <AssistantConfigContext.Provider value={configValue}>
       <AssistantContext.Provider value={assistantValue}>
-        <ChatLiveContext.Provider value={runtime.live}>{children}</ChatLiveContext.Provider>
+        <ChatDraftContext.Provider value={runtime.draftState}>
+          <StreamingDeltaContext.Provider value={runtime.streamingDelta}>{children}</StreamingDeltaContext.Provider>
+        </ChatDraftContext.Provider>
       </AssistantContext.Provider>
     </AssistantConfigContext.Provider>
   );
@@ -111,8 +132,24 @@ export function useAssistant() {
   return value;
 }
 
-export function useChatLive() {
-  const value = useContext(ChatLiveContext);
-  if (!value) throw new Error("useChatLive needs AssistantProvider");
+export function useChatDraft(): RuntimeDraft {
+  const value = useContext(ChatDraftContext);
+  if (!value) throw new Error("useChatDraft needs AssistantProvider");
   return value;
+}
+
+export function useStreamingDelta(): StreamingDelta {
+  const value = useContext(StreamingDeltaContext);
+  if (value === undefined) throw new Error("useStreamingDelta needs AssistantProvider");
+  return value;
+}
+
+export function useStreamingDeltaOptional(): StreamingDelta {
+  return useContext(StreamingDeltaContext) ?? null;
+}
+
+export function useChatLive(): RuntimeLive {
+  const draftState = useChatDraft();
+  const streamingDelta = useStreamingDelta();
+  return useMemo(() => ({ ...draftState, streamingDelta }), [draftState, streamingDelta]);
 }

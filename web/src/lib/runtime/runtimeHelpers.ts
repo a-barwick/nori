@@ -167,6 +167,26 @@ export function mergeById<T extends { id: string }>(older: T[], newer: T[]): T[]
   return [...new Map([...older, ...newer].map((item) => [item.id, item])).values()];
 }
 
+export function mergeMessages<T extends { id: string; created_at: string }>(older: T[], newer: T[]): T[] {
+  if (newer.length === 0) return older;
+  if (older.length === 0) {
+    return newer.length === 1 ? [newer[0]] : [...newer].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
+  }
+  if (newer.length === 1) {
+    const incoming = newer[0];
+    const last = older[older.length - 1];
+    if (last.id === incoming.id && last.created_at === incoming.created_at) {
+      return [...older.slice(0, -1), incoming];
+    }
+    const incomingAt = Date.parse(incoming.created_at);
+    const lastAt = Date.parse(last.created_at);
+    if (incomingAt >= lastAt && !older.some((item) => item.id === incoming.id)) {
+      return [...older, incoming];
+    }
+  }
+  return mergeById(older, newer).sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
+}
+
 export function mergeReadPosition(older: ReadPosition | undefined, newer: ReadPosition | undefined) {
   return !older || (newer && newer.position > older.position) ? newer : older;
 }

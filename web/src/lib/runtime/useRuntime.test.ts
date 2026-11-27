@@ -51,6 +51,11 @@ class FakeEventSource {
     this.onerror?.();
   }
 
+  emitConnectingError() {
+    this.readyState = FakeEventSource.CONNECTING;
+    this.onerror?.();
+  }
+
   close() {
     this.closed = true;
     this.readyState = FakeEventSource.CLOSED;
@@ -281,17 +286,18 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
         return entry[1];
       };
 
-      await act(async () => { FakeEventSource.instances[0].emitClosedError(); });
+      await act(async () => { FakeEventSource.instances[0].emitConnectingError(); });
+      assert.equal(FakeEventSource.instances[0].closed, true);
       assert.equal(hook.current.error, "");
       const t1 = popReconnectTimer();
-      assert.equal(t1.delay, 2000);
+      assert.ok(t1.delay >= 0 && t1.delay < 2000, `expected jittered delay in [0, 2000), got ${t1.delay}`);
       await act(async () => { t1.fn(); });
       assert.equal(FakeEventSource.instances.length, 2);
 
       await act(async () => { FakeEventSource.instances[1].emitClosedError(); });
       assert.equal(hook.current.error, "");
       const t2 = popReconnectTimer();
-      assert.equal(t2.delay, 4000);
+      assert.ok(t2.delay >= 0 && t2.delay < 4000, `expected jittered delay in [0, 4000), got ${t2.delay}`);
       await act(async () => { t2.fn(); });
       assert.equal(FakeEventSource.instances.length, 3);
 
@@ -299,7 +305,7 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
       assert.equal(hook.current.error, STREAM_RECONNECTING);
       assert.equal(hook.current.reconnecting, true);
       const t3 = popReconnectTimer();
-      assert.equal(t3.delay, 8000);
+      assert.ok(t3.delay >= 0 && t3.delay < 8000, `expected jittered delay in [0, 8000), got ${t3.delay}`);
       await act(async () => { t3.fn(); });
       assert.equal(FakeEventSource.instances.length, 4);
 
@@ -453,6 +459,26 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
       assert.deepEqual(retryCall.body, { turn_id: "turn-1", message_id: "turn-1-assistant" });
       assert.equal(hook.current.session?.messages[0].status, "superseded");
       assert.equal(hook.current.conversationBusy, true);
+    } finally {
+      hook.unmount();
+    }
+  });
+
+  test("boot reuses freshly seeded /preferences in shared cache without redundant fetch", async () => {
+    const fetched: string[] = [];
+    cache.seed("/preferences", { timezone: "UTC", working_hours: [], default_destination_ids: [], account_defaults: {}, budgets: { task_usd: 5 }, revision: 1 }, false);
+    g.fetch = asFetch(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      fetched.push(url);
+      if (url.startsWith("/api/v1/snapshot")) return Response.json(baseSession());
+      return Response.json({ ok: true });
+    });
+
+    const hook = mountHook(() => useRuntime());
+    try {
+      await settleTestDOM();
+      assert.equal(fetched.includes("/api/v1/preferences"), false);
+      assert.equal(fetched.includes("/api/v1/snapshot"), true);
     } finally {
       hook.unmount();
     }

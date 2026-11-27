@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+
 	"nori/internal/state/docstore"
 )
 
@@ -98,9 +100,23 @@ func lookupField(fields map[string]any, field string) (any, bool) {
 	}
 	return nil, false
 }
-func query(ctx context.Context, q executor, s docstore.QuerySpec) ([]docstore.Record, error) {
-	args := []any{recordShard(s.Collection), s.Collection}
-	clauses := []string{"shard=$1", "collection=$2"}
+func buildQuery(s docstore.QuerySpec) (string, []any, bool, error) {
+	multi := len(s.Collections) > 0
+	var args []any
+	var clauses []string
+	if multi {
+		shard := recordShard(s.Collections[0])
+		for _, col := range s.Collections[1:] {
+			if recordShard(col) != shard {
+				return "", nil, false, fmt.Errorf("multi-collection query must share a single shard")
+			}
+		}
+		args = []any{shard, s.Collections}
+		clauses = []string{"shard=$1", "collection = ANY($2::text[])"}
+	} else {
+		args = []any{recordShard(s.Collection), s.Collection}
+		clauses = []string{"shard=$1", "collection=$2"}
+	}
 	value := func(v any) (string, error) {
 		x, e := docstore.Value(v)
 		if e != nil {
@@ -117,7 +133,7 @@ func query(ctx context.Context, q executor, s docstore.QuerySpec) ([]docstore.Re
 		if f.Field == docstore.DocumentID {
 			x, e := docstore.Value(f.Value)
 			if e != nil {
-				return nil, e
+				return "", nil, false, e
 			}
 			switch f.Op {
 			case "==", ">", ">=", "<", "<=":
@@ -149,11 +165,11 @@ func query(ctx context.Context, q executor, s docstore.QuerySpec) ([]docstore.Re
 					}
 				}
 			default:
-				return nil, fmt.Errorf("unsupported document comparison")
+				return "", nil, false, fmt.Errorf("unsupported document comparison")
 			}
 			v, e := value(f.Value)
 			if e != nil {
-				return nil, e
+				return "", nil, false, e
 			}
 			switch f.Op {
 			case "==":
@@ -167,7 +183,7 @@ func query(ctx context.Context, q executor, s docstore.QuerySpec) ([]docstore.Re
 		}
 		field, e := expression(f.Field)
 		if e != nil {
-			return nil, e
+			return "", nil, false, e
 		}
 		if f.Op == "==" {
 			if literal, ok := partialIndexEqualityClause(f.Field, f.Value); ok {
@@ -177,12 +193,12 @@ func query(ctx context.Context, q executor, s docstore.QuerySpec) ([]docstore.Re
 		}
 		v, e := value(f.Value)
 		if e != nil {
-			return nil, e
+			return "", nil, false, e
 		}
 		switch f.Op {
 		case "==":
 			clauses = append(clauses, field+" = "+v)
-			if f.Field == "run_id" {
+			if f.Field == "run_id" && !multi {
 				if strings.HasSuffix(s.Collection, "/results") {
 					clauses = append(clauses, "right(collection, 8) = '/results'")
 				} else {
@@ -194,7 +210,7 @@ func query(ctx context.Context, q executor, s docstore.QuerySpec) ([]docstore.Re
 		case "in":
 			clauses = append(clauses, field+" IS NOT NULL", field+" IN (SELECT jsonb_array_elements("+v+"))")
 		default:
-			return nil, fmt.Errorf("unsupported document comparison")
+			return "", nil, false, fmt.Errorf("unsupported document comparison")
 		}
 	}
 	orders := append([]docstore.Order{}, s.Orders...)
@@ -210,7 +226,7 @@ func query(ctx context.Context, q executor, s docstore.QuerySpec) ([]docstore.Re
 	for _, order := range orders {
 		field, e := expression(order.Field)
 		if e != nil {
-			return nil, e
+			return "", nil, false, e
 		}
 		direction, op := "ASC", ">"
 		if order.Direction == docstore.Desc {
@@ -225,7 +241,7 @@ func query(ctx context.Context, q executor, s docstore.QuerySpec) ([]docstore.Re
 			if order.Field == docstore.DocumentID {
 				_, rawID, e := split(s.After.Path)
 				if e != nil {
-					return nil, e
+					return "", nil, false, e
 				}
 				args = append(args, rawID)
 				v = fmt.Sprintf("$%d", len(args))
@@ -233,7 +249,7 @@ func query(ctx context.Context, q executor, s docstore.QuerySpec) ([]docstore.Re
 				raw, _ := lookupField(s.After.Fields, order.Field)
 				v, e = value(raw)
 				if e != nil {
-					return nil, e
+					return "", nil, false, e
 				}
 			}
 			part := append(append([]string{}, prefix...), field+" "+op+" "+v)
@@ -244,21 +260,32 @@ func query(ctx context.Context, q executor, s docstore.QuerySpec) ([]docstore.Re
 	if len(after) > 0 {
 		clauses = append(clauses, "("+strings.Join(after, " OR ")+")")
 	}
-	sql := "SELECT id,data FROM nori_records WHERE " + strings.Join(clauses, " AND ") + " ORDER BY " + strings.Join(ordered, ",")
+	selectCols := "id,data"
+	if multi {
+		selectCols = "collection,id,data"
+	}
+	sql := "SELECT " + selectCols + " FROM nori_records WHERE " + strings.Join(clauses, " AND ") + " ORDER BY " + strings.Join(ordered, ",")
 	if s.Count > 0 {
 		args = append(args, s.Count)
 		sql += fmt.Sprintf(" LIMIT $%d", len(args))
 	}
-	rows, e := q.Query(ctx, sql, args...)
-	if e != nil {
-		return nil, e
-	}
+	return sql, args, multi, nil
+}
+
+func scanQueryRows(rows pgx.Rows, s docstore.QuerySpec, multi bool) ([]docstore.Record, error) {
 	defer rows.Close()
 	result := []docstore.Record{}
 	for rows.Next() {
+		col := s.Collection
 		var id string
 		var raw []byte
-		if e = rows.Scan(&id, &raw); e != nil {
+		var e error
+		if multi {
+			e = rows.Scan(&col, &id, &raw)
+		} else {
+			e = rows.Scan(&id, &raw)
+		}
+		if e != nil {
 			return nil, e
 		}
 		fields, e := decode(raw)
@@ -274,7 +301,19 @@ func query(ctx context.Context, q executor, s docstore.QuerySpec) ([]docstore.Re
 			}
 			fields = selected
 		}
-		result = append(result, docstore.Record{Path: s.Collection + "/" + id, Fields: fields})
+		result = append(result, docstore.Record{Path: col + "/" + id, Fields: fields})
 	}
 	return result, rows.Err()
+}
+
+func query(ctx context.Context, q executor, s docstore.QuerySpec) ([]docstore.Record, error) {
+	sql, args, multi, e := buildQuery(s)
+	if e != nil {
+		return nil, e
+	}
+	rows, e := q.Query(ctx, sql, args...)
+	if e != nil {
+		return nil, e
+	}
+	return scanQueryRows(rows, s, multi)
 }

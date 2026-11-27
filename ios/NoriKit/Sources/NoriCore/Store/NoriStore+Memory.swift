@@ -1,7 +1,8 @@
 import Foundation
 
 extension NoriStore {
-    public func refreshMemory() async {
+    public func refreshMemory(force: Bool = true) async {
+        guard !isRefreshFresh(.memory, force: force) else { return }
         let generation = sessionGeneration
         let activeTransport = transport
         async let facts = captureMemoryRefresh { try await activeTransport.fetchCoreMemories() }
@@ -20,6 +21,9 @@ extension NoriStore {
         if case .success(let latest) = workingResult {
             workingMemory = latest
             hasLoadedWorkingMemory = true
+        }
+        if errors.isEmpty {
+            markRefreshed(.memory)
         }
         memoryRefreshError = errors.first?.localizedDescription
     }

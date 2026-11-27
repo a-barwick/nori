@@ -115,16 +115,107 @@ func (s *Service) automations(ctx context.Context, status string) ([]stored, err
 	return out, nil
 }
 
+func (s *Service) resourcesByIDs(ctx context.Context, collection string, ids []string) (map[string]state.Resource, error) {
+	out := make(map[string]state.Resource, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	if batch, ok := s.Store.(interface {
+		ResourcesByIDs(context.Context, string, []string) ([]state.Resource, error)
+	}); ok {
+		resources, err := batch.ResourcesByIDs(ctx, collection, ids)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range resources {
+			out[r.ID] = r
+		}
+		return out, nil
+	}
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		if r, err := s.Store.Resource(ctx, collection, id); err == nil {
+			out[r.ID] = r
+		}
+	}
+	return out, nil
+}
+
+func (s *Service) deliveriesByIDs(ctx context.Context, ids []string) (map[string]Delivery, error) {
+	resources, err := s.resourcesByIDs(ctx, CollectionDeliveries, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]Delivery, len(resources))
+	for id, r := range resources {
+		var d Delivery
+		if r.Decode(&d) == nil {
+			out[id] = d
+		}
+	}
+	return out, nil
+}
+
 func (s *Service) List(ctx context.Context, status string) ([]Automation, error) {
 	all, err := s.automations(ctx, status)
 	if err != nil {
 		return nil, err
 	}
+	occIDs := make([]string, 0, len(all))
+	for _, a := range all {
+		if a.LastOccurrenceID != "" {
+			occIDs = append(occIDs, a.LastOccurrenceID)
+		}
+	}
+	occDocs := make(map[string]occurrenceDoc, len(occIDs))
+	var deliveryIDs []string
+	if len(occIDs) > 0 {
+		occResources, err := s.resourcesByIDs(ctx, CollectionOccurrences, occIDs)
+		if err != nil {
+			return nil, err
+		}
+		for id, r := range occResources {
+			o, err := decodeOccurrence(r)
+			if err != nil {
+				continue
+			}
+			occDocs[id] = o
+			deliveryIDs = append(deliveryIDs, o.DeliveryIDs...)
+		}
+	}
+	deliveries, err := s.deliveriesByIDs(ctx, deliveryIDs)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]Automation, 0, len(all))
 	for _, a := range all {
-		out = append(out, s.project(ctx, a))
+		p := a.Automation
+		if a.LastOccurrenceID != "" {
+			if o, ok := occDocs[a.LastOccurrenceID]; ok {
+				occ := o.Occurrence
+				for _, did := range o.DeliveryIDs {
+					if d, ok := deliveries[did]; ok {
+						occ.Deliveries = append(occ.Deliveries, d)
+					}
+				}
+				p.LastOccurrence = &occ
+			}
+		}
+		out = append(out, p)
 	}
 	return out, nil
+}
+
+func (s *Service) Exists(ctx context.Context, id string) error {
+	_, err := s.Store.Resource(ctx, CollectionAutomations, id)
+	return err
 }
 
 func (s *Service) project(ctx context.Context, a stored) Automation {
@@ -600,13 +691,29 @@ func (s *Service) Occurrences(ctx context.Context, automationID string) ([]Occur
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Occurrence, 0, len(resources))
+	docs := make([]occurrenceDoc, 0, len(resources))
+	var deliveryIDs []string
 	for _, r := range resources {
-		o, err := s.Occurrence(ctx, r.ID)
+		o, err := decodeOccurrence(r)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, o)
+		docs = append(docs, o)
+		deliveryIDs = append(deliveryIDs, o.DeliveryIDs...)
+	}
+	deliveries, err := s.deliveriesByIDs(ctx, deliveryIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Occurrence, 0, len(docs))
+	for _, o := range docs {
+		occ := o.Occurrence
+		for _, deliveryID := range o.DeliveryIDs {
+			if d, ok := deliveries[deliveryID]; ok {
+				occ.Deliveries = append(occ.Deliveries, d)
+			}
+		}
+		out = append(out, occ)
 	}
 	slices.SortStableFunc(out, func(a, b Occurrence) int { return b.ScheduledAt.Compare(a.ScheduledAt) })
 	return out, nil

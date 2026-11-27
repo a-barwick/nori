@@ -151,26 +151,9 @@ public struct NoriRootView: View {
     }
 
     private func refresh(for tab: NoriTab) async {
-        switch tab {
-        case .chat:
-            async let sessionTask: Void = store.refreshSession()
-            async let summaryTask: Void = store.refreshSummary()
-            _ = await (sessionTask, summaryTask)
-        case .work:
-            async let workTask: Void = store.refreshWorkAndInteractions()
-            async let libraryTask: Void = store.refreshLibrary()
-            async let automationsTask: Void = store.refreshAutomations()
-            _ = await (workTask, libraryTask, automationsTask)
-            if !Task.isCancelled, !didApplyInitialWorkTab {
-                didApplyInitialWorkTab = true
-            }
-        case .more:
-            async let summaryTask: Void = store.refreshSummary()
-            async let appsTask: Void = store.refreshApps()
-            async let memoryTask: Void = store.refreshMemory()
-            async let permsPrefsTask: Void = store.refreshPermissionsAndPreferences()
-            async let modelKeysTask: Void = store.refreshModelKeys()
-            _ = await (summaryTask, appsTask, memoryTask, permsPrefsTask, modelKeysTask)
+        await store.refreshForTab(tab, force: false)
+        if tab == .work, !Task.isCancelled, !didApplyInitialWorkTab {
+            didApplyInitialWorkTab = true
         }
     }
 

@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { AlertDialog } from "radix-ui";
 import { ArrowLeft, ChevronRight, RefreshCw } from "lucide-react";
@@ -32,7 +31,6 @@ export function Screen({
   hideHeaderTitle?: boolean;
   children: ReactNode;
 }) {
-  const router = useRouter();
   const showHeader = !hideHeaderTitle || !!tabs || !!back || !!actions || !!line;
   return (
     <main className="nori-screen flex min-h-0 flex-1 flex-col overflow-clip" aria-label={title}>
@@ -47,14 +45,13 @@ export function Screen({
             )}
           >
             {back && (
-              <button
-                type="button"
-                onClick={() => router.push(back)}
+              <Link
+                href={back}
                 className="mb-3 inline-flex h-8 items-center gap-1.5 rounded-full bg-fill-1 px-3 text-meta font-semibold text-ink transition-colors hover:bg-fill-2"
               >
                 <ArrowLeft size={14} aria-hidden />
                 {backLabel}
-              </button>
+              </Link>
             )}
             {!hideHeaderTitle && (
               <div className="flex flex-wrap items-baseline justify-between gap-3">

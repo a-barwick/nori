@@ -6,8 +6,10 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,7 +17,11 @@ import (
 	"nori/internal/state"
 )
 
-const Collection = "credential_rows"
+const (
+	Collection         = "credential_rows"
+	DefaultDEKCacheTTL = 5 * time.Second
+	maxDEKCacheEntries = 256
+)
 
 type KeyWrapper interface {
 	Wrap(ctx context.Context, dataKey []byte) (wrapped []byte, keyID string, err error)
@@ -41,14 +47,151 @@ type row struct {
 	AADVersion int    `json:"aad_version,omitempty"`
 }
 
+type dekCacheEntry struct {
+	connectionID string
+	dek          []byte
+	gcm          cipher.AEAD
+	expiresAt    time.Time
+}
+
 type Store struct {
 	Resources state.ResourceStore
 	Keys      KeyWrapper
 	Owner     string
 	Now       func() time.Time
+	// CacheTTL sets the in-memory unwrapped DEK cache TTL. Zero uses
+	// DefaultDEKCacheTTL (5s); negative values disable caching.
+	CacheTTL time.Duration
+
+	dekMu    sync.RWMutex
+	dekCache map[[32]byte]dekCacheEntry
 }
 
 var _ secret.CredentialStore = (*Store)(nil)
+
+func (s *Store) cacheTTL() time.Duration {
+	if s.CacheTTL < 0 {
+		return 0
+	}
+	if s.CacheTTL == 0 {
+		return DefaultDEKCacheTTL
+	}
+	return s.CacheTTL
+}
+
+func dekCacheKey(owner, keyID string, wrapped, aad []byte) [32]byte {
+	h := sha256.New()
+	var lenBuf [8]byte
+	writePart := func(b []byte) {
+		binary.BigEndian.PutUint64(lenBuf[:], uint64(len(b)))
+		h.Write(lenBuf[:])
+		h.Write(b)
+	}
+	writePart([]byte(owner))
+	writePart([]byte(keyID))
+	writePart(wrapped)
+	writePart(aad)
+	var sum [32]byte
+	h.Sum(sum[:0])
+	return sum
+}
+
+func (s *Store) cachedGCM(key [32]byte, now time.Time) (cipher.AEAD, bool) {
+	if s.cacheTTL() <= 0 {
+		return nil, false
+	}
+	s.dekMu.RLock()
+	entry, ok := s.dekCache[key]
+	s.dekMu.RUnlock()
+	if !ok {
+		return nil, false
+	}
+	if !now.Before(entry.expiresAt) {
+		s.dekMu.Lock()
+		if cur, exists := s.dekCache[key]; exists && !now.Before(cur.expiresAt) {
+			clear(cur.dek)
+			delete(s.dekCache, key)
+		}
+		s.dekMu.Unlock()
+		return nil, false
+	}
+	return entry.gcm, true
+}
+
+func (s *Store) putCachedGCM(key [32]byte, connectionID string, dek []byte, gcm cipher.AEAD, now time.Time) {
+	ttl := s.cacheTTL()
+	if ttl <= 0 || gcm == nil {
+		return
+	}
+	copied := append([]byte(nil), dek...)
+	s.dekMu.Lock()
+	defer s.dekMu.Unlock()
+	if s.dekCache == nil {
+		s.dekCache = make(map[[32]byte]dekCacheEntry)
+	}
+	if prev, ok := s.dekCache[key]; ok {
+		clear(prev.dek)
+	}
+	if len(s.dekCache) >= maxDEKCacheEntries {
+		for k, entry := range s.dekCache {
+			if !now.Before(entry.expiresAt) {
+				clear(entry.dek)
+				delete(s.dekCache, k)
+			}
+		}
+	}
+	for len(s.dekCache) >= maxDEKCacheEntries {
+		var oldestKey [32]byte
+		var oldestTime time.Time
+		first := true
+		for k, entry := range s.dekCache {
+			if first || entry.expiresAt.Before(oldestTime) {
+				oldestKey = k
+				oldestTime = entry.expiresAt
+				first = false
+			}
+		}
+		if first {
+			break
+		}
+		clear(s.dekCache[oldestKey].dek)
+		delete(s.dekCache, oldestKey)
+	}
+	s.dekCache[key] = dekCacheEntry{
+		connectionID: connectionID,
+		dek:          copied,
+		gcm:          gcm,
+		expiresAt:    now.Add(ttl),
+	}
+}
+
+// Evict immediately zeroes and removes any cached DEKs for connectionID.
+func (s *Store) Evict(connectionID string) {
+	if s == nil || connectionID == "" {
+		return
+	}
+	s.dekMu.Lock()
+	for k, entry := range s.dekCache {
+		if entry.connectionID == connectionID {
+			clear(entry.dek)
+			delete(s.dekCache, k)
+		}
+	}
+	s.dekMu.Unlock()
+}
+
+// Close zeroes and removes all cached DEKs.
+func (s *Store) Close() {
+	if s == nil {
+		return
+	}
+	s.dekMu.Lock()
+	for k, entry := range s.dekCache {
+		clear(entry.dek)
+		delete(s.dekCache, k)
+	}
+	s.dekMu.Unlock()
+}
 
 func (s *Store) now() time.Time {
 	if s.Now == nil {
@@ -83,23 +226,34 @@ func (s *Store) Get(ctx context.Context, connectionID string) (secret.Credential
 	if !stored.Owner || s.Owner == "" {
 		return secret.Credential{}, errors.New("the credential could not be decrypted")
 	}
-	dataKey, err := s.Keys.Unwrap(ctx, stored.WrappedKey, stored.KeyID)
-	if err != nil {
-		return secret.Credential{}, fmt.Errorf("the credential's data key could not be unwrapped: %w", err)
-	}
-	gcm, err := newGCM(dataKey)
-	if err != nil {
-		return secret.Credential{}, err
+	now := s.now()
+	aad := ownerAAD(s.Owner, connectionID)
+	cacheKey := dekCacheKey(s.Owner, stored.KeyID, stored.WrappedKey, aad)
+	gcm, cached := s.cachedGCM(cacheKey, now)
+	var dataKey []byte
+	if !cached {
+		dataKey, err = s.Keys.Unwrap(ctx, stored.WrappedKey, stored.KeyID)
+		if err != nil {
+			return secret.Credential{}, fmt.Errorf("the credential's data key could not be unwrapped: %w", err)
+		}
+		defer clear(dataKey)
+		gcm, err = newGCM(dataKey)
+		if err != nil {
+			return secret.Credential{}, err
+		}
 	}
 	if len(stored.Nonce) != gcm.NonceSize() {
 		return secret.Credential{}, errors.New("the credential could not be decrypted")
 	}
-	data, err := gcm.Open(nil, stored.Nonce, stored.Ciphertext, ownerAAD(s.Owner, connectionID))
+	data, err := gcm.Open(nil, stored.Nonce, stored.Ciphertext, aad)
 	if err != nil && stored.AADVersion == 0 {
 		data, err = gcm.Open(nil, stored.Nonce, stored.Ciphertext, legacyOwnerAAD(s.Owner, connectionID))
 	}
 	if err != nil {
 		return secret.Credential{}, errors.New("the credential could not be decrypted")
+	}
+	if !cached {
+		s.putCachedGCM(cacheKey, connectionID, dataKey, gcm, now)
 	}
 	return secret.Credential{Version: r.Revision, Data: data, VersionTag: sha256.Sum256(r.Body)}, nil
 }
@@ -116,6 +270,7 @@ func (s *Store) Replace(ctx context.Context, connectionID string, expected int64
 	if err != nil {
 		return 0, err
 	}
+	s.Evict(connectionID)
 	return saved.Revision, nil
 }
 
@@ -182,6 +337,9 @@ func (s *Store) delete(ctx context.Context, connectionID string, expected *secre
 				Receipt: state.MutationReceipt{Status: "applied"}}, nil
 		},
 	})
+	if err == nil {
+		s.Evict(connectionID)
+	}
 	return err
 }
 
