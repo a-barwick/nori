@@ -569,7 +569,11 @@ func (m *AnthropicModel) buildRequestBody(request ReplyRequest, outputLimit int)
 		}
 	}
 	if len(messages) == 0 {
-		appendMsg("user", "Continue.", false)
+		if request.NoDispatch && len(request.Tools) == 0 {
+			appendMsg("user", "[System turn — follow the instructions above and reply in plain text.]", false)
+		} else {
+			appendMsg("user", "Continue.", false)
+		}
 	} else if messages[0]["role"] == "assistant" {
 		messages = append([]map[string]any{{
 			"role":    "user",

@@ -104,6 +104,40 @@ func accountProfile(id string) (Profile, bool) {
 	return Profile{}, false
 }
 
+// Describe returns a human-readable model name, provider label, and hosting
+// location ("cloud" or "home_ai") for user-facing model self-knowledge.
+func Describe(profileID, backend, model string) (name, provider, location string) {
+	backend = strings.TrimSpace(backend)
+	model = strings.TrimSpace(model)
+	profileID = strings.TrimSpace(profileID)
+	if backend == BackendHome {
+		if model == "" {
+			model = profileID
+		}
+		return model, "Home AI Server", "home_ai"
+	}
+	location = "cloud"
+	if def, ok := modelkeys.LookupProvider(backend); ok {
+		provider = def.Label
+	} else {
+		switch backend {
+		case "gateway":
+			provider = "Model Gateway"
+		default:
+			provider = backend
+		}
+	}
+	for _, fam := range byokFamilies {
+		if model == fam.direct || model == fam.routed || strings.HasSuffix(profileID, "-"+fam.id) {
+			return fam.label, provider, location
+		}
+	}
+	if model != "" {
+		return model, provider, location
+	}
+	return profileID, provider, location
+}
+
 func (a *Account) stored(ctx context.Context) (state.ModelSelection, int64, error) {
 	if a == nil || a.Store == nil {
 		return state.ModelSelection{}, 0, nil

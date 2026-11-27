@@ -415,9 +415,65 @@ func TestConversationPrompt_PreservesHypotheticalAndAmbiguityInstructions(t *tes
 		"ambiguous",
 		"clarify",
 		"task_outcome",
+		"More → Models",
+		"More → Apps & MCP",
+		"More → Memory",
+		"onigiri",
 	} {
-		if !strings.Contains(strings.ToLower(p), needle) {
+		if !strings.Contains(p, needle) && !strings.Contains(strings.ToLower(p), strings.ToLower(needle)) {
 			t.Fatalf("prompts.Conversation missing expected instruction keyword %q", needle)
+		}
+	}
+	if strings.Contains(strings.ToLower(p), "browse the web") {
+		t.Fatalf("prompts.Conversation should not claim workers can browse the web")
+	}
+}
+
+func TestAppendAdvisoryContext_IncludesCapabilitiesAndModelAfterBreakpoints(t *testing.T) {
+	r := &Runner{
+		UserFacts: `{"display_name":"Austin"}`,
+		Capabilities: func(context.Context) *CapabilitySummary {
+			return &CapabilitySummary{
+				WebSearch:     "available",
+				UploadedFiles: []string{"images (PNG, JPEG, WebP)"},
+				BuiltIn:       []string{"one-time reminders"},
+				ConnectedApps: []ConnectedAppSummary{{
+					App:          "Google",
+					Account:      "austin@example.com",
+					Status:       "connected",
+					Capabilities: []string{"Gmail (send emails with your approval; cannot read or search inbox)"},
+				}},
+				MCPServers: []MCPServerSummary{},
+			}
+		},
+		ModelInfo: func(context.Context, *state.ModelSelection) *ModelSummary {
+			return &ModelSummary{Name: "Claude Opus 5.5", Provider: "Vercel AI Gateway", Location: "cloud"}
+		},
+	}
+	turn := &state.ConversationTurn{
+		ID: "turn-1",
+		Inputs: []state.ConversationInput{{
+			ID: "inp-1", Text: "What can you do?", CreatedAt: time.Now().UTC(),
+		}},
+	}
+	view := historyView{}
+	msgs, bps := buildMessages(turn, nil, view, "")
+	msgs, outBPs, adv := r.appendAdvisoryContext(context.Background(), turn, nil, &view, "", msgs, bps, TaskContext{}, Classification{}, nil)
+	if len(outBPs) != len(bps) || outBPs[0] != 0 {
+		t.Fatalf("expected cache breakpoint 0 preserved, got %v", outBPs)
+	}
+	if len(msgs) == 0 || string(msgs[len(msgs)-1]) != string(adv) {
+		t.Fatalf("expected advisory message appended last")
+	}
+	var decoded struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(adv, &decoded); err != nil {
+		t.Fatalf("unmarshal advisory: %v", err)
+	}
+	for _, want := range []string{`"capabilities"`, `"Google"`, `cannot read or search inbox`, `"model"`, `"Claude Opus 5.5"`, `"Vercel AI Gateway"`} {
+		if !strings.Contains(decoded.Content, want) {
+			t.Fatalf("advisory context missing %s: %s", want, decoded.Content)
 		}
 	}
 }

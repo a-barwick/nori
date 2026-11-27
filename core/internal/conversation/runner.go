@@ -79,6 +79,8 @@ type Session struct {
 type Runner struct {
 	UserFacts        string
 	Profile          users.Profile
+	Capabilities     func(context.Context) *CapabilitySummary
+	ModelInfo        func(context.Context, *state.ModelSelection) *ModelSummary
 	model            ReplyModel
 	ModelForTurn     func(*state.ModelSelection) ReplyModel
 	AccountModel     func(context.Context, *state.ModelSelection) ReplyModel

@@ -348,6 +348,20 @@ func (r *Runner) appendAdvisoryContext(
 		clock.Now = r.Now
 	}
 	advisoryPayload := map[string]any{"user": facts, "task_context": taskContext, "now": clock.timeContext()}
+	if r.Capabilities != nil {
+		if caps := r.Capabilities(ctx); caps != nil {
+			advisoryPayload["capabilities"] = caps
+		}
+	}
+	if r.ModelInfo != nil {
+		selection := t.ModelSelection
+		if r.AccountModel != nil && t.Attempt.ModelSelection != nil {
+			selection = t.Attempt.ModelSelection
+		}
+		if mod := r.ModelInfo(ctx, selection); mod != nil {
+			advisoryPayload["model"] = mod
+		}
+	}
 	if hint.Available {
 		advisoryPayload["classification_hint"] = hint
 	}
