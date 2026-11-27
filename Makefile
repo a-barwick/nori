@@ -30,10 +30,12 @@ core:
 api-types:
 	bun -e 'import { readFileSync, writeFileSync } from "node:fs"; const doc = Bun.YAML.parse(readFileSync("api/openapi.yaml", "utf8")); writeFileSync("api/openapi.json", JSON.stringify(doc) + "\n");'
 	cd web && bun run api:types
+	node scripts/gen-swift-openapi.mjs
 
 api-check:
 	cd core && go test ./internal/api -run TestOpenAPI
 	cd web && bun run api:types:check
+	node scripts/gen-swift-openapi.mjs --check
 
 contracts: api-types
 
@@ -89,3 +91,4 @@ infra-check:
 infra-plan:
 	terraform -chdir=infra init -input=false -lockfile=readonly >/dev/null
 	terraform -chdir=infra plan -input=false
+	infra/check-unmanaged.sh

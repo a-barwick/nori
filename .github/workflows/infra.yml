@@ -72,10 +72,22 @@ jobs:
             if [[ "$code" -eq 2 ]]; then echo '```'; cat changes.txt; echo '```'; else echo "No changes."; fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Fail on drift
-        if: github.event_name == 'schedule' && steps.plan.outputs.changes == 'true'
+      # terraform plan only sees managed resources. This catches ones created by hand.
+      - name: Find unmanaged resources
+        id: unmanaged
         run: |
-          echo "::error::Live infrastructure differs from infra/. Fix it in Terraform, or run 'make infra-plan' to see the diff."
+          if ./check-unmanaged.sh > unmanaged.txt; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            { echo "### Resources not in infra/"; echo '```'; cat unmanaged.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            while IFS=$'\t' read -r kind name; do echo "::warning::$kind $name is not managed by infra/"; done < unmanaged.txt
+          fi
+
+      - name: Fail on drift
+        if: github.event_name == 'schedule' && (steps.plan.outputs.changes == 'true' || steps.unmanaged.outputs.found == 'true')
+        run: |
+          echo "::error::Live GCP differs from infra/. Run 'make infra-plan' and infra/check-unmanaged.sh locally to see why, then fix it in Terraform."
           exit 1
 
       - name: Apply

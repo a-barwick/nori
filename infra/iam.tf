@@ -21,6 +21,12 @@ resource "google_service_account" "nori_home_ai_relay" {
   display_name = "Nori Home AI relay"
 }
 
+resource "google_service_account" "nori_site" {
+  account_id   = "nori-site"
+  display_name = "Nori public site runtime"
+  description  = "Runs the nori-site Cloud Run service. No roles."
+}
+
 resource "google_service_account" "nori_docs" {
   account_id   = "nori-docs"
   display_name = "Nori docs"
@@ -94,6 +100,7 @@ resource "google_service_account_iam_member" "release_acts_as" {
     runtime = google_service_account.nori_runtime.name
     web     = google_service_account.nori_web.name
     web_mac = google_service_account.nori_web_mac.name
+    site    = google_service_account.nori_site.name
   }
 
   service_account_id = each.value

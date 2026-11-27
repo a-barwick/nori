@@ -290,7 +290,65 @@ func openAPISchemaConformance() throws {
     try assertCodableConformance(HomeConnector.self, schema: "HomeConnector", spec: spec)
     try assertCodableConformance(HomeConnectorsResponse.self, schema: "HomeConnectors", spec: spec)
     try assertCodableConformance(HomePairing.self, schema: "HomePairing", spec: spec)
+    try assertCodableConformance(HomePairingRequest.self, schema: "HomePairingRequest", spec: spec)
+    try assertCodableConformance(HomeConnectorTest.self, schema: "HomeConnectorTestResponse", spec: spec)
+    try assertCodableConformance(SaveModelKeyRequest.self, schema: "SetModelKeyRequest", spec: spec)
+    try assertCodableConformance(SaveModelSettingsRequest.self, schema: "SaveModelSettingsRequest", spec: spec)
     try assertDecodableConformance(APICostResponse.self, schema: "CostReport", spec: spec)
+
+    // Session & Conversation Models
+    try assertDecodableConformance(Attachment.self, schema: "Attachment", spec: spec)
+    try assertDecodableConformance(Artifact.self, schema: "Artifact", spec: spec)
+    try assertDecodableConformance(RunEvent.self, schema: "RunEvent", spec: spec)
+    try assertDecodableConformance(TaskQuestion.self, schema: "TaskQuestion", spec: spec)
+    try assertDecodableConformance(TaskHold.self, schema: "TaskHold", spec: spec)
+    try assertDecodableConformance(SavedResult.self, schema: "SavedResult", spec: spec)
+    try assertDecodableConformance(Run.self, schema: "Run", spec: spec)
+    try assertDecodableConformance(Message.self, schema: "Message", spec: spec)
+    try assertDecodableConformance(Session.self, schema: "Session", spec: spec)
+}
+
+@Test("Generated OpenAPI Swift models round-trip against api/openapi.json schemas")
+func generatedOpenAPISchemaConformance() throws {
+    let spec = try OpenAPISpec(url: apiDirectory.appendingPathComponent("openapi.json"))
+
+    // Conversation & Chat endpoints
+    try assertCodableConformance(OpenAPI.ConversationView.self, schema: "ConversationView", spec: spec)
+    try assertCodableConformance(OpenAPI.ConversationHistoryResponse.self, schema: "ConversationHistoryResponse", spec: spec)
+    try assertCodableConformance(OpenAPI.ConversationMessageRequest.self, schema: "ConversationMessageRequest", spec: spec)
+    try assertCodableConformance(OpenAPI.ConversationMessageAccepted.self, schema: "ConversationMessageAccepted", spec: spec)
+    try assertCodableConformance(OpenAPI.ConversationOperationsResponse.self, schema: "ConversationOperationsResponse", spec: spec)
+    try assertCodableConformance(OpenAPI.ConversationStatus.self, schema: "ConversationStatus", spec: spec)
+    try assertCodableConformance(OpenAPI.Session.self, schema: "Session", spec: spec)
+
+    // Mutation requests & account maintenance
+    try assertCodableConformance(OpenAPI.AccountDeleteRequest.self, schema: "AccountDeleteRequest", spec: spec)
+    try assertCodableConformance(OpenAPI.DataResetRequest.self, schema: "DataResetRequest", spec: spec)
+    try assertCodableConformance(OpenAPI.FeedbackRequest.self, schema: "FeedbackRequest", spec: spec)
+    try assertCodableConformance(OpenAPI.AutomationChange.self, schema: "AutomationChange", spec: spec)
+    try assertCodableConformance(OpenAPI.GoalChange.self, schema: "GoalChange", spec: spec)
+    try assertCodableConformance(OpenAPI.ConnectionChange.self, schema: "ConnectionChange", spec: spec)
+    try assertCodableConformance(OpenAPI.PreferencesChange.self, schema: "PreferencesChange", spec: spec)
+    try assertCodableConformance(OpenAPI.PermissionRuleChange.self, schema: "PermissionRuleChange", spec: spec)
+    try assertCodableConformance(OpenAPI.MemoryFactChange.self, schema: "MemoryFactChange", spec: spec)
+    try assertCodableConformance(OpenAPI.GoogleDrivePickerRequest.self, schema: "GoogleDrivePickerRequest", spec: spec)
+    try assertCodableConformance(OpenAPI.WorkActionRequest.self, schema: "WorkActionRequest", spec: spec)
+    try assertCodableConformance(OpenAPI.InteractionResponse.self, schema: "InteractionResponse", spec: spec)
+
+    // Discriminated oneOf unions & allOf merged structs
+    try assertCodableConformance(OpenAPI.MutationReceipt.self, schema: "MutationReceipt", spec: spec)
+    try assertCodableConformance(OpenAPI.CalendarTime.self, schema: "CalendarTime", spec: spec)
+    try assertCodableConformance(OpenAPI.SearchJump.self, schema: "SearchJump", spec: spec)
+    try assertCodableConformance(OpenAPI.Trigger.self, schema: "Trigger", spec: spec)
+    try assertCodableConformance(OpenAPI.Interaction.self, schema: "Interaction", spec: spec)
+    try assertCodableConformance(OpenAPI.LibraryItem.self, schema: "LibraryItem", spec: spec)
+    try assertCodableConformance(OpenAPI.ModelCost.self, schema: "ModelCost", spec: spec)
+    try assertCodableConformance(OpenAPI.Attendee.self, schema: "Attendee", spec: spec)
+
+    // Generated path helpers percent-encode parameters cleanly
+    #expect(OpenAPI.Path.capabilities == "/v1/capabilities")
+    #expect(OpenAPI.Path.workActions(taskID: "t/1") == "/v1/work/t%2F1/actions")
+    #expect(OpenAPI.Path.memoryLogsActions(date: "2026-11-26", entryID: "e 1") == "/v1/memory/logs/2026-11-26/e%201/actions")
 }
 
 private struct ModelSelectionFixture: Decodable {

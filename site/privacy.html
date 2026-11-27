@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy · Nori</title>
+<meta name="description" content="How Nori collects, uses, protects, and deletes your data, including Google user data.">
+<link rel="icon" href="/favicon.ico">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="/"><svg width="32" height="32" viewBox="0 0 96 96" aria-hidden="true" focusable="false"><defs><clipPath id="rice-head"><path d="M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z"/></clipPath></defs><path d="M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z" fill="var(--mark-body)"/><rect x="30" y="61" width="36" height="30" rx="3" fill="var(--mark-seaweed)" clip-path="url(#rice-head)"/><path d="M48 11C54.5 11 59.2 14.3 62.6 20L84.6 58.4C91.5 70.5 84.6 85 70.6 85H25.4C11.4 85 4.5 70.5 11.4 58.4L33.4 20C36.8 14.3 41.5 11 48 11Z" fill="none" stroke="var(--mark-edge)" stroke-width="1.75" stroke-linejoin="round"/><ellipse cx="38.5" cy="46" rx="3.4" ry="4" fill="var(--mark-ink)"/><ellipse cx="57.5" cy="46" rx="3.4" ry="4" fill="var(--mark-ink)"/><path d="M43.5 53.5Q48 57 52.5 53.5" fill="none" stroke="var(--mark-ink)" stroke-width="2.6" stroke-linecap="round"/></svg><span>Nori</span></a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="/#download">Download</a>
+      <a href="/about">About</a>
+      <a class="btn" href="https://app.noribot.chat">Sign in</a>
+    </nav>
+  </div>
+</header>
+<main>
+<div class="wrap"><article class="prose">
+  <h1>Privacy Policy</h1>
+  <p class="effective">Effective November 26, 2026</p>
+
+  <h2>Information Nori collects</h2>
+  <p>When you sign in to Nori, we store your email address, display name, and sign-in account identifier. Inside Nori, we store your timezone, preferences, standing permissions, conversations, memories, tasks, routines, uploaded files, and metadata for apps or MCP servers you connect.</p>
+  <p>If you bring your own model API keys (BYOK), your keys are encrypted at rest using Google Cloud KMS and used solely to authenticate requests to the AI providers you select.</p>
+
+  <h2>Third-party model providers and connected apps</h2>
+  <p>When you message Nori or run tasks, the relevant conversation context, files, and tool outputs are sent to the third-party AI model providers you choose (such as OpenAI, Anthropic, Google, Vercel AI Gateway, or OpenRouter) and to any external apps or MCP servers you authorize. Those services handle data under their own privacy policies and terms.</p>
+
+  <h2>Google user data</h2>
+  <p>When you connect Google, Nori asks only for the access needed by the services you turn on:</p>
+  <ul>
+    <li><strong>Drive:</strong> the files you choose in the Google file picker and files Nori creates for you. Nori can't see the rest of your Drive.</li>
+    <li><strong>Calendar:</strong> reading your calendars and events, and creating or changing events when you ask.</li>
+    <li><strong>Gmail:</strong> sending email you approve. Nori can't read your inbox, and each send needs your approval of its recipients, body, and attachments.</li>
+    <li><strong>Account:</strong> your Google email address and account identifier, so Nori can show which account is connected.</li>
+  </ul>
+  <p>Nori stores your Google access token encrypted in its database, along with the names and IDs of the files you choose. File contents and event details that Nori reads for a request become part of that conversation or task, and are sent to the AI model provider you selected so it can answer.</p>
+  <p>Nori uses Google user data only to provide the features you request. Nori doesn't sell it, use it for advertising, or use it to train AI models. People at Nori don't view it unless the law requires it.</p>
+  <p>You can disconnect Google from <strong>More → Apps &amp; MCP</strong>. Nori then revokes its access with Google and deletes the stored token. You can also remove Nori's access from your <a href="https://myaccount.google.com/permissions">Google Account permissions</a>.</p>
+  <p>Nori's use and transfer of information received from Google APIs to any other app will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+
+  <h2>Telemetry and diagnostics</h2>
+  <p>Nori uses Sentry for error reporting and Arize for operational traces so we can diagnose crashes and reliability issues. Credentials, API keys, authorization tokens, and sensitive message content are redacted before diagnostic telemetry is sent.</p>
+
+  <h2>Data retention</h2>
+  <p>Your conversations, memories, tasks, files, and settings remain stored while your account is active so Nori can maintain continuity across sessions. Operational logs and diagnostics are kept for a limited period to support security and reliability.</p>
+
+  <h2>Resetting data and deleting your account</h2>
+  <p>You can clear your conversations, memories, work history, uploaded files, schedules, preferences, saved API keys, and connected apps at any time from <strong>Settings → Reset data</strong>.</p>
+  <p>Permanent account deletion, from <strong>Settings → Account</strong>, removes your user record, conversations, tasks, memory, encrypted API keys, and stored files from Nori's database and cloud storage.</p>
+</article></div>
+</main>
+<footer class="site-footer">
+  <div class="wrap">
+    <span>© 2026 Nori</span>
+    <nav aria-label="Footer">
+      <a href="/about">About</a>
+      <a href="/privacy" aria-current="page">Privacy Policy</a>
+      <a href="/terms">Terms of Service</a>
+      <a href="https://github.com/a-barwick/nori">Source code</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>
