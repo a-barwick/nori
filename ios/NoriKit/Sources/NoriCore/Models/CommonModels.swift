@@ -635,12 +635,112 @@ public struct WorkingHoursSlot: Sendable, Codable, Hashable {
 }
 
 public struct QuietHours: Sendable, Codable, Hashable {
+    public var enabled: Bool?
     public var start: String
     public var end: String
 
-    public init(start: String, end: String) {
+    public init(enabled: Bool? = nil, start: String, end: String) {
+        self.enabled = enabled
         self.start = start
         self.end = end
+    }
+
+    public var isEnabled: Bool {
+        enabled ?? true
+    }
+}
+
+public enum PushPolicy: String, Sendable, Codable, Hashable, CaseIterable {
+    case urgentAndApprovals = "urgent_and_approvals"
+    case includeBrief = "include_brief"
+    case quietOnly = "quiet_only"
+
+    public var displayLabel: String {
+        switch self {
+        case .urgentAndApprovals: return "Urgent & approvals"
+        case .includeBrief: return "Include morning brief"
+        case .quietOnly: return "Quiet only"
+        }
+    }
+
+    public var next: PushPolicy {
+        let all = Self.allCases
+        guard let idx = all.firstIndex(of: self) else { return .urgentAndApprovals }
+        return all[(idx + 1) % all.count]
+    }
+}
+
+public struct ProactivityPreferences: Sendable, Codable, Hashable {
+    public var pushPolicy: PushPolicy?
+    public var morningBriefTime: String?
+    public var morningBriefEnabled: Bool?
+    public var dailyProactiveBudgetUSD: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case pushPolicy = "push_policy"
+        case morningBriefTime = "morning_brief_time"
+        case morningBriefEnabled = "morning_brief_enabled"
+        case dailyProactiveBudgetUSD = "daily_proactive_budget_usd"
+    }
+
+    public init(
+        pushPolicy: PushPolicy? = nil,
+        morningBriefTime: String? = nil,
+        morningBriefEnabled: Bool? = nil,
+        dailyProactiveBudgetUSD: Double? = nil
+    ) {
+        self.pushPolicy = pushPolicy
+        self.morningBriefTime = morningBriefTime
+        self.morningBriefEnabled = morningBriefEnabled
+        self.dailyProactiveBudgetUSD = dailyProactiveBudgetUSD
+    }
+}
+
+public struct PushDevice: Sendable, Codable, Hashable, Identifiable {
+    public var id: String
+    public var deviceID: String?
+    public var environment: String
+    public var createdAt: String
+    public var updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case deviceID = "device_id"
+        case environment
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+
+    public init(
+        id: String,
+        deviceID: String? = nil,
+        environment: String,
+        createdAt: String = "",
+        updatedAt: String = ""
+    ) {
+        self.id = id
+        self.deviceID = deviceID
+        self.environment = environment
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
+public struct RegisterPushDeviceRequest: Sendable, Codable, Hashable {
+    public var token: String
+    public var deviceID: String?
+    public var environment: String
+
+    enum CodingKeys: String, CodingKey {
+        case token
+        case deviceID = "device_id"
+        case environment
+    }
+
+    public init(token: String, deviceID: String? = nil, environment: String) {
+        self.token = token
+        self.deviceID = deviceID
+        self.environment = environment
     }
 }
 
@@ -681,6 +781,7 @@ public struct Preferences: Sendable, Codable, Hashable {
     public var accountDefaults: [String: String]
     public var budgets: BudgetPreferences
     public var input: InputPreferences?
+    public var proactivity: ProactivityPreferences?
     public var onboardingCompletedAt: String?
     public var dataResetAt: String?
     public var dataResetPending: Bool?
@@ -696,6 +797,7 @@ public struct Preferences: Sendable, Codable, Hashable {
         case accountDefaults = "account_defaults"
         case budgets
         case input
+        case proactivity
         case onboardingCompletedAt = "onboarding_completed_at"
         case dataResetAt = "data_reset_at"
         case dataResetPending = "data_reset_pending"
@@ -712,6 +814,7 @@ public struct Preferences: Sendable, Codable, Hashable {
         accountDefaults: [String: String] = [:],
         budgets: BudgetPreferences = BudgetPreferences(),
         input: InputPreferences? = nil,
+        proactivity: ProactivityPreferences? = nil,
         onboardingCompletedAt: String? = nil,
         dataResetAt: String? = nil,
         dataResetPending: Bool? = nil,
@@ -726,6 +829,7 @@ public struct Preferences: Sendable, Codable, Hashable {
         self.accountDefaults = accountDefaults
         self.budgets = budgets
         self.input = input
+        self.proactivity = proactivity
         self.onboardingCompletedAt = onboardingCompletedAt
         self.dataResetAt = dataResetAt
         self.dataResetPending = dataResetPending

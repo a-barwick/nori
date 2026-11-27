@@ -121,7 +121,7 @@ struct NoriMessageBubble: View {
     static func visibleNonTextParts(in message: Message) -> [MessagePart] {
         (message.parts ?? []).filter { part in
             switch part.type {
-            case "text", "action", "reminder", "page":
+            case "text", "action", "reminder", "page", "brief":
                 return false
             default:
                 return part.display != "page"

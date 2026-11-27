@@ -323,6 +323,10 @@ public protocol NoriTransport: Sendable {
     func updateComputerSessionMode(sessionID: String, mode: ComputerSessionMode) async throws -> ComputerSessionSummary
     func endComputerSession(sessionID: String) async throws
     func computerDesktopWebSocketRequest(for session: CreateComputerSessionResponse) async throws -> URLRequest
+
+    // Push notifications (APNs)
+    func registerPushDevice(_ request: RegisterPushDeviceRequest) async throws -> PushDevice
+    func deletePushDevice(id: String) async throws
 }
 
 public extension NoriTransport {
@@ -603,4 +607,10 @@ public extension NoriTransport {
     func computerDesktopWebSocketRequest(for session: CreateComputerSessionResponse) async throws -> URLRequest {
         throw NoriAPIError(message: "Nori Computer is not supported by this transport.")
     }
+
+    func registerPushDevice(_ request: RegisterPushDeviceRequest) async throws -> PushDevice {
+        PushDevice(id: "push-local", deviceID: request.deviceID, environment: request.environment)
+    }
+
+    func deletePushDevice(id: String) async throws {}
 }

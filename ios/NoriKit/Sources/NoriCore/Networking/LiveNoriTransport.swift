@@ -1655,6 +1655,7 @@ public actor LiveNoriTransport: NoriTransport {
             let account_defaults: [String: String]
             let budgets: BudgetPreferences
             let input: InputPreferences?
+            let proactivity: ProactivityPreferences?
             let onboarding_completed_at: String?
         }
         let val = PrefVal(
@@ -1666,6 +1667,7 @@ public actor LiveNoriTransport: NoriTransport {
             account_defaults: preferences.accountDefaults,
             budgets: preferences.budgets,
             input: preferences.input,
+            proactivity: preferences.proactivity,
             onboarding_completed_at: preferences.onboardingCompletedAt
         )
         return try await mutateEnvelope(
@@ -1675,6 +1677,16 @@ public actor LiveNoriTransport: NoriTransport {
             expectedRevision: preferences.revision,
             value: val
         )
+    }
+
+    // MARK: - Push Notifications (APNs)
+
+    public func registerPushDevice(_ request: RegisterPushDeviceRequest) async throws -> PushDevice {
+        try await sendJSON(OpenAPI.Path.devicesPush, method: "POST", body: request)
+    }
+
+    public func deletePushDevice(id: String) async throws {
+        try await sendWithoutResponse(OpenAPI.Path.devicesPushByID(id: id), method: "DELETE", body: EmptyBody())
     }
 
     // MARK: - Model API Keys (BYOK)

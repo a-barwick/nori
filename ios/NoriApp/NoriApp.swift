@@ -2,9 +2,84 @@ import NoriCore
 import NoriDesign
 import NoriFeatures
 import SwiftUI
+#if os(iOS)
+import UIKit
+import UserNotifications
+#endif
+
+#if os(iOS)
+@MainActor
+final class NoriAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    weak var store: NoriStore?
+    private var pendingDeviceToken: Data?
+    private var pendingPushUserInfo: [AnyHashable: Any]?
+
+    func attach(store: NoriStore) {
+        self.store = store
+        if let token = pendingDeviceToken {
+            pendingDeviceToken = nil
+            store.handleAPNsDeviceToken(token)
+        }
+        if let userInfo = pendingPushUserInfo {
+            pendingPushUserInfo = nil
+            store.handlePushNotificationTap(userInfo: userInfo)
+        }
+    }
+
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        UNUserNotificationCenter.current().delegate = self
+        return true
+    }
+
+    func application(
+        _ application: UIApplication,
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+        if let store {
+            store.handleAPNsDeviceToken(deviceToken)
+        } else {
+            pendingDeviceToken = deviceToken
+        }
+    }
+
+    func application(
+        _ application: UIApplication,
+        didFailToRegisterForRemoteNotificationsWithError error: Error
+    ) {
+        NoriLogger.network.warning("push.apns_registration_failed", attributes: ["error": error.localizedDescription])
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .sound]
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        let userInfo = response.notification.request.content.userInfo
+        await MainActor.run {
+            if let store = self.store {
+                store.handlePushNotificationTap(userInfo: userInfo)
+            } else {
+                self.pendingPushUserInfo = userInfo
+            }
+        }
+    }
+}
+#endif
 
 @main
 struct NoriApp: App {
+    #if os(iOS)
+    @UIApplicationDelegateAdaptor(NoriAppDelegate.self) private var appDelegate
+    #endif
     @AppStorage(NoriAppearance.storageKey) private var appearanceRawValue: String = NoriAppearance.system.rawValue
     @State private var store: NoriStore
 
@@ -42,6 +117,11 @@ struct NoriApp: App {
             NoriRootView(store: store)
                 .tint(NoriColors.accent)
                 .preferredColorScheme(appearance.colorScheme)
+                .onAppear {
+                    #if os(iOS)
+                    appDelegate.attach(store: store)
+                    #endif
+                }
         }
     }
 

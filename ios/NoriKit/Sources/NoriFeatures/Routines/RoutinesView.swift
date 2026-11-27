@@ -1,50 +1,28 @@
 import SwiftUI
 import NoriCore
 import NoriDesign
+#if canImport(UIKit)
+import UIKit
+#endif
 
 public struct RoutinesView: View {
     @Bindable private var store: NoriStore
-    @State private var busyID: String?
     @State private var selectedRoutineID: String?
     @State private var showNewRoutineSheet: Bool = false
+    @State private var confirmingRemoveID: String?
+    @State private var dismissedIDs: Set<String> = []
 
     public init(store: NoriStore) {
         self.store = store
     }
 
     private var activeAutomations: [Automation] {
-        let nonCancelled = store.automations.filter { $0.status != .cancelled && $0.trigger.kind != "once" }
+        let nonCancelled = store.automations.filter {
+            $0.status != .cancelled && $0.trigger.kind != "once" && !dismissedIDs.contains($0.id)
+        }
         let enabled = nonCancelled.filter { $0.status == .enabled }
         let paused = nonCancelled.filter { $0.status != .enabled }
         return enabled + paused
-    }
-
-    private var nextEnabledAutomation: Automation? {
-        let enabled = activeAutomations.filter { $0.status == .enabled && !$0.isSpentOneTime }
-        return enabled.min { lhs, rhs in
-            let lDate = lhs.nextAt.flatMap { NoriDateFormatting.parse($0) }
-            let rDate = rhs.nextAt.flatMap { NoriDateFormatting.parse($0) }
-            switch (lDate, rDate) {
-            case (let l?, let r?): return l < r
-            case (_?, nil): return true
-            case (nil, _?): return false
-            case (nil, nil): return false
-            }
-        }
-    }
-
-    private var nextRunLine: String? {
-        guard !activeAutomations.isEmpty else { return nil }
-        if let next = nextEnabledAutomation {
-            let when: String = {
-                if let nextAt = next.nextAt, !nextAt.isEmpty {
-                    return NoriDateFormatting.relative(nextAt)
-                }
-                return next.trigger.summaryLabel
-            }()
-            return "Next up: \(next.title), \(when)."
-        }
-        return "All automations are currently paused."
     }
 
     public var body: some View {
@@ -63,24 +41,9 @@ public struct RoutinesView: View {
                         .buttonStyle(NoriButtonStyle(.primary, compact: true))
                     }
                 } else {
-                    HStack(alignment: .center, spacing: 8) {
-                        if let nextRunLine {
-                            NoriLine(nextRunLine)
-                        } else {
-                            Spacer(minLength: 0)
-                        }
-
-                        Button {
-                            showNewRoutineSheet = true
-                        } label: {
-                            Label("New", systemImage: "plus")
-                        }
-                        .buttonStyle(NoriButtonStyle(.primary, compact: true))
-                    }
-
                     NoriRows {
                         ForEach(Array(activeAutomations.enumerated()), id: \.element.id) { idx, automation in
-                            routineRow(
+                            automationRow(
                                 automation,
                                 showDivider: idx < activeAutomations.count - 1
                             )
@@ -89,7 +52,7 @@ public struct RoutinesView: View {
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.top, 12)
+            .padding(.top, 10)
             .padding(.bottom, 96)
         }
         .background(NoriColors.canvas)
@@ -110,137 +73,103 @@ public struct RoutinesView: View {
         }
     }
 
-    private func statusBadge(for automation: Automation) -> (label: String, tone: NoriTone)? {
-        if automation.lastRunFailed {
-            return ("Last run failed", .danger)
-        }
-        if automation.isSpentOneTime {
-            return ("Done", .neutral)
-        }
-        if automation.isSnoozed {
-            return ("Snoozed", .neutral)
-        }
-        if automation.status != .enabled {
-            return (automation.status.displayLabel, .neutral)
-        }
-        return nil
-    }
-
-    private func routineRow(_ automation: Automation, showDivider: Bool) -> some View {
+    private func automationRow(_ automation: Automation, showDivider: Bool) -> some View {
         let isEnabled = automation.status == .enabled && !automation.isSpentOneTime
-        let isBusy = busyID == automation.id
-        let badge = statusBadge(for: automation)
+        let isConfirming = confirmingRemoveID == automation.id
 
-        return VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 10) {
-                Button {
-                    selectedRoutineID = automation.id
-                } label: {
-                    HStack(alignment: .top, spacing: 8) {
-                        Text(automation.title)
-                            .font(NoriTypography.rowTitle)
-                            .foregroundStyle(isEnabled ? NoriColors.ink : NoriColors.ink2)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "clock")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(isEnabled ? NoriColors.scheduled : NoriColors.ink3)
+                    .frame(width: 20, height: 20)
 
-                        if let badge {
-                            NoriPill(badge.label, tone: badge.tone)
+                Text(automation.title)
+                    .font(NoriTypography.rowTitle)
+                    .foregroundStyle(isEnabled ? NoriColors.ink : NoriColors.ink2)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if isConfirming {
+                    HStack(spacing: 6) {
+                        Button("Remove") {
+                            confirmRemove(automation)
                         }
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(NoriColors.danger)
+                        .padding(.horizontal, 10)
+                        .frame(height: 28)
+                        .background(NoriColors.dangerBg, in: Capsule())
+                        .buttonStyle(.plain)
 
-                HStack(alignment: .center, spacing: 10) {
-                    Button {
-                        selectedRoutineID = automation.id
-                    } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(automation.trigger.summaryLabel)
-                                .font(.system(size: 12.5))
-                                .foregroundStyle(NoriColors.ink2)
-                                .lineLimit(1)
-
-                            if isEnabled,
-                               automation.trigger.at == nil,
-                               let nextAt = automation.nextAt, !nextAt.isEmpty {
-                                let rel = NoriDateFormatting.relative(nextAt)
-                                let nextText = rel.prefix(1).lowercased() + rel.dropFirst()
-                                Text("Next \(nextText)")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(NoriColors.accent)
-                                    .lineLimit(1)
+                        Button("Keep") {
+                            withAnimation(.easeInOut(duration: 0.14)) {
+                                confirmingRemoveID = nil
                             }
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(NoriColors.ink2)
+                        .padding(.horizontal, 10)
+                        .frame(height: 28)
+                        .background(NoriColors.fill1, in: Capsule())
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
+                } else {
+                    HStack(spacing: 8) {
+                        Text(automation.trigger.compactCadenceLabel)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(isEnabled ? NoriColors.scheduled : NoriColors.ink3)
+                            .lineLimit(1)
 
-                    HStack(spacing: 6) {
                         Button {
-                            busyID = automation.id
-                            Task {
-                                await store.runAutomationNow(automationID: automation.id)
-                                busyID = nil
+                            withAnimation(.easeInOut(duration: 0.14)) {
+                                confirmingRemoveID = automation.id
                             }
                         } label: {
-                            HStack(spacing: 4) {
-                                if isBusy {
-                                    ProgressView()
-                                        .controlSize(.mini)
-                                        .tint(NoriColors.accent)
-                                } else {
-                                    Image(systemName: "play.fill")
-                                        .font(.system(size: 9.5, weight: .semibold))
-                                }
-                                Text("Run")
-                                    .font(.system(size: 12.5, weight: .semibold))
-                            }
-                            .foregroundStyle(isBusy ? NoriColors.disabled : NoriColors.accent)
-                            .padding(.horizontal, 12)
-                            .frame(minHeight: 34)
-                            .background(isBusy ? NoriColors.disabledBg : NoriColors.selected, in: Capsule())
+                            Image(systemName: "xmark")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(NoriColors.ink3)
+                                .frame(width: 26, height: 26)
+                                .contentShape(Circle())
                         }
                         .buttonStyle(.plain)
-                        .disabled(isBusy)
-                        .accessibilityLabel("Run \(automation.title) now")
-
-                        if !automation.isSpentOneTime {
-                            Button {
-                                busyID = automation.id
-                                Task {
-                                    await store.toggleAutomation(automationID: automation.id)
-                                    busyID = nil
-                                }
-                            } label: {
-                                Text(isEnabled ? "Pause" : "Resume")
-                                    .font(.system(size: 12.5, weight: .medium))
-                                    .foregroundStyle(isBusy ? NoriColors.disabled : (isEnabled ? NoriColors.ink2 : NoriColors.ink))
-                                    .padding(.horizontal, 12)
-                                    .frame(minHeight: 34)
-                                    .background(isBusy ? NoriColors.disabledBg : NoriColors.elevated, in: Capsule())
-                                    .overlay(
-                                        Capsule()
-                                            .strokeBorder(isBusy ? .clear : NoriColors.cardBorder, lineWidth: 1)
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(isBusy)
-                            .accessibilityLabel("\(isEnabled ? "Pause" : "Resume") \(automation.title)")
-                        }
+                        .accessibilityLabel("Remove \(automation.title)")
                     }
                 }
             }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 13)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if isConfirming {
+                    withAnimation(.easeInOut(duration: 0.14)) {
+                        confirmingRemoveID = nil
+                    }
+                } else {
+                    selectedRoutineID = automation.id
+                }
+            }
 
             if showDivider {
                 Rectangle()
                     .fill(NoriColors.hairline)
                     .frame(height: 1)
-                    .padding(.leading, 13)
+                    .padding(.leading, 46)
+            }
+        }
+    }
+
+    private func confirmRemove(_ automation: Automation) {
+        #if os(iOS)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        #endif
+        confirmingRemoveID = nil
+        dismissedIDs.insert(automation.id)
+
+        Task {
+            let ok = await store.cancelAutomation(automationID: automation.id)
+            if !ok {
+                dismissedIDs.remove(automation.id)
             }
         }
     }

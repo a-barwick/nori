@@ -105,6 +105,8 @@ actor MockNoriTransport: NoriTransport {
     var mockPermissions: [PermissionRule] = []
     var mockOperations: [OperationProjection] = []
     var mockMemorySearchResponse = MemorySearchResponse(items: [], query: "")
+    var registeredPushRequests: [RegisterPushDeviceRequest] = []
+    var deletedPushDeviceIDs: [String] = []
 
     // Stream & Interaction synchronization
     private nonisolated(unsafe) var streamEvents: [NoriStreamEvent] = []
@@ -685,5 +687,20 @@ actor MockNoriTransport: NoriTransport {
             nextDeleteError = nil
             throw error
         }
+    }
+
+    func registerPushDevice(_ request: RegisterPushDeviceRequest) async throws -> PushDevice {
+        registeredPushRequests.append(request)
+        return PushDevice(
+            id: "push-dev-\(registeredPushRequests.count)",
+            deviceID: request.deviceID,
+            environment: request.environment,
+            createdAt: "2026-11-27T08:00:00Z",
+            updatedAt: "2026-11-27T08:00:00Z"
+        )
+    }
+
+    func deletePushDevice(id: String) async throws {
+        deletedPushDeviceIDs.append(id)
     }
 }

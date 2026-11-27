@@ -133,7 +133,9 @@ extension NoriStore {
             }
 
             let shouldRefreshPermissions: Bool
-            if case .approve(_, let rememberRule) = answer, rememberRule {
+            if case .approve(_, let rememberRule, let editedFields) = answer,
+               rememberRule,
+               editedFields?.isEmpty != false {
                 shouldRefreshPermissions = true
             } else {
                 shouldRefreshPermissions = false
@@ -160,12 +162,16 @@ extension NoriStore {
             interactionFollowUpTasks[followUpID] = followUpTask
 
             switch answer {
-            case .approve(_, let rememberRule):
-                showToast(
-                    rememberRule
-                        ? "Always allowed — rule saved"
-                        : "Allowed once"
-                )
+            case .approve(_, let rememberRule, let editedFields):
+                if let editedFields, !editedFields.isEmpty {
+                    showToast("Sent")
+                } else {
+                    showToast(
+                        rememberRule
+                            ? "Always allowed — rule saved"
+                            : "Allowed once"
+                    )
+                }
             case .decline:
                 showToast(interaction.kind == .approval ? "Denied — nothing was sent" : "Declined")
             case .answer: showToast("Answer sent to Nori")
@@ -200,11 +206,37 @@ extension NoriStore {
     }
 
     @discardableResult
-    public func approveInteraction(_ interaction: Interaction, rememberRule: Bool = false) async -> InteractionSubmitOutcome {
-        await resolveInteraction(
+    public func approveInteraction(
+        _ interaction: Interaction,
+        rememberRule: Bool = false,
+        editedFields: EditedApprovalFields? = nil
+    ) async -> InteractionSubmitOutcome {
+        let effectiveRemember = (editedFields?.isEmpty == false) ? false : rememberRule
+        return await resolveInteraction(
             interaction,
-            answer: .approve(actionDigest: interaction.actionDigest ?? "", rememberRule: rememberRule)
+            answer: .approve(
+                actionDigest: interaction.actionDigest ?? "",
+                rememberRule: effectiveRemember,
+                editedFields: editedFields
+            )
         )
+    }
+
+    public func fetchOrFindInteraction(id: String) async -> Interaction? {
+        if let existing = interactions.first(where: { $0.id == id }) {
+            return existing
+        }
+        let generation = sessionGeneration
+        do {
+            let fetched = try await transport.fetchInteraction(id: id)
+            guard generation == sessionGeneration else { return nil }
+            applyCurrentInteraction(fetched)
+            return fetched
+        } catch {
+            guard generation == sessionGeneration else { return nil }
+            _ = await handleOperationError(error, showToast: false)
+            return nil
+        }
     }
 
     @discardableResult

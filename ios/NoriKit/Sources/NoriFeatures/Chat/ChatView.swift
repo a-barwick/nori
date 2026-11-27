@@ -17,6 +17,7 @@ public struct ChatView: View {
     @State private var retryingMessageIDs: Set<String> = []
     @State private var cancellingReminderIDs: Set<String> = []
     @State private var editingReminder: ReminderEditTarget?
+    @State private var reviewingInteraction: Interaction?
     @State private var visiblePendingInteractionIDs: Set<String> = []
     @State private var isNearBottom: Bool = true
     @Namespace private var noriAvatarNamespace
@@ -124,6 +125,23 @@ public struct ChatView: View {
                 .presentationDragIndicator(.visible)
                 .presentationBackground(NoriColors.sheetBackground)
                 .presentationCornerRadius(NoriRadius.sheet)
+        }
+        .sheet(item: $reviewingInteraction) { interaction in
+            ReviewApprovalSheet(store: store, interaction: interaction)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(NoriColors.sheetBackground)
+                .presentationCornerRadius(NoriRadius.sheet)
+        }
+        .onChange(of: store.pendingReviewInteractionID) { _, nextID in
+            guard let nextID, !nextID.isEmpty else { return }
+            store.pendingReviewInteractionID = nil
+            openReviewSheet(interactionID: nextID)
+        }
+        .task(id: store.pendingReviewInteractionID) {
+            guard let nextID = store.pendingReviewInteractionID, !nextID.isEmpty else { return }
+            store.pendingReviewInteractionID = nil
+            openReviewSheet(interactionID: nextID)
         }
         #if os(iOS)
         .toolbar(.hidden, for: .navigationBar)
@@ -299,6 +317,22 @@ public struct ChatView: View {
                 .padding(.bottom, 10)
                 .id(id)
 
+        case .brief(let message, let parts):
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(parts) { part in
+                    BriefCardView(
+                        part: part,
+                        interactions: store.interactions,
+                        onReview: { interactionID in
+                            openReviewSheet(interactionID: interactionID)
+                        }
+                    )
+                }
+            }
+            .padding(.top, 4)
+            .padding(.bottom, 12)
+            .id("brief-\(message.id)")
+
         case .page(let message, let part):
             PageBlockCard(
                 message: message,
@@ -470,6 +504,19 @@ public struct ChatView: View {
             title: initialTitle,
             scheduledAt: initialDate
         )
+    }
+
+    private func openReviewSheet(interactionID: String) {
+        triggerLightHaptic()
+        if let existing = store.interactions.first(where: { $0.id == interactionID }) {
+            reviewingInteraction = existing
+            return
+        }
+        Task {
+            if let fetched = await store.fetchOrFindInteraction(id: interactionID) {
+                reviewingInteraction = fetched
+            }
+        }
     }
 
     private func cancelReminder(automationID: String) {

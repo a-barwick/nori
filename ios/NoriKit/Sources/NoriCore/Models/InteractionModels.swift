@@ -513,9 +513,34 @@ public struct Interaction: Sendable, Codable, Hashable, Identifiable {
     }
 }
 
+public struct EditedApprovalFields: Sendable, Codable, Hashable {
+    public var subject: String?
+    public var body: String?
+
+    public init(subject: String? = nil, body: String? = nil) {
+        self.subject = subject
+        self.body = body
+    }
+
+    public var isEmpty: Bool {
+        subject == nil && body == nil
+    }
+
+    public var jsonObject: [String: AnyJSON] {
+        var dict: [String: AnyJSON] = [:]
+        if let subject {
+            dict["subject"] = .string(subject)
+        }
+        if let body {
+            dict["body"] = .string(body)
+        }
+        return dict
+    }
+}
+
 public enum InteractionAnswer: Sendable, Hashable, Encodable {
     case answer(text: String, optionIDs: [String]? = nil)
-    case approve(actionDigest: String, rememberRule: Bool = false)
+    case approve(actionDigest: String, rememberRule: Bool = false, editedFields: EditedApprovalFields? = nil)
     case decline(actionDigest: String?)
     case chooseAccount(connectionID: String, rememberAsDefault: Bool = false)
     case resume(text: String? = nil)
@@ -529,12 +554,14 @@ public enum InteractionAnswer: Sendable, Hashable, Encodable {
                 dict["option_ids"] = .array(optionIDs.map { .string($0) })
             }
             return dict
-        case .approve(let digest, let rememberRule):
+        case .approve(let digest, let rememberRule, let editedFields):
             var dict: [String: AnyJSON] = [
                 "kind": .string("approve"),
                 "action_digest": .string(digest)
             ]
-            if rememberRule {
+            if let editedFields, !editedFields.isEmpty {
+                dict["edited_fields"] = .object(editedFields.jsonObject)
+            } else if rememberRule {
                 dict["remember_rule"] = .bool(true)
             }
             return dict

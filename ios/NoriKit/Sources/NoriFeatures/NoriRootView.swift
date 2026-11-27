@@ -354,6 +354,10 @@ public struct NoriRootView: View {
             store.isShowingOnboardingReplay = true
         case .workDetail(let taskID):
             openWorkTask(taskID)
+        case .reviewInteraction(let interactionID):
+            presentedDocument = nil
+            selectedTab = .chat
+            store.pendingReviewInteractionID = interactionID
         case .activitySheet:
             jumpToNeedsYou()
         case .oauthCallback:

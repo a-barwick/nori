@@ -99,6 +99,98 @@ public struct AutomationTrigger: Sendable, Codable, Hashable {
         return kind.replacingOccurrences(of: "_", with: " ").capitalized
     }
 
+    public var compactCadenceLabel: String {
+        if kind == "event_relative" {
+            if let offset = offsetSeconds {
+                let minutes = Int((Double(abs(offset)) / 60.0).rounded())
+                let span = (minutes >= 60 && minutes % 60 == 0) ? "\(minutes / 60)h" : "\(minutes)m"
+                return "\(span) \(offset <= 0 ? "before" : "after")"
+            }
+            return "Before event"
+        }
+        if kind == "watch" {
+            if let interval = minIntervalSeconds {
+                let mins = max(1, Int((Double(interval) / 60.0).rounded()))
+                if mins >= 60 && mins % 60 == 0 {
+                    let hours = mins / 60
+                    return hours == 1 ? "Hourly" : "Every \(hours)h"
+                }
+                return "Every \(mins)m"
+            }
+            return "Watching"
+        }
+        if let rrule, !rrule.isEmpty {
+            return Self.formatCompactRecurrence(rrule: rrule, localStart: localStart)
+        }
+        if let at, !at.isEmpty {
+            return Self.formatOnceTimestamp(at)
+        }
+        return kind.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    private static func formatClock12Hour(_ hhmm: String) -> String {
+        let parts = hhmm.split(separator: ":")
+        guard parts.count == 2,
+              let hour24 = Int(parts[0]),
+              let minute = Int(parts[1]),
+              (0...23).contains(hour24),
+              (0...59).contains(minute) else {
+            return hhmm
+        }
+        let suffix = hour24 >= 12 ? "PM" : "AM"
+        let hour12 = hour24 % 12 == 0 ? 12 : hour24 % 12
+        return String(format: "%d:%02d %@", hour12, minute, suffix)
+    }
+
+    private static func formatCompactRecurrence(rrule: String, localStart: String?) -> String {
+        let timePart: String = {
+            guard let localStart,
+                  let tIndex = localStart.firstIndex(of: "T") else { return "" }
+            let afterT = localStart[localStart.index(after: tIndex)...]
+            let hhmm = String(afterT.prefix(5))
+            return hhmm.contains(":") ? formatClock12Hour(hhmm) : ""
+        }()
+        let timeSuffix = timePart.isEmpty ? "" : " \(timePart)"
+
+        var parts: [String: String] = [:]
+        for token in rrule.uppercased().split(separator: ";") {
+            let kv = token.split(separator: "=", maxSplits: 1)
+            if kv.count == 2 {
+                parts[String(kv[0]).trimmingCharacters(in: .whitespaces)] =
+                    String(kv[1]).trimmingCharacters(in: .whitespaces)
+            }
+        }
+        let freq = parts["FREQ"] ?? ""
+        let interval = Int(parts["INTERVAL"] ?? "") ?? 1
+        let days = parts["BYDAY"]?
+            .split(separator: ",")
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        let weekdaysSet: Set<String> = ["MO", "TU", "WE", "TH", "FR"]
+        let isWeekdays = days?.count == 5 && Set(days ?? []) == weekdaysSet
+
+        switch freq {
+        case "DAILY":
+            if interval > 1 { return "Every \(interval)d\(timeSuffix)" }
+            return "Daily\(timeSuffix)"
+        case "WEEKLY":
+            if isWeekdays { return "Weekdays\(timeSuffix)" }
+            if let days, !days.isEmpty {
+                let labels = days.map { weekdayLabels[$0] ?? $0.capitalized }
+                return "\(labels.joined(separator: ", "))\(timeSuffix)"
+            }
+            return "Weekly\(timeSuffix)"
+        case "MONTHLY":
+            return "Monthly\(timeSuffix)"
+        case "YEARLY":
+            return "Yearly\(timeSuffix)"
+        case "HOURLY":
+            return interval > 1 ? "Every \(interval)h" : "Hourly"
+        default:
+            return timePart.isEmpty ? "Recurring" : timePart
+        }
+    }
+
     private static func formatOnceTimestamp(_ iso: String) -> String {
         guard let date = parseISO8601Date(iso) else { return iso }
         let formatter = DateFormatter()

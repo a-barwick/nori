@@ -42,6 +42,10 @@ extension NoriStore {
         }
         guard generation == sessionGeneration, authState.isSignedIn, !Task.isCancelled else { return }
         startEventStream()
+        Task { @MainActor [weak self] in
+            guard let self, generation == self.sessionGeneration, self.authState.isSignedIn else { return }
+            await self.pushManager.registerPendingTokenIfSignedIn(transport: self.transport)
+        }
     }
 
     public func beginGoogleSignIn(callbackURL: URL, pkce: GoogleOAuthPKCE) async throws -> GoogleSignInResult {
@@ -123,6 +127,11 @@ extension NoriStore {
             lastError = nil
             NoriLogger.auth.info("auth.signed_in", breadcrumb: true)
             startChatSession()
+            Task { @MainActor [weak self] in
+                guard let self, generation == self.sessionGeneration, self.authState.isSignedIn else { return }
+                await self.pushManager.requestAuthorizationIfNeeded()
+                await self.pushManager.registerPendingTokenIfSignedIn(transport: self.transport)
+            }
         } catch {
             guard generation == sessionGeneration else { return }
             await failSignIn(error, generation: generation)
@@ -150,6 +159,8 @@ extension NoriStore {
 
     public func signOut() async {
         let previousEmail = authState.email
+        let activeTransport = transport
+        await pushManager.unregisterOnSignOut(transport: activeTransport)
         sessionGeneration &+= 1
         accountDeletePending = false
         clearUserState()

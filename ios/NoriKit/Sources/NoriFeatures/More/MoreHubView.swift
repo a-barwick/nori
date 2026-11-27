@@ -44,6 +44,9 @@ public struct MoreHubView: View {
                     .padding(.bottom, 12)
                 }
 
+                NoriSectionHeader("Proactivity")
+                ProactivitySectionView(store: store)
+
                 NoriSectionHeader("Nori")
                 noriRows
 

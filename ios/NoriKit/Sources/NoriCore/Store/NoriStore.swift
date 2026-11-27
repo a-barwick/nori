@@ -20,12 +20,14 @@ public enum NoriDeepLink: Sendable, Hashable {
     case onboarding
     case workDetail(String)
     case document(String)
+    case reviewInteraction(String)
     case oauthCallback(URL)
 
     public static func parse(_ url: URL) -> NoriDeepLink? {
         guard url.scheme?.lowercased() == "nori" else { return nil }
         let host = url.host?.lowercased() ?? ""
         let parts = url.pathComponents.filter { $0 != "/" }
+        let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
 
         switch host {
         case "tab":
@@ -39,7 +41,17 @@ public enum NoriDeepLink: Sendable, Hashable {
                 default: break
                 }
             }
-        case "chat": return .tab(.chat)
+        case "chat":
+            if let interactionID = queryItems.first(where: { $0.name == "interaction_id" })?.value,
+               !interactionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return .reviewInteraction(interactionID)
+            }
+            return .tab(.chat)
+        case "review":
+            if let interactionID = parts.first, !interactionID.isEmpty {
+                return .reviewInteraction(interactionID)
+            }
+            return .tab(.chat)
         case "work":
             if let taskID = parts.first, !taskID.isEmpty {
                 return .workDetail(taskID)
@@ -141,8 +153,11 @@ public final class NoriStore {
     public var memoryRefreshError: String?
     public var toastMessage: String?
     public var pendingDeepLink: NoriDeepLink?
+    public var pendingReviewInteractionID: String?
     public var hasLoadedSnapshot: Bool = false
     public var isShowingOnboardingReplay: Bool = false
+
+    public let pushManager: NoriPushManager
 
     var hasLoadedSession = false
     var isAwaitingResetMarker = false
@@ -216,11 +231,13 @@ public final class NoriStore {
         transport: (any NoriTransport)? = nil,
         authProvider: AuthTokenProvider = AuthTokenProvider(),
         resetMinimumDuration: Duration = .seconds(2),
-        devLocalEmail: String? = nil
+        devLocalEmail: String? = nil,
+        pushManager: NoriPushManager? = nil
     ) {
         self.authProvider = authProvider
         self.resetMinimumDuration = resetMinimumDuration
         self.devLocalEmail = devLocalEmail
+        self.pushManager = pushManager ?? NoriPushManager()
         if let transport {
             self.liveTransport = transport as? LiveNoriTransport
             self.transport = transport
@@ -391,12 +408,13 @@ public final class NoriStore {
             let computerEnabled = isComputerEnabled
             async let summaryTask: Void = refreshSummary(force: force)
             async let modelKeysTask: Void = refreshModelKeys(force: force)
+            async let prefsTask: Void = refreshPermissionsAndPreferences(force: force)
             async let computerTask: Void = {
                 if computerEnabled {
                     _ = await self.refreshComputerStatus(force: force)
                 }
             }()
-            _ = await (summaryTask, modelKeysTask, computerTask)
+            _ = await (summaryTask, modelKeysTask, prefsTask, computerTask)
         }
     }
 
@@ -472,6 +490,7 @@ public final class NoriStore {
         isStreamingAssistant = false
         pendingComposerDraft = nil
         pendingDeepLink = nil
+        pendingReviewInteractionID = nil
         lastError = nil
         memoryRefreshError = nil
         toastMessage = nil
@@ -555,6 +574,32 @@ public final class NoriStore {
             }
         }
         pendingDeepLink = link
+    }
+
+    public func handleAPNsDeviceToken(_ tokenData: Data) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.pushManager.updateDeviceToken(
+                tokenData,
+                transport: self.transport,
+                isSignedIn: self.authState.isSignedIn
+            )
+        }
+    }
+
+    public func requestPushAuthorizationIfNeeded() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.pushManager.requestAuthorizationIfNeeded()
+        }
+    }
+
+    public func handlePushNotificationTap(userInfo: [AnyHashable: Any]) {
+        if let interactionID = NoriPushManager.extractInteractionID(from: userInfo) {
+            pendingDeepLink = .reviewInteraction(interactionID)
+        } else {
+            pendingDeepLink = .tab(.chat)
+        }
     }
 
     public func showToast(_ message: String) {

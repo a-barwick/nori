@@ -48,6 +48,36 @@ public struct PageMetric: Sendable, Codable, Hashable, Identifiable {
     }
 }
 
+public struct BriefItem: Sendable, Codable, Hashable, Identifiable {
+    public var title: String
+    public var trailing: String?
+    public var interactionID: String?
+    public var actionLabel: String?
+
+    public var id: String {
+        "\(interactionID ?? "")|\(title)|\(trailing ?? "")"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case trailing
+        case interactionID = "interaction_id"
+        case actionLabel = "action_label"
+    }
+
+    public init(
+        title: String,
+        trailing: String? = nil,
+        interactionID: String? = nil,
+        actionLabel: String? = nil
+    ) {
+        self.title = title
+        self.trailing = trailing
+        self.interactionID = interactionID
+        self.actionLabel = actionLabel
+    }
+}
+
 public struct MessagePart: Sendable, Codable, Hashable, Identifiable {
     public var id: String
     public var type: String
@@ -65,6 +95,9 @@ public struct MessagePart: Sendable, Codable, Hashable, Identifiable {
     public var title: String?
     public var metrics: [PageMetric]?
     public var scheduledAt: String?
+    public var greeting: String?
+    public var meta: String?
+    public var items: [BriefItem]?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -83,6 +116,9 @@ public struct MessagePart: Sendable, Codable, Hashable, Identifiable {
         case title
         case metrics
         case scheduledAt = "scheduled_at"
+        case greeting
+        case meta
+        case items
     }
 
     public init(
@@ -101,7 +137,10 @@ public struct MessagePart: Sendable, Codable, Hashable, Identifiable {
         actions: [String]? = nil,
         title: String? = nil,
         metrics: [PageMetric]? = nil,
-        scheduledAt: String? = nil
+        scheduledAt: String? = nil,
+        greeting: String? = nil,
+        meta: String? = nil,
+        items: [BriefItem]? = nil
     ) {
         self.id = id
         self.type = type
@@ -119,6 +158,9 @@ public struct MessagePart: Sendable, Codable, Hashable, Identifiable {
         self.title = title
         self.metrics = metrics
         self.scheduledAt = scheduledAt
+        self.greeting = greeting
+        self.meta = meta
+        self.items = items
     }
 
     public init(from decoder: any Decoder) throws {
@@ -138,11 +180,18 @@ public struct MessagePart: Sendable, Codable, Hashable, Identifiable {
         self.title = try c.decodeIfPresent(String.self, forKey: .title)
         self.metrics = try c.decodeIfPresent([PageMetric].self, forKey: .metrics)
         self.scheduledAt = try c.decodeIfPresent(String.self, forKey: .scheduledAt)
+        self.greeting = try c.decodeIfPresent(String.self, forKey: .greeting)
+        self.meta = try c.decodeIfPresent(String.self, forKey: .meta)
+        self.items = try c.decodeIfPresent([BriefItem].self, forKey: .items)
         self.id = try c.decodeIfPresent(String.self, forKey: .id) ?? "\(type)-\(resource?.id ?? name ?? UUID().uuidString)"
     }
 
     public var isReminder: Bool {
         type == "reminder"
+    }
+
+    public var isBrief: Bool {
+        type == "brief"
     }
 
     public var reminderTitle: String {
@@ -278,6 +327,10 @@ public struct Message: Sendable, Codable, Hashable, Identifiable {
 
     public var reminderParts: [MessagePart] {
         (parts ?? []).filter { $0.isReminder }
+    }
+
+    public var briefParts: [MessagePart] {
+        (parts ?? []).filter { $0.isBrief }
     }
 }
 

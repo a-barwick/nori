@@ -51,6 +51,7 @@ extension Interaction {
 
 enum ChatThreadUnit: Identifiable {
     case separator(id: String, label: String)
+    case brief(message: Message, parts: [MessagePart])
     case page(message: Message, part: MessagePart)
     case reminder(message: Message, parts: [MessagePart])
     case group(id: String, isUser: Bool, messages: [Message])
@@ -60,6 +61,7 @@ enum ChatThreadUnit: Identifiable {
     var id: String {
         switch self {
         case .separator(let id, _): return id
+        case .brief(let message, _): return "brief-\(message.id)"
         case .page(let message, _): return "page-\(message.id)"
         case .reminder(let message, _): return "reminder-\(message.id)"
         case .group(let id, _, _): return id
@@ -127,6 +129,13 @@ enum ChatThreadUnit: Identifiable {
             if msg.isFailed {
                 flushBuffer()
                 result.append(.error(msg))
+                continue
+            }
+
+            let briefParts = msg.briefParts
+            if !briefParts.isEmpty {
+                flushBuffer()
+                result.append(.brief(message: msg, parts: briefParts))
                 continue
             }
 
