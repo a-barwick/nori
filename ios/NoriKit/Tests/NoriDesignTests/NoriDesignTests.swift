@@ -62,6 +62,7 @@ struct NoriDesignTests {
         #expect(hexString(for: NoriColors.Text.disabled, dark: true) == "#6B6578")
 
         #expect(hexString(for: NoriColors.Brand.primary, dark: true) == "#7A3DF6")
+        #expect(hexString(for: NoriColors.accentPressed, dark: true) == "#5922CC")
         #expect(hexString(for: NoriColors.Brand.accent, dark: true) == "#A98AFF")
 
         #expect(hexString(for: NoriColors.Mascot.body, dark: true) == "#C6C4CE")
@@ -70,10 +71,29 @@ struct NoriDesignTests {
         #expect(hexString(for: NoriColors.Mascot.edge, dark: true) == "#D1CFD8")
         #expect(hexString(for: NoriColors.Mascot.activity, dark: true) == "#7A3DF6")
 
+        let darkMascot = NoriColors.Mascot.resolvedColors(for: .dark)
+        #expect(hexString(for: darkMascot.body, dark: true) == "#C6C4CE")
+        #expect(hexString(for: darkMascot.seaweed, dark: true) == "#171522")
+        #expect(hexString(for: darkMascot.ink, dark: true) == "#171522")
+        #expect(hexString(for: darkMascot.edge, dark: true) == "#D1CFD8")
+
         #expect(hexString(for: NoriColors.chipSelectedFg, dark: true) == "#A98AFF")
         #expect(hexString(for: NoriColors.chipSelectedBorder, dark: true) == "#A98AFF")
         #expect(hexString(for: NoriColors.toastBg, dark: true) == "#1E1B29")
+        #expect(hexString(for: NoriColors.heroStart, dark: true) == "#100E18")
+        #expect(hexString(for: NoriColors.heroEnd, dark: true) == "#171226")
         #expect(hexString(for: NoriColors.topWashStart, dark: true) == "#100E18")
+    }
+
+    @Test("Swatch tokens match cross-platform appearance swatch palette")
+    func swatchTokens() {
+        #expect(hexString(for: NoriColors.Swatch.lightBg, dark: false) == "#FFFFFF")
+        #expect(hexString(for: NoriColors.Swatch.darkBg, dark: true) == "#000000")
+        #expect(hexString(for: NoriColors.Swatch.lightBubble, dark: false) == "#5000FF")
+        #expect(hexString(for: NoriColors.Swatch.darkBubble, dark: true) == "#7A3DF6")
+        #expect(hexString(for: NoriColors.Swatch.lightLine, dark: false) == "#E7E2EF")
+        #expect(hexString(for: NoriColors.Swatch.darkLine, dark: true) == "#261F38")
+        #expect(hexString(for: NoriColors.Swatch.systemLine, dark: true) == "#A98AFF")
     }
 
     @Test("Dark mode semantic status tones match specification table")

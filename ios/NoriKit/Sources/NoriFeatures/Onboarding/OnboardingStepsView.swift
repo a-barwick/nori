@@ -8,9 +8,10 @@ struct OnboardingWelcomeStep: View {
     var body: some View {
         VStack(spacing: 0) {
             Text("Hi, I’m Nori")
-                .font(.system(size: 28, weight: .bold))
+                .font(.title.bold())
                 .foregroundStyle(NoriColors.ink)
                 .multilineTextAlignment(.center)
+                .accessibilityAddTraits(.isHeader)
 
             VStack(spacing: 10) {
                 pillarRow(
@@ -67,9 +68,10 @@ struct OnboardingAppearanceStep: View {
     var body: some View {
         VStack(spacing: 0) {
             Text("Appearance")
-                .font(.system(size: 28, weight: .bold))
+                .font(.title.bold())
                 .foregroundStyle(NoriColors.ink)
                 .multilineTextAlignment(.center)
+                .accessibilityAddTraits(.isHeader)
 
             HStack(spacing: 10) {
                 ForEach(NoriAppearance.allCases) { option in
@@ -99,6 +101,7 @@ struct OnboardingAppearanceStep: View {
                         )
                     }
                     .buttonStyle(.plain)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
                 }
             }
             .padding(.top, 24)
@@ -142,46 +145,50 @@ struct OnboardingAppearanceStep: View {
         ZStack {
             switch mode {
             case .light:
-                Color.white
+                NoriColors.Swatch.lightBg
             case .dark:
-                Color.black
+                NoriColors.Swatch.darkBg
             case .system:
                 LinearGradient(
                     stops: [
-                        .init(color: .white, location: 0.495),
-                        .init(color: .black, location: 0.505)
+                        .init(color: NoriColors.Swatch.lightBg, location: 0.495),
+                        .init(color: NoriColors.Swatch.darkBg, location: 0.505)
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
             }
 
-            VStack(alignment: .leading, spacing: 0) {
-                HStack {
+            GeometryReader { proxy in
+                let innerWidth = max(0, proxy.size.width - 14)
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack {
+                        Spacer()
+                        Capsule()
+                            .fill(mode == .light ? NoriColors.Swatch.lightBubble : NoriColors.Swatch.darkBubble)
+                            .frame(width: innerWidth * 0.44, height: 7)
+                    }
                     Spacer()
                     Capsule()
-                        .fill(mode == .light ? Color(hex: 0x5000FF) : Color(hex: 0x7A3DF6))
-                        .frame(width: 28, height: 7)
+                        .fill(
+                            mode == .light
+                                ? NoriColors.Swatch.lightLine
+                                : mode == .dark
+                                    ? NoriColors.Swatch.darkLine
+                                    : NoriColors.Swatch.systemLine
+                        )
+                        .frame(width: innerWidth * 0.62, height: 6)
                 }
-                Spacer()
-                Capsule()
-                    .fill(
-                        mode == .light
-                            ? Color(hex: 0xE7E2EF)
-                            : mode == .dark
-                                ? Color(hex: 0x261F38)
-                                : Color(hex: 0xA98AFF).opacity(0.6)
-                    )
-                    .frame(width: 42, height: 6)
+                .padding(7)
             }
-            .padding(7)
         }
         .frame(height: 52)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous)
                 .strokeBorder(NoriColors.hairlineStrong, lineWidth: 1)
         )
+        .accessibilityHidden(true)
     }
 }
 
@@ -211,9 +218,10 @@ struct OnboardingModelKeyStep: View {
     var body: some View {
         VStack(spacing: 0) {
             Text(store.homeConnectors?.enabled == true ? "Choose your AI model" : "Add your API key")
-                .font(.system(size: 28, weight: .bold))
+                .font(.title.bold())
                 .foregroundStyle(NoriColors.ink)
                 .multilineTextAlignment(.center)
+                .accessibilityAddTraits(.isHeader)
 
             NoriCard(padding: 16) {
                 VStack(alignment: .leading, spacing: 14) {
@@ -222,30 +230,40 @@ struct OnboardingModelKeyStep: View {
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(NoriColors.accent)
                             .frame(width: 36, height: 36)
-                            .background(NoriColors.accentSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .background(NoriColors.accentSubtle, in: RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous))
 
-                        Picker("Provider", selection: Binding(
-                            get: { primaryProvider?.provider ?? "" },
-                            set: { provider in
-                                selectedProviderID = provider
-                                isReplacingKey = false
-                                keyInput = ""
-                                keyError = nil
+                        if store.modelKeys.providers.isEmpty {
+                            Text("Providers unavailable")
+                                .font(NoriTypography.rowTitle)
+                                .foregroundStyle(NoriColors.ink3)
+                        } else {
+                            Picker("Provider", selection: Binding(
+                                get: { primaryProvider?.provider ?? "" },
+                                set: { provider in
+                                    selectedProviderID = provider
+                                    isReplacingKey = false
+                                    keyInput = ""
+                                    keyError = nil
+                                }
+                            )) {
+                                ForEach(store.modelKeys.providers) { provider in
+                                    Text(provider.label).tag(provider.provider)
+                                }
                             }
-                        )) {
-                            ForEach(store.modelKeys.providers) { provider in
-                                Text(provider.label).tag(provider.provider)
-                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                            .disabled(isValidatingKey)
                         }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
 
                         Spacer()
 
-                        NoriPill(
-                            isValidatingKey ? "Validating" : keyConfigured ? "Configured" : byokRequired && store.homeConnectors?.enabled != true ? "Required" : "Optional",
-                            tone: isValidatingKey ? .working : keyConfigured ? .ok : byokRequired && store.homeConnectors?.enabled != true ? .warning : .neutral
-                        )
+                        if isValidatingKey {
+                            NoriPill("Saving", tone: .working)
+                        } else if keyConfigured {
+                            NoriPill("Configured", tone: .ok)
+                        } else if byokRequired && store.homeConnectors?.enabled != true {
+                            NoriPill("Required", tone: .warning)
+                        }
                     }
 
                     if !keyConfigured {
@@ -265,22 +283,25 @@ struct OnboardingModelKeyStep: View {
                                     .textInputAutocapitalization(.never)
                                     #endif
                                     .focused(isKeyFocused)
-                                    .disabled(isValidatingKey)
+                                    .disabled(isValidatingKey || primaryProvider == nil)
                                     .onSubmit(onVerifyKey)
 
                                 Button(isValidatingKey ? "Saving…" : "Save", action: onVerifyKey)
-                                    .font(.system(size: 12.5, weight: .semibold))
-                                    .foregroundStyle(NoriColors.accent)
+                                    .font(NoriTypography.metaSemibold)
+                                    .foregroundStyle((isValidatingKey || primaryProvider == nil) ? NoriColors.disabled : NoriColors.accent)
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 6)
-                                    .background(NoriColors.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                                    .disabled(isValidatingKey)
+                                    .background(
+                                        (isValidatingKey || primaryProvider == nil) ? NoriColors.disabledBg : NoriColors.surface,
+                                        in: RoundedRectangle(cornerRadius: NoriRadius.chip, style: .continuous)
+                                    )
+                                    .disabled(isValidatingKey || primaryProvider == nil)
                             }
                             .padding(.horizontal, 12)
-                            .frame(height: 44)
-                            .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .frame(minHeight: 44)
+                            .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                             .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
                                     .strokeBorder(
                                         isKeyFocused.wrappedValue ? NoriColors.accentSignal : NoriColors.cardBorder,
                                         lineWidth: isKeyFocused.wrappedValue ? 1.5 : 1
@@ -297,12 +318,12 @@ struct OnboardingModelKeyStep: View {
                                 isReplacingKey = true
                                 keyError = nil
                             }
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(NoriTypography.metaSemibold)
                             .foregroundStyle(NoriTone.ok.foreground)
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
-                        .background(NoriTone.ok.background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .background(NoriTone.ok.background, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                     }
 
                     if let keyError {
@@ -341,15 +362,18 @@ struct OnboardingAboutYouStep: View {
     @Binding var selectedFocus: Set<String>
     @Binding var workingOn: String
     let isFinishing: Bool
+    let finishError: String?
     let onOptionTap: () -> Void
     let onFinish: () -> Void
+    let onRetry: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             Text("About you")
-                .font(.system(size: 28, weight: .bold))
+                .font(.title.bold())
                 .foregroundStyle(NoriColors.ink)
                 .multilineTextAlignment(.center)
+                .accessibilityAddTraits(.isHeader)
 
             NoriCard(padding: 16) {
                 VStack(alignment: .leading, spacing: 16) {
@@ -364,10 +388,10 @@ struct OnboardingAboutYouStep: View {
                             .foregroundStyle(NoriColors.ink)
                             .tint(NoriColors.accent)
                             .padding(.horizontal, 12)
-                            .frame(height: 44)
-                            .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .frame(minHeight: 44)
+                            .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                             .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
                                     .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
                             )
                     }
@@ -417,16 +441,29 @@ struct OnboardingAboutYouStep: View {
                             .foregroundStyle(NoriColors.ink)
                             .tint(NoriColors.accent)
                             .padding(.horizontal, 12)
-                            .frame(height: 44)
-                            .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .frame(minHeight: 44)
+                            .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
                             .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous)
                                     .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
                             )
                     }
                 }
             }
             .padding(.top, 20)
+
+            if let finishError {
+                NoriNotice(
+                    title: finishError,
+                    tone: .danger,
+                    systemImage: "exclamationmark.triangle.fill"
+                ) {
+                    Button("Retry", action: onRetry)
+                        .buttonStyle(NoriButtonStyle(.neutral, compact: true))
+                        .disabled(isFinishing)
+                }
+                .padding(.top, 16)
+            }
 
             Button(isFinishing ? "Starting…" : "Start chatting", action: onFinish)
                 .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
@@ -438,7 +475,7 @@ struct OnboardingAboutYouStep: View {
     private func chipButton(_ label: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label)
-                .font(.system(size: 13.5, weight: selected ? .semibold : .medium))
+                .font(.footnote.weight(selected ? .semibold : .medium))
                 .foregroundStyle(selected ? NoriColors.chipSelectedFg : NoriColors.ink2)
                 .padding(.horizontal, 13)
                 .padding(.vertical, 8)
@@ -455,5 +492,6 @@ struct OnboardingAboutYouStep: View {
                 )
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

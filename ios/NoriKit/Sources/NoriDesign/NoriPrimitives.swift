@@ -339,7 +339,7 @@ public struct NoriSegmentedTabs<Value: Hashable & Sendable>: View {
                         .background(isSelected ? NoriColors.chipSelectedBg : NoriColors.elevated, in: Capsule())
                         .overlay(
                             Capsule()
-                                .strokeBorder(isSelected ? NoriColors.chipSelectedBorder : NoriColors.hairline, lineWidth: 1)
+                                .strokeBorder(isSelected ? NoriColors.chipSelectedBorder : NoriColors.cardBorder, lineWidth: 1)
                         )
                     }
                     .buttonStyle(.plain)
@@ -363,11 +363,13 @@ public struct NoriButtonStyle: ButtonStyle {
     public let kind: NoriButtonKind
     public let fullWidth: Bool
     public let compact: Bool
+    public let large: Bool
 
-    public init(_ kind: NoriButtonKind = .neutral, fullWidth: Bool = false, compact: Bool = false) {
+    public init(_ kind: NoriButtonKind = .neutral, fullWidth: Bool = false, compact: Bool = false, large: Bool = false) {
         self.kind = kind
         self.fullWidth = fullWidth
         self.compact = compact
+        self.large = large
     }
 
     public func makeBody(configuration: Configuration) -> some View {
@@ -375,7 +377,8 @@ public struct NoriButtonStyle: ButtonStyle {
             configuration: configuration,
             kind: kind,
             fullWidth: fullWidth,
-            compact: compact
+            compact: compact,
+            large: large
         )
     }
 
@@ -385,6 +388,7 @@ public struct NoriButtonStyle: ButtonStyle {
         let kind: NoriButtonKind
         let fullWidth: Bool
         let compact: Bool
+        let large: Bool
 
         var body: some View {
             let bg: Color
@@ -392,20 +396,9 @@ public struct NoriButtonStyle: ButtonStyle {
             let border: Color
 
             if !isEnabled {
-                switch kind {
-                case .primary, .tonal, .quiet:
-                    bg = NoriColors.disabledBg
-                    fg = NoriColors.disabled
-                    border = NoriColors.cardBorder
-                case .neutral:
-                    bg = NoriColors.surface
-                    fg = NoriColors.disabled
-                    border = NoriColors.hairline
-                case .danger:
-                    bg = NoriColors.disabledBg
-                    fg = NoriColors.disabled
-                    border = NoriColors.cardBorder
-                }
+                bg = NoriColors.disabledBg
+                fg = NoriColors.disabled
+                border = NoriColors.cardBorder
             } else {
                 switch kind {
                 case .primary:
@@ -419,7 +412,7 @@ public struct NoriButtonStyle: ButtonStyle {
                 case .tonal:
                     bg = configuration.isPressed ? NoriColors.accentSubtle : NoriColors.selected
                     fg = NoriColors.accent
-                    border = NoriColors.accentBorder
+                    border = Color.clear
                 case .quiet:
                     bg = configuration.isPressed ? NoriColors.selected : NoriColors.elevated
                     fg = NoriColors.ink
@@ -427,16 +420,16 @@ public struct NoriButtonStyle: ButtonStyle {
                 case .danger:
                     bg = configuration.isPressed ? NoriColors.danger.opacity(0.22) : NoriColors.dangerBg
                     fg = NoriColors.danger
-                    border = NoriColors.danger.opacity(0.34)
+                    border = Color.clear
                 }
             }
 
             return configuration.label
-                .font(.system(size: compact ? 12.5 : 13.5, weight: .semibold))
+                .font(large ? NoriTypography.section : .system(size: compact ? 12.5 : 13.5, weight: .semibold))
                 .foregroundStyle(fg)
                 .padding(.horizontal, compact ? 12 : 15)
                 .frame(maxWidth: fullWidth ? .infinity : nil)
-                .frame(height: compact ? 32 : 38)
+                .frame(minHeight: compact ? 32 : (large ? 48 : 38), maxHeight: large ? nil : (compact ? 32 : 38))
                 .background(bg, in: Capsule())
                 .overlay(
                     Capsule()
@@ -495,7 +488,7 @@ public struct NoriToast: View {
             .background(NoriColors.toastBg, in: Capsule())
             .overlay(
                 Capsule()
-                    .strokeBorder(NoriColors.hairline, lineWidth: 1)
+                    .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
             )
             .shadow(color: NoriColors.shadowColor, radius: 14, x: 0, y: 6)
     }

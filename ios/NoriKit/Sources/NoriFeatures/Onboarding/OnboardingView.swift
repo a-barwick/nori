@@ -24,9 +24,11 @@ public struct OnboardingView: View {
 
     @State private var name = ""
     @State private var replyStyle = "Concise & direct"
-    @State private var selectedFocus: Set<String> = ["Engineering", "Daily planning"]
+    @State private var selectedFocus: Set<String> = []
     @State private var workingOn = ""
     @State private var isFinishing = false
+    @State private var finishError: String?
+    @State private var lastSaveAboutYou = true
 
     private let replyStyles = ["Concise & direct", "Warm & conversational", "Bullets first"]
     private let focusOptions = ["Engineering", "Daily planning", "Email & calendar", "Research", "Writing"]
@@ -127,11 +129,13 @@ public struct OnboardingView: View {
                                 selectedFocus: $selectedFocus,
                                 workingOn: $workingOn,
                                 isFinishing: isFinishing,
+                                finishError: finishError,
                                 onOptionTap: {
                                     triggerHaptic(.light)
                                     triggerMood(.nod)
                                 },
-                                onFinish: { finish(saveAboutYou: true) }
+                                onFinish: { finish(saveAboutYou: true) },
+                                onRetry: { finish(saveAboutYou: lastSaveAboutYou) }
                             )
                         }
                     }
@@ -158,6 +162,7 @@ public struct OnboardingView: View {
                 ModelsSettingsView(store: store)
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { showingModels = false } } }
             }
+            .presentationDragIndicator(.visible)
             .presentationBackground(NoriColors.sheetBackground)
             .presentationCornerRadius(NoriRadius.sheet)
         }
@@ -179,19 +184,39 @@ public struct OnboardingView: View {
         }
     }
 
-    private var headerBar: some View {
-        HStack {
-            Button("Back") {
-                if step > 1 {
-                    goToStep(step - 1)
-                }
-            }
-            .font(NoriTypography.metaSemibold)
-            .foregroundStyle(NoriColors.ink2)
-            .opacity(step > 1 ? 1 : 0)
-            .disabled(step <= 1)
+    private var showsRightHeaderAction: Bool {
+        (step == 3 && !keyConfigured) || step == 4
+    }
 
-            Spacer()
+    private var headerBar: some View {
+        ZStack {
+            HStack {
+                Button("Back") {
+                    if step > 1 {
+                        goToStep(step - 1)
+                    }
+                }
+                .font(NoriTypography.metaSemibold)
+                .foregroundStyle(NoriColors.ink2)
+                .opacity(step > 1 ? 1 : 0)
+                .disabled(step <= 1)
+                .accessibilityHidden(step <= 1)
+
+                Spacer()
+
+                Button(step == 3 ? "Set up later" : "Skip") {
+                    if step == 3 {
+                        goToStep(4)
+                    } else if step == 4 {
+                        finish(saveAboutYou: false)
+                    }
+                }
+                .font(NoriTypography.metaSemibold)
+                .foregroundStyle(NoriColors.ink2)
+                .opacity(showsRightHeaderAction ? 1 : 0)
+                .disabled(!showsRightHeaderAction || isFinishing)
+                .accessibilityHidden(!showsRightHeaderAction)
+            }
 
             HStack(spacing: 6) {
                 ForEach(1...4, id: \.self) { idx in
@@ -207,19 +232,8 @@ public struct OnboardingView: View {
                         .animation(.spring(response: 0.28, dampingFraction: 0.85), value: step)
                 }
             }
-
-            Spacer()
-
-            Button(step == 3 ? "Set up later" : "Skip") {
-                if step < 4 {
-                    goToStep(step + 1)
-                } else {
-                    finish(saveAboutYou: false)
-                }
-            }
-            .font(NoriTypography.metaSemibold)
-            .foregroundStyle(NoriColors.ink2)
-            .disabled(isFinishing)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Step \(step) of 4")
         }
         .padding(.horizontal, 20)
         .padding(.top, 12)
@@ -242,6 +256,9 @@ public struct OnboardingView: View {
     }
 
     private func goToStep(_ next: Int) {
+        if next != 4 {
+            finishError = nil
+        }
         withAnimation(.easeOut(duration: 0.22)) {
             step = next
         }
@@ -290,21 +307,39 @@ public struct OnboardingView: View {
         }
     }
 
+    private func friendlyOnboardingSaveError(_ error: Error) -> String {
+        if let apiErr = error as? NoriAPIError, !apiErr.message.isEmpty, apiErr.statusCode < 500, apiErr.statusCode > 0 {
+            return apiErr.message
+        }
+        if let urlErr = error as? URLError,
+           urlErr.code == .notConnectedToInternet || urlErr.code == .networkConnectionLost {
+            return "You appear to be offline. Check your connection and try again."
+        }
+        return "Could not save your setup. Try again."
+    }
+
     private func finish(saveAboutYou: Bool) {
         guard !isFinishing else { return }
+        lastSaveAboutYou = saveAboutYou
+        finishError = nil
         isFinishing = true
-        triggerHaptic(.success)
-        triggerMood(.celebrate, happy: true, sparkles: true, duration: 0.85)
         let orderedFocus = focusOptions.filter { selectedFocus.contains($0) }
         Task {
-            await store.completeOnboarding(
-                name: name,
-                replyStyle: replyStyle,
-                focus: orderedFocus,
-                workingOn: workingOn,
-                saveAboutYou: saveAboutYou
-            )
-            isFinishing = false
+            defer { isFinishing = false }
+            do {
+                try await store.completeOnboarding(
+                    name: name,
+                    replyStyle: replyStyle,
+                    focus: orderedFocus,
+                    workingOn: workingOn,
+                    saveAboutYou: saveAboutYou
+                )
+                triggerHaptic(.success)
+                triggerMood(.celebrate, happy: true, sparkles: true, duration: 0.85)
+            } catch {
+                finishError = friendlyOnboardingSaveError(error)
+                triggerMood(.shake)
+            }
         }
     }
 

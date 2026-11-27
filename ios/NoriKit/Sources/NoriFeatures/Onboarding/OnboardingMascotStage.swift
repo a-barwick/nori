@@ -68,30 +68,34 @@ struct OnboardingMascotStage: View {
     }
 
     private func runHappy(enabled: Bool, duration: Double) async {
-        guard enabled else { return }
+        guard enabled else {
+            isHappy = false
+            return
+        }
         isHappy = true
         do {
             try await Task.sleep(for: .seconds(duration))
+            isHappy = false
         } catch {
-            return
+            isHappy = false
         }
-        guard !Task.isCancelled else { return }
-        isHappy = false
     }
 
     private func runSparkles(enabled: Bool) async {
-        guard enabled else { return }
+        guard enabled else {
+            showSparkles = false
+            return
+        }
         showSparkles = false
         withAnimation(.easeOut(duration: 0.2)) {
             showSparkles = true
         }
         do {
             try await Task.sleep(for: .milliseconds(720))
+            withAnimation(.easeOut(duration: 0.15)) {
+                showSparkles = false
+            }
         } catch {
-            return
-        }
-        guard !Task.isCancelled else { return }
-        withAnimation(.easeOut(duration: 0.15)) {
             showSparkles = false
         }
     }

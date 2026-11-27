@@ -33,64 +33,92 @@ public struct SignInView: View {
         }
     }
 
+    private var isBusy: Bool {
+        isAuthenticating || store.authState == .signingIn
+    }
+
     private var signInContent: some View {
-        VStack(spacing: 24) {
-            Spacer()
+        GeometryReader { proxy in
+            ScrollView {
+                VStack(spacing: 24) {
+                    Spacer(minLength: 24)
 
-            VStack(spacing: 14) {
-                NoriMark(size: 52, state: isAuthenticating ? .thinking : .idle)
-                Text("Nori")
-                    .font(NoriTypography.display)
-                    .foregroundStyle(NoriColors.ink)
-                Text("Sign in with your Google account to continue.")
-                    .font(NoriTypography.meta)
-                    .foregroundStyle(NoriColors.ink2)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
-            }
-
-            if let errorMessage = localError ?? store.authError {
-                NoriNotice(
-                    title: "Sign-in failed",
-                    detail: errorMessage,
-                    tone: .danger,
-                    systemImage: "exclamationmark.triangle.fill"
-                )
-                .padding(.horizontal, 24)
-            }
-
-            Button {
-                startGoogleSignIn()
-            } label: {
-                HStack(spacing: 10) {
-                    if isAuthenticating || store.authState == .signingIn {
-                        ProgressView()
-                            .tint(.white)
-                    } else {
-                        Image(systemName: "person.badge.key.fill")
+                    VStack(spacing: 14) {
+                        NoriMark(size: 56, state: isBusy ? .thinking : .idle)
+                        Text("Nori")
+                            .font(NoriTypography.display)
+                            .foregroundStyle(NoriColors.ink)
+                            .accessibilityAddTraits(.isHeader)
                     }
-                    Text("Sign in with Google")
-                        .font(NoriTypography.section)
+
+                    if let errorMessage = localError ?? store.authError {
+                        NoriNotice(
+                            title: "Sign-in failed",
+                            detail: errorMessage,
+                            tone: .danger,
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .padding(.horizontal, 24)
+                    }
+
+                    Button {
+                        startGoogleSignIn()
+                    } label: {
+                        HStack(spacing: 10) {
+                            if isBusy {
+                                ProgressView()
+                                    .tint(NoriColors.disabled)
+                            } else {
+                                Image(systemName: "person.badge.key.fill")
+                            }
+                            Text("Sign in with Google")
+                        }
+                    }
+                    .buttonStyle(NoriButtonStyle(.primary, fullWidth: true, large: true))
+                    .disabled(isBusy)
+                    .padding(.horizontal, 24)
+
+                    Spacer(minLength: 24)
+
+                    HStack(spacing: 16) {
+                        Link("Privacy Policy", destination: NoriConfig.legalURL(path: "/privacy"))
+                        Link("Terms of Service", destination: NoriConfig.legalURL(path: "/terms"))
+                    }
+                    .font(NoriTypography.meta)
+                    .foregroundStyle(NoriColors.ink3)
+                    .padding(.bottom, 20)
                 }
-                .frame(maxWidth: .infinity)
-                .frame(height: 48)
+                .frame(maxWidth: 420)
+                .frame(maxWidth: .infinity, minHeight: proxy.size.height)
             }
-            .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
-            .disabled(isAuthenticating || store.authState == .signingIn)
-            .padding(.horizontal, 24)
-
-            Spacer()
-
-            HStack(spacing: 16) {
-                Link("Privacy Policy", destination: NoriConfig.legalURL(path: "/privacy"))
-                Link("Terms of Service", destination: NoriConfig.legalURL(path: "/terms"))
-            }
-            .font(NoriTypography.meta)
-            .foregroundStyle(NoriColors.ink3)
-            .padding(.bottom, 20)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(NoriColors.canvas)
+        .background(NoriColors.canvas.ignoresSafeArea())
+    }
+
+    private func friendlySignInError(_ error: Error, fallback: String) -> String {
+        if let apiErr = error as? NoriAPIError {
+            if apiErr.isAuthError {
+                return "This Google account is not authorized to access Nori."
+            }
+            if apiErr.statusCode >= 500 || apiErr.statusCode == 0 {
+                return "Nori is temporarily unavailable. Try again in a moment."
+            }
+            if !apiErr.message.isEmpty {
+                return apiErr.message
+            }
+            return fallback
+        }
+        if let urlErr = error as? URLError {
+            switch urlErr.code {
+            case .notConnectedToInternet, .networkConnectionLost:
+                return "You appear to be offline. Check your connection and try again."
+            case .timedOut:
+                return "Sign-in timed out. Check your connection and try again."
+            default:
+                return "Could not reach Nori. Check your connection and try again."
+            }
+        }
+        return fallback
     }
 
     private func startGoogleSignIn() {
@@ -101,7 +129,7 @@ public struct SignInView: View {
         do {
             authorizeURL = try pkce.authorizationURL()
         } catch {
-            localError = error.localizedDescription
+            localError = friendlySignInError(error, fallback: "Could not start Google sign-in. Try again.")
             return
         }
 
@@ -127,7 +155,7 @@ public struct SignInView: View {
             } catch let authErr as ASWebAuthenticationSessionError where authErr.code == .canceledLogin {
                 // User cancelled Google sign-in sheet.
             } catch {
-                localError = error.localizedDescription
+                localError = friendlySignInError(error, fallback: "Could not complete sign-in. Try again.")
             }
         }
     }

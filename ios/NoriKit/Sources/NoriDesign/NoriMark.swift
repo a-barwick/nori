@@ -62,9 +62,9 @@ public struct NoriMark: View {
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
-        .task(id: "\(state.rawValue)-\(reduceMotion)") {
+        .task(id: "\(state.rawValue)-\(reduceMotion)-\(happy)") {
             isBlinking = false
-            guard !reduceMotion, state == .idle || state == .attentive else { return }
+            guard !reduceMotion, !happy, state == .idle || state == .attentive else { return }
             while !Task.isCancelled {
                 let waitMs = Int.random(in: 5200...8400)
                 try? await Task.sleep(for: .milliseconds(waitMs))
@@ -79,10 +79,11 @@ public struct NoriMark: View {
 
     private func markCanvas(eyeOffset: CGSize, blinkScaleY: CGFloat) -> some View {
         let isDark = colorScheme == .dark
-        let bodyColor = isDark ? Color(hex: 0xC6C4CE) : Color(hex: 0xFDFCFF)
-        let seaweedColor = isDark ? Color(hex: 0x171522) : Color(hex: 0x101A30)
-        let faceColor = isDark ? Color(hex: 0x171522) : Color(hex: 0x190936)
-        let edgeColor = isDark ? Color(hex: 0xD1CFD8) : Color(hex: 0x190936)
+        let palette = NoriColors.Mascot.resolvedColors(for: colorScheme)
+        let bodyColor = palette.body
+        let seaweedColor = palette.seaweed
+        let faceColor = palette.ink
+        let edgeColor = palette.edge
 
         return Canvas { context, canvasSize in
             let s = min(canvasSize.width, canvasSize.height) / 96.0

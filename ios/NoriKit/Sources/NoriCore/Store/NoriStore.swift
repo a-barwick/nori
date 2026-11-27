@@ -177,6 +177,13 @@ public final class NoriStore {
     @ObservationIgnored var submitSpans: [String: (span: any NoriTelemetrySpan, timeout: Task<Void, Never>)] = [:]
     var reportedFailedTaskIDs: Set<String> = []
     var hasBootstrapped: Bool = false
+    var isCheckingSavedSession: Bool = false
+    var onboardingSavedFactKeys: Set<String> = []
+    var onboardingSavedPreferences: Bool = false
+
+    public var isBootstrappingAuth: Bool {
+        !hasBootstrapped || isCheckingSavedSession
+    }
 
     public init(
         transport: (any NoriTransport)? = nil,
@@ -353,6 +360,8 @@ public final class NoriStore {
         hasLoadedSession = false
         isAwaitingResetMarker = false
         isShowingOnboardingReplay = false
+        onboardingSavedFactKeys.removeAll()
+        onboardingSavedPreferences = false
         capabilities = nil
         assistantSummary = nil
         lastPing = nil

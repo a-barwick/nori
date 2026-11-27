@@ -76,7 +76,7 @@ public enum NoriColors {
 
     public static let brandPrimary = Color.adaptive(light: 0x5000FF, dark: 0x7A3DF6)
     public static let accentHover = Color.adaptive(light: 0x4200D6, dark: 0x692FE0)
-    public static let accentPressed = Color.adaptive(light: 0x3500AE, dark: 0x5B25C9)
+    public static let accentPressed = Color.adaptive(light: 0x3500AE, dark: 0x5922CC)
     public static let accent = Color.adaptive(light: 0x5000FF, dark: 0xA98AFF)
     public static let accentSignal = Color.adaptive(light: 0x7943FF, dark: 0xA98AFF)
     public static let accentSubtle = Color.adaptive(light: 0xF1EBFF, dark: 0x1B162C)
@@ -100,10 +100,10 @@ public enum NoriColors {
     public static let inactive = Color.adaptive(light: 0x6E6880, dark: 0x878196)
     public static let inactiveBg = Color.adaptive(light: 0xF7F5FB, dark: 0x14141A)
 
-    public static let markFillSoft = Color.adaptive(light: 0xFDFCFF, dark: 0xC6C4CE)
-    public static let markFill = Color.adaptive(light: 0x101A30, dark: 0x171522)
-    public static let markInk = Color.adaptive(light: 0x190936, dark: 0x171522)
-    public static let markEdge = Color.adaptive(light: 0x190936, dark: 0xD1CFD8)
+    public static let markFillSoft = Color.adaptive(light: Mascot.bodyLightHex, dark: Mascot.bodyDarkHex)
+    public static let markFill = Color.adaptive(light: Mascot.seaweedLightHex, dark: Mascot.seaweedDarkHex)
+    public static let markInk = Color.adaptive(light: Mascot.inkLightHex, dark: Mascot.inkDarkHex)
+    public static let markEdge = Color.adaptive(light: Mascot.edgeLightHex, dark: Mascot.edgeDarkHex)
     public static let markActivity = brandPrimary
 
     public static let chipSelectedBg = Color.adaptive(light: 0xEEE8FA, dark: 0x261F38)
@@ -116,10 +116,20 @@ public enum NoriColors {
     public static let accentShadow = Color.adaptive(light: 0x5000FF, lightAlpha: 0.06, dark: 0x000000, darkAlpha: 0.0)
     public static let toastBg = Color.adaptive(light: 0x190936, dark: 0x1E1B29)
     public static let toastFg = Color.adaptive(light: 0xFFFFFF, dark: 0xF2EFF8)
-    public static let heroStart = Color.adaptive(light: 0xFBF9FF, dark: 0x12101A)
-    public static let heroEnd = Color.adaptive(light: 0xF1EBFF, dark: 0x0B0B0F)
+    public static let heroStart = Color.adaptive(light: 0xFBF9FF, dark: 0x100E18)
+    public static let heroEnd = Color.adaptive(light: 0xF1EBFF, dark: 0x171226)
     public static let topWashStart = Color.adaptive(light: 0xFAF8FE, dark: 0x100E18)
     public static let topWashEnd = Color.adaptive(light: 0xFFFFFF, dark: 0x000000)
+
+    public enum Swatch {
+        public static let lightBg = Color(hex: 0xFFFFFF)
+        public static let darkBg = Color(hex: 0x000000)
+        public static let lightBubble = Color(hex: 0x5000FF)
+        public static let darkBubble = Color(hex: 0x7A3DF6)
+        public static let lightLine = Color(hex: 0xE7E2EF)
+        public static let darkLine = Color(hex: 0x261F38)
+        public static let systemLine = Color(hex: 0xA98AFF, alpha: 0.6)
+    }
 
     public enum Background {
         public static let canvas = NoriColors.canvas
@@ -146,11 +156,30 @@ public enum NoriColors {
     }
 
     public enum Mascot {
+        public static let bodyLightHex: UInt32 = 0xFDFCFF
+        public static let bodyDarkHex: UInt32 = 0xC6C4CE
+        public static let seaweedLightHex: UInt32 = 0x101A30
+        public static let seaweedDarkHex: UInt32 = 0x171522
+        public static let inkLightHex: UInt32 = 0x190936
+        public static let inkDarkHex: UInt32 = 0x171522
+        public static let edgeLightHex: UInt32 = 0x190936
+        public static let edgeDarkHex: UInt32 = 0xD1CFD8
+
         public static let body = NoriColors.markFillSoft
         public static let ink = NoriColors.markInk
         public static let seaweed = NoriColors.markFill
         public static let edge = NoriColors.markEdge
         public static let activity = NoriColors.markActivity
+
+        public static func resolvedColors(for colorScheme: ColorScheme) -> (body: Color, seaweed: Color, ink: Color, edge: Color) {
+            let isDark = colorScheme == .dark
+            return (
+                body: Color(hex: isDark ? bodyDarkHex : bodyLightHex),
+                seaweed: Color(hex: isDark ? seaweedDarkHex : seaweedLightHex),
+                ink: Color(hex: isDark ? inkDarkHex : inkLightHex),
+                edge: Color(hex: isDark ? edgeDarkHex : edgeLightHex)
+            )
+        }
     }
 
     public enum Status {
