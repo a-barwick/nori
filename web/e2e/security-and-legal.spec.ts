@@ -48,7 +48,8 @@ test("authenticated app, Settings -> Account, /signed-out, and /api/health enfor
   await expect(page.getByRole("link", { name: "Terms of Service" })).toHaveAttribute("href", "https://www.noribot.chat/terms");
 
   await page.getByRole("button", { name: "Sign out" }).click();
-  await expect(page.getByRole("heading", { name: "Signed out" })).toBeVisible();
+  await expect(page).toHaveURL(/\/signed-out$/);
+  await expect(page.getByRole("button", { name: "Sign in with Google" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Privacy Policy" })).toHaveAttribute("href", "https://www.noribot.chat/privacy");
   await expect(page.getByRole("link", { name: "Terms of Service" })).toHaveAttribute("href", "https://www.noribot.chat/terms");
 

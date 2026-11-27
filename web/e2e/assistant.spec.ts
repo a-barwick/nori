@@ -279,11 +279,13 @@ test("sign out closes other tabs and sign in restores the workspace", async ({ p
   const secondTab = await context.newPage();
   await secondTab.goto(`${app}/more`);
   await page.getByRole("button", { name: "Sign out" }).click();
-  await expect(page.getByRole("heading", { name: "Signed out" })).toBeVisible();
-  await expect(secondTab.getByRole("heading", { name: "Signed out" })).toBeVisible();
+  await expect(page).toHaveURL(/\/signed-out$/);
+  await expect(secondTab).toHaveURL(/\/signed-out$/);
+  await expect(page.getByRole("button", { name: "Sign in with Google" })).toBeVisible();
+  await expect(secondTab.getByRole("button", { name: "Sign in with Google" })).toBeVisible();
   expect(await page.evaluate(async () => (await fetch("/api/v1/preferences")).status)).toBe(403);
 
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("button", { name: "Sign in with Google" }).click();
   await page.goto(signInURL("first", "/more"));
   await expect(page.getByRole("link", { name: "Reset data" })).toBeVisible();
   await secondTab.close();
@@ -406,7 +408,8 @@ test("reset clears saved model keys and choices and opens onboarding in both tab
   await expect(page.getByLabel("Step 3 of 4")).toBeVisible();
   for (const provider of ["openai", "anthropic", "google", "vercel_ai_gateway", "openrouter"]) {
     await page.getByLabel("Model provider").selectOption(provider);
-    await expect(page.getByText("Not configured", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("API key")).toBeVisible();
+    await expect(page.getByText("Configured", { exact: true })).toHaveCount(0);
   }
   await secondTab.close();
 });
