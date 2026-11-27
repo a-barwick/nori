@@ -26,10 +26,10 @@ func TestJSONLogHandlerGCPSeverityMapping(t *testing.T) {
 	logger := slog.New(handler)
 
 	cases := []struct {
-		name     string
-		logFn    func()
-		wantSev  string
-		wantMsg  string
+		name    string
+		logFn   func()
+		wantSev string
+		wantMsg string
 	}{
 		{"debug", func() { logger.Debug("debug event") }, "DEBUG", "debug event"},
 		{"info", func() { logger.Info("info event") }, "INFO", "info event"},
