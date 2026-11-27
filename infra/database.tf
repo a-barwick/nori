@@ -28,11 +28,13 @@ resource "google_sql_database_instance" "nori_pg" {
     # Keeps the backups if the instance is deleted anyway.
     retain_backups_on_delete = true
 
-    # Daily backup at 09:00 UTC (01:00 Pacific), seven kept. Point-in-time
-    # recovery is off because turning it on restarts the instance.
+    # Daily backup at 09:00 UTC (01:00 Pacific), seven kept, plus seven days of
+    # transaction logs for point-in-time recovery.
     backup_configuration {
-      enabled    = true
-      start_time = "09:00"
+      enabled                        = true
+      start_time                     = "09:00"
+      point_in_time_recovery_enabled = true
+      transaction_log_retention_days = 7
 
       backup_retention_settings {
         retained_backups = 7
