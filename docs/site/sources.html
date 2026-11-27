@@ -15,7 +15,6 @@
 <div class="card"><table class="stack"><tr><th>Check</th><th>What it covers</th><th>Where</th></tr>
 <tr><td>Sources block</td><td data-label="What it covers">Names the Go, TypeScript, OpenAPI or integration files behind a page's claims.</td><td data-label="Where">Every page</td></tr>
 <tr><td>OpenAPI check</td><td data-label="What it covers">Verifies that <code>api/openapi.yaml</code>, live Go handlers, generated TypeScript types and Swift models match.</td><td data-label="Where"><code>make api-check</code> (<code>core/internal/api/openapi_test.go</code>)</td></tr>
-<tr><td>Static export</td><td data-label="What it covers">Strips the Sources blocks and leaves out the <code>sources</code> and <code>code</code> pages.</td><td data-label="Where"><code>docs/publish.py</code></td></tr>
 </table></div></section>
 <section><h2>Reconciled claims</h2>
 <div class="card"><table class="tall"><tr><th>Earlier claim</th><th>What the code implements</th></tr>
@@ -24,6 +23,6 @@
 <tr><td>Browser Sentry tunnel used a legacy route</td><td>Browser events post to <code>/sentry-tunnel</code> (<code>web/src/app/sentry-tunnel/route.ts</code>). See <a href="observability.html">Observability</a>.</td></tr>
 <tr><td>Completion needs a Jev score</td><td>Record checks and cited tool evidence control completion. Jev supplies advisory intent hints only. See <a href="completion.html">Finishing a task</a>.</td></tr>
 </table></div></section>
-<details class="sources"><summary>Sources</summary><p><code>docs/publish.py</code> · <code>api/openapi.yaml</code> · <code>core/internal/api/openapi_test.go</code> · <code>core/internal/task/runner.go</code> · <code>core/internal/task/completion.go</code> · <code>core/internal/usage/openai.go</code> · <code>core/internal/conversation/jev.go</code> · <code>web/src/app/sentry-tunnel/route.ts</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>api/openapi.yaml</code> · <code>core/internal/api/openapi_test.go</code> · <code>core/internal/task/runner.go</code> · <code>core/internal/task/completion.go</code> · <code>core/internal/usage/openai.go</code> · <code>core/internal/conversation/jev.go</code> · <code>web/src/app/sentry-tunnel/route.ts</code></p></details>
 </body>
 </html>

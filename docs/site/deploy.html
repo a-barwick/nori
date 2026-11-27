@@ -37,7 +37,6 @@
 <li><code>scripts/release.sh rollback core|web|site|all</code> moves services back to their previous revisions by hand.</li>
 <li><code>core/infrastructure/Dockerfile</code> builds the static <code>CGO_ENABLED=0</code> <code>nori</code> binary onto <code>gcr.io/distroless/static-debian12:nonroot</code>.</li>
 <li>Inner tasks checkpoint state and receipts in Postgres, so a new binary resumes parked tasks without pinned workflow build IDs.</li>
-<li><code>docs/Dockerfile</code> and <code>docs/deploy.sh</code> package the static Dokyu output into an unprivileged nginx container serving <code>X-Robots-Tag: noindex</code> and <code>Disallow: /</code>.</li>
 </ul></section>
 <section><h2>Pausing and operations</h2>
 <ul class="pts">
@@ -46,6 +45,6 @@
 <li><code>nori-user</code> provisions and manages user rows in Postgres.</li>
 <li>The repository contains no Terraform. Cloud resources are created with <code>gcloud</code>.</li>
 </ul></section>
-<details class="sources"><summary>Sources</summary><p><code>core/infrastructure/README.md</code> · <code>scripts/release.sh</code> · <code>.github/workflows/release.yml</code> · <code>.github/workflows/ci.yml</code> · <code>core/internal/platform/platform.go</code> · <code>core/internal/state/gcs/gcs.go</code> · <code>core/internal/secret/rowstore/gcpkms.go</code> · <code>core/infrastructure/aws/README.md</code> · <code>core/infrastructure/local/README.md</code> · <code>core/infrastructure/local/compose.yaml</code> · <code>core/infrastructure/Dockerfile</code> · <code>core/cmd/nori/main.go</code> · <code>core/internal/worker/pool.go</code> · <code>core/internal/secret/awssecrets/awssecrets.go</code> · <code>core/internal/secret/rowstore/rowstore.go</code> · <code>core/internal/serviceauth/auth.go</code> · <code>docs/Dockerfile</code> · <code>docs/deploy.sh</code></p></details>
+<details class="sources"><summary>Sources</summary><p><code>core/infrastructure/README.md</code> · <code>scripts/release.sh</code> · <code>.github/workflows/release.yml</code> · <code>.github/workflows/ci.yml</code> · <code>core/internal/platform/platform.go</code> · <code>core/internal/state/gcs/gcs.go</code> · <code>core/internal/secret/rowstore/gcpkms.go</code> · <code>core/infrastructure/aws/README.md</code> · <code>core/infrastructure/local/README.md</code> · <code>core/infrastructure/local/compose.yaml</code> · <code>core/infrastructure/Dockerfile</code> · <code>core/cmd/nori/main.go</code> · <code>core/internal/worker/pool.go</code> · <code>core/internal/secret/awssecrets/awssecrets.go</code> · <code>core/internal/secret/rowstore/rowstore.go</code> · <code>core/internal/serviceauth/auth.go</code></p></details>
 </body>
 </html>

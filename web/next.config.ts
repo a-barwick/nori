@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs/config";
+import { PRIVACY_URL, TERMS_URL } from "./src/lib/legal";
 import { API_DEFAULT_CSP, BASELINE_SECURITY_HEADERS, HSTS_HEADER_VALUE } from "./src/lib/securityHeaders";
 
 export async function securityHeaders() {
@@ -24,6 +25,13 @@ export async function securityHeaders() {
   return rules;
 }
 
+export async function legalRedirects() {
+  return [
+    { source: "/privacy", destination: PRIVACY_URL, permanent: false },
+    { source: "/terms", destination: TERMS_URL, permanent: false },
+  ];
+}
+
 const nextConfig: NextConfig = {
   output: "standalone",
   cacheComponents: true,
@@ -32,6 +40,7 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: process.env.NORI_DEV_ORIGINS?.split(",").map((origin) => origin.trim()).filter(Boolean),
   agentRules: false,
   headers: securityHeaders,
+  redirects: legalRedirects,
   experimental: {
     instantInsights: { validationLevel: "manual-warning" },
   },
