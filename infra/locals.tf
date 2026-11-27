@@ -7,7 +7,7 @@ locals {
   cloud_sql      = "${local.project}:${local.region}:${google_sql_database_instance.nori_pg.name}"
   kms_key        = google_kms_crypto_key.connected_accounts.id
   core_url       = "https://nori-core-${local.project_number}.${local.region}.run.app"
-  web_origin     = "https://noribot.chat"
+  web_origin     = "https://app.noribot.chat"
 
   # Values that would leak personal data in this public repository live in the
   # nori-terraform-private secret as a JSON object. See secrets.tf. They are not

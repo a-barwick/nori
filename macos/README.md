@@ -27,7 +27,7 @@ A signed build targeting hosted Nori needs these values.
 
 ```sh
 export NORI_MAC_WEB_ORIGIN=https://<desktop-web-origin>
-export NORI_MAC_BROWSER_ORIGIN=https://noribot.chat
+export NORI_MAC_BROWSER_ORIGIN=https://app.noribot.chat
 export NORI_CONNECTOR_RELAY_URL=https://<home-ai-relay-origin>
 export NORI_MAC_GOOGLE_CLIENT_ID=<desktop-oauth-client-id>
 export NORI_MAC_GOOGLE_CLIENT_SECRET=<desktop-oauth-client-secret>

@@ -416,7 +416,7 @@ resource "google_cloud_run_v2_job" "nori_home_ai_migrate" {
 
 # --- Web -----------------------------------------------------------------------
 
-# Browser Web behind IAP at noribot.chat.
+# Browser Web behind IAP at app.noribot.chat.
 resource "google_cloud_run_v2_service" "nori_web" {
   name        = "nori-web"
   location    = local.region
@@ -729,6 +729,8 @@ resource "google_cloud_run_v2_service_iam_member" "site_public" {
 # DNS for noribot.chat is hosted at Porkbun: the apex, app and www point at
 # ghs.googlehosted.com, and relay points at the Home AI edge address.
 
+# The bare domain serves the public site, whose nginx sends site pages to www and
+# every other path to app.noribot.chat with a 308.
 resource "google_cloud_run_domain_mapping" "noribot_chat" {
   name     = "noribot.chat"
   location = local.region
@@ -738,7 +740,12 @@ resource "google_cloud_run_domain_mapping" "noribot_chat" {
   }
 
   spec {
-    route_name = google_cloud_run_v2_service.nori_web.name
+    route_name = google_cloud_run_v2_service.nori_site.name
+  }
+
+  # The API omits certificate_mode until the certificate is issued.
+  lifecycle {
+    ignore_changes = [spec[0].certificate_mode]
   }
 }
 
