@@ -27,6 +27,34 @@ var indexedColumns = map[string]string{
 	"index.task_id":       "idx_index_task_id",
 }
 
+// partialIndexEqualityClause returns a literal SQL predicate matching the partial
+// index WHERE clause for known boolean/status hot filters. Emitting the literal
+// instead of a query parameter ($N::jsonb) allows PostgreSQL's generic prepared-
+// statement plans to keep using the partial index after the first 5 executions,
+// preventing fallbacks to full collection PK scans or seq scans and minimizing
+// SSI predicate-lock amplification.
+func partialIndexEqualityClause(field string, rawValue any) (string, bool) {
+	switch field {
+	case "status":
+		if s, ok := rawValue.(string); ok && s == "running" {
+			return `idx_status = '"running"'::jsonb`, true
+		}
+	case "delivered":
+		if b, ok := rawValue.(bool); ok && !b {
+			return `idx_delivered = 'false'::jsonb`, true
+		}
+	case "cleanup_pending":
+		if b, ok := rawValue.(bool); ok && b {
+			return `idx_cleanup_pending = 'true'::jsonb`, true
+		}
+	case "publication_pending":
+		if b, ok := rawValue.(bool); ok && b {
+			return `idx_publication_pending = 'true'::jsonb`, true
+		}
+	}
+	return "", false
+}
+
 func expression(field string) (string, error) {
 	if field == docstore.DocumentID {
 		return "id", nil
@@ -140,6 +168,12 @@ func query(ctx context.Context, q executor, s docstore.QuerySpec) ([]docstore.Re
 		field, e := expression(f.Field)
 		if e != nil {
 			return nil, e
+		}
+		if f.Op == "==" {
+			if literal, ok := partialIndexEqualityClause(f.Field, f.Value); ok {
+				clauses = append(clauses, literal)
+				continue
+			}
 		}
 		v, e := value(f.Value)
 		if e != nil {

@@ -387,8 +387,8 @@ func (p *Pool) Run(ctx context.Context) error {
 	<-ctx.Done()
 
 	cancelClaim()
-	p.closeDrain()
 	claimWG.Wait()
+	p.closeDrain()
 
 	workDone := make(chan struct{})
 	go func() {
