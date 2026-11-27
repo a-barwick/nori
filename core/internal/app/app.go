@@ -207,6 +207,8 @@ func wireBackgroundRuntime(result *App, cfg settings.Settings, user users.User, 
 	runner := conversation.New(models.outer, classifier, models.summarizer, tasks)
 	runner.UserFacts = userFacts
 	runner.Profile = platform.Profile(user, services.Connections)
+	runner.Capabilities = buildCapabilitySummary(services, cfg, models)
+	runner.ModelInfo = buildModelSummary(cfg, models)
 	runner.Clock = conversation.Clock{Location: location}
 	runner.OnDelta = result.Deltas.Publish
 	if cfg.Models.BYOKRequired {

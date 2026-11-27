@@ -158,41 +158,6 @@ final class PreviewNoriTransport: NoriTransport, @unchecked Sendable {
         ]
     }
     func fetchGoals() async throws -> [Goal] { snapshot.goals }
-    func fetchGoal(id: String) async throws -> Goal {
-        snapshot.goals.first(where: { $0.id == id }) ?? Goal(id: id, title: "Preview Goal")
-    }
-    func createGoal(_ value: GoalEditable, requestID: String) async throws -> MutationReceipt<Goal> {
-        let created = Goal(
-            id: "goal-\(UUID().uuidString.prefix(6))",
-            title: value.title,
-            outcome: value.outcome,
-            completionCriteria: value.completionCriteria.map { GoalCriterion(text: $0.text) },
-            status: .active,
-            deadline: value.deadline,
-            followUp: value.followUp
-        )
-        return MutationReceipt(requestID: requestID, resource: created)
-    }
-    func updateGoal(id: String, expectedRevision: Int, value: GoalEditable, requestID: String) async throws -> MutationReceipt<Goal> {
-        var updated = snapshot.goals.first(where: { $0.id == id }) ?? Goal(id: id, title: value.title)
-        updated.title = value.title
-        updated.outcome = value.outcome
-        updated.completionCriteria = value.completionCriteria.map { GoalCriterion(id: $0.id ?? UUID().uuidString, text: $0.text) }
-        updated.deadline = value.deadline
-        updated.followUp = value.followUp
-        return MutationReceipt(requestID: requestID, resource: updated)
-    }
-    func performGoalAction(id: String, expectedRevision: Int, action: String, keepMonitors: Bool?, requestID: String) async throws -> MutationReceipt<Goal> {
-        var updated = snapshot.goals.first(where: { $0.id == id }) ?? Goal(id: id, title: "Preview Goal")
-        switch action {
-        case "pause": updated.status = .paused
-        case "resume": updated.status = .active
-        case "complete": updated.status = .completed
-        case "abandon": updated.status = .abandoned
-        default: break
-        }
-        return MutationReceipt(requestID: requestID, resource: updated)
-    }
     func renameLibraryItem(id: String, expectedRevision: Int, title: String, collection: String?, requestID: String) async throws -> MutationReceipt<LibraryItem> {
         var updated = snapshot.libraryItems.first(where: { $0.id == id }) ?? LibraryItem(id: id, title: title)
         updated.title = title
@@ -570,24 +535,6 @@ public extension NoriStore {
             )
         ]
 
-        let goals: [Goal] = [
-            Goal(
-                id: "goal-1",
-                title: "Plan Portland weekend trip",
-                outcome: "Book flights and hotel under $900 and put itinerary on calendar.",
-                completionCriteria: [
-                    GoalCriterion(id: "c-1", text: "Compare direct morning flight options", met: true),
-                    GoalCriterion(id: "c-2", text: "Shortlist 3 downtown hotels under $240/night", met: true),
-                    GoalCriterion(id: "c-3", text: "Confirm booking and add to calendar", met: false)
-                ],
-                status: .active,
-                progress: "2 of 3 criteria done.",
-                nextActions: ["Review hotel shortlist and approve booking"],
-                deadline: tTomorrowNoon,
-                followUp: "monitor"
-            )
-        ]
-
         let libraryItems: [LibraryItem] = [
             LibraryItem(
                 id: "lib-1",
@@ -637,7 +584,6 @@ public extension NoriStore {
                 coreBudgetBytes: 24 * 1024
             ),
             automations: automations,
-            goals: goals,
             permissions: [
                 PermissionRule(
                     id: "perm-1",

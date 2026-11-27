@@ -285,21 +285,6 @@ public protocol NoriTransport: Sendable {
     ) async throws -> MutationReceipt<Automation>
     func fetchAutomationOccurrences(id: String) async throws -> [AutomationOccurrence]
     func fetchGoals() async throws -> [Goal]
-    func fetchGoal(id: String) async throws -> Goal
-    func createGoal(_ value: GoalEditable, requestID: String) async throws -> MutationReceipt<Goal>
-    func updateGoal(
-        id: String,
-        expectedRevision: Int,
-        value: GoalEditable,
-        requestID: String
-    ) async throws -> MutationReceipt<Goal>
-    func performGoalAction(
-        id: String,
-        expectedRevision: Int,
-        action: String,
-        keepMonitors: Bool?,
-        requestID: String
-    ) async throws -> MutationReceipt<Goal>
     func fetchPermissions() async throws -> [PermissionRule]
     func createPermissionRule(
         _ rule: PermissionRuleEditable,
@@ -559,35 +544,4 @@ public extension NoriTransport {
     }
 
     func fetchAutomationOccurrences(id: String) async throws -> [AutomationOccurrence] { [] }
-
-    func fetchGoal(id: String) async throws -> Goal {
-        let all = try await fetchGoals()
-        if let found = all.first(where: { $0.id == id }) {
-            return found
-        }
-        throw NoriAPIError(message: "Goal not found.", statusCode: 404)
-    }
-
-    func createGoal(_ value: GoalEditable, requestID: String) async throws -> MutationReceipt<Goal> {
-        throw NoriAPIError(message: "Creating goals is not supported by this transport.")
-    }
-
-    func updateGoal(
-        id: String,
-        expectedRevision: Int,
-        value: GoalEditable,
-        requestID: String
-    ) async throws -> MutationReceipt<Goal> {
-        throw NoriAPIError(message: "Updating goals is not supported by this transport.")
-    }
-
-    func performGoalAction(
-        id: String,
-        expectedRevision: Int,
-        action: String,
-        keepMonitors: Bool?,
-        requestID: String
-    ) async throws -> MutationReceipt<Goal> {
-        throw NoriAPIError(message: "Goal actions are not supported by this transport.")
-    }
 }

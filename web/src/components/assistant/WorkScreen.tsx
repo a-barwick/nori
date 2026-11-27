@@ -14,7 +14,7 @@ import { GoalsContent } from "./GoalsScreen";
 import { InteractionCard } from "./InteractionCard";
 import { LibraryContent } from "./LibraryScreen";
 import { RoutinesContent } from "./RoutinesScreen";
-import { Failure, Loading, Pill, Row, Rows, Screen, Section, UnderlineTabs, type Tone } from "./ui";
+import { Empty, Failure, Loading, Pill, Row, Rows, Screen, Section, UnderlineTabs, type Tone } from "./ui";
 
 export {
   groupOperations,
@@ -35,28 +35,13 @@ function parseWorkTab(raw: string | null): WorkTab {
   return "tasks";
 }
 
-export function isBudgetExhaustedWorkItem(item: WorkItem): boolean {
-  if (item.status !== "failed") return false;
-  const msg = item.error?.message?.toLowerCase() ?? "";
-  if (msg.includes("spending limit") || msg.includes("budget")) return true;
-  if (
-    typeof item.cost.amount_usd === "number" &&
-    typeof item.cost.budget_usd === "number" &&
-    item.cost.budget_usd > 0 &&
-    item.cost.amount_usd >= item.cost.budget_usd
-  ) {
-    return true;
-  }
-  return false;
-}
-
 export function isPartialWorkItem(item: WorkItem): boolean {
-  return Boolean(item.partial || item.error?.code === "task_incomplete" || isBudgetExhaustedWorkItem(item));
+  return Boolean(item.partial || item.error?.code === "task_incomplete");
 }
 
 export function statusPill(item: WorkItem): { tone: Tone; label: string } {
   if (item.cancel_requested && item.status === "running") return { tone: "neutral", label: "Stopping" };
-  if (item.bucket === "needs_you" && item.status === "running") return { tone: "warning", label: "Action needed" };
+  if (item.bucket === "needs_you") return { tone: "warning", label: "Action needed" };
   if (item.status === "running") {
     return item.operations.uncertain ? { tone: "warning", label: "Checking" } : { tone: "working", label: "Working" };
   }
@@ -297,7 +282,7 @@ function TasksHub({
         </Section>
       )}
 
-      {finishedTasks.length > 0 && (
+      {finishedTasks.length > 0 ? (
         <Section title="Recent">
           <Rows label="Recent tasks">
             {visibleRecent.map((item) => (
@@ -315,14 +300,17 @@ function TasksHub({
             </button>
           )}
         </Section>
-      )}
+      ) : !runningTasks.length ? (
+        <Section title="Recent">
+          <Empty>Finished tasks appear here.</Empty>
+        </Section>
+      ) : null}
     </div>
   );
 }
 
 function WorkRow({ item }: { item: WorkItem }) {
   const pill = statusPill(item);
-  const showPill = !(item.status === "completed" && item.operations.uncertain === 0);
   const detailText =
     item.error?.message ||
     item.progress ||
@@ -333,14 +321,12 @@ function WorkRow({ item }: { item: WorkItem }) {
       title={item.title}
       detail={<span className="line-clamp-2">{detailText}</span>}
       trailing={
-        showPill || item.operations.uncertain > 0 ? (
-          <>
-            {item.operations.uncertain > 0 && (
-              <AlertTriangle size={14} className="text-warning" aria-label="Has an unconfirmed action" />
-            )}
-            {showPill && <Pill tone={pill.tone}>{pill.label}</Pill>}
-          </>
-        ) : undefined
+        <>
+          {item.operations.uncertain > 0 && (
+            <AlertTriangle size={14} className="text-warning" aria-label="Has an unconfirmed action" />
+          )}
+          <Pill tone={pill.tone}>{pill.label}</Pill>
+        </>
       }
     />
   );

@@ -176,7 +176,7 @@ struct FeedbackFixesTests {
     }
 
 
-    @Test("OperationProjection decodes native web_search wire payload, humanizes names, and omits Confirmed on normal ops")
+    @Test("OperationProjection decodes native web_search wire payload, hides nil authority, and omits Confirmed on read-only ops")
     func workOperationProjectionAndBadges() throws {
         let json = """
         {
@@ -203,23 +203,14 @@ struct FeedbackFixesTests {
 
         let writeOp = OperationProjection(
             id: "op-write",
-            name: "calendar_create_event",
+            name: "calendar.create_event",
             effectClass: .reversibleWrite,
             outcome: .confirmed,
             actionSummary: "Created calendar event",
             authoritySource: "user_request"
         )
         #expect(writeOp.displayAuthorityLabel == "you asked")
-        #expect(writeOp.statusBadge == nil)
-
-        let unnamedOp = OperationProjection(
-            id: "op-unnamed",
-            name: "calendar_create_event",
-            effectClass: .reversibleWrite,
-            outcome: .uncertain
-        )
-        #expect(unnamedOp.displaySummary == "Calendar create event")
-        #expect(unnamedOp.statusBadge == OperationBadge(label: "Unconfirmed", tone: .warning))
+        #expect(writeOp.statusBadge == OperationBadge(label: "Confirmed", tone: .ok))
 
         let failedRead = OperationProjection(
             id: "op-fail",
@@ -390,22 +381,43 @@ struct FeedbackFixesTests {
         #expect(part.fallback == "Reminder set · Wed, Nov 25 at 12:00 PM PST · Check supernino updates")
     }
 
-    @Test("AutomationTrigger formats RRULE schedules in plain English and LibraryItemKind classifies links under documents")
-    func rruleFormattingAndLibraryLinkGroup() {
-        let daily = AutomationTrigger(kind: "recurring", localStart: "2026-06-15T09:00:00", timezone: "UTC", rrule: "FREQ=DAILY")
-        #expect(daily.summaryLabel == "Every day at 09:00")
+    @Test("WorkStepEntry unifies operations and events chronologically, filters external changes, and strips duplicate headings")
+    func workDetailRedesignHelpers() {
+        let ops: [OperationProjection] = [
+            OperationProjection(id: "c0", name: "capability_load", effectClass: .control, outcome: .confirmed, createdAt: "2026-11-26T09:15:00Z"),
+            OperationProjection(id: "ws-1", name: "web_search", effectClass: .read, outcome: .confirmed, actionSummary: "Query 1", createdAt: "2026-11-26T09:15:10Z"),
+            OperationProjection(id: "ws-2", name: "web_search", effectClass: .read, outcome: .confirmed, actionSummary: "Query 2", createdAt: "2026-11-26T09:15:20Z"),
+            OperationProjection(id: "w1", name: "notes_append", effectClass: .reversibleWrite, outcome: .confirmed, actionSummary: "Updated grocery note", createdAt: "2026-11-26T09:16:00Z"),
+            OperationProjection(id: "s1", name: "gmail_send", effectClass: .sensitiveSend, outcome: .uncertain, actionSummary: "Send email", createdAt: "2026-11-26T09:16:30Z")
+        ]
+        let events: [RunEvent] = [
+            RunEvent(text: "web_search", createdAt: "2026-11-26T09:15:10Z"),
+            RunEvent(text: "Updated grocery note", createdAt: "2026-11-26T09:16:00Z"),
+            RunEvent(text: "Saved recipe to Artifacts", createdAt: "2026-11-26T09:17:00Z")
+        ]
 
-        let weekdays = AutomationTrigger(kind: "recurring", localStart: "2026-06-15T08:00:00", timezone: "UTC", rrule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR")
-        #expect(weekdays.summaryLabel == "Weekdays at 08:00")
+        let changes = WorkStepEntry.externalChanges(from: ops)
+        #expect(changes.map(\.id) == ["w1", "s1"])
 
-        let specific = AutomationTrigger(kind: "recurring", localStart: "2026-06-15T10:15:00", timezone: "UTC", rrule: "FREQ=WEEKLY;BYDAY=MO,WE")
-        #expect(specific.summaryLabel == "Mon, Wed at 10:15")
+        let steps = WorkStepEntry.build(operations: ops, events: events)
+        #expect(steps.count == 4)
+        #expect(steps[0].title == "Searched the web (2 queries)")
+        #expect(steps[1].title == "Updated grocery note")
+        #expect(steps[2].title == "Send email")
+        #expect(steps[2].status == .warning)
+        #expect(steps[3].title == "Saved recipe to Artifacts")
 
-        let monthly = AutomationTrigger(kind: "recurring", localStart: "2026-06-15T07:30:00", timezone: "UTC", rrule: "FREQ=MONTHLY")
-        #expect(monthly.summaryLabel == "Monthly at 07:30")
-
-        #expect(LibraryItemKind.link.filterGroup == "documents")
-        #expect(LibraryItemKind.event.filterGroup == "events")
-        #expect(LibraryItemKind.message.filterGroup == "messages")
+        #expect(
+            WorkStepEntry.stripLeadingMatchingHeading("### Overnight Focaccia\n\nMix flour and water.", title: "Overnight Focaccia")
+                == "Mix flour and water."
+        )
+        #expect(
+            WorkStepEntry.stripLeadingMatchingHeading("## Ingredients\n\n- 500g flour", title: "Overnight Focaccia")
+                == "## Ingredients\n\n- 500g flour"
+        )
+        #expect(WorkStepEntry.budgetPresets(currentBudgetUSD: 1.0) == [2.0, 5.0, 10.0])
+        #expect(WorkStepEntry.budgetPresets(currentBudgetUSD: 10.0) == [15.0, 20.0, 30.0])
+        #expect(WorkStepEntry.isLongMarkdown("Short summary.") == false)
+        #expect(WorkStepEntry.isLongMarkdown(String(repeating: "Line\n", count: 10)) == true)
     }
 }

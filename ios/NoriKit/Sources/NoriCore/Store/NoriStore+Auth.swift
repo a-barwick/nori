@@ -161,22 +161,22 @@ extension NoriStore {
         var firstFailure: Error?
 
         if saveAboutYou {
-            var seeds: [(section: String, text: String)] = []
+            var seeds: [(section: String, text: String, pinned: Bool)] = []
             let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
             let trimmedStyle = replyStyle.trimmingCharacters(in: .whitespacesAndNewlines)
             let trimmedWorking = workingOn.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmedName.isEmpty {
-                seeds.append(("Preferences", "The user's name is \(trimmedName)."))
+                seeds.append(("Preferences", "The user's name is \(trimmedName).", false))
             }
             if !trimmedStyle.isEmpty {
-                seeds.append(("Preferences", "Prefers \(trimmedStyle.lowercased()) replies."))
+                seeds.append(("Preferences", "Prefers \(trimmedStyle.lowercased()) replies.", true))
             }
             if !focus.isEmpty {
                 let joined = focus.map { $0.lowercased() }.joined(separator: ", ")
-                seeds.append(("Context", "Uses Nori for \(joined)."))
+                seeds.append(("Context", "Uses Nori for \(joined).", false))
             }
             if !trimmedWorking.isEmpty {
-                seeds.append(("Context", "Currently working on: \(trimmedWorking)"))
+                seeds.append(("Context", "Currently working on: \(trimmedWorking)", false))
             }
             for seed in seeds {
                 let factKey = "\(seed.section):\(seed.text)"
@@ -186,7 +186,7 @@ extension NoriStore {
                         text: seed.text,
                         section: seed.section,
                         about: nil,
-                        pinned: false,
+                        pinned: seed.pinned,
                         requestID: UUID().uuidString.lowercased()
                     )
                     guard generation == sessionGeneration else { return }

@@ -62,15 +62,6 @@ describe("Web UI simplification pass & design system parity", () => {
       { tone: "warning", label: "Partial" },
     );
     assert.deepEqual(statusPill({ ...base, status: "failed", bucket: "finished" }), { tone: "danger", label: "Failed" });
-    assert.deepEqual(
-      statusPill({
-        ...base,
-        status: "failed",
-        bucket: "needs_you",
-        error: { code: "budget_exceeded", message: "Reached spending limit.", retryable: false },
-      }),
-      { tone: "warning", label: "Partial" },
-    );
   });
 
   test("Thread renders a single active NoriMark on only the latest Nori reply when idle, and moves it to WorkLine while thinking", () => {

@@ -1480,53 +1480,6 @@ public actor LiveNoriTransport: NoriTransport {
         return resp.items
     }
 
-    public func fetchGoal(id: String) async throws -> Goal {
-        try await getJSON(OpenAPI.Path.goalsByID(id: id))
-    }
-
-    public func createGoal(_ value: GoalEditable, requestID: String) async throws -> MutationReceipt<Goal> {
-        try await mutateEnvelope(
-            OpenAPI.Path.goals,
-            requestID: requestID,
-            expectedRevision: 0,
-            value: value
-        )
-    }
-
-    public func updateGoal(
-        id: String,
-        expectedRevision: Int,
-        value: GoalEditable,
-        requestID: String
-    ) async throws -> MutationReceipt<Goal> {
-        try await mutateEnvelope(
-            OpenAPI.Path.goalsByID(id: id),
-            method: "PUT",
-            requestID: requestID,
-            expectedRevision: expectedRevision,
-            value: value
-        )
-    }
-
-    public func performGoalAction(
-        id: String,
-        expectedRevision: Int,
-        action: String,
-        keepMonitors: Bool?,
-        requestID: String
-    ) async throws -> MutationReceipt<Goal> {
-        struct GoalActionVal: Encodable {
-            let action: String
-            let keep_monitors: Bool?
-        }
-        return try await mutateEnvelope(
-            OpenAPI.Path.goalsActions(id: id),
-            requestID: requestID,
-            expectedRevision: expectedRevision,
-            value: GoalActionVal(action: action, keep_monitors: keepMonitors)
-        )
-    }
-
     public func fetchPermissions() async throws -> [PermissionRule] {
         let resp: ListResponse<PermissionRule> = try await getJSON(OpenAPI.Path.permissions)
         return resp.items

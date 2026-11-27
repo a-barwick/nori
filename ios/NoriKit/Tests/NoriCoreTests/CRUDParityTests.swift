@@ -6,35 +6,6 @@ import Testing
 struct CRUDParityTests {
 
     @MainActor
-    @Test("Goals create, update, pause, complete, and drop update store.goals")
-    func goalCRUDLifecycle() async throws {
-        let store = NoriStore.makePreviewStore()
-        let initialCount = store.goals.count
-
-        let created = try await store.createGoal(
-            GoalEditable(
-                title: "Ship iOS parity",
-                outcome: "Every screen matches Web",
-                completionCriteria: [GoalCriterionInput(text: "Goals CRUD")],
-                followUp: "monitor"
-            )
-        )
-        #expect(store.goals.count == initialCount + 1)
-        #expect(created.title == "Ship iOS parity")
-
-        var edited = created.editable
-        edited.title = "Ship full parity"
-        let updated = try await store.updateGoal(id: created.id, value: edited)
-        #expect(updated.title == "Ship full parity")
-
-        let paused = await store.performGoalAction(goalID: created.id, action: "pause")
-        #expect(paused?.status == .paused)
-
-        let done = await store.performGoalAction(goalID: created.id, action: "complete", keepMonitors: true)
-        #expect(done?.status == .completed)
-    }
-
-    @MainActor
     @Test("Routines create, snooze, and occurrence history work on NoriStore")
     func routineCRUDLifecycle() async throws {
         let store = NoriStore.makePreviewStore()

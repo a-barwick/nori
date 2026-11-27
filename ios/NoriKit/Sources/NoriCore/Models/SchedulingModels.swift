@@ -516,56 +516,6 @@ public struct Goal: Sendable, Codable, Hashable, Identifiable {
 
     public var isBlocked: Bool { !blockers.isEmpty }
     public var metCriteriaCount: Int { completionCriteria.filter(\.met).count }
-
-    public var editable: GoalEditable {
-        GoalEditable(
-            title: title,
-            outcome: outcome,
-            completionCriteria: completionCriteria.map { GoalCriterionInput(id: $0.id, text: $0.text) },
-            deadline: deadline,
-            followUp: followUp
-        )
-    }
-}
-
-public struct GoalCriterionInput: Sendable, Codable, Hashable {
-    public var id: String?
-    public var text: String
-
-    public init(id: String? = nil, text: String) {
-        self.id = id
-        self.text = text
-    }
-}
-
-public struct GoalEditable: Sendable, Codable, Hashable {
-    public var title: String
-    public var outcome: String
-    public var completionCriteria: [GoalCriterionInput]
-    public var deadline: String?
-    public var followUp: String?
-
-    enum CodingKeys: String, CodingKey {
-        case title
-        case outcome
-        case completionCriteria = "completion_criteria"
-        case deadline
-        case followUp = "follow_up"
-    }
-
-    public init(
-        title: String,
-        outcome: String = "",
-        completionCriteria: [GoalCriterionInput] = [],
-        deadline: String? = nil,
-        followUp: String? = nil
-    ) {
-        self.title = title
-        self.outcome = outcome
-        self.completionCriteria = completionCriteria
-        self.deadline = deadline
-        self.followUp = followUp
-    }
 }
 
 public struct AutomationOccurrence: Sendable, Codable, Hashable, Identifiable {

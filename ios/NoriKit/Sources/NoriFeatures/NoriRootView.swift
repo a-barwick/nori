@@ -233,6 +233,7 @@ public struct NoriRootView: View {
                             store: store,
                             taskID: taskID,
                             onOpenDocument: openDocument,
+                            onStartInChat: startInChat,
                             onOpenModels: openModels
                         )
                     }

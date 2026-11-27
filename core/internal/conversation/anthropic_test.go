@@ -86,3 +86,38 @@ func TestAnthropicModel_StructuredResponseAndGuardAccounting(t *testing.T) {
 		t.Fatalf("expected llmguard to record call and actual cost, got %+v", st)
 	}
 }
+
+func TestAnthropicModel_NoDispatchSystemOnlyTurnAvoidsContinue(t *testing.T) {
+	model := NewAnthropicModel("sk-ant-test", "claude-opus-5-5")
+	raw, structured, err := model.buildRequestBody(ReplyRequest{
+		Messages: []json.RawMessage{
+			modelMessage(map[string]string{"role": "system", "content": "You are Nori."}),
+			modelMessage(map[string]string{"role": "system", "content": "This is the first load of a new conversation."}),
+		},
+		NoDispatch: true,
+	}, 4096)
+	if err != nil {
+		t.Fatalf("buildRequestBody: %v", err)
+	}
+	if structured {
+		t.Fatalf("expected unstructured plain-text request for NoDispatch turn")
+	}
+	var body struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	if len(body.Messages) != 1 || body.Messages[0].Role != "user" || len(body.Messages[0].Content) != 1 {
+		t.Fatalf("unexpected messages: %+v", body.Messages)
+	}
+	text := body.Messages[0].Content[0].Text
+	if text == "Continue." || !strings.Contains(text, "plain text") {
+		t.Fatalf("expected plain-text system-turn kickoff instead of Continue., got %q", text)
+	}
+}

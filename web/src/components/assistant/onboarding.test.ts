@@ -95,7 +95,7 @@ describe("buildOnboardingMemoryFacts", () => {
       }),
       [
         { section: "Preferences", text: "The user's name is Austin." },
-        { section: "Preferences", text: "Prefers concise & direct replies." },
+        { section: "Preferences", text: "Prefers concise & direct replies.", pinned: true },
         { section: "Context", text: "Uses Nori for engineering, daily planning." },
         { section: "Context", text: "Currently working on: Nori onboarding" },
       ],

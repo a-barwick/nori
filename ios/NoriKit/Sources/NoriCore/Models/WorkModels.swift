@@ -336,26 +336,6 @@ public struct OperationProjection: Sendable, Codable, Hashable, Identifiable {
         return false
     }
 
-    private static let builtinStepNames: [String: String] = [
-        "web_search": "Searched the web",
-        "upload_open": "Opened an attached file",
-        "shell": "Ran a command",
-        "job_start": "Started a long-running command",
-        "browser_navigate": "Opened a web page",
-        "browser_screenshot": "Took a screenshot",
-        "screenshot_inspect": "Looked at a screenshot"
-    ]
-
-    public static func humanizeStepName(_ raw: String) -> String {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "Action" }
-        if let mapped = builtinStepNames[trimmed] {
-            return mapped
-        }
-        let spaced = trimmed.replacingOccurrences(of: "_", with: " ")
-        return spaced.prefix(1).uppercased() + spaced.dropFirst()
-    }
-
     public var displaySummary: String {
         if let summary = actionSummary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
             return summary
@@ -366,7 +346,7 @@ public struct OperationProjection: Sendable, Codable, Hashable, Identifiable {
         if isWebSearch {
             return "Searched the web"
         }
-        return Self.humanizeStepName(name)
+        return name
     }
 
     public var displayAuthorityLabel: String? {
@@ -399,7 +379,10 @@ public struct OperationProjection: Sendable, Codable, Hashable, Identifiable {
         }
         switch outcome {
         case .confirmed:
-            return nil
+            if effectClass == .read {
+                return nil
+            }
+            return OperationBadge(label: "Confirmed", tone: .ok)
         case .pending: return OperationBadge(label: "Waiting", tone: .neutral)
         case .uncertain: return OperationBadge(label: "Unconfirmed", tone: .warning)
         case .failed: return OperationBadge(label: "Failed", tone: .danger)
@@ -482,6 +465,213 @@ public enum WorkActionEntry: Sendable, Hashable, Identifiable {
         }
         flushSearchRun()
         return entries
+    }
+}
+
+public enum WorkStepStatus: String, Sendable, Hashable {
+    case done
+    case active
+    case warning
+    case error
+}
+
+public struct WorkStepQuery: Sendable, Hashable, Identifiable {
+    public let id: String
+    public let text: String
+    public let createdAt: String?
+
+    public init(id: String, text: String, createdAt: String? = nil) {
+        self.id = id
+        self.text = text
+        self.createdAt = createdAt
+    }
+}
+
+public enum WorkStepEntry: Sendable, Hashable, Identifiable {
+    case step(id: String, title: String, status: WorkStepStatus, createdAt: String?)
+    case searchGroup(id: String, title: String, status: WorkStepStatus, createdAt: String?, queries: [WorkStepQuery])
+
+    public var id: String {
+        switch self {
+        case .step(let id, _, _, _): return id
+        case .searchGroup(let id, _, _, _, _): return id
+        }
+    }
+
+    public var title: String {
+        switch self {
+        case .step(_, let title, _, _): return title
+        case .searchGroup(_, let title, _, _, _): return title
+        }
+    }
+
+    public var status: WorkStepStatus {
+        switch self {
+        case .step(_, _, let status, _): return status
+        case .searchGroup(_, _, let status, _, _): return status
+        }
+    }
+
+    public var createdAt: String? {
+        switch self {
+        case .step(_, _, _, let createdAt): return createdAt
+        case .searchGroup(_, _, _, let createdAt, _): return createdAt
+        }
+    }
+
+    public static func externalChanges(from operations: [OperationProjection]) -> [OperationProjection] {
+        operations.filter { op in
+            guard op.name != "capability_load" else { return false }
+            if op.effectClass == .reversibleWrite || op.effectClass == .sensitiveSend {
+                return true
+            }
+            return op.effectClass != .read && (op.outcome == .uncertain || op.outcome == .failed)
+        }
+    }
+
+    public static func build(operations: [OperationProjection], events: [RunEvent]) -> [WorkStepEntry] {
+        let visibleOps = operations.filter { $0.name != "capability_load" }
+        let grouped = WorkActionEntry.group(visibleOps)
+        let toolNames = Set(operations.map(\.name))
+        let opSummaries = Set(visibleOps.map { $0.displaySummary.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
+
+        struct IndexedEntry {
+            let entry: WorkStepEntry
+            let sortTimestamp: Double
+            let order: Int
+        }
+
+        func parseSortTimestamp(_ iso: String?) -> Double {
+            guard let iso, !iso.isEmpty else { return .greatestFiniteMagnitude }
+            let frac = ISO8601DateFormatter()
+            frac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = frac.date(from: iso) {
+                return date.timeIntervalSince1970
+            }
+            let std = ISO8601DateFormatter()
+            std.formatOptions = [.withInternetDateTime]
+            if let date = std.date(from: iso) {
+                return date.timeIntervalSince1970
+            }
+            return .greatestFiniteMagnitude
+        }
+
+        func stepStatus(for op: OperationProjection) -> WorkStepStatus {
+            switch op.outcome {
+            case .failed: return .error
+            case .uncertain: return .warning
+            case .attempted, .pending, .submitted: return .active
+            default: return .done
+            }
+        }
+
+        var indexed: [IndexedEntry] = []
+        var order = 0
+
+        for entry in grouped {
+            switch entry {
+            case .webSearchGroup(let groupID, let ops):
+                let hasFailed = ops.contains { $0.outcome == .failed }
+                let hasActive = ops.contains { $0.outcome == .attempted || $0.outcome == .pending }
+                let firstTime = ops.first { ($0.createdAt ?? "").isEmpty == false }?.createdAt
+                let status: WorkStepStatus = hasFailed ? .error : (hasActive ? .active : .done)
+                let title = "Searched the web (\(ops.count) \(ops.count == 1 ? "query" : "queries"))"
+                let queries = ops.map { WorkStepQuery(id: $0.id, text: $0.displaySummary, createdAt: $0.createdAt) }
+                indexed.append(
+                    IndexedEntry(
+                        entry: .searchGroup(id: groupID, title: title, status: status, createdAt: firstTime, queries: queries),
+                        sortTimestamp: parseSortTimestamp(firstTime),
+                        order: order
+                    )
+                )
+                order += 1
+            case .single(let op):
+                indexed.append(
+                    IndexedEntry(
+                        entry: .step(id: "op-\(op.id)", title: op.displaySummary, status: stepStatus(for: op), createdAt: op.createdAt),
+                        sortTimestamp: parseSortTimestamp(op.createdAt),
+                        order: order
+                    )
+                )
+                order += 1
+            }
+        }
+
+        for (idx, event) in events.enumerated() {
+            let trimmed = event.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !toolNames.contains(trimmed), trimmed != "capability_load" else { continue }
+            guard !opSummaries.contains(trimmed.lowercased()) else { continue }
+            indexed.append(
+                IndexedEntry(
+                    entry: .step(id: "evt-\(event.createdAt)-\(idx)", title: trimmed, status: .done, createdAt: event.createdAt),
+                    sortTimestamp: parseSortTimestamp(event.createdAt),
+                    order: order
+                )
+            )
+            order += 1
+        }
+
+        return indexed
+            .sorted { lhs, rhs in
+                if lhs.sortTimestamp != rhs.sortTimestamp {
+                    return lhs.sortTimestamp < rhs.sortTimestamp
+                }
+                return lhs.order < rhs.order
+            }
+            .map(\.entry)
+    }
+
+    public static func stripLeadingMatchingHeading(_ markdown: String, title: String) -> String {
+        let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalizedTitle.isEmpty else { return markdown }
+        let lines = markdown.components(separatedBy: .newlines)
+        guard let firstIndex = lines.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) else {
+            return markdown
+        }
+        let firstLine = lines[firstIndex].trimmingCharacters(in: .whitespaces)
+        var hashes = 0
+        for char in firstLine {
+            if char == "#" { hashes += 1 } else { break }
+        }
+        guard hashes >= 1 && hashes <= 6 else { return markdown }
+        let afterHashes = firstLine.dropFirst(hashes)
+        guard afterHashes.first == " " else { return markdown }
+        let headingText = afterHashes
+            .trimmingCharacters(in: .whitespaces)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+            .trimmingCharacters(in: .whitespaces)
+            .lowercased()
+        guard headingText == normalizedTitle else { return markdown }
+        let remaining = lines[(firstIndex + 1)...].joined(separator: "\n")
+        return remaining.replacingOccurrences(of: #"^\s*\n"#, with: "", options: .regularExpression)
+    }
+
+    public static func budgetPresets(currentBudgetUSD: Double?) -> [Double] {
+        let current = (currentBudgetUSD ?? 1.0) > 0 ? (currentBudgetUSD ?? 1.0) : 1.0
+        if current < 10 {
+            let standard = [2.0, 5.0, 10.0].filter { $0 > current }
+            if standard.count == 3 { return standard }
+            let base = (current * 2.0).rounded(.up)
+            var result = standard
+            for candidate in [base, base * 2.0] where !result.contains(candidate) && result.count < 3 {
+                result.append(candidate)
+            }
+            return result
+        }
+        return [
+            (current * 1.5).rounded(.up),
+            (current * 2.0).rounded(.up),
+            (current * 3.0).rounded(.up)
+        ]
+    }
+
+    public static func isLongMarkdown(_ markdown: String) -> Bool {
+        let trimmed = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.count > 400 { return true }
+        let nonEmptyLines = trimmed
+            .components(separatedBy: .newlines)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        return nonEmptyLines.count > 7
     }
 }
 

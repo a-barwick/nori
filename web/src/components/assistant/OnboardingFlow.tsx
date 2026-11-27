@@ -34,6 +34,7 @@ export type OnboardingStep = 1 | 2 | 3 | 4;
 export interface OnboardingMemorySeed {
   section: "Preferences" | "Context";
   text: string;
+  pinned?: boolean;
 }
 
 export function buildOnboardingMemoryFacts(input: {
@@ -51,7 +52,7 @@ export function buildOnboardingMemoryFacts(input: {
     facts.push({ section: "Preferences", text: `The user's name is ${name}.` });
   }
   if (style) {
-    facts.push({ section: "Preferences", text: `Prefers ${style.toLowerCase()} replies.` });
+    facts.push({ section: "Preferences", text: `Prefers ${style.toLowerCase()} replies.`, pinned: true });
   }
   if (input.focus.length > 0) {
     facts.push({
@@ -227,7 +228,7 @@ export function OnboardingFlow({
             value: {
               text: fact.text,
               section: fact.section,
-              pinned: false,
+              pinned: fact.pinned ?? false,
             },
           })
             .then(() => {

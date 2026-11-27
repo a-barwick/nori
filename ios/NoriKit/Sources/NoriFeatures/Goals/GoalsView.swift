@@ -47,34 +47,21 @@ public struct GoalsView: View {
     @Bindable private var store: NoriStore
     private let onJumpToNeedsYou: () -> Void
     private let onStartInChat: (String) -> Void
-    private let onOpenApps: (() -> Void)?
 
     @State private var showExamples: Bool = false
-    @State private var selectedGoalID: String?
-    @State private var showNewGoalSheet: Bool = false
 
     public init(
         store: NoriStore,
         onJumpToNeedsYou: @escaping () -> Void,
-        onStartInChat: @escaping (String) -> Void = { _ in },
-        onOpenApps: (() -> Void)? = nil
+        onStartInChat: @escaping (String) -> Void = { _ in }
     ) {
         self.store = store
         self.onJumpToNeedsYou = onJumpToNeedsYou
         self.onStartInChat = onStartInChat
-        self.onOpenApps = onOpenApps
-    }
-
-    private var openGoals: [Goal] {
-        store.goals.filter { $0.status == .active || $0.status == .paused }
-    }
-
-    private var closedGoals: [Goal] {
-        store.goals.filter { $0.status == .completed || $0.status == .abandoned }
     }
 
     private var blockedCount: Int {
-        openGoals.filter(\.isBlocked).count
+        store.goals.filter(\.isBlocked).count
     }
 
     public var body: some View {
@@ -82,19 +69,10 @@ public struct GoalsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 if store.goals.isEmpty {
                     NoriCard(padding: 16) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Give Nori something bigger you want done—like planning a trip or organizing an event—and it will keep track of every step until it’s finished.")
-                                .font(NoriTypography.body)
-                                .foregroundStyle(NoriColors.ink)
-                                .fixedSize(horizontal: false, vertical: true)
-
-                            Button {
-                                showNewGoalSheet = true
-                            } label: {
-                                Label("New goal", systemImage: "plus")
-                            }
-                            .buttonStyle(NoriButtonStyle(.primary, compact: true))
-                        }
+                        Text("Give Nori something bigger you want done—like planning a trip or organizing an event—and it will keep track of every step until it’s finished.")
+                            .font(NoriTypography.body)
+                            .foregroundStyle(NoriColors.ink)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     VStack(alignment: .leading, spacing: 0) {
@@ -102,12 +80,12 @@ public struct GoalsView: View {
                         quickStartGrid
                     }
                 } else {
-                    HStack(alignment: .center, spacing: 8) {
+                    HStack(alignment: .center, spacing: 10) {
                         if blockedCount > 0 {
                             NoriLine(
                                 blockedCount == 1
-                                    ? "One goal is waiting for input."
-                                    : "\(blockedCount) goals are waiting for input."
+                                    ? "One goal is waiting on your input."
+                                    : "\(blockedCount) goals are waiting on your input."
                             )
                         } else {
                             Spacer(minLength: 0)
@@ -121,17 +99,10 @@ public struct GoalsView: View {
                             HStack(spacing: 5) {
                                 Image(systemName: "sparkles")
                                     .font(.system(size: 11.5, weight: .semibold))
-                                Text(showExamples ? "Hide examples" : "Ideas")
+                                Text(showExamples ? "Hide ideas" : "Ideas")
                             }
                         }
                         .buttonStyle(NoriButtonStyle(.quiet, compact: true))
-
-                        Button {
-                            showNewGoalSheet = true
-                        } label: {
-                            Label("New", systemImage: "plus")
-                        }
-                        .buttonStyle(NoriButtonStyle(.primary, compact: true))
                     }
 
                     if showExamples {
@@ -142,34 +113,8 @@ public struct GoalsView: View {
                         .transition(.opacity.combined(with: .move(edge: .top)))
                     }
 
-                    ForEach(openGoals) { goal in
+                    ForEach(store.goals) { goal in
                         goalCard(goal)
-                    }
-
-                    if !closedGoals.isEmpty {
-                        VStack(alignment: .leading, spacing: 0) {
-                            NoriSectionHeader("Closed")
-                            NoriRows {
-                                ForEach(Array(closedGoals.enumerated()), id: \.element.id) { idx, goal in
-                                    Button {
-                                        selectedGoalID = goal.id
-                                    } label: {
-                                        NoriRow(
-                                            title: goal.title,
-                                            detail: closedDetail(for: goal),
-                                            showChevron: true,
-                                            showDivider: idx < closedGoals.count - 1
-                                        ) {
-                                            NoriPill(
-                                                statusLabel(for: goal.status),
-                                                tone: statusTone(for: goal.status)
-                                            )
-                                        }
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                        }
                     }
                 }
             }
@@ -178,45 +123,11 @@ public struct GoalsView: View {
             .padding(.bottom, 96)
         }
         .background(NoriColors.canvas)
-        .navigationDestination(item: $selectedGoalID) { goalID in
-            GoalDetailView(
-                store: store,
-                goalID: goalID,
-                onJumpToNeedsYou: onJumpToNeedsYou,
-                onOpenApps: openAppsDestination
-            )
-        }
         .refreshable {
             await store.refreshRoutinesAndGoals()
         }
-        .sheet(isPresented: $showNewGoalSheet) {
-            GoalEditorSheet(store: store) { created in
-                selectedGoalID = created.id
-            }
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
-            .presentationBackground(NoriColors.sheetBackground)
-            .presentationCornerRadius(NoriRadius.sheet)
-        }
     }
 
-    private func openAppsDestination() {
-        if let onOpenApps {
-            onOpenApps()
-        } else {
-            store.pendingDeepLink = .apps
-        }
-    }
-
-    private func routeBlocker(_ blocker: GoalBlocker, goalID: String) {
-        if blocker.interactionID != nil {
-            onJumpToNeedsYou()
-        } else if blocker.connectionID != nil {
-            openAppsDestination()
-        } else {
-            selectedGoalID = goalID
-        }
-    }
 
     private var quickStartGrid: some View {
         let columns = [GridItem(.adaptive(minimum: 260), spacing: 10)]
@@ -262,67 +173,50 @@ public struct GoalsView: View {
         }
     }
 
+
     private func goalCard(_ goal: Goal) -> some View {
         let ratio = completionRatio(for: goal)
-        let sub = subtitle(for: goal)
-        let visibleCriteria = Array(goal.completionCriteria.prefix(4))
-        let remainingCount = max(0, goal.completionCriteria.count - 4)
-        let badge: (label: String, tone: NoriTone)? = {
-            if goal.isBlocked { return ("Blocked", .warning) }
-            if goal.status != .active { return (statusLabel(for: goal.status), statusTone(for: goal.status)) }
-            return nil
-        }()
 
         return NoriCard(padding: 15) {
             VStack(alignment: .leading, spacing: 11) {
-                Button {
-                    selectedGoalID = goal.id
-                } label: {
-                    HStack(alignment: .top, spacing: 8) {
-                        Text(goal.title)
-                            .font(.system(size: 15.5, weight: .bold))
-                            .foregroundStyle(NoriColors.ink)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(alignment: .top, spacing: 8) {
+                    Text(goal.title)
+                        .font(.system(size: 15.5, weight: .bold))
+                        .foregroundStyle(NoriColors.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                        if let badge {
-                            NoriPill(badge.label, tone: badge.tone)
-                        }
-                    }
-                    .contentShape(Rectangle())
+                    NoriPill(
+                        goal.isBlocked ? "Blocked" : statusLabel(for: goal.status),
+                        tone: goal.isBlocked ? .warning : statusTone(for: goal.status)
+                    )
                 }
-                .buttonStyle(.plain)
 
-                if !goal.completionCriteria.isEmpty || sub != nil {
-                    VStack(alignment: .leading, spacing: 6) {
-                        if !goal.completionCriteria.isEmpty {
-                            GeometryReader { proxy in
-                                let fillWidth = ratio > 0 ? max(6, proxy.size.width * ratio) : 0
-                                ZStack(alignment: .leading) {
+                VStack(alignment: .leading, spacing: 6) {
+                    if !goal.completionCriteria.isEmpty {
+                        GeometryReader { proxy in
+                            let fillWidth = ratio > 0 ? max(6, proxy.size.width * ratio) : 0
+                            ZStack(alignment: .leading) {
+                                Capsule()
+                                    .fill(NoriColors.fill2)
+                                if fillWidth > 0 {
                                     Capsule()
-                                        .fill(NoriColors.fill2)
-                                    if fillWidth > 0 {
-                                        Capsule()
-                                            .fill(goal.status == .completed ? NoriColors.ok : NoriColors.brandPrimary)
-                                            .frame(width: min(proxy.size.width, fillWidth))
-                                    }
+                                        .fill(goal.status == .completed ? NoriColors.ok : NoriColors.brandPrimary)
+                                        .frame(width: min(proxy.size.width, fillWidth))
                                 }
                             }
-                            .frame(height: 4)
                         }
-
-                        if let sub {
-                            Text(sub)
-                                .font(.system(size: 12))
-                                .foregroundStyle(NoriColors.ink2)
-                        }
+                        .frame(height: 4)
                     }
+
+                    Text(subtitle(for: goal))
+                        .font(.system(size: 12))
+                        .foregroundStyle(NoriColors.ink2)
                 }
 
                 ForEach(goal.blockers) { blocker in
                     Button {
-                        routeBlocker(blocker, goalID: goal.id)
+                        onJumpToNeedsYou()
                     } label: {
                         HStack(spacing: 10) {
                             Text("\(Text("Action needed: ").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(NoriColors.accent))\(Text(blocker.text).font(.system(size: 12.5)).foregroundStyle(NoriColors.ink))")
@@ -331,12 +225,19 @@ public struct GoalsView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
 
                             HStack(spacing: 3) {
-                                Text(blocker.connectionID != nil && blocker.interactionID == nil ? "Fix" : "Review")
+                                Text("Review")
                                     .font(.system(size: 12, weight: .semibold))
                                 Image(systemName: "chevron.right")
-                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .font(.system(size: 10, weight: .semibold))
                             }
                             .foregroundStyle(NoriColors.accent)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(NoriColors.elevated, in: Capsule())
+                            .overlay(
+                                Capsule()
+                                    .strokeBorder(NoriColors.accentBorder, lineWidth: 1)
+                            )
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
@@ -344,15 +245,19 @@ public struct GoalsView: View {
                             NoriColors.accentSubtle,
                             in: RoundedRectangle(cornerRadius: 14, style: .continuous)
                         )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .strokeBorder(NoriColors.accentBorder, lineWidth: 1)
+                        )
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Action needed: \(blocker.text).")
+                    .accessibilityLabel("Action needed: \(blocker.text). Review in Tasks.")
                 }
 
-                if !visibleCriteria.isEmpty {
+                if !goal.completionCriteria.isEmpty {
                     VStack(alignment: .leading, spacing: 7) {
-                        ForEach(visibleCriteria) { criterion in
+                        ForEach(goal.completionCriteria) { criterion in
                             HStack(alignment: .top, spacing: 8) {
                                 Image(systemName: criterion.met ? "checkmark.circle.fill" : "circle")
                                     .font(.system(size: 15, weight: .medium))
@@ -366,18 +271,6 @@ public struct GoalsView: View {
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
-
-                        if remainingCount > 0 {
-                            Button {
-                                selectedGoalID = goal.id
-                            } label: {
-                                Text("+\(remainingCount) more")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(NoriColors.ink3)
-                                    .padding(.leading, 23)
-                            }
-                            .buttonStyle(.plain)
-                        }
                     }
                     .padding(.top, 2)
                 }
@@ -385,31 +278,25 @@ public struct GoalsView: View {
         }
     }
 
+
     private func completionRatio(for goal: Goal) -> CGFloat {
         let total = goal.completionCriteria.count
         guard total > 0 else { return goal.status == .completed ? 1.0 : 0.0 }
         return min(1.0, max(0.0, CGFloat(goal.metCriteriaCount) / CGFloat(total)))
     }
 
-    private func subtitle(for goal: Goal) -> String? {
+    private func subtitle(for goal: Goal) -> String {
         var parts: [String] = []
         if !goal.completionCriteria.isEmpty {
             parts.append("\(goal.metCriteriaCount) of \(goal.completionCriteria.count) done")
         }
         if let deadline = goal.deadline, !deadline.isEmpty {
-            parts.append("Due \(NoriDateFormatting.shortDate(deadline))")
+            parts.append("Target \(NoriDateFormatting.shortDate(deadline))")
         }
         if parts.isEmpty, !goal.progress.isEmpty {
             return goal.progress
         }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    private func closedDetail(for goal: Goal) -> String? {
-        if let completedAt = goal.completedAt, !completedAt.isEmpty {
-            return "Finished \(NoriDateFormatting.relative(completedAt))"
-        }
-        return nil
+        return parts.isEmpty ? statusLabel(for: goal.status) : parts.joined(separator: " · ")
     }
 
     private func statusLabel(for status: GoalStatus) -> String {
