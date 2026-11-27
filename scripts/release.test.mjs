@@ -27,6 +27,7 @@ function fixture(
     live = "base",
     failDeploy = "",
     badRevisions = "",
+    webHealthStatus = "200",
     webRootStatus = "200",
     siteRootStatus = "200",
     missingImages = "",
@@ -98,6 +99,7 @@ exit 0`);
   command("curl", `
 url="\${@: -1}"
 case "$url" in
+  *nori-web-new.example/api/health) printf '%s' "$FIXTURE_WEB_HEALTH_STATUS" ;;
   */readyz|*/api/health) printf 200 ;;
   *nori-web-new.example/) printf '%s' "$FIXTURE_WEB_ROOT_STATUS" ;;
   *nori-site-new.example/privacy) printf 200 ;;
@@ -115,6 +117,7 @@ esac`);
     FIXTURE_LIVE: liveCommit,
     FIXTURE_FAIL_DEPLOY: failDeploy,
     FIXTURE_BAD: badRevisions,
+    FIXTURE_WEB_HEALTH_STATUS: webHealthStatus,
     FIXTURE_WEB_ROOT_STATUS: webRootStatus,
     FIXTURE_SITE_ROOT_STATUS: siteRootStatus,
     FIXTURE_MISSING_IMAGES: missingImages,
@@ -229,6 +232,12 @@ test("a 500 on nori-web root blocks promotion and removes tags", (t) => {
   assert.equal(result.status, 1);
   assert.doesNotMatch(calls, /--to-revisions=nori-web-new=100/);
   assert.match(calls, /update-traffic nori-web .*--remove-tags=release-/);
+});
+
+test("IAP 302 redirects on nori-web health and root pass staged checks", (t) => {
+  const { result, calls } = fixture(t, { change: "web/page.tsx", webHealthStatus: "302", webRootStatus: "302" });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.match(calls, /update-traffic nori-web .*--to-revisions=nori-web-new=100/);
 });
 
 test("transient gcloud logging read errors during bake are retried", (t) => {

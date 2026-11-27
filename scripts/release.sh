@@ -310,12 +310,16 @@ revert_group() {
 }
 
 check_staged() {
-  local svc="$1" url="$2" root_status
+  local svc="$1" url="$2" health_status root_status
   case "$svc" in
     nori-core) [[ "$(http_status "$url/readyz")" == 200 ]] ;;
     nori-web)
+      # nori-web sits behind Cloud Run IAP, so unauthenticated probes receive a 302
+      # redirect to Google sign-in while Cloud Run's startup probe verifies /api/health
+      # inside the container (and nori-web-mac verifies /api/health == 200 on the same image).
+      health_status="$(http_status "$url/api/health")"
       root_status="$(http_status "$url/")"
-      [[ "$(http_status "$url/api/health")" == 200 ]] &&
+      [[ "$health_status" == 200 || "$health_status" == 302 ]] &&
         [[ "$root_status" =~ ^[234][0-9][0-9]$ ]]
       ;;
     nori-web-mac)
