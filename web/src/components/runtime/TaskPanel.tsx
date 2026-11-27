@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 
 const RECENT_LIMIT = 5;
 
-const isPartial = (run: Run) => run.status === "failed" && /^incomplete\b/i.test(run.error || "");
+const isPartial = (run: Run) => run.status === "failed" && /^incomplete\b|spending limit|budget/i.test(run.error || "");
 
 function taskTitle(run: Run, session?: Session): string {
   const explicit = run.title?.trim();
