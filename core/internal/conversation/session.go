@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"time"
 
@@ -85,6 +86,11 @@ func (r *Runner) SnapshotPage(ctx context.Context, before string) (Session, erro
 	}
 	for i := range result.Messages {
 		result.Messages[i] = result.Messages[i].WithParts()
+	}
+	for i := range result.Runs {
+		if strings.TrimSpace(result.Runs[i].Title) == "" {
+			result.Runs[i].Title = state.TaskTitle(result.Runs[i])
+		}
 	}
 	return result, nil
 }

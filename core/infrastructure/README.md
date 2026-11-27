@@ -36,7 +36,7 @@ Its log lists the resources that change, without the diff, because the repositor
 | The allowed emails or Google tester list | The `nori-terraform-private` secret, a JSON object with `allowed_emails` and `google_workspace_test_users`. Add a version, then run the Infrastructure workflow. An empty tester list offers Google to every user. |
 | Who can sign in through IAP | `gcloud iap web add-iam-policy-binding` on `nori-web`. People's grants stay outside Terraform. |
 
-`nori-pg` takes a backup every day at 09:00 UTC and keeps seven, and Google applies maintenance on Sundays from 10:00 UTC. Deletion protection is on in GCP, and backups are kept if the instance is deleted. Point-in-time recovery is off, because turning it on restarts the instance. To restore, run `gcloud sql backups list --instance=nori-pg`, then `gcloud sql backups restore <id> --backup-instance=nori-pg --restore-instance=<target instance>`.
+`nori-pg` takes a backup every day at 09:00 UTC and keeps seven, and Google applies maintenance on Sundays from 10:00 UTC. Deletion protection is on in GCP, and backups are kept if the instance is deleted. Point-in-time recovery keeps seven days of transaction logs. To restore a backup, run `gcloud sql backups list --instance=nori-pg`, then `gcloud sql backups restore <id> --backup-instance=nori-pg --restore-instance=<target instance>`. To restore to a moment, run `gcloud sql instances clone nori-pg <new instance> --point-in-time=<RFC 3339 time>`.
 
 Terraform ignores each service's image, its `nori-commit` and `nori-prev` labels and its traffic, which releases own. Secret values, database users and OAuth clients are also outside Terraform.
 

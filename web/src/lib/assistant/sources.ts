@@ -9,7 +9,10 @@ import { useResource } from "./useResource";
 type List<T> = { items: T[]; next_cursor?: string };
 
 const legacyTitle = (run: Run, session?: Session) =>
-  run.request || session?.messages.find((message) => message.run_id === run.id && message.role === "user")?.text || "Task";
+  run.title?.trim() ||
+  run.request ||
+  session?.messages.find((message) => message.run_id === run.id && message.role === "user")?.text ||
+  "Task";
 
 function legacyInteraction(run: Run): Interaction | undefined {
   const question = run.question;
@@ -22,7 +25,7 @@ function legacyInteraction(run: Run): Interaction | undefined {
 
 function legacyWorkItem(run: Run, session?: Session): WorkItem {
   const waiting = run.status === "running" && !!((run.question && !run.question.resolved_by) || run.waiting);
-  const partial = run.status === "failed" && /^incomplete\b/i.test(run.error || "");
+  const partial = run.status === "failed" && /^incomplete\b|spending limit|budget/i.test(run.error || "");
   return {
     task_id: run.id, title: legacyTitle(run, session), status: run.status,
     bucket: run.status !== "running" ? "finished" : waiting ? "needs_you" : "working",

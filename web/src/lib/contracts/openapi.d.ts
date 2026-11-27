@@ -1870,6 +1870,7 @@ export interface components {
         RunStatus: "running" | "completed" | "failed" | "cancelled";
         Run: {
             id: string;
+            title?: string;
             status: components["schemas"]["RunStatus"];
             cancel_requested: boolean;
             origin?: components["schemas"]["TaskOrigin"];

@@ -17,6 +17,19 @@ type CompletionInput struct {
 }
 type CompletionOutcome struct{ Ref, Action, Detail string }
 
+func isNoopUnmet(raw string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(raw))
+	trimmed = strings.TrimRight(trimmed, ".! ")
+	switch trimmed {
+	case "", "none", "n/a", "na", "nil", "null", "nothing",
+		"no unmet", "no unmet items", "no unmet requirements",
+		"none unmet", "all met", "all requirements met":
+		return true
+	default:
+		return false
+	}
+}
+
 func proposal(call transcript.ToolCall) state.CompletionProposal {
 	p := state.CompletionProposal{}
 	p.Answer, _ = call.Args["answer"].(string)
@@ -24,9 +37,12 @@ func proposal(call transcript.ToolCall) state.CompletionProposal {
 		values, _ := call.Args[field].([]any)
 		for _, value := range values {
 			text, _ := value.(string)
+			text = strings.TrimSpace(text)
 			if field == "evidence" {
-				p.Evidence = append(p.Evidence, text)
-			} else {
+				if text != "" {
+					p.Evidence = append(p.Evidence, text)
+				}
+			} else if !isNoopUnmet(text) {
 				p.Unmet = append(p.Unmet, text)
 			}
 		}

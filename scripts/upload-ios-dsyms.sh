@@ -83,7 +83,7 @@ fi
 
 export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
 if ! command -v sentry-cli >/dev/null 2>&1; then
-  echo "error: sentry-cli not found. Install with: brew install --cask sentry-cli" >&2
+  echo "error: sentry-cli not found. Install with: brew install --cask sentry-cli (CI installs a pinned release in .github/actions/ios-symbols)" >&2
   exit 1
 fi
 

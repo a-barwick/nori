@@ -500,6 +500,7 @@ public struct Run: Sendable, Codable, Hashable, Identifiable {
     }
 
     public var id: String
+    public var title: String?
     public var status: RunStatus
     public var cancelRequested: Bool
     public var finishing: Finishing?
@@ -528,6 +529,7 @@ public struct Run: Sendable, Codable, Hashable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id
+        case title
         case status
         case cancelRequested = "cancel_requested"
         case finishing
@@ -557,6 +559,7 @@ public struct Run: Sendable, Codable, Hashable, Identifiable {
 
     public init(
         id: String,
+        title: String? = nil,
         status: RunStatus,
         cancelRequested: Bool = false,
         finishing: Finishing? = nil,
@@ -584,6 +587,7 @@ public struct Run: Sendable, Codable, Hashable, Identifiable {
         artifacts: [Artifact]? = nil
     ) {
         self.id = id
+        self.title = title
         self.status = status
         self.cancelRequested = cancelRequested
         self.finishing = finishing

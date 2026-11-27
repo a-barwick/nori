@@ -3372,6 +3372,8 @@ components:
       properties:
         id:
           type: string
+        title:
+          type: string
         status:
           $ref: "#/components/schemas/RunStatus"
         cancel_requested:

@@ -23,7 +23,7 @@ func TestTitleFromRequestStripsPromptLeakageAndSecondSentences(t *testing.T) {
 		{
 			name: "presentation brief",
 			in:   "Create a presentation about Nova, the user's internal enterprise project. Gather details about Nova from the user's connected apps (e.g., docs, drive, email) if available.",
-			want: "Create a presentation about Nova, internal enterprise project",
+			want: "Create a presentation about Nova",
 		},
 		{
 			name: "routine brief",

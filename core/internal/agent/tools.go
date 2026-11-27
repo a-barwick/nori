@@ -61,11 +61,11 @@ var taskToolDefinitions = func() []taskToolDefinition {
 		Type: transcript.TypeObject,
 		Properties: map[string]*transcript.Schema{
 			"title":    {Type: transcript.TypeString, Description: "Optional concise document title when returning a write-up, report, or artifact."},
-			"answer":   text,
-			"evidence": list,
-			"unmet":    list,
+			"answer":   {Type: transcript.TypeString, Description: "The complete response for the user, including any helpful caveats or notes."},
+			"evidence": {Type: transcript.TypeArray, Items: text, Description: "Optional opaque operation_id or artifact_id references backing the answer."},
+			"unmet":    {Type: transcript.TypeArray, Items: text, Description: "Optional. Omit or pass [] whenever the user's request was fulfilled. Only list explicitly requested deliverables or actions that failed or could not be completed. Never include caveats, disclaimers, unverified background details, or placeholders like 'none'."},
 		},
-		Required: []string{"answer", "evidence", "unmet"},
+		Required: []string{"answer"},
 	}
 	capabilities := &transcript.Schema{
 		Type:       transcript.TypeObject,
@@ -305,7 +305,11 @@ func ValidateCalls(calls []transcript.ToolCall, wait, work bool, snapshot *exten
 				return errors.New(prompts.Runtime("tool-complete-needs-an-answer-of-1-65536-bytes", nil))
 			}
 			for _, key := range []string{"evidence", "unmet"} {
-				values, ok := call.Args[key].([]any)
+				raw, present := call.Args[key]
+				if !present || raw == nil {
+					continue
+				}
+				values, ok := raw.([]any)
 				if !ok || len(values) > 256 {
 					return errors.New(prompts.Runtime("completion-array", map[string]any{"Field": key}))
 				}

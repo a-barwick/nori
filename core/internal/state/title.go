@@ -10,17 +10,24 @@ import (
 const maxTaskTitleLen = 72
 
 var (
-	parenMetaRe  = regexp.MustCompile(`(?i)\s*\([^)]*(?:user'?s?\s+words|thanksgiving|today\s+is|pacific|e\.g\.)[^)]*\)`)
-	multiSpaceRe = regexp.MustCompile(`\s+`)
+	parenMetaRe      = regexp.MustCompile(`(?i)\s*\([^)]*(?:user['’]?s?\s+words?|thanksgiving|today\s+is|pacific|e\.g\.)[^)]*\)`)
+	userAppositiveRe = regexp.MustCompile(`(?i),\s+the\s+user['’]s\s+[^.!?\n]+`)
+	multiSpaceRe     = regexp.MustCompile(`\s+`)
 )
 
 // TaskTitle returns a concise, human-readable label for a run, preferring an
 // explicit run.Title and falling back to a cleaned first sentence of run.Request.
 func TaskTitle(run Run) string {
-	if t := strings.TrimSpace(run.Title); t != "" {
+	if t := strings.Join(strings.Fields(strings.TrimSpace(run.Title)), " "); t != "" {
 		return clipTitle(t, maxTaskTitleLen)
 	}
 	return TitleFromRequest(run.Request)
+}
+
+// ShortTaskTitle derives a concise plain-English task title from a raw delegation
+// request string when no explicit title was provided.
+func ShortTaskTitle(request string) string {
+	return TitleFromRequest(request)
 }
 
 // TitleFromRequest derives a short display title from an internal task request,
@@ -35,6 +42,7 @@ func TitleFromRequest(request string) string {
 	}
 	s = parenMetaRe.ReplaceAllString(s, "")
 	s = firstSentence(s)
+	s = userAppositiveRe.ReplaceAllString(s, "")
 
 	replacements := []struct {
 		old string

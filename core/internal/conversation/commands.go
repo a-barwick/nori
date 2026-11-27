@@ -48,6 +48,7 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 		switch call.Function.Name {
 		case "dispatch":
 			var args struct {
+				Title       string   `json:"title"`
 				Request     string   `json:"request"`
 				For         *string  `json:"for"`
 				QuestionID  *string  `json:"question_id"`
@@ -58,6 +59,9 @@ func commandRequests(calls []ToolCall) ([]state.Command, error) {
 				return nil, err
 			}
 			command.Kind, command.Text = "start", strings.TrimSpace(args.Request)
+			if title := strings.Join(strings.Fields(strings.TrimSpace(args.Title)), " "); title != "" {
+				command.Title = state.TaskTitle(state.Run{Title: title})
+			}
 			if len(args.Attachments) > state.MaxAttachments {
 				return nil, fmt.Errorf("a dispatch can name at most %d files", state.MaxAttachments)
 			}
