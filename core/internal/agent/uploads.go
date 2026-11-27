@@ -49,6 +49,7 @@ func (s *Service) uploadInspect(ctx context.Context, run, id, question string) (
 	if err != nil {
 		return nil, err
 	}
+	_ = state.MarkRunTainted(ctx, s.Store, run, "upload_inspect:"+attachment.Name)
 	result, err := s.inspect(ctx, "upload_id", id, inspectUploadInstruction, question, data, attachment.MediaType)
 	if result != nil {
 		result["note"] = uploadNote

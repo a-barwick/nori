@@ -5,6 +5,7 @@ import NoriDesign
 public enum MoreRoute: Hashable, Sendable {
     case apps
     case mcpDetail(String)
+    case computer
     case memory
     case permissions
     case preferences
@@ -137,6 +138,20 @@ public struct MoreHubView: View {
                 }
             }
             .buttonStyle(.plain)
+
+            if store.isComputerEnabled {
+                NavigationLink(value: MoreRoute.computer) {
+                    NoriRow(
+                        title: "Computer",
+                        detail: store.computerStatus?.status.displayLabel,
+                        systemImage: "desktopcomputer",
+                        iconTone: .accent,
+                        showChevron: true,
+                        showDivider: true
+                    )
+                }
+                .buttonStyle(.plain)
+            }
 
             NavigationLink(value: MoreRoute.memory) {
                 NoriRow(

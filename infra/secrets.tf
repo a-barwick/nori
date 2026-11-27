@@ -16,6 +16,7 @@ locals {
     "nori-postgres-url",
     "nori-sentry-auth-token",
     "nori-service-token-key",
+    "nori-sprites-api-key",
     "nori-terraform-private",
   ])
 
@@ -24,6 +25,7 @@ locals {
   secret_readers = {
     "exa-runtime"            = { secret = "nori-exa-api-key", member = google_service_account.nori_runtime.member }
     "home-ai-key-runtime"    = { secret = "nori-home-ai-key", member = google_service_account.nori_runtime.member }
+    "sprites-runtime"        = { secret = "nori-sprites-api-key", member = google_service_account.nori_runtime.member }
     "mac-identities-web-mac" = { secret = "nori-mac-google-identities", member = google_service_account.nori_web_mac.member }
     "mac-pilot-web-mac"      = { secret = "nori-mac-pilot-identities", member = google_service_account.nori_web_mac.member }
     "service-token-web-mac"  = { secret = "nori-service-token-key", member = google_service_account.nori_web_mac.member }

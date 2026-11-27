@@ -42,6 +42,10 @@ export function responseAnnouncement(value: InteractionResponse["value"]): strin
       return "Answer sent.";
     case "choose_account":
       return "Account chosen.";
+    case "resume":
+      return "Handed back to Nori.";
+    case "cancel":
+      return "Takeover cancelled.";
   }
 }
 
@@ -84,7 +88,9 @@ export function resolveInteractionLocally(
       ? { kind: "answer", text: value.text, at: nowISO }
       : value.kind === "choose_account"
         ? { kind: "choose_account", connection_id: value.connection_id, at: nowISO }
-        : { kind: value.kind, at: nowISO };
+        : value.kind === "resume" || value.kind === "cancel"
+          ? { kind: value.kind, ...(value.text ? { text: value.text } : {}), at: nowISO }
+          : { kind: value.kind, at: nowISO };
   return {
     ...interaction,
     status: "resolved",
@@ -141,6 +147,8 @@ export function resolvedStatusPill(interaction: Interaction): { tone: "ok" | "ne
     };
   }
   if (kind === "signed_in") return { tone: "ok", label: "Signed in" };
+  if (kind === "resume") return { tone: "ok", label: "Resumed" };
+  if (kind === "cancel") return { tone: "neutral", label: "Cancelled" };
   return { tone: "ok", label: "Answered" };
 }
 
@@ -154,6 +162,10 @@ export function resolvedSummaryText(interaction: Interaction, rememberedRule?: b
       return "Approved";
     case "signed_in":
       return "Signed in";
+    case "resume":
+      return resolution.text ? `Resumed · ${resolution.text}` : "Handed back to Nori";
+    case "cancel":
+      return "Cancelled";
     case "decline":
       return interaction.kind === "sign_in" ? "Not now" : interaction.kind === "approval" ? "Denied" : "Declined";
     case "choose_account":

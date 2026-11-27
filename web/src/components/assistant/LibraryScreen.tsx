@@ -350,11 +350,13 @@ export function LibraryDetailScreen({ id }: { id: string }) {
       invalidate("/library");
     });
 
+  const rawFileURL =
+    item.url || (item.kind === "file" ? `/api/v1/library/${encodeURIComponent(item.id)}/file` : undefined);
   const fileURL =
-    item.url &&
-    ((item.url.startsWith("/") && !item.url.startsWith("//") && !item.url.startsWith("/\\") && !item.url.includes("\\")) ||
-      /^https:\/\//.test(item.url))
-      ? item.url
+    rawFileURL &&
+    ((rawFileURL.startsWith("/") && !rawFileURL.startsWith("//") && !rawFileURL.startsWith("/\\") && !rawFileURL.includes("\\")) ||
+      /^https:\/\//.test(rawFileURL))
+      ? rawFileURL
       : undefined;
 
   const copyableText =

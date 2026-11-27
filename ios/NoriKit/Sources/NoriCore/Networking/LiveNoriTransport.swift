@@ -358,6 +358,8 @@ public actor LiveNoriTransport: NoriTransport {
             if parts[3] != "pairing" {
                 parts[3] = ":id"
             }
+        case "computer" where parts.count > 3 && parts[2] == "sessions":
+            parts[3] = ":id"
         case "work", "interactions", "library", "memory", "automations", "permissions", "mutations", "mcp", "connections":
             parts[2] = ":id"
         default:
@@ -1610,6 +1612,85 @@ public actor LiveNoriTransport: NoriTransport {
 
     public func revokeHomeConnector(_ id: String) async throws {
         try await sendWithoutResponse(OpenAPI.Path.settingsHomeConnectorsByID(id: id), method: "DELETE", body: EmptyBody())
+    }
+
+    // MARK: - Personal Agent Computer
+
+    public func fetchComputerStatus() async throws -> ComputerStatus {
+        try await getJSON(OpenAPI.Path.computer)
+    }
+
+    public func wakeComputer() async throws -> ComputerStatus {
+        try await sendJSON(OpenAPI.Path.computerWake, method: "POST", body: EmptyBody())
+    }
+
+    public func sleepComputer() async throws {
+        try await sendWithoutResponse(OpenAPI.Path.computerSleep, method: "POST", body: EmptyBody())
+    }
+
+    public func resetComputer() async throws -> ComputerStatus {
+        try await sendJSON(OpenAPI.Path.computerReset, method: "POST", body: EmptyBody())
+    }
+
+    public func createComputerCheckpoint(label: String?) async throws -> ComputerCheckpoint {
+        try await sendJSON(
+            OpenAPI.Path.computerCheckpoints,
+            method: "POST",
+            body: CreateComputerCheckpointRequest(label: label)
+        )
+    }
+
+    public func restoreComputerCheckpoint(checkpointID: String?) async throws -> ComputerStatus {
+        try await sendJSON(
+            OpenAPI.Path.computerRestore,
+            method: "POST",
+            body: RestoreComputerRequest(checkpointID: checkpointID)
+        )
+    }
+
+    public func createComputerSession(_ request: CreateComputerSessionRequest) async throws -> CreateComputerSessionResponse {
+        try await sendJSON(OpenAPI.Path.computerSessions, method: "POST", body: request)
+    }
+
+    public func updateComputerSessionMode(sessionID: String, mode: ComputerSessionMode) async throws -> ComputerSessionSummary {
+        try await sendJSON(
+            OpenAPI.Path.computerSessionsByID(id: sessionID),
+            method: "PATCH",
+            body: UpdateComputerSessionRequest(mode: mode)
+        )
+    }
+
+    public func endComputerSession(sessionID: String) async throws {
+        try await sendWithoutResponse(OpenAPI.Path.computerSessionsByID(id: sessionID), method: "DELETE", body: EmptyBody())
+    }
+
+    public func computerDesktopWebSocketRequest(for session: CreateComputerSessionResponse) async throws -> URLRequest {
+        let userID = try await ensureUserID()
+        let httpURL = try router.scopedURL(
+            path: session.wsPath,
+            userID: userID,
+            queryItems: [URLQueryItem(name: "token", value: session.token)]
+        )
+        guard var components = URLComponents(url: httpURL, resolvingAgainstBaseURL: true) else {
+            throw NoriAPIError(message: "Could not build desktop connection URL.")
+        }
+        if components.scheme == "https" {
+            components.scheme = "wss"
+        } else if components.scheme == "http" {
+            components.scheme = "ws"
+        }
+        guard let wsURL = components.url else {
+            throw NoriAPIError(message: "Could not encode desktop connection URL.")
+        }
+        var req = URLRequest(url: wsURL)
+        req.setValue("binary", forHTTPHeaderField: "Sec-WebSocket-Protocol")
+        req.setValue(session.token, forHTTPHeaderField: "X-Nori-Computer-Token")
+        req.setValue("ios", forHTTPHeaderField: "X-Nori-Client")
+        if localEmail == nil {
+            let token = try await authProvider.validIDToken(forceRefresh: false)
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        return req
     }
 
     private func sendWithoutResponse<Body: Encodable>(_ path: String, method: String, body: Body) async throws {

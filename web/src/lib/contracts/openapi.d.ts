@@ -1395,6 +1395,160 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/computer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get personal computer status, disk usage, checkpoints, and active desktop sessions */
+        get: operations["getComputerStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/computer/wake": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Provision or wake the user's personal computer */
+        post: operations["wakeComputer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/computer/sleep": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Put the user's personal computer to sleep and end active desktop sessions */
+        post: operations["sleepComputer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/computer/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reset the user's personal computer back to its baseline checkpoint */
+        post: operations["resetComputer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/computer/checkpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create a point-in-time checkpoint of the user's personal computer */
+        post: operations["createComputerCheckpoint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/computer/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore the user's personal computer to a saved checkpoint */
+        post: operations["restoreComputerCheckpoint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/computer/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start a short-lived live desktop viewing or takeover session */
+        post: operations["createComputerSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/computer/sessions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** End an active live desktop session */
+        delete: operations["endComputerSession"];
+        options?: never;
+        head?: never;
+        /** Switch a live desktop session between view and control mode */
+        patch: operations["updateComputerSession"];
+        trace?: never;
+    };
+    "/v1/computer/sessions/{id}/ws": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Authenticated RFB WebSocket proxy for live desktop viewing and user takeover */
+        get: operations["connectComputerSessionWS"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1500,6 +1654,7 @@ export interface components {
             memory?: boolean;
             inbox?: boolean;
             operations?: boolean;
+            computer?: boolean;
         };
         Capabilities: {
             /** @enum {string} */
@@ -2233,9 +2388,15 @@ export interface components {
             return_to?: string;
             expires_at?: components["schemas"]["Instant"];
         };
+        ComputerTakeoverPayload: {
+            reason?: string;
+            url?: string;
+            computer_id?: string;
+            task_id?: string;
+        };
         InteractionResolution: {
             /** @enum {string} */
-            kind: "answer" | "approve" | "decline" | "choose_account" | "signed_in" | "expired";
+            kind: "answer" | "approve" | "decline" | "choose_account" | "signed_in" | "resume" | "cancel" | "expired";
             text?: string;
             connection_id?: components["schemas"]["ID"];
             at: components["schemas"]["Instant"];
@@ -2277,6 +2438,10 @@ export interface components {
             /** @enum {string} */
             kind: "sign_in";
             payload: components["schemas"]["SignInPayload"];
+        }) | (components["schemas"]["InteractionBase"] & {
+            /** @enum {string} */
+            kind: "computer_takeover";
+            payload: components["schemas"]["ComputerTakeoverPayload"];
         });
         InteractionResponse: {
             request_id: components["schemas"]["UUID"];
@@ -2299,6 +2464,10 @@ export interface components {
             } | {
                 /** @enum {string} */
                 kind: "decline";
+            } | {
+                /** @enum {string} */
+                kind: "resume" | "cancel";
+                text?: string;
             };
         };
         Trigger: {
@@ -3116,6 +3285,64 @@ export interface components {
                 connection_id?: components["schemas"]["ID"];
                 text?: string;
             };
+        };
+        ComputerCheckpoint: {
+            id: string;
+            label?: string;
+            created_at: components["schemas"]["Instant"];
+        };
+        ComputerSessionSummary: {
+            id: string;
+            computer_id: string;
+            /** @enum {string} */
+            mode: "view" | "control";
+            task_id?: string;
+            interaction_id?: string;
+            expires_at: components["schemas"]["Instant"];
+            created_at: components["schemas"]["Instant"];
+            last_activity_at?: components["schemas"]["Instant"];
+        };
+        ComputerStatus: {
+            enabled: boolean;
+            computer_id?: string;
+            provider: string;
+            /** @enum {string} */
+            status: "not_provisioned" | "provisioning" | "ready" | "sleeping" | "resetting" | "deleting" | "deleted" | "error";
+            baseline_checkpoint_id?: string;
+            /** Format: int64 */
+            disk_used_bytes: number;
+            /** Format: int64 */
+            disk_max_bytes: number;
+            checkpoints: components["schemas"]["ComputerCheckpoint"][];
+            active_sessions: components["schemas"]["ComputerSessionSummary"][];
+            last_active_at?: components["schemas"]["Instant"];
+        };
+        CreateComputerSessionRequest: {
+            /** @enum {string} */
+            mode?: "view" | "control";
+            task_id?: string;
+            interaction_id?: string;
+        };
+        CreateComputerSessionResponse: {
+            id: string;
+            computer_id: string;
+            /** @enum {string} */
+            mode: "view" | "control";
+            task_id?: string;
+            interaction_id?: string;
+            token: string;
+            ws_path: string;
+            expires_at: components["schemas"]["Instant"];
+        };
+        UpdateComputerSessionRequest: {
+            /** @enum {string} */
+            mode: "view" | "control";
+        };
+        CreateComputerCheckpointRequest: {
+            label?: string;
+        };
+        RestoreComputerRequest: {
+            checkpoint_id?: string;
         };
     };
     responses: {
@@ -5540,6 +5767,242 @@ export interface operations {
             };
             400: components["responses"]["ErrorResponse"];
             404: components["responses"]["ErrorResponse"];
+        };
+    };
+    getComputerStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Personal computer status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComputerStatus"];
+                };
+            };
+            502: components["responses"]["ErrorResponse"];
+        };
+    };
+    wakeComputer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Personal computer status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComputerStatus"];
+                };
+            };
+            503: components["responses"]["ErrorResponse"];
+        };
+    };
+    sleepComputer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Computer sleeping */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["ErrorResponse"];
+            503: components["responses"]["ErrorResponse"];
+        };
+    };
+    resetComputer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reset personal computer status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComputerStatus"];
+                };
+            };
+            503: components["responses"]["ErrorResponse"];
+        };
+    };
+    createComputerCheckpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CreateComputerCheckpointRequest"];
+            };
+        };
+        responses: {
+            /** @description Checkpoint created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComputerCheckpoint"];
+                };
+            };
+            503: components["responses"]["ErrorResponse"];
+        };
+    };
+    restoreComputerCheckpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RestoreComputerRequest"];
+            };
+        };
+        responses: {
+            /** @description Restored computer status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComputerStatus"];
+                };
+            };
+            404: components["responses"]["ErrorResponse"];
+            503: components["responses"]["ErrorResponse"];
+        };
+    };
+    createComputerSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CreateComputerSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Live desktop session created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateComputerSessionResponse"];
+                };
+            };
+            400: components["responses"]["ErrorResponse"];
+            503: components["responses"]["ErrorResponse"];
+        };
+    };
+    endComputerSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session ended */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: components["responses"]["ErrorResponse"];
+        };
+    };
+    updateComputerSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateComputerSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Session updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComputerSessionSummary"];
+                };
+            };
+            400: components["responses"]["ErrorResponse"];
+            404: components["responses"]["ErrorResponse"];
+        };
+    };
+    connectComputerSessionWS: {
+        parameters: {
+            query: {
+                /** @description Short-lived user-bound session token returned by createComputerSession. */
+                token: string;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["IdParam"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Switching Protocols to binary RFB WebSocket stream */
+            101: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["ErrorResponse"];
+            404: components["responses"]["ErrorResponse"];
+            502: components["responses"]["ErrorResponse"];
+            503: components["responses"]["ErrorResponse"];
         };
     };
 }

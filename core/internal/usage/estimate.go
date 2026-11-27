@@ -26,6 +26,8 @@ func EstimateCallUSD(provider, model string, bodyBytes, maxOutputTokens int) flo
 		inputRate, outputRate = 3.75, 15
 	case strings.Contains(m, "gpt-6.1-terra"):
 		inputRate, outputRate = 2.5, 7.5
+	case strings.Contains(m, "gpt-6-luna"), strings.Contains(m, "gpt-6.1-luna"), strings.Contains(m, "gpt-6.2-luna"):
+		inputRate, outputRate = 0.2, 0.75
 	case strings.Contains(m, "gpt-6"):
 	case provider == "gateway", provider == "openrouter":
 		inputRate, outputRate = 18.75, 75

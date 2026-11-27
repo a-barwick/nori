@@ -44,9 +44,12 @@ func (b *backend) ListAccountDeletePending(ctx context.Context) ([]string, error
 
 func (b *backend) BeginAccountDelete(ctx context.Context, userID string) error {
 	return b.readCommitted(ctx, false, func(q executor) error {
-		// Pairing and redemption use the same lock, so no device can be
-		// authorized concurrently after deletion is marked pending.
+		// Pairing, redemption, and computer provisioning use these locks, so no device or VM
+		// can be authorized/provisioned concurrently after deletion is marked pending.
 		if _, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "nori-home-ai:"+userID); err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "nori-computer:"+userID); err != nil {
 			return err
 		}
 		for _, query := range []string{
@@ -79,6 +82,14 @@ func (b *backend) BeginAccountDelete(ctx context.Context, userID string) error {
 		if _, err := q.Exec(ctx, "DELETE FROM nori_user_wakes WHERE user_id = $1", userID); err != nil {
 			return err
 		}
+		if _, err := q.Exec(ctx, `UPDATE nori_user_computers SET status = 'deleting', updated_at = clock_timestamp()
+			WHERE user_id = $1 AND status <> 'deleted'`, userID); err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, `UPDATE nori_computer_sessions SET ended_at = COALESCE(ended_at, clock_timestamp())
+			WHERE user_id = $1 AND ended_at IS NULL`, userID); err != nil {
+			return err
+		}
 		for _, query := range []string{
 			`SELECT pg_notify('nori_home_ai_events', 'd:' || id) FROM nori_home_ai_devices WHERE user_id = $1`,
 			`SELECT pg_notify('nori_home_ai_events', 'r:' || id) FROM nori_home_ai_requests WHERE user_id = $1`,
@@ -105,6 +116,22 @@ func (b *backend) FinishAccountDelete(ctx context.Context, userID, owner string)
 			return err
 		}
 		if _, err := q.Exec(ctx, "SELECT nori_purge_home_ai_account($1)", userID); err != nil {
+			return err
+		}
+		var undestroyed int
+		if err := q.QueryRow(ctx, `SELECT count(*) FROM nori_user_computers WHERE user_id = $1 AND status <> 'deleted'`, userID).Scan(&undestroyed); err != nil {
+			return err
+		}
+		if undestroyed > 0 {
+			return fmt.Errorf("user %s computer has not completed remote destruction", userID)
+		}
+		if _, err := q.Exec(ctx, "DELETE FROM nori_computer_sessions WHERE user_id = $1", userID); err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, "DELETE FROM nori_computer_file_links WHERE user_id = $1", userID); err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, "DELETE FROM nori_user_computers WHERE user_id = $1 AND status = 'deleted'", userID); err != nil {
 			return err
 		}
 		if _, err := q.Exec(ctx, "DELETE FROM nori_records WHERE shard = $1", shard); err != nil {

@@ -25,6 +25,8 @@ struct InteractionCardPresentationTests {
             payload = .accountSelection(AccountSelectionPayload(purpose: "mail.send", eligibleConnectionIDs: ["conn-1"]))
         case .signIn:
             payload = .signIn(SignInPayload(integrationID: "google"))
+        case .computerTakeover:
+            payload = .computerTakeover(ComputerTakeoverPayload(reason: "Sign in to portal", url: "https://example.com"))
         }
         return Interaction(
             id: "int-1",
@@ -79,6 +81,16 @@ struct InteractionCardPresentationTests {
             for: makeInteraction(kind: .approval, status: .superseded)
         )
         #expect(superseded == InteractionStatusPill(label: "Replaced", tone: .neutral))
+
+        let resumedTakeover = InteractionStatusPresentation.statusPill(
+            for: makeInteraction(kind: .computerTakeover, status: .resolved, resolutionKind: .resume)
+        )
+        #expect(resumedTakeover == InteractionStatusPill(label: "Resumed", tone: .ok))
+
+        let cancelledTakeover = InteractionStatusPresentation.statusPill(
+            for: makeInteraction(kind: .computerTakeover, status: .resolved, resolutionKind: .cancel)
+        )
+        #expect(cancelledTakeover == InteractionStatusPill(label: "Cancelled", tone: .neutral))
     }
 
     @Test("Renders Waiting pill for pending interactions without expires_at and clock pill when expires_at is present")

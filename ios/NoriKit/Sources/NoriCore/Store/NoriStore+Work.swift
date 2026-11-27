@@ -136,6 +136,8 @@ extension NoriStore {
                 showToast(interaction.kind == .approval ? "Denied — nothing was sent" : "Declined")
             case .answer: showToast("Answer sent to Nori")
             case .chooseAccount: showToast("Account selected")
+            case .resume: showToast("Nori is continuing")
+            case .cancel: showToast("Task paused")
             }
             return .resolved(receipt.resource)
         } catch {
@@ -184,6 +186,16 @@ extension NoriStore {
     @discardableResult
     public func chooseAccountInteraction(_ interaction: Interaction, connectionID: String, rememberAsDefault: Bool = false) async -> InteractionSubmitOutcome {
         await resolveInteraction(interaction, answer: .chooseAccount(connectionID: connectionID, rememberAsDefault: rememberAsDefault))
+    }
+
+    @discardableResult
+    public func resumeComputerTakeover(_ interaction: Interaction, note: String? = nil) async -> InteractionSubmitOutcome {
+        await resolveInteraction(interaction, answer: .resume(text: note))
+    }
+
+    @discardableResult
+    public func cancelComputerTakeover(_ interaction: Interaction, note: String? = nil) async -> InteractionSubmitOutcome {
+        await resolveInteraction(interaction, answer: .cancel(text: note))
     }
 
     public func steerTask(taskID: String, instruction: String) async {

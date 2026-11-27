@@ -348,6 +348,22 @@ func (s *Service) Respond(ctx context.Context, id, requestID string, expected in
 				if response.RememberAsDefault {
 					body.RememberDefault = true
 				}
+			case (response.Kind == "resume" || response.Kind == "cancel") && i.Kind == "computer_takeover":
+				if response.RememberRule || len(response.Text) > state.MaxMessageBytes {
+					return state.MutationResult{}, state.ErrInvalidResource
+				}
+				note := strings.TrimSpace(response.Text)
+				if response.Kind == "resume" {
+					text = "The user finished taking control of the computer desktop and handed it back to Nori. Continue the task."
+				} else {
+					text = "The user cancelled the desktop takeover request. Continue without that step or report what could not be done."
+				}
+				if note != "" {
+					resolution.Text = note
+					text += " User note: " + note
+				} else {
+					resolution.Text = text
+				}
 			default:
 				return state.MutationResult{}, state.ErrInvalidResource
 			}

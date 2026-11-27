@@ -2234,6 +2234,193 @@ paths:
         "404":
           $ref: "#/components/responses/ErrorResponse"
 
+  /v1/computer:
+    get:
+      operationId: getComputerStatus
+      tags: [Computer]
+      summary: Get personal computer status, disk usage, checkpoints, and active desktop sessions
+      responses:
+        "200":
+          description: Personal computer status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComputerStatus"
+        "502":
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v1/computer/wake:
+    post:
+      operationId: wakeComputer
+      tags: [Computer]
+      summary: Provision or wake the user's personal computer
+      responses:
+        "200":
+          description: Personal computer status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComputerStatus"
+        "503":
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v1/computer/sleep:
+    post:
+      operationId: sleepComputer
+      tags: [Computer]
+      summary: Put the user's personal computer to sleep and end active desktop sessions
+      responses:
+        "204":
+          description: Computer sleeping
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v1/computer/reset:
+    post:
+      operationId: resetComputer
+      tags: [Computer]
+      summary: Reset the user's personal computer back to its baseline checkpoint
+      responses:
+        "200":
+          description: Reset personal computer status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComputerStatus"
+        "503":
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v1/computer/checkpoints:
+    post:
+      operationId: createComputerCheckpoint
+      tags: [Computer]
+      summary: Create a point-in-time checkpoint of the user's personal computer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateComputerCheckpointRequest"
+      responses:
+        "201":
+          description: Checkpoint created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComputerCheckpoint"
+        "503":
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v1/computer/restore:
+    post:
+      operationId: restoreComputerCheckpoint
+      tags: [Computer]
+      summary: Restore the user's personal computer to a saved checkpoint
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RestoreComputerRequest"
+      responses:
+        "200":
+          description: Restored computer status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComputerStatus"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v1/computer/sessions:
+    post:
+      operationId: createComputerSession
+      tags: [Computer]
+      summary: Start a short-lived live desktop viewing or takeover session
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateComputerSessionRequest"
+      responses:
+        "201":
+          description: Live desktop session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateComputerSessionResponse"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v1/computer/sessions/{id}:
+    patch:
+      operationId: updateComputerSession
+      tags: [Computer]
+      summary: Switch a live desktop session between view and control mode
+      parameters:
+        - $ref: "#/components/parameters/IdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateComputerSessionRequest"
+      responses:
+        "200":
+          description: Session updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComputerSessionSummary"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+    delete:
+      operationId: endComputerSession
+      tags: [Computer]
+      summary: End an active live desktop session
+      parameters:
+        - $ref: "#/components/parameters/IdParam"
+      responses:
+        "204":
+          description: Session ended
+        "503":
+          $ref: "#/components/responses/ErrorResponse"
+
+  /v1/computer/sessions/{id}/ws:
+    get:
+      operationId: connectComputerSessionWS
+      tags: [Computer]
+      summary: Authenticated RFB WebSocket proxy for live desktop viewing and user takeover
+      parameters:
+        - $ref: "#/components/parameters/IdParam"
+        - name: token
+          in: query
+          required: true
+          description: Short-lived user-bound session token returned by createComputerSession.
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "101":
+          description: Switching Protocols to binary RFB WebSocket stream
+        "401":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+        "502":
+          $ref: "#/components/responses/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/ErrorResponse"
+
 components:
   parameters:
     IdParam:
@@ -2517,6 +2704,8 @@ components:
         inbox:
           type: boolean
         operations:
+          type: boolean
+        computer:
           type: boolean
 
     Capabilities:
@@ -4227,13 +4416,25 @@ components:
         expires_at:
           $ref: "#/components/schemas/Instant"
 
+    ComputerTakeoverPayload:
+      type: object
+      properties:
+        reason:
+          type: string
+        url:
+          type: string
+        computer_id:
+          type: string
+        task_id:
+          type: string
+
     InteractionResolution:
       type: object
       required: [kind, at]
       properties:
         kind:
           type: string
-          enum: [answer, approve, decline, choose_account, signed_in, expired]
+          enum: [answer, approve, decline, choose_account, signed_in, resume, cancel, expired]
         text:
           type: string
         connection_id:
@@ -4324,6 +4525,16 @@ components:
                   enum: [sign_in]
                 payload:
                   $ref: "#/components/schemas/SignInPayload"
+        - allOf:
+            - $ref: "#/components/schemas/InteractionBase"
+            - type: object
+              required: [kind, payload]
+              properties:
+                kind:
+                  type: string
+                  enum: [computer_takeover]
+                payload:
+                  $ref: "#/components/schemas/ComputerTakeoverPayload"
 
     InteractionResponse:
       type: object
@@ -4373,6 +4584,14 @@ components:
                 kind:
                   type: string
                   enum: [decline]
+            - type: object
+              required: [kind]
+              properties:
+                kind:
+                  type: string
+                  enum: [resume, cancel]
+                text:
+                  type: string
 
     # -------------------------------------------------------------------------
     # Automations & Inbox
@@ -6235,3 +6454,125 @@ components:
             text:
               type: string
               maxLength: 4000
+
+    # -------------------------------------------------------------------------
+    # Personal Agent Computer
+    # -------------------------------------------------------------------------
+    ComputerCheckpoint:
+      type: object
+      required: [id, created_at]
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        created_at:
+          $ref: "#/components/schemas/Instant"
+
+    ComputerSessionSummary:
+      type: object
+      required: [id, computer_id, mode, expires_at, created_at]
+      properties:
+        id:
+          type: string
+        computer_id:
+          type: string
+        mode:
+          type: string
+          enum: [view, control]
+        task_id:
+          type: string
+        interaction_id:
+          type: string
+        expires_at:
+          $ref: "#/components/schemas/Instant"
+        created_at:
+          $ref: "#/components/schemas/Instant"
+        last_activity_at:
+          $ref: "#/components/schemas/Instant"
+
+    ComputerStatus:
+      type: object
+      required: [enabled, provider, status, disk_used_bytes, disk_max_bytes, checkpoints, active_sessions]
+      properties:
+        enabled:
+          type: boolean
+        computer_id:
+          type: string
+        provider:
+          type: string
+        status:
+          type: string
+          enum: [not_provisioned, provisioning, ready, sleeping, resetting, deleting, deleted, error]
+        baseline_checkpoint_id:
+          type: string
+        disk_used_bytes:
+          type: integer
+          format: int64
+        disk_max_bytes:
+          type: integer
+          format: int64
+        checkpoints:
+          type: array
+          items:
+            $ref: "#/components/schemas/ComputerCheckpoint"
+        active_sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ComputerSessionSummary"
+        last_active_at:
+          $ref: "#/components/schemas/Instant"
+
+    CreateComputerSessionRequest:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [view, control]
+        task_id:
+          type: string
+        interaction_id:
+          type: string
+
+    CreateComputerSessionResponse:
+      type: object
+      required: [id, computer_id, mode, token, ws_path, expires_at]
+      properties:
+        id:
+          type: string
+        computer_id:
+          type: string
+        mode:
+          type: string
+          enum: [view, control]
+        task_id:
+          type: string
+        interaction_id:
+          type: string
+        token:
+          type: string
+        ws_path:
+          type: string
+        expires_at:
+          $ref: "#/components/schemas/Instant"
+
+    UpdateComputerSessionRequest:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [view, control]
+
+    CreateComputerCheckpointRequest:
+      type: object
+      properties:
+        label:
+          type: string
+          maxLength: 120
+
+    RestoreComputerRequest:
+      type: object
+      properties:
+        checkpoint_id:
+          type: string

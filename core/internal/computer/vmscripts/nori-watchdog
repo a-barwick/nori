@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Lightweight memory watchdog running inside the user's computer.
+# Keeps RSS below NORI_COMPUTER_MEMORY_WATCHDOG_MB (default 3072 MiB) by trimming
+# extra Chromium tabs first, then terminating the largest non-essential child process.
+
+LIMIT_MB="${NORI_COMPUTER_MEMORY_WATCHDOG_MB:-3072}"
+CDP_PORT="${NORI_CHROMIUM_CDP_PORT:-9222}"
+INTERVAL_SEC="${NORI_WATCHDOG_INTERVAL_SEC:-15}"
+
+read_rss_mb() {
+  if [[ -r /sys/fs/cgroup/memory.current ]]; then
+    awk '{printf "%d\n", $1 / 1048576}' /sys/fs/cgroup/memory.current
+    return
+  fi
+  awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {if (t>0) printf "%d\n", (t-a)/1024; else print 0}' /proc/meminfo 2>/dev/null || echo 0
+}
+
+trim_chromium_tabs() {
+  python3 - "$CDP_PORT" <<'PY' || true
+import json, sys, urllib.request
+port = sys.argv[1]
+try:
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=2) as r:
+        tabs = [t for t in json.loads(r.read()) if t.get("type") == "page"]
+    # Keep only the 2 most recent tabs when under memory pressure.
+    for tab in tabs[:-2]:
+        tid = tab.get("id")
+        if tid:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/json/close/{tid}", timeout=2).read()
+except Exception:
+    pass
+PY
+}
+
+kill_largest_user_proc() {
+  local victim
+  victim="$(ps -eo pid=,rss=,comm= --sort=-rss | awk '
+    $3 !~ /^(systemd|init|Xvfb|fluxbox|x11vnc|websockify|nori-watchdog|sshd|bash|sh)$/ {
+      print $1; exit
+    }
+  ' || true)"
+  if [[ -n "${victim}" && "${victim}" != "$$" ]]; then
+    kill -TERM "${victim}" 2>/dev/null || true
+    sleep 2
+    kill -KILL "${victim}" 2>/dev/null || true
+  fi
+}
+
+while true; do
+  used_mb="$(read_rss_mb)"
+  if [[ "${used_mb}" -gt "${LIMIT_MB}" ]]; then
+    echo "$(date -u +%FT%TZ) watchdog: memory ${used_mb}MiB > ${LIMIT_MB}MiB; trimming chromium tabs" >&2
+    trim_chromium_tabs
+    sleep 2
+    used_mb="$(read_rss_mb)"
+    if [[ "${used_mb}" -gt "${LIMIT_MB}" ]]; then
+      echo "$(date -u +%FT%TZ) watchdog: memory still ${used_mb}MiB > ${LIMIT_MB}MiB; terminating largest child" >&2
+      kill_largest_user_proc
+    fi
+  fi
+  sleep "${INTERVAL_SEC}"
+done

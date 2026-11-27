@@ -21,6 +21,7 @@ public struct WorkDetailView: View {
     @State private var isLoadingDetail: Bool = false
     @State private var copiedResult: Bool = false
     @State private var isResultReaderPresented: Bool = false
+    @State private var showingWatchDesktop: Bool = false
     @State private var userStepsExpanded: Bool? = nil
     @State private var expandedSearchGroupIDs: Set<String> = []
 
@@ -167,6 +168,17 @@ public struct WorkDetailView: View {
                 .presentationCornerRadius(NoriRadius.sheet)
             }
         }
+        .sheet(isPresented: $showingWatchDesktop) {
+            ComputerDesktopSheet(
+                store: store,
+                initialMode: .view,
+                taskID: taskID
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(NoriColors.sheetBackground)
+            .presentationCornerRadius(NoriRadius.sheet)
+        }
     }
 
     private func detailScrollView(item: WorkItem) -> some View {
@@ -192,6 +204,19 @@ public struct WorkDetailView: View {
                             .fixedSize()
 
                         if isRunning {
+                            if store.isComputerEnabled {
+                                Button {
+                                    showingWatchDesktop = true
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "desktopcomputer")
+                                            .font(.system(size: 10.5, weight: .semibold))
+                                        Text("Watch")
+                                    }
+                                }
+                                .buttonStyle(NoriButtonStyle(.neutral, compact: true))
+                            }
+
                             Button {
                                 stopCurrentTask()
                             } label: {

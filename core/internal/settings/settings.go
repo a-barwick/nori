@@ -30,6 +30,7 @@ type Settings struct {
 	BindHost, Port string
 	Models         Models
 	HomeAI         HomeAI
+	Computer       Computer
 	Metering       usage.Config
 	Store          Store
 	ExaSearchKey   string
@@ -229,6 +230,9 @@ func load(defaultCloud string, simulation bool) (Settings, error) {
 	if err := s.HomeAI.validate(s.Cloud); err != nil {
 		return Settings{}, err
 	}
+	if err := s.Computer.validate(s.Cloud); err != nil {
+		return Settings{}, err
+	}
 	if err := s.Models.validateModels(s.Cloud); err != nil {
 		return Settings{}, err
 	}
@@ -300,6 +304,7 @@ func fromEnvironment(defaultCloud string, simulation bool) Settings {
 		"NORI_HOME_AI_KEY",
 		"NORI_HOME_AI_POSTGRES_URL",
 		"NORI_HOME_AI_POSTGRES_LISTEN_URL",
+		"NORI_SPRITES_API_TOKEN",
 		"AWS_SECRET_ACCESS_KEY",
 		"AWS_SESSION_TOKEN",
 	} {
@@ -323,6 +328,7 @@ func fromEnvironment(defaultCloud string, simulation bool) Settings {
 		BindHost:      get("BIND_HOST", "127.0.0.1"),
 		Port:          os.Getenv("PORT"),
 		HomeAI:        homeAIFromEnvironment(),
+		Computer:      computerFromEnvironment(),
 		Models:        modelsFromEnvironment(envProfile, cloud, simulation),
 		Store:         store,
 		Metering:      usage.Config{Mode: get("NORI_USAGE_METER", "store"), Endpoint: os.Getenv("NORI_USAGE_ENDPOINT"), Token: os.Getenv("NORI_USAGE_TOKEN"), MaxCallsPerHour: int(parseEnvInt32Default("NORI_USER_MAX_CALLS_PER_HOUR", 300)), MaxUSDPerDay: parseOptionalNonNegativeFloatDefault("NORI_USER_MAX_USD_PER_DAY", 15.0)},

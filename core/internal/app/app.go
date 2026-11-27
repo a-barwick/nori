@@ -11,8 +11,11 @@ import (
 
 	"nori/internal/agent"
 	"nori/internal/api"
+	"nori/internal/computer"
 	"nori/internal/connections"
+	computerconn "nori/internal/connectors/computer"
 	"nori/internal/conversation"
+	"nori/internal/extensions"
 	"nori/internal/homeai"
 	"nori/internal/llmguard"
 	"nori/internal/modelprofiles"
@@ -51,6 +54,7 @@ type App struct {
 type openOptions struct {
 	skipCollapseDuplicates bool
 	home                   *homeai.Service
+	computer               *computer.Manager
 }
 
 type appModels struct {
@@ -145,6 +149,10 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 	if services.Permissions != nil && services.Permissions.UserSends == "" {
 		services.Permissions.UserSends = "ask"
 	}
+	if opts.computer != nil && opts.computer.Enabled() {
+		computerconn.Register(services.Adapters, computerconn.NewAdapter(opts.computer, user.ID, store, cfg.Cloud == "local"))
+		services.Tools = extensions.Sources{services.Tools, computerconn.Source{Enabled: true}}
+	}
 	collapsed := collapseDuplicateConnections(ctx, user.ID, services.Connections, opts.skipCollapseDuplicates)
 
 	toolSource := &agent.Service{Extensions: services.Tools}
@@ -167,6 +175,22 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 			},
 		}
 		result.Assistant.Features["homeConnectors"] = true
+	}
+	if opts.computer != nil && opts.computer.Enabled() {
+		result.Assistant.Features["computer"] = true
+		result.Assistant.Computer = &api.ComputerAPI{Manager: opts.computer, UserID: user.ID}
+		compMgr := opts.computer
+		uid := user.ID
+		result.Assistant.OnLibraryDelete = func(ctx context.Context, resultIDs []string) {
+			for _, rid := range resultIDs {
+				_ = compMgr.PurgeLinkedResultFiles(ctx, uid, rid)
+			}
+		}
+		result.Assistant.OnForget = func(ctx context.Context, tags []string) {
+			for _, tag := range tags {
+				_ = compMgr.PurgeLinkedEntityFiles(ctx, uid, tag)
+			}
+		}
 	}
 	result.WakeRepair = platform.WorkWakes(store, waker, !cfg.Features.DisableBackgroundTasks)
 	if cfg.Features.DisableBackgroundTasks {
@@ -211,6 +235,9 @@ func wireBackgroundRuntime(result *App, cfg settings.Settings, user users.User, 
 	runner.ModelInfo = buildModelSummary(cfg, models)
 	runner.Clock = conversation.Clock{Location: location}
 	runner.OnDelta = result.Deltas.Publish
+	if result.Assistant != nil {
+		runner.OnForget = result.Assistant.OnForget
+	}
 	if cfg.Models.BYOKRequired {
 		runner.AccountModel = models.outer.(*accountReplyModel).resolve
 		runner.AccountSelection = models.account.CurrentSelection

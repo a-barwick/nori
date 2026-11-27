@@ -246,6 +246,8 @@ public struct NoriRootView: View {
                                 AppsView(store: store)
                             case .mcpDetail(let serverID):
                                 MCPDetailView(store: store, serverID: serverID)
+                            case .computer:
+                                ComputerView(store: store)
                             case .memory:
                                 MemoryView(store: store)
                             case .permissions:

@@ -5,6 +5,7 @@ public enum InteractionKind: String, Sendable, Codable, Hashable {
     case approval
     case accountSelection = "account_selection"
     case signIn = "sign_in"
+    case computerTakeover = "computer_takeover"
 }
 
 public enum InteractionStatus: String, Sendable, Codable, Hashable {
@@ -273,11 +274,38 @@ public struct SignInPayload: Sendable, Codable, Hashable {
     }
 }
 
+public struct ComputerTakeoverPayload: Sendable, Codable, Hashable {
+    public var reason: String?
+    public var url: String?
+    public var computerID: String?
+    public var taskID: String?
+
+    enum CodingKeys: String, CodingKey {
+        case reason
+        case url
+        case computerID = "computer_id"
+        case taskID = "task_id"
+    }
+
+    public init(
+        reason: String? = nil,
+        url: String? = nil,
+        computerID: String? = nil,
+        taskID: String? = nil
+    ) {
+        self.reason = reason
+        self.url = url
+        self.computerID = computerID
+        self.taskID = taskID
+    }
+}
+
 public enum InteractionPayload: Sendable, Hashable {
     case question(QuestionPayload)
     case approval(ApprovalPayload)
     case accountSelection(AccountSelectionPayload)
     case signIn(SignInPayload)
+    case computerTakeover(ComputerTakeoverPayload)
     case unknown(AnyJSON)
 }
 
@@ -288,6 +316,8 @@ public struct InteractionResolution: Sendable, Codable, Hashable {
         case decline
         case chooseAccount = "choose_account"
         case signedIn = "signed_in"
+        case resume
+        case cancel
         case expired
     }
 
@@ -442,6 +472,12 @@ public struct Interaction: Sendable, Codable, Hashable, Identifiable {
             } else {
                 self.payload = .unknown((try? c.decode(AnyJSON.self, forKey: .payload)) ?? .null)
             }
+        case .computerTakeover:
+            if let t = try? c.decode(ComputerTakeoverPayload.self, forKey: .payload) {
+                self.payload = .computerTakeover(t)
+            } else {
+                self.payload = .unknown((try? c.decode(AnyJSON.self, forKey: .payload)) ?? .null)
+            }
         }
     }
 
@@ -471,6 +507,7 @@ public struct Interaction: Sendable, Codable, Hashable, Identifiable {
         case .approval(let a): try c.encode(a, forKey: .payload)
         case .accountSelection(let acc): try c.encode(acc, forKey: .payload)
         case .signIn(let s): try c.encode(s, forKey: .payload)
+        case .computerTakeover(let t): try c.encode(t, forKey: .payload)
         case .unknown(let json): try c.encode(json, forKey: .payload)
         }
     }
@@ -481,6 +518,8 @@ public enum InteractionAnswer: Sendable, Hashable, Encodable {
     case approve(actionDigest: String, rememberRule: Bool = false)
     case decline(actionDigest: String?)
     case chooseAccount(connectionID: String, rememberAsDefault: Bool = false)
+    case resume(text: String? = nil)
+    case cancel(text: String? = nil)
 
     public var payloadDictionary: [String: AnyJSON] {
         switch self {
@@ -511,6 +550,18 @@ public enum InteractionAnswer: Sendable, Hashable, Encodable {
                 "connection_id": .string(connectionID),
                 "remember_as_default": .bool(remember)
             ]
+        case .resume(let text):
+            var dict: [String: AnyJSON] = ["kind": .string("resume")]
+            if let text, !text.isEmpty {
+                dict["text"] = .string(text)
+            }
+            return dict
+        case .cancel(let text):
+            var dict: [String: AnyJSON] = ["kind": .string("cancel")]
+            if let text, !text.isEmpty {
+                dict["text"] = .string(text)
+            }
+            return dict
         }
     }
 

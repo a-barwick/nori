@@ -243,14 +243,15 @@ export async function capabilitiesRoute(request: Request) {
 
 const ASSISTANT_FAMILIES = new Set([
   "integrations", "connections", "interactions", "work", "automations", "library", "search", "permissions",
-  "preferences", "mcp", "assistant", "mutations", "operations", "memory", "inbox", "tools", "settings",
+  "preferences", "mcp", "assistant", "mutations", "operations", "memory", "inbox", "tools", "settings", "computer",
 ]);
 
 export async function assistantRoute(request: Request, family: string, segments: string[]) {
   const mode = runtimeMode(request.headers);
   if (!ASSISTANT_FAMILIES.has(family) || segments.length > 4 || !segments.every(validSegment)) return notFound();
   const read = request.method === "GET";
-  if (!read && !["POST", "PUT", "DELETE"].includes(request.method)) return notFound();
+  const allowedWriteMethods = family === "computer" ? ["POST", "PUT", "PATCH", "DELETE"] : ["POST", "PUT", "DELETE"];
+  if (!read && !allowedWriteMethods.includes(request.method)) return notFound();
   const incoming = new URL(request.url).searchParams;
   const path = ["v1", family, ...segments].map(encodeURIComponent).join("/") + (incoming.size ? `?${incoming}` : "");
   if (family === "connections" && segments.join("/") === "oauth/callback") {
@@ -274,7 +275,19 @@ export async function assistantRoute(request: Request, family: string, segments:
     if (new TextEncoder().encode(body).length > 128_000) return Response.json({ error: "Request is too large." }, { status: 413 });
   }
   const init: RequestInit = read ? {} : { method: request.method, body, headers: { "Content-Type": "application/json" } };
-  return forward(request, mode, path, init, (type) => json(type) || (read && family === "library" && /^(application\/(pdf|octet-stream)|image\/(png|jpeg|webp)|text\/(plain|markdown|csv))/.test(type)));
+  return forward(
+    request,
+    mode,
+    path,
+    init,
+    (type) =>
+      json(type) ||
+      (read &&
+        family === "library" &&
+        /^(application\/(pdf|octet-stream|vnd\.openxmlformats-officedocument\.(spreadsheetml\.sheet|wordprocessingml\.document|presentationml\.presentation))|image\/(png|jpeg|webp)|text\/(plain|markdown|csv|calendar|html))/.test(
+          type,
+        )),
+  );
 }
 
 async function googleWorkspaceCallback(request: Request, mode: Mode, params: URLSearchParams) {

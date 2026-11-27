@@ -219,6 +219,14 @@ func (b *backend) Close() error {
 	return nil
 }
 
+// Pool exposes the underlying pgxpool.Pool for shared subsystems (e.g. computer store).
+func (b *backend) Pool() *pgxpool.Pool {
+	if b == nil {
+		return nil
+	}
+	return b.pool
+}
+
 func (b *backend) Ping(ctx context.Context) error {
 	if b == nil || b.pool == nil {
 		return errors.New("postgres pool is not open")

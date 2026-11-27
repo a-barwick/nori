@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, Ban, Check, ChevronDown, ChevronUp, Clock, KeyRound, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Ban, Check, ChevronDown, ChevronUp, Clock, KeyRound, Monitor, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/primitives";
 import { APIError, mutate, newRequestID } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
@@ -21,6 +21,7 @@ import type {
   AccountSelectionPayload,
   ApprovalPayload,
   AuthAttempt,
+  ComputerTakeoverPayload,
   Connection,
   Integration,
   Interaction,
@@ -34,6 +35,7 @@ import { useHydrated } from "@/lib/hooks";
 import "@/lib/desktop";
 import { cn } from "@/lib/utils";
 import { startSignIn } from "./AppsScreen";
+import { ComputerDesktopDrawer } from "./ComputerDesktopDrawer";
 import { inputClass, Notice, Pill } from "./ui";
 
 type Value = InteractionResponse["value"];
@@ -128,6 +130,9 @@ function humanizeIntegrationID(raw: string): string {
 }
 
 function heading(interaction: Interaction) {
+  if (interaction.kind === "computer_takeover") {
+    return "Your turn on the desktop";
+  }
   if (interaction.kind === "sign_in") {
     const payload = interaction.payload as Partial<SignInPayload>;
     if (payload.integration_id && payload.integration_id !== "mcp") {
@@ -317,7 +322,74 @@ function Body({
           {extra}
         </>
       );
+    case "computer_takeover":
+      return (
+        <>
+          <ComputerTakeover interaction={interaction} payload={interaction.payload} state={state} />
+          {extra}
+        </>
+      );
   }
+}
+
+function ComputerTakeover({
+  interaction,
+  payload,
+  state,
+}: {
+  interaction: Interaction;
+  payload: ComputerTakeoverPayload;
+  state: State;
+}) {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const busy = !!state.pending;
+  const host = (() => {
+    if (!payload.url) return undefined;
+    try {
+      return new URL(payload.url).host;
+    } catch {
+      return undefined;
+    }
+  })();
+
+  return (
+    <div className="space-y-3">
+      <p className="text-body text-ink">{interaction.prompt}</p>
+      {host && (
+        <p className="text-meta text-ink-2">
+          Page: <span className="font-medium text-ink">{host}</span>
+        </p>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="primary" disabled={busy} onClick={() => setDrawerOpen(true)}>
+          <Monitor size={15} className="mr-1.5" aria-hidden />
+          Open Desktop
+        </Button>
+        <Button
+          disabled={busy}
+          onClick={() => void state.respond({ kind: "resume" }, "resume")}
+        >
+          {state.pending === "resume" ? "Resuming…" : "Done, continue"}
+        </Button>
+        <Button
+          variant="quiet"
+          disabled={busy}
+          onClick={() => void state.respond({ kind: "cancel" }, "cancel")}
+        >
+          {state.pending === "cancel" ? "Cancelling…" : "Cancel"}
+        </Button>
+      </div>
+      <ComputerDesktopDrawer
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+        initialMode="control"
+        taskId={interaction.task_id}
+        interactionId={interaction.id}
+        prompt={interaction.prompt}
+        onDoneContinue={() => state.respond({ kind: "resume" }, "resume")}
+      />
+    </div>
+  );
 }
 
 type State = ReturnType<typeof useRespond>;

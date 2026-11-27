@@ -39,6 +39,22 @@ func (s *Service) resultLink(ctx context.Context, run, address, title string) (m
 	if err != nil {
 		return nil, err
 	}
+	if taint := state.GetRunTaint(ctx, s.Store, run); taint.Tainted {
+		targetDomain := state.NormalizeDomain(address)
+		trusted := false
+		for _, allowed := range taint.TrustedDomains {
+			if state.DomainMatches(targetDomain, allowed) {
+				trusted = true
+				break
+			}
+		}
+		if !trusted && targetDomain != "" && strings.Contains(strings.ToLower(record.Request), targetDomain) {
+			trusted = true
+		}
+		if !trusted {
+			return nil, errors.New("result_link to an untrusted domain is blocked after reading untrusted content; ask the user before saving external links from untrusted sources")
+		}
+	}
 	id := state.ResultID(run, address)
 	saved, err := s.Store.SaveResult(ctx, state.Result{
 		ID: id, RootID: id, Version: 1, RunID: run, Revision: record.Revision, Kind: state.ResultLink, Title: title, URL: address, CreatedAt: s.currentTime().UTC(),

@@ -22,6 +22,19 @@ public enum OpenAPI {
             "/v1/automations/\(encodeSegment(id))/occurrences"
         }
         public static let capabilities = "/v1/capabilities"
+        public static let computer = "/v1/computer"
+        public static let computerCheckpoints = "/v1/computer/checkpoints"
+        public static let computerReset = "/v1/computer/reset"
+        public static let computerRestore = "/v1/computer/restore"
+        public static let computerSessions = "/v1/computer/sessions"
+        public static func computerSessionsByID(id: String) -> String {
+            "/v1/computer/sessions/\(encodeSegment(id))"
+        }
+        public static func computerSessionsWs(id: String) -> String {
+            "/v1/computer/sessions/\(encodeSegment(id))/ws"
+        }
+        public static let computerSleep = "/v1/computer/sleep"
+        public static let computerWake = "/v1/computer/wake"
         public static let connections = "/v1/connections"
         public static let connectionsOAuthCallback = "/v1/connections/oauth/callback"
         public static func connectionsByID(id: String) -> String {
@@ -361,6 +374,7 @@ public enum OpenAPI {
         public var memory: Bool?
         public var inbox: Bool?
         public var operations: Bool?
+        public var computer: Bool?
 
         public init(
             integrations: Bool? = nil,
@@ -375,7 +389,8 @@ public enum OpenAPI {
             preferences: Bool? = nil,
             memory: Bool? = nil,
             inbox: Bool? = nil,
-            operations: Bool? = nil
+            operations: Bool? = nil,
+            computer: Bool? = nil
         ) {
             self.integrations = integrations
             self.connections = connections
@@ -390,6 +405,7 @@ public enum OpenAPI {
             self.memory = memory
             self.inbox = inbox
             self.operations = operations
+            self.computer = computer
         }
     }
 
@@ -1328,6 +1344,146 @@ public enum OpenAPI {
         }
     }
 
+    public struct ComputerCheckpoint: Sendable, Codable, Hashable {
+        public var id: String
+        public var label: String?
+        public var createdAt: OpenAPI.Instant
+
+        public init(
+            id: String,
+            label: String? = nil,
+            createdAt: OpenAPI.Instant
+        ) {
+            self.id = id
+            self.label = label
+            self.createdAt = createdAt
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case label
+            case createdAt = "created_at"
+        }
+    }
+
+    public struct ComputerSessionSummary: Sendable, Codable, Hashable {
+        public var id: String
+        public var computerID: String
+        public var mode: String
+        public var taskID: String?
+        public var interactionID: String?
+        public var expiresAt: OpenAPI.Instant
+        public var createdAt: OpenAPI.Instant
+        public var lastActivityAt: OpenAPI.Instant?
+
+        public init(
+            id: String,
+            computerID: String,
+            mode: String,
+            taskID: String? = nil,
+            interactionID: String? = nil,
+            expiresAt: OpenAPI.Instant,
+            createdAt: OpenAPI.Instant,
+            lastActivityAt: OpenAPI.Instant? = nil
+        ) {
+            self.id = id
+            self.computerID = computerID
+            self.mode = mode
+            self.taskID = taskID
+            self.interactionID = interactionID
+            self.expiresAt = expiresAt
+            self.createdAt = createdAt
+            self.lastActivityAt = lastActivityAt
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case computerID = "computer_id"
+            case mode
+            case taskID = "task_id"
+            case interactionID = "interaction_id"
+            case expiresAt = "expires_at"
+            case createdAt = "created_at"
+            case lastActivityAt = "last_activity_at"
+        }
+    }
+
+    public struct ComputerStatus: Sendable, Codable, Hashable {
+        public var enabled: Bool
+        public var computerID: String?
+        public var provider: String
+        public var status: String
+        public var baselineCheckpointID: String?
+        public var diskUsedBytes: Int
+        public var diskMaxBytes: Int
+        public var checkpoints: [OpenAPI.ComputerCheckpoint]
+        public var activeSessions: [OpenAPI.ComputerSessionSummary]
+        public var lastActiveAt: OpenAPI.Instant?
+
+        public init(
+            enabled: Bool,
+            computerID: String? = nil,
+            provider: String,
+            status: String,
+            baselineCheckpointID: String? = nil,
+            diskUsedBytes: Int,
+            diskMaxBytes: Int,
+            checkpoints: [OpenAPI.ComputerCheckpoint],
+            activeSessions: [OpenAPI.ComputerSessionSummary],
+            lastActiveAt: OpenAPI.Instant? = nil
+        ) {
+            self.enabled = enabled
+            self.computerID = computerID
+            self.provider = provider
+            self.status = status
+            self.baselineCheckpointID = baselineCheckpointID
+            self.diskUsedBytes = diskUsedBytes
+            self.diskMaxBytes = diskMaxBytes
+            self.checkpoints = checkpoints
+            self.activeSessions = activeSessions
+            self.lastActiveAt = lastActiveAt
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case enabled
+            case computerID = "computer_id"
+            case provider
+            case status
+            case baselineCheckpointID = "baseline_checkpoint_id"
+            case diskUsedBytes = "disk_used_bytes"
+            case diskMaxBytes = "disk_max_bytes"
+            case checkpoints
+            case activeSessions = "active_sessions"
+            case lastActiveAt = "last_active_at"
+        }
+    }
+
+    public struct ComputerTakeoverPayload: Sendable, Codable, Hashable {
+        public var reason: String?
+        public var url: String?
+        public var computerID: String?
+        public var taskID: String?
+
+        public init(
+            reason: String? = nil,
+            url: String? = nil,
+            computerID: String? = nil,
+            taskID: String? = nil
+        ) {
+            self.reason = reason
+            self.url = url
+            self.computerID = computerID
+            self.taskID = taskID
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case reason
+            case url
+            case computerID = "computer_id"
+            case taskID = "task_id"
+        }
+    }
+
     public struct Connection: Sendable, Codable, Hashable {
         public var id: OpenAPI.ID
         public var revision: OpenAPI.Revision
@@ -2074,6 +2230,80 @@ public enum OpenAPI {
             case totals
             case models
             case buckets
+        }
+    }
+
+    public struct CreateComputerCheckpointRequest: Sendable, Codable, Hashable {
+        public var label: String?
+
+        public init(
+            label: String? = nil
+        ) {
+            self.label = label
+        }
+    }
+
+    public struct CreateComputerSessionRequest: Sendable, Codable, Hashable {
+        public var mode: String?
+        public var taskID: String?
+        public var interactionID: String?
+
+        public init(
+            mode: String? = nil,
+            taskID: String? = nil,
+            interactionID: String? = nil
+        ) {
+            self.mode = mode
+            self.taskID = taskID
+            self.interactionID = interactionID
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case mode
+            case taskID = "task_id"
+            case interactionID = "interaction_id"
+        }
+    }
+
+    public struct CreateComputerSessionResponse: Sendable, Codable, Hashable {
+        public var id: String
+        public var computerID: String
+        public var mode: String
+        public var taskID: String?
+        public var interactionID: String?
+        public var token: String
+        public var wsPath: String
+        public var expiresAt: OpenAPI.Instant
+
+        public init(
+            id: String,
+            computerID: String,
+            mode: String,
+            taskID: String? = nil,
+            interactionID: String? = nil,
+            token: String,
+            wsPath: String,
+            expiresAt: OpenAPI.Instant
+        ) {
+            self.id = id
+            self.computerID = computerID
+            self.mode = mode
+            self.taskID = taskID
+            self.interactionID = interactionID
+            self.token = token
+            self.wsPath = wsPath
+            self.expiresAt = expiresAt
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case computerID = "computer_id"
+            case mode
+            case taskID = "task_id"
+            case interactionID = "interaction_id"
+            case token
+            case wsPath = "ws_path"
+            case expiresAt = "expires_at"
         }
     }
 
@@ -3075,11 +3305,97 @@ public enum OpenAPI {
                 case payload
             }
         }
+        public struct ComputerTakeoverPayload: Sendable, Codable, Hashable {
+            public var id: OpenAPI.ID
+            public var revision: OpenAPI.Revision
+            public var taskID: String?
+            public var instructionRevision: Int?
+            public var conversationID: String?
+            public var automationID: OpenAPI.ID?
+            public var status: String
+            public var surface: String?
+            public var prompt: String
+            public var actionDigest: String?
+            public var expiresAt: OpenAPI.Instant?
+            public var createdAt: OpenAPI.Instant?
+            public var resolvedAt: OpenAPI.Instant?
+            public var legacyQuestionID: String?
+            public var supersededBy: OpenAPI.ID?
+            public var taskTitle: String?
+            public var resolution: OpenAPI.InteractionResolution?
+            public var kind: String
+            public var payload: OpenAPI.ComputerTakeoverPayload
+
+            public init(
+                id: OpenAPI.ID,
+                revision: OpenAPI.Revision,
+                taskID: String? = nil,
+                instructionRevision: Int? = nil,
+                conversationID: String? = nil,
+                automationID: OpenAPI.ID? = nil,
+                status: String,
+                surface: String? = nil,
+                prompt: String,
+                actionDigest: String? = nil,
+                expiresAt: OpenAPI.Instant? = nil,
+                createdAt: OpenAPI.Instant? = nil,
+                resolvedAt: OpenAPI.Instant? = nil,
+                legacyQuestionID: String? = nil,
+                supersededBy: OpenAPI.ID? = nil,
+                taskTitle: String? = nil,
+                resolution: OpenAPI.InteractionResolution? = nil,
+                kind: String,
+                payload: OpenAPI.ComputerTakeoverPayload
+            ) {
+                self.id = id
+                self.revision = revision
+                self.taskID = taskID
+                self.instructionRevision = instructionRevision
+                self.conversationID = conversationID
+                self.automationID = automationID
+                self.status = status
+                self.surface = surface
+                self.prompt = prompt
+                self.actionDigest = actionDigest
+                self.expiresAt = expiresAt
+                self.createdAt = createdAt
+                self.resolvedAt = resolvedAt
+                self.legacyQuestionID = legacyQuestionID
+                self.supersededBy = supersededBy
+                self.taskTitle = taskTitle
+                self.resolution = resolution
+                self.kind = kind
+                self.payload = payload
+            }
+
+            enum CodingKeys: String, CodingKey {
+                case id
+                case revision
+                case taskID = "task_id"
+                case instructionRevision = "instruction_revision"
+                case conversationID = "conversation_id"
+                case automationID = "automation_id"
+                case status
+                case surface
+                case prompt
+                case actionDigest = "action_digest"
+                case expiresAt = "expires_at"
+                case createdAt = "created_at"
+                case resolvedAt = "resolved_at"
+                case legacyQuestionID = "legacy_question_id"
+                case supersededBy = "superseded_by"
+                case taskTitle = "task_title"
+                case resolution
+                case kind
+                case payload
+            }
+        }
 
         case question(QuestionPayload)
         case approval(ApprovalPayload)
         case accountSelection(AccountSelectionPayload)
         case signIn(SignInPayload)
+        case computerTakeover(ComputerTakeoverPayload)
 
         private enum DiscriminatorKey: String, CodingKey {
             case discriminator = "kind"
@@ -3097,6 +3413,8 @@ public enum OpenAPI {
                 self = .accountSelection(try AccountSelectionPayload(from: decoder))
             case "sign_in":
                 self = .signIn(try SignInPayload(from: decoder))
+            case "computer_takeover":
+                self = .computerTakeover(try ComputerTakeoverPayload(from: decoder))
             default:
                 throw DecodingError.dataCorruptedError(forKey: .discriminator, in: container, debugDescription: "Unsupported Interaction kind: \(String(describing: kind))")
             }
@@ -3111,6 +3429,8 @@ public enum OpenAPI {
             case .accountSelection(let value):
                 try value.encode(to: encoder)
             case .signIn(let value):
+                try value.encode(to: encoder)
+            case .computerTakeover(let value):
                 try value.encode(to: encoder)
             }
         }
@@ -3294,11 +3614,24 @@ public enum OpenAPI {
                     self.kind = kind
                 }
             }
+            public struct Variant5Payload: Sendable, Codable, Hashable {
+                public var kind: String
+                public var text: String?
+
+                public init(
+                    kind: String,
+                    text: String? = nil
+                ) {
+                    self.kind = kind
+                    self.text = text
+                }
+            }
 
             case variant1(Variant1Payload)
             case variant2(Variant2Payload)
             case variant3(Variant3Payload)
             case variant4(Variant4Payload)
+            case variant5(Variant5Payload)
 
             public init(from decoder: any Decoder) throws {
                 if let value = try? Variant1Payload(from: decoder) {
@@ -3317,6 +3650,10 @@ public enum OpenAPI {
                     self = .variant4(value)
                     return
                 }
+                if let value = try? Variant5Payload(from: decoder) {
+                    self = .variant5(value)
+                    return
+                }
                 throw DecodingError.dataCorrupted(DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Could not decode Value"))
             }
 
@@ -3329,6 +3666,8 @@ public enum OpenAPI {
                 case .variant3(let value):
                     try value.encode(to: encoder)
                 case .variant4(let value):
+                    try value.encode(to: encoder)
+                case .variant5(let value):
                     try value.encode(to: encoder)
                 }
             }
@@ -6517,6 +6856,20 @@ public enum OpenAPI {
         }
     }
 
+    public struct RestoreComputerRequest: Sendable, Codable, Hashable {
+        public var checkpointID: String?
+
+        public init(
+            checkpointID: String? = nil
+        ) {
+            self.checkpointID = checkpointID
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case checkpointID = "checkpoint_id"
+        }
+    }
+
     public typealias Revision = Int
 
     public struct Run: Sendable, Codable, Hashable {
@@ -7386,6 +7739,16 @@ public enum OpenAPI {
     }
 
     public typealias UUID = String
+
+    public struct UpdateComputerSessionRequest: Sendable, Codable, Hashable {
+        public var mode: String
+
+        public init(
+            mode: String
+        ) {
+            self.mode = mode
+        }
+    }
 
     public struct UploadAccept: Sendable, Codable, Hashable {
         public var mediaTypes: [String]

@@ -349,6 +349,8 @@ actor MockNoriTransport: NoriTransport {
         case .decline: resolutionKind = .decline
         case .answer: resolutionKind = .answer
         case .chooseAccount: resolutionKind = .chooseAccount
+        case .resume: resolutionKind = .resume
+        case .cancel: resolutionKind = .cancel
         }
         let resolved = Interaction(
             id: id,

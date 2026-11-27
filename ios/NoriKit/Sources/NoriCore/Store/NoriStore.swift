@@ -99,6 +99,7 @@ public final class NoriStore {
     public var lastPing: HealthCheckResult?
     public internal(set) var modelSettings: ModelSettingsResponse?
     public internal(set) var homeConnectors: HomeConnectorsResponse?
+    public internal(set) var computerStatus: ComputerStatus?
     public var modelKeyError: String?
     public internal(set) var dataResetRecoveryRequired = false
     public internal(set) var dataResetStatusRequired = false
@@ -328,6 +329,10 @@ public final class NoriStore {
         return settings.selection.homeOnly == true || id.hasPrefix("home-") || settings.modelProfiles.profiles.contains { $0.id == id && $0.backend == "home" }
     }
 
+    public var isComputerEnabled: Bool {
+        capabilities?.assistantFeatures?["computer"] == true || computerStatus?.enabled == true
+    }
+
     public func cachedBodyText(for itemID: String) -> String? {
         libraryBodyCache[itemID]
     }
@@ -396,6 +401,7 @@ public final class NoriStore {
         streamingTurnID = nil
         modelSettings = nil
         homeConnectors = nil
+        computerStatus = nil
         modelKeyError = nil
         dataResetRecoveryRequired = false
         dataResetStatusRequired = false

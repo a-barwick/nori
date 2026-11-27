@@ -97,11 +97,45 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 			zone = prefs.Timezone
 		}
 	}
-	call := invoke.Call{RunID: in.RunID, Revision: in.Revision, OperationID: in.OperationID, Exec: *in.Exec, Args: in.Call.Args, TimeZone: zone,
+	userSources := a.verifiedUserSources(ctx, in.RunID, run)
+	call := invoke.Call{
+		RunID: in.RunID, Revision: in.Revision, OperationID: in.OperationID, Exec: *in.Exec, Args: in.Call.Args,
+		TimeZone: zone, ReadOnly: run.ReadOnly || in.ReadOnly, UserSources: userSources,
 		Upload: func(ctx context.Context, id string) (string, string, []byte, error) {
 			attachment, data, err := a.Agent.TaskUpload(ctx, in.RunID, id)
 			return attachment.Name, attachment.MediaType, data, err
-		}}
+		},
+		InspectImage: func(ctx context.Context, label, instruction, question string, data []byte, mediaType string) (map[string]any, error) {
+			if a.Agent == nil {
+				return nil, errors.New("vision inspector is unavailable")
+			}
+			return a.Agent.InspectImage(ctx, "source", label, instruction, question, data, mediaType)
+		},
+		PublishFile: func(ctx context.Context, title, fileName, mediaType string, data []byte) (state.Result, error) {
+			id := state.ResultID(in.RunID, in.OperationID, fileName)
+			if err := a.Store.PutFile(ctx, state.ResultKey(id), mediaType, data); err != nil && !errors.Is(err, state.ErrFileExists) {
+				return state.Result{}, err
+			}
+			return a.Store.SaveResult(ctx, state.Result{
+				ID: id, RootID: id, Version: 1, RunID: in.RunID, Revision: in.Revision,
+				Kind: state.ResultFile, Title: title, Name: fileName, MediaType: mediaType,
+				Size: int64(len(data)), ArtifactID: id, CreatedAt: a.externalNow().UTC(),
+			})
+		},
+	}
+	if requester, ok := adapter.(invoke.TakeoverRequester); ok && !recovering && a.Executor.Permissions != nil {
+		req, err := requester.TakeoverNeeded(ctx, call)
+		if err != nil {
+			if errors.Is(err, invoke.ErrInvalidArguments) {
+				return nil, denial(in, effect, "failed", err.Error(), nil), nil
+			}
+			return nil, denial(in, effect, "failed", "Desktop takeover could not start: "+err.Error(), nil), nil
+		}
+		if req != nil {
+			out, err := a.requestTakeover(ctx, in, run, *req)
+			return nil, out, err
+		}
+	}
 	connectionID, epoch := "", int64(0)
 	if in.Exec.ConnectionType != "" {
 		if a.Executor.Connections == nil {
@@ -192,7 +226,7 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 	decision := permissions.Decision{Result: "allow", Source: "user_request"}
 	if a.Executor.Permissions != nil {
 		decision, err = a.Executor.Permissions.Check(ctx, permissions.Request{
-			RunID: in.RunID, Revision: in.Revision, Origin: origin, AutomationID: automationID, ReadOnly: run.ReadOnly,
+			RunID: in.RunID, Revision: in.Revision, Origin: origin, AutomationID: automationID, ReadOnly: run.ReadOnly || in.ReadOnly,
 			ToolID: in.Exec.Tool.ID, Effect: string(prepared.Effect), ConnectionID: connectionID, Epoch: epoch,
 			ResourceIDs: resourceIDs, Recipients: prepared.Recipients, Digest: plan.digest,
 			RequireExplicitApproval: prepared.RequireExplicitApproval, OperationID: in.OperationID,
@@ -200,6 +234,8 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 		if err != nil {
 			return nil, nil, err
 		}
+	} else if (run.ReadOnly || in.ReadOnly) && prepared.Effect != extensions.EffectRead {
+		decision = permissions.Decision{Result: "deny", Reason: "This task is read-only and cannot change external or computer state."}
 	} else if prepared.Effect != "read" {
 		decision = permissions.Decision{Result: "needs_interaction", Reason: "Permission checks are not configured; nothing may change without them."}
 	}
@@ -479,6 +515,29 @@ func (a *Activities) signInStarted(ctx context.Context, in ToolInput, run state.
 	}
 	return denial(in, string(in.Exec.Policy.Effect), "needs_interaction", "The server needs sign-in before this can run.", map[string]any{
 		"interaction_id": interaction.ID, "interaction_kind": "sign_in", "prompt": prompt, "connection_id": start.ConnectionID,
+	}), nil
+}
+
+func (a *Activities) requestTakeover(ctx context.Context, in ToolInput, run state.Run, req invoke.TakeoverRequest) (map[string]any, error) {
+	revision := in.Revision
+	payload := map[string]any{
+		"reason":      req.Reason,
+		"computer_id": req.ComputerID,
+		"task_id":     in.RunID,
+	}
+	if req.URL != "" {
+		payload["url"] = req.URL
+	}
+	data, _ := json.Marshal(payload)
+	interaction, err := a.Executor.Permissions.Open(ctx, permissions.Interaction{
+		ID: interactionID("int_", in.OperationID, "takeover:"+req.Prompt), TaskID: in.RunID, InstructionRevision: &revision,
+		Kind: "computer_takeover", Prompt: req.Prompt, Payload: data, TaskTitle: state.TaskTitle(run),
+	}, "")
+	if err != nil {
+		return nil, err
+	}
+	return denial(in, string(extensions.EffectControl), "needs_interaction", "Waiting for the user to take control of their computer desktop and click Done.", map[string]any{
+		"interaction_id": interaction.ID, "interaction_kind": "computer_takeover", "prompt": req.Prompt,
 	}), nil
 }
 

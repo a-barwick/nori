@@ -27,8 +27,13 @@ type accountDeletePendingLister interface {
 }
 
 // SweepPendingAccountDeletions finishes any accounts left in delete_pending state
-// (e.g. if a client disconnected or timed out mid-deletion).
+// (e.g. if a client disconnected or timed out mid-deletion), and reaps any deleting
+// personal computers or idle desktop sessions.
 func (s *Service) SweepPendingAccountDeletions(ctx context.Context) {
+	if s.computer != nil {
+		_ = s.computer.ReapDeletingComputers(ctx)
+		_, _ = s.computer.SweepIdleSessions(ctx)
+	}
 	lister, ok := s.Backend().(accountDeletePendingLister)
 	if !ok {
 		return
@@ -140,6 +145,11 @@ func (s *Service) deleteUserAccount(ctx context.Context, row users.User, confirm
 	}
 	if err := store.BeginAccountDelete(ctx, row.ID); err != nil {
 		return err
+	}
+	if s.computer != nil {
+		if err := s.computer.DestroyForAccountDelete(ctx, row.ID); err != nil {
+			return fmt.Errorf("%w: destroy user computer: %w", api.ErrAccountDeletePending, err)
+		}
 	}
 	if err := s.storage.PurgeUserArtifacts(ctx, s.cfg, row); err != nil {
 		return fmt.Errorf("%w: purge user artifacts: %w", api.ErrAccountDeletePending, err)

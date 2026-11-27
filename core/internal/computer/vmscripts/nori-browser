@@ -1,0 +1,445 @@
+#!/usr/bin/env node
+'use strict';
+
+// nori-browser: Playwright/CDP CLI helper that connects to headed Chromium on 127.0.0.1:9222.
+// Defaults to returning a pruned Accessibility Tree with stable [idx] handles to keep token
+// budgets low. Screenshots are written to disk (never base64 on stdout) and read via binary channel.
+
+const fs = require('fs');
+const path = require('path');
+
+let playwright;
+try {
+  playwright = require('/home/nori/.nori/browser/node_modules/playwright-core');
+} catch {
+  playwright = require('playwright-core');
+}
+
+const CDP_URL = process.env.NORI_CDP_URL || 'http://127.0.0.1:9222';
+const STATE_PATH = '/home/nori/.nori/browser-refs.json';
+const DOWNLOAD_DIR = '/home/nori/workspace/downloads';
+const SCREENSHOT_PATH = '/home/nori/.nori/logs/last-screenshot.png';
+const MAX_ELEMENTS = 100;
+const MAX_TEXT_CHARS = 6000;
+
+function usageError(msg) {
+  process.stdout.write(JSON.stringify({ ok: false, error: msg }) + '\n');
+  process.exit(1);
+}
+
+function loadRefs() {
+  try {
+    return JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function saveRefs(refs) {
+  fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
+  fs.writeFileSync(STATE_PATH, JSON.stringify(refs));
+}
+
+async function activePage(browser) {
+  const contexts = browser.contexts();
+  const ctx = contexts[0] || (await browser.newContext({ acceptDownloads: true }));
+  const pages = ctx.pages();
+  if (pages.length > 0) {
+    return pages[pages.length - 1];
+  }
+  return await ctx.newPage();
+}
+
+async function buildSnapshot(page) {
+  const result = await page.evaluate((maxElements) => {
+    const isVisible = (el) => {
+      if (!el || el.nodeType !== 1) return false;
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+
+    const interactiveSelector = [
+      'a[href]',
+      'button',
+      'input:not([type="hidden"])',
+      'textarea',
+      'select',
+      '[role="button"]',
+      '[role="link"]',
+      '[role="textbox"]',
+      '[role="checkbox"]',
+      '[role="radio"]',
+      '[role="menuitem"]',
+      '[role="tab"]',
+      '[contenteditable="true"]',
+    ].join(',');
+
+    const nodes = Array.from(document.querySelectorAll(interactiveSelector)).filter(isVisible);
+    const elements = [];
+    const refs = {};
+    let idx = 1;
+
+    for (const el of nodes) {
+      if (elements.length >= maxElements) break;
+      const tag = el.tagName.toLowerCase();
+      const role = el.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'button' ? 'button' : tag === 'input' ? (el.type || 'textbox') : tag);
+      const label = (
+        el.getAttribute('aria-label') ||
+        el.innerText ||
+        el.getAttribute('placeholder') ||
+        el.getAttribute('title') ||
+        el.getAttribute('name') ||
+        (tag === 'input' && (el.type === 'submit' || el.type === 'button') ? el.value : '') ||
+        ''
+      ).replace(/\s+/g, ' ').trim().slice(0, 120);
+      const rect = el.getBoundingClientRect();
+      const form = el.closest ? el.closest('form') : null;
+      const isSubmit = Boolean(
+        (tag === 'button' && (!el.getAttribute('type') || el.getAttribute('type').toLowerCase() === 'submit') && form) ||
+        (tag === 'input' && (el.type || '').toLowerCase() === 'submit')
+      );
+      const refId = String(idx++);
+      el.setAttribute('data-nori-ref', refId);
+      const entry = {
+        ref: Number(refId),
+        role,
+        tag,
+        name: label,
+        href: tag === 'a' ? (el.href || '').slice(0, 200) : undefined,
+        type: (tag === 'input' || tag === 'button') ? (el.type || '') : undefined,
+        is_submit: isSubmit || undefined,
+        form_action: form ? (form.getAttribute('action') || '').slice(0, 200) : undefined,
+        value: (tag === 'input' || tag === 'textarea' || tag === 'select') && el.type !== 'password'
+          ? String(el.value || '').slice(0, 120)
+          : undefined,
+        checked: (el.type === 'checkbox' || el.type === 'radio') ? Boolean(el.checked) : undefined,
+        disabled: Boolean(el.disabled),
+        cx: Math.round(rect.left + rect.width / 2),
+        cy: Math.round(rect.top + rect.height / 2),
+      };
+      elements.push(entry);
+      refs[refId] = {
+        cx: entry.cx,
+        cy: entry.cy,
+        role: entry.role,
+        tag: entry.tag,
+        name: entry.name,
+        href: entry.href || '',
+        is_submit: Boolean(entry.is_submit),
+        form_action: entry.form_action || '',
+      };
+    }
+
+    const bodyText = (document.body ? document.body.innerText : '')
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+    return {
+      url: window.location.href,
+      title: document.title || '',
+      elements,
+      refs,
+      text: bodyText,
+    };
+  }, MAX_ELEMENTS);
+
+  saveRefs(result.refs);
+  const lines = result.elements.map((e) => {
+    const parts = [`[${e.ref}]`, e.role];
+    if (e.name) parts.push(JSON.stringify(e.name));
+    if (e.is_submit) parts.push('submit');
+    if (e.value) parts.push(`value=${JSON.stringify(e.value)}`);
+    if (e.checked !== undefined) parts.push(`checked=${e.checked}`);
+    if (e.disabled) parts.push('disabled');
+    if (e.href) parts.push(`href=${JSON.stringify(e.href)}`);
+    return parts.join(' ');
+  });
+
+  let text = result.text || '';
+  let textTruncated = false;
+  if (text.length > MAX_TEXT_CHARS) {
+    text = text.slice(0, MAX_TEXT_CHARS);
+    textTruncated = true;
+  }
+
+  return {
+    ok: true,
+    url: result.url,
+    title: result.title,
+    element_count: result.elements.length,
+    axtree: lines.join('\n'),
+    text,
+    text_truncated: textTruncated,
+  };
+}
+
+async function resolveTarget(page, selectorOrRef) {
+  if (/^\d+$/.test(String(selectorOrRef))) {
+    const byAttr = page.locator(`[data-nori-ref="${selectorOrRef}"]`).first();
+    if ((await byAttr.count()) > 0) {
+      return { locator: byAttr };
+    }
+    const refs = loadRefs();
+    if (refs[String(selectorOrRef)]) {
+      return { coords: refs[String(selectorOrRef)] };
+    }
+    throw new Error(`unknown element ref [${selectorOrRef}]; run snapshot first`);
+  }
+  return { locator: page.locator(selectorOrRef).first() };
+}
+
+async function inspectTarget(page, selectorOrRef) {
+  const url = page.url();
+  const title = await page.title().catch(() => '');
+  if (!selectorOrRef) {
+    return { ok: true, found: false, url, title };
+  }
+  const resolved = await resolveTarget(page, selectorOrRef).catch(() => null);
+  if (!resolved) {
+    return { ok: true, found: false, url, title };
+  }
+  if (resolved.locator) {
+    const count = await resolved.locator.count().catch(() => 0);
+    if (count === 0) {
+      return { ok: true, found: false, url, title };
+    }
+    const info = await resolved.locator.evaluate((el) => {
+      const tag = el.tagName.toLowerCase();
+      const role = el.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'button' ? 'button' : tag === 'input' ? (el.type || 'textbox') : tag);
+      const label = (
+        el.getAttribute('aria-label') ||
+        el.innerText ||
+        el.getAttribute('placeholder') ||
+        el.getAttribute('title') ||
+        el.getAttribute('name') ||
+        (tag === 'input' && (el.type === 'submit' || el.type === 'button') ? el.value : '') ||
+        ''
+      ).replace(/\s+/g, ' ').trim().slice(0, 160);
+      const form = el.closest ? el.closest('form') : null;
+      const isSubmit = Boolean(
+        (tag === 'button' && (!el.getAttribute('type') || el.getAttribute('type').toLowerCase() === 'submit') && form) ||
+        (tag === 'input' && (el.type || '').toLowerCase() === 'submit')
+      );
+      return {
+        found: true,
+        tag,
+        role,
+        type: (el.getAttribute('type') || '').toLowerCase(),
+        label,
+        href: tag === 'a' ? (el.href || '').slice(0, 300) : '',
+        is_submit: isSubmit,
+        form_action: form ? (form.getAttribute('action') || '').slice(0, 300) : '',
+      };
+    });
+    return { ok: true, url, title, ...info };
+  }
+  if (resolved.coords) {
+    return {
+      ok: true,
+      found: true,
+      url,
+      title,
+      tag: resolved.coords.tag || '',
+      role: resolved.coords.role || '',
+      label: resolved.coords.name || '',
+      href: resolved.coords.href || '',
+      is_submit: Boolean(resolved.coords.is_submit),
+      form_action: resolved.coords.form_action || '',
+    };
+  }
+  return { ok: true, found: false, url, title };
+}
+
+async function verifyPreconditions(page, payload, target) {
+  if (payload.expected_url) {
+    const currentURL = page.url();
+    if (currentURL !== payload.expected_url) {
+      throw new Error(`page changed before action (expected ${payload.expected_url}, got ${currentURL}); take a fresh snapshot and retry`);
+    }
+  }
+  if (payload.expected_label && target) {
+    const live = await inspectTarget(page, target);
+    if (!live.found) {
+      throw new Error('target element is no longer present on the page; take a fresh snapshot and retry');
+    }
+    if ((live.label || '').trim() !== String(payload.expected_label).trim()) {
+      throw new Error(`target element changed before action (expected "${payload.expected_label}", got "${live.label || ''}"); take a fresh snapshot and retry`);
+    }
+  }
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  if (args.length === 0) usageError('missing subcommand');
+  const cmd = args[0];
+
+  let payload = {};
+  if (args[1]) {
+    try {
+      payload = JSON.parse(args[1]);
+    } catch {
+      payload = { arg: args[1] };
+    }
+  }
+
+  const browser = await playwright.chromium.connectOverCDP(CDP_URL, { timeout: 15000 });
+  try {
+    const page = await activePage(browser);
+    page.setDefaultTimeout(20000);
+
+    switch (cmd) {
+      case 'resolve': {
+        const target = payload.ref !== undefined ? String(payload.ref) : (payload.selector || payload.arg || '');
+        const info = await inspectTarget(page, target);
+        process.stdout.write(JSON.stringify(info) + '\n');
+        break;
+      }
+      case 'open': {
+        const targetURL = payload.url || payload.arg;
+        if (!targetURL) usageError('open requires url');
+        await page.goto(targetURL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.waitForTimeout(300);
+        const snap = await buildSnapshot(page);
+        process.stdout.write(JSON.stringify(snap) + '\n');
+        break;
+      }
+      case 'snapshot': {
+        const snap = await buildSnapshot(page);
+        process.stdout.write(JSON.stringify(snap) + '\n');
+        break;
+      }
+      case 'click': {
+        const target = payload.ref !== undefined ? String(payload.ref) : (payload.selector || payload.arg);
+        if (!target) usageError('click requires ref or selector');
+        await verifyPreconditions(page, payload, target);
+        const resolved = await resolveTarget(page, target);
+        if (resolved.locator) {
+          await resolved.locator.click({ timeout: 15000 });
+        } else {
+          await page.mouse.click(resolved.coords.cx, resolved.coords.cy);
+        }
+        await page.waitForTimeout(350);
+        const snap = await buildSnapshot(page);
+        process.stdout.write(JSON.stringify(snap) + '\n');
+        break;
+      }
+      case 'type': {
+        const target = payload.ref !== undefined ? String(payload.ref) : payload.selector;
+        const text = payload.text !== undefined ? String(payload.text) : '';
+        if (!target) usageError('type requires ref or selector');
+        await verifyPreconditions(page, payload, target);
+        const resolved = await resolveTarget(page, target);
+        if (resolved.locator) {
+          if (payload.clear !== false) {
+            await resolved.locator.fill(text, { timeout: 15000 });
+          } else {
+            await resolved.locator.click({ timeout: 15000 });
+            await page.keyboard.type(text);
+          }
+        } else {
+          await page.mouse.click(resolved.coords.cx, resolved.coords.cy);
+          await page.keyboard.type(text);
+        }
+        if (payload.submit) {
+          await page.keyboard.press('Enter');
+          await page.waitForTimeout(350);
+        }
+        const snap = await buildSnapshot(page);
+        process.stdout.write(JSON.stringify(snap) + '\n');
+        break;
+      }
+      case 'press': {
+        const key = payload.key || payload.arg;
+        if (!key) usageError('press requires key');
+        const target = payload.ref !== undefined ? String(payload.ref) : payload.selector;
+        await verifyPreconditions(page, payload, target);
+        await page.keyboard.press(key);
+        await page.waitForTimeout(250);
+        const snap = await buildSnapshot(page);
+        process.stdout.write(JSON.stringify(snap) + '\n');
+        break;
+      }
+      case 'select': {
+        const target = payload.ref !== undefined ? String(payload.ref) : payload.selector;
+        const value = payload.value !== undefined ? String(payload.value) : '';
+        if (!target) usageError('select requires ref or selector');
+        await verifyPreconditions(page, payload, target);
+        const resolved = await resolveTarget(page, target);
+        if (!resolved.locator) usageError('select requires a DOM element');
+        await resolved.locator.selectOption(value, { timeout: 15000 });
+        await page.waitForTimeout(250);
+        const snap = await buildSnapshot(page);
+        process.stdout.write(JSON.stringify(snap) + '\n');
+        break;
+      }
+      case 'scroll': {
+        const dy = Number(payload.delta_y ?? 600);
+        const dx = Number(payload.delta_x ?? 0);
+        await page.mouse.wheel(dx, dy);
+        await page.waitForTimeout(250);
+        const snap = await buildSnapshot(page);
+        process.stdout.write(JSON.stringify(snap) + '\n');
+        break;
+      }
+      case 'back': {
+        await page.goBack({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+        await page.waitForTimeout(250);
+        const snap = await buildSnapshot(page);
+        process.stdout.write(JSON.stringify(snap) + '\n');
+        break;
+      }
+      case 'wait': {
+        const ms = Math.min(Math.max(Number(payload.ms ?? 1000), 100), 15000);
+        if (payload.selector) {
+          await page.waitForSelector(payload.selector, { timeout: ms });
+        } else {
+          await page.waitForTimeout(ms);
+        }
+        const snap = await buildSnapshot(page);
+        process.stdout.write(JSON.stringify(snap) + '\n');
+        break;
+      }
+      case 'screenshot': {
+        fs.mkdirSync(path.dirname(SCREENSHOT_PATH), { recursive: true });
+        await page.screenshot({ path: SCREENSHOT_PATH, fullPage: Boolean(payload.full_page) });
+        const st = fs.statSync(SCREENSHOT_PATH);
+        process.stdout.write(JSON.stringify({
+          ok: true,
+          url: page.url(),
+          title: await page.title(),
+          path: SCREENSHOT_PATH,
+          bytes: st.size,
+        }) + '\n');
+        break;
+      }
+      case 'downloads': {
+        fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
+        const files = fs.readdirSync(DOWNLOAD_DIR).map((name) => {
+          const full = path.join(DOWNLOAD_DIR, name);
+          const st = fs.statSync(full);
+          return { name, path: full, size: st.size, mtime: st.mtime.toISOString() };
+        });
+        process.stdout.write(JSON.stringify({ ok: true, downloads: files }) + '\n');
+        break;
+      }
+      case 'close': {
+        const cdp = await browser.newBrowserCDPSession();
+        await cdp.send('Browser.close').catch(() => {});
+        process.stdout.write(JSON.stringify({ ok: true, closed: true }) + '\n');
+        break;
+      }
+      default:
+        usageError(`unknown subcommand: ${cmd}`);
+    }
+  } finally {
+    await browser.close().catch(() => {});
+  }
+}
+
+main().catch((err) => {
+  process.stdout.write(JSON.stringify({ ok: false, error: err && err.message ? err.message : String(err) }) + '\n');
+  process.exit(1);
+});

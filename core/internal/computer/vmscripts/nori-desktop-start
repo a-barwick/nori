@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Starts the persistent desktop stack inside the user's computer:
+#   Xvfb :99 -> fluxbox -> x11vnc (127.0.0.1:5900) -> websockify (127.0.0.1:5901)
+#   -> authenticated desktop WS gate (:8080, checking per-container X-Nori-Desktop-Token when configured)
+#   + headed Chromium with persistent /home/nori/.config/chromium & CDP on 127.0.0.1:9222
+#   + nori-watchdog RSS guard.
+# Idempotent: safe to call repeatedly on wake or session start. Fails non-zero if any required listener is down.
+
+export HOME="/home/nori"
+export DISPLAY=":99"
+WIDTH="${NORI_DISPLAY_WIDTH:-1280}"
+HEIGHT="${NORI_DISPLAY_HEIGHT:-800}"
+DESKTOP_PORT="${NORI_DESKTOP_PORT:-8080}"
+WS_INTERNAL_PORT="5901"
+CDP_PORT="${NORI_CHROMIUM_CDP_PORT:-9222}"
+LOG_DIR="/home/nori/.nori/logs"
+TOKEN_FILE="/home/nori/.nori/desktop.token"
+mkdir -p "${LOG_DIR}" /home/nori/.config/chromium /home/nori/workspace/downloads
+
+is_listening() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -tln "( sport = :${port} )" | grep -q ":${port}"
+  else
+    python3 -c "import socket,sys; s=socket.socket(); s.settimeout(0.5); rc=s.connect_ex(('127.0.0.1', ${port})); s.close(); sys.exit(0 if rc==0 else 1)"
+  fi
+}
+
+# Generate a per-computer desktop token if not already present (used by Docker adapter for per-container auth).
+if [[ ! -f "${TOKEN_FILE}" ]]; then
+  python3 -c 'import secrets; print(secrets.token_urlsafe(32), end="")' > "${TOKEN_FILE}"
+  chmod 600 "${TOKEN_FILE}"
+fi
+
+# 1. Xvfb
+if ! pgrep -f "Xvfb :99" >/dev/null 2>&1; then
+  rm -f /tmp/.X99-lock
+  nohup Xvfb :99 -screen 0 "${WIDTH}x${HEIGHT}x24" -ac +extension RANDR >"${LOG_DIR}/xvfb.log" 2>&1 </dev/null &
+  for _ in $(seq 1 30); do
+    if [[ -S /tmp/.X11-unix/X99 ]]; then break; fi
+    sleep 0.1
+  done
+fi
+
+# 2. Fluxbox window manager
+if ! pgrep -x fluxbox >/dev/null 2>&1; then
+  nohup fluxbox >"${LOG_DIR}/fluxbox.log" 2>&1 </dev/null &
+  sleep 0.2
+fi
+
+# 3. x11vnc bound strictly to loopback (127.0.0.1:5900)
+if ! is_listening 5900; then
+  nohup x11vnc -display :99 -localhost -rfbport 5900 -nopw -forever -shared -noxdamage -wait 10 -defer 10 \
+    >"${LOG_DIR}/x11vnc.log" 2>&1 </dev/null &
+  for _ in $(seq 1 30); do
+    if is_listening 5900; then break; fi
+    sleep 0.1
+  done
+fi
+
+# 4. websockify on loopback 127.0.0.1:5901 + authenticated token gate on 0.0.0.0:8080
+if ! is_listening "${WS_INTERNAL_PORT}"; then
+  nohup websockify "127.0.0.1:${WS_INTERNAL_PORT}" 127.0.0.1:5900 \
+    >"${LOG_DIR}/websockify.log" 2>&1 </dev/null &
+  for _ in $(seq 1 30); do
+    if is_listening "${WS_INTERNAL_PORT}"; then break; fi
+    sleep 0.1
+  done
+fi
+
+if ! is_listening "${DESKTOP_PORT}"; then
+  nohup node -e '
+const http = require("http");
+const net = require("net");
+const fs = require("fs");
+const crypto = require("crypto");
+const tokenFile = process.argv[1];
+const listenPort = Number(process.argv[2]);
+const targetPort = Number(process.argv[3]);
+const requireToken = process.env.NORI_REQUIRE_DESKTOP_TOKEN === "1";
+
+function validToken(req) {
+  if (!requireToken) return true;
+  let expected = "";
+  try { expected = fs.readFileSync(tokenFile, "utf8").trim(); } catch { return false; }
+  if (!expected) return false;
+  const got = String(req.headers["x-nori-desktop-token"] || "").trim();
+  if (got.length !== expected.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(got), Buffer.from(expected));
+}
+
+const srv = http.createServer((req, res) => {
+  res.writeHead(404);
+  res.end("not found");
+});
+srv.on("upgrade", (req, socket, head) => {
+  if (!validToken(req)) {
+    socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+  const upstream = net.connect(targetPort, "127.0.0.1", () => {
+    let raw = `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n`;
+    for (let i = 0; i < req.rawHeaders.length; i += 2) {
+      if (req.rawHeaders[i].toLowerCase() === "x-nori-desktop-token") continue;
+      raw += `${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\r\n`;
+    }
+    raw += "\r\n";
+    upstream.write(raw);
+    if (head && head.length) upstream.write(head);
+    upstream.pipe(socket);
+    socket.pipe(upstream);
+  });
+  upstream.on("error", () => socket.destroy());
+  socket.on("error", () => upstream.destroy());
+});
+srv.listen(listenPort, "0.0.0.0");
+' "${TOKEN_FILE}" "${DESKTOP_PORT}" "${WS_INTERNAL_PORT}" >"${LOG_DIR}/desktop-gate.log" 2>&1 </dev/null &
+  for _ in $(seq 1 30); do
+    if is_listening "${DESKTOP_PORT}"; then break; fi
+    sleep 0.1
+  done
+fi
+
+# 5. Headed Chromium with persistent profile and loopback-only CDP
+if ! is_listening "${CDP_PORT}"; then
+  CHROME_BIN=""
+  for candidate in chromium chromium-browser google-chrome; do
+    if command -v "${candidate}" >/dev/null 2>&1; then
+      CHROME_BIN="${candidate}"
+      break
+    fi
+  done
+  if [[ -n "${CHROME_BIN}" ]]; then
+    if ! pgrep -f "${CHROME_BIN}" >/dev/null 2>&1; then
+      rm -f /home/nori/.config/chromium/SingletonLock /home/nori/.config/chromium/SingletonSocket /home/nori/.config/chromium/SingletonCookie
+    fi
+    nohup "${CHROME_BIN}" \
+      --no-sandbox \
+      --disable-dev-shm-usage \
+      --disable-gpu \
+      --password-store=basic \
+      --no-first-run \
+      --no-default-browser-check \
+      --window-position=0,0 \
+      --window-size="${WIDTH},${HEIGHT}" \
+      --user-data-dir=/home/nori/.config/chromium \
+      --remote-debugging-address=127.0.0.1 \
+      --remote-debugging-port="${CDP_PORT}" \
+      about:blank >"${LOG_DIR}/chromium.log" 2>&1 </dev/null &
+    echo $! > "${LOG_DIR}/chromium.pid"
+    for _ in $(seq 1 50); do
+      if is_listening "${CDP_PORT}"; then break; fi
+      sleep 0.1
+    done
+  fi
+fi
+
+# 6. Memory watchdog
+if [[ -x /home/nori/.nori/bin/nori-watchdog ]] && ! pgrep -f "nori-watchdog" >/dev/null 2>&1; then
+  nohup /home/nori/.nori/bin/nori-watchdog >"${LOG_DIR}/watchdog.log" 2>&1 </dev/null &
+fi
+
+# 7. Verify all required services are actually listening before reporting ok.
+if [[ ! -S /tmp/.X11-unix/X99 ]] || ! is_listening 5900 || ! is_listening "${WS_INTERNAL_PORT}" || ! is_listening "${DESKTOP_PORT}" || ! is_listening "${CDP_PORT}"; then
+  printf '{"ok":false,"error":"desktop services failed readiness check","xvfb":%s,"vnc":%s,"ws":%s,"gate":%s,"cdp":%s}\n' \
+    "$([[ -S /tmp/.X11-unix/X99 ]] && echo true || echo false)" \
+    "$(is_listening 5900 && echo true || echo false)" \
+    "$(is_listening "${WS_INTERNAL_PORT}" && echo true || echo false)" \
+    "$(is_listening "${DESKTOP_PORT}" && echo true || echo false)" \
+    "$(is_listening "${CDP_PORT}" && echo true || echo false)" >&2
+  exit 1
+fi
+
+printf '{"ok":true,"display":":99","desktop_port":%s,"cdp_port":%s}\n' "${DESKTOP_PORT}" "${CDP_PORT}"

@@ -8,8 +8,9 @@ import { useAssistant } from "@/lib/assistant/context";
 import { money, plural } from "@/lib/assistant/format";
 import { useSummary } from "@/lib/assistant/sources";
 import { useResource } from "@/lib/assistant/useResource";
-import type { Connection, MCPServer, MemoryFact, PermissionRule, Preferences, WorkingMemory } from "@/lib/contracts/assistant";
+import type { ComputerStatus, Connection, MCPServer, MemoryFact, PermissionRule, Preferences, WorkingMemory } from "@/lib/contracts/assistant";
 import { needsByokSetup } from "./ApiKeysSettings";
+import { computerStatusPill } from "./ComputerScreen";
 import { hasSelectedHomeChat } from "./ModelsSettings";
 import { coreBudgetStats, formatByteBudget } from "./MemoryScreen";
 import { Notice, Pill, Row, Rows, Screen, Section } from "./ui";
@@ -35,6 +36,7 @@ export function MoreScreen({ userEmail }: { userEmail?: string } = {}) {
   const preferences = useResource<Preferences>(has("preferences") ? "/preferences" : null, { poll: 60_000 });
   const modelKeys = useResource<ModelKeysResponse>("/settings/model-keys", { poll: 60_000, versioned: false });
   const models = useResource<ModelSettings>("/settings/models", { poll: 60_000 });
+  const computer = useResource<ComputerStatus>(has("computer") ? "/computer" : null, { poll: 30_000, versioned: false });
 
   const mcpItems = mcp.data?.items ?? [];
   const connItems = (connections.data?.items ?? []).filter((c) => c.status !== "disconnected");
@@ -100,6 +102,18 @@ export function MoreScreen({ userEmail }: { userEmail?: string } = {}) {
             title="Memory"
             detail={has("memory") ? formatByteBudget(budget.used, budget.budget) : undefined}
           />
+          {has("computer") && (
+            <Row
+              href="/computer"
+              leading={
+                <span className="grid size-9 place-items-center rounded-[10px] bg-accent-subtle text-accent-text">
+                  <Monitor size={18} strokeWidth={1.85} aria-hidden />
+                </span>
+              }
+              title="Computer"
+              detail={computer.data ? computerStatusPill(computer.data.status).label : undefined}
+            />
+          )}
         </Rows>
       </Section>
 

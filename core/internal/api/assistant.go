@@ -48,6 +48,7 @@ type Assistant struct {
 	ModelKeys   *modelkeys.Service
 	Models      *modelprofiles.Account
 	HomeAI      *HomeAISettings
+	Computer    *ComputerAPI
 	AccountBYOK bool
 	UsageNow    func() time.Time
 
@@ -70,6 +71,8 @@ type Assistant struct {
 	Resume              func(ctx context.Context) error
 	Continue            func(ctx context.Context, taskID, previous, request string, budget float64) (state.Run, error)
 	Stop                func(ctx context.Context, commandID, taskID string) (state.Run, error)
+	OnLibraryDelete     func(ctx context.Context, resultIDs []string)
+	OnForget            func(ctx context.Context, tags []string)
 }
 
 type apiError struct {
@@ -236,6 +239,12 @@ func (a *Assistant) register(mux *http.ServeMux) {
 	}
 	if a.HomeAI != nil {
 		a.HomeAI.register(mux)
+	}
+	if a.Computer != nil {
+		a.Computer.register(mux)
+	} else {
+		// Always register GET /v1/computer so clients cleanly detect enabled=false.
+		(&ComputerAPI{}).register(mux)
 	}
 	mux.HandleFunc("GET /v1/diagnostics", a.diagnostics)
 	mux.HandleFunc("POST /v1/diagnostics/actions", jsonBody(a.diagnosticsAction))

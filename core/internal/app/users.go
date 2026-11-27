@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"nori/internal/api"
+	"nori/internal/computer"
 	"nori/internal/connections"
 	"nori/internal/homeai"
 	"nori/internal/observability"
@@ -31,17 +32,19 @@ type Service struct {
 	Now           func() time.Time
 	ConfigureApp  func(users.User, *App)
 
-	home      *homeai.Service
-	storage   *platform.Storage
-	cfg       settings.Settings
-	waker     wake.Waker
-	mu        sync.Mutex
-	apps      map[string]*userApp
-	opening   map[string]chan struct{}
-	collapsed map[string]bool
-	closed    bool
-	refs      int
-	closeOnce sync.Once
+	home          *homeai.Service
+	computer      *computer.Manager
+	closeComputer func()
+	storage       *platform.Storage
+	cfg           settings.Settings
+	waker         wake.Waker
+	mu            sync.Mutex
+	apps          map[string]*userApp
+	opening       map[string]chan struct{}
+	collapsed     map[string]bool
+	closed        bool
+	refs          int
+	closeOnce     sync.Once
 }
 
 type userApp struct {
@@ -63,6 +66,13 @@ func OpenService(ctx context.Context, waker wake.Waker, cfg settings.Settings) (
 	service := OpenServiceWithStorage(storage, waker, cfg)
 	if cfg.HomeAI.Enabled() {
 		service.home, err = openHomeAI(ctx, cfg)
+		if err != nil {
+			service.Close()
+			return nil, err
+		}
+	}
+	if cfg.Computer.Enabled() {
+		service.computer, service.closeComputer, err = platform.OpenComputer(ctx, cfg, storage)
 		if err != nil {
 			service.Close()
 			return nil, err
@@ -127,6 +137,20 @@ func (s *Service) HomeRelayHandler() http.Handler {
 	return s.home.Handler()
 }
 
+func (s *Service) ComputerManager() *computer.Manager {
+	if s == nil {
+		return nil
+	}
+	return s.computer
+}
+
+func (s *Service) SetComputerManager(mgr *computer.Manager) {
+	if s == nil {
+		return
+	}
+	s.computer = mgr
+}
+
 func (s *Service) AdvisoryLocker() docstore.AdvisoryLocker {
 	locker, _ := s.Backend().(docstore.AdvisoryLocker)
 	return locker
@@ -155,6 +179,9 @@ func (s *Service) WakeListener() docstore.WakeListener {
 
 func (s *Service) closeShared() {
 	s.closeOnce.Do(func() {
+		if s.closeComputer != nil {
+			s.closeComputer()
+		}
 		if s.home != nil {
 			s.home.Close()
 		}
@@ -332,6 +359,7 @@ func (s *Service) RepairUser(ctx context.Context, row users.User) error {
 	opened, _, err := openWithResources(ctx, s.waker, s.cfg, row, s.storage, openOptions{
 		skipCollapseDuplicates: true,
 		home:                   s.home,
+		computer:               s.computer,
 	})
 	if err != nil {
 		return err
@@ -406,6 +434,7 @@ func (s *Service) openUserApp(ctx context.Context, row users.User, done chan str
 	opened, collapsed, err := openWithResources(ctx, s.waker, s.cfg, row, s.storage, openOptions{
 		skipCollapseDuplicates: alreadyCollapsed || row.ResetPending,
 		home:                   s.home,
+		computer:               s.computer,
 	})
 	if err != nil {
 		return nil, err

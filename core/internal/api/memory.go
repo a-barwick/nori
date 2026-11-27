@@ -560,6 +560,7 @@ func (a *Assistant) memoryAction(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var kind string
 	var format func(res state.MemoryMutationResult) (json.RawMessage, error)
+	var forgottenTags []string
 	switch value.Action {
 	case "forget":
 		kind = state.MemoryMutateForgetCore
@@ -571,6 +572,12 @@ func (a *Assistant) memoryAction(w http.ResponseWriter, r *http.Request) {
 			out := map[string]any{"note": note}
 			if res.Memory != nil {
 				out["forgotten"] = memoryView(*res.Memory)
+				if about := strings.TrimSpace(res.Memory.About); about != "" {
+					forgottenTags = append(forgottenTags, about)
+				}
+				if text := strings.TrimSpace(res.Memory.Text); text != "" {
+					forgottenTags = append(forgottenTags, text)
+				}
 			}
 			return json.Marshal(out)
 		}
@@ -616,6 +623,9 @@ func (a *Assistant) memoryAction(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeAPIError(w, err, requestID, a.currentMemory(r.Context(), id))
 		return
+	}
+	if value.Action == "forget" && a.OnForget != nil && len(forgottenTags) > 0 {
+		a.OnForget(r.Context(), forgottenTags)
 	}
 	writeReceipt(w, receipt)
 }

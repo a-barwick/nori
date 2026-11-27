@@ -8,6 +8,7 @@ import (
 
 	"nori/internal/extensions"
 	"nori/internal/prompts"
+	"nori/internal/state"
 )
 
 type Capabilities struct {
@@ -104,7 +105,19 @@ func (s *Service) CallRuntimeTool(ctx context.Context, run, name string, args ma
 	text := func(key string) string { value, _ := args[key].(string); return value }
 	switch name {
 	case "web_search":
-		return s.webSearch(ctx, text("query"))
+		res, err := s.webSearch(ctx, text("query"))
+		if err == nil && res != nil && run != "" {
+			if rawResults, ok := res["results"].([]map[string]any); ok {
+				var domains []string
+				for _, item := range rawResults {
+					if u, _ := item["url"].(string); u != "" {
+						domains = append(domains, u)
+					}
+				}
+				_ = state.AddRunTrustedDomains(ctx, s.Store, run, domains)
+			}
+		}
+		return res, err
 	case "upload_inspect":
 		return s.uploadInspect(ctx, run, text("upload_id"), text("question"))
 	case "result_link":

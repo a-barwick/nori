@@ -46,11 +46,15 @@ public enum InteractionStatusPresentation {
                 switch interaction.kind {
                 case .signIn: label = "Not now"
                 case .approval: label = "Denied"
-                case .question, .accountSelection: label = "Declined"
+                case .question, .accountSelection, .computerTakeover: label = "Declined"
                 }
                 return InteractionStatusPill(label: label, tone: .neutral)
             case .signedIn:
                 return InteractionStatusPill(label: "Signed in", tone: .ok)
+            case .resume:
+                return InteractionStatusPill(label: "Resumed", tone: .ok)
+            case .cancel:
+                return InteractionStatusPill(label: "Cancelled", tone: .neutral)
             case .expired:
                 return InteractionStatusPill(label: "Expired", tone: .neutral)
             case .answer, .chooseAccount, .none:
@@ -88,6 +92,9 @@ extension Interaction {
     }
 
     var displayHeading: String {
+        if kind == .computerTakeover {
+            return "Take over desktop"
+        }
         if kind == .signIn, case .signIn(let payload) = payload {
             if payload.integrationID != "mcp", !payload.integrationID.isEmpty {
                 return "Connect \(Self.humanizedIntegrationName(payload.integrationID))"
@@ -142,6 +149,7 @@ public struct InteractionCardView: View {
 
     @State private var rememberAccountAsDefault: Bool = false
     @State private var didSeedAccountDefault: Bool = false
+    @State private var showingTakeoverDesktop: Bool = false
 
     public init(
         store: NoriStore,
@@ -249,6 +257,22 @@ public struct InteractionCardView: View {
             conflictState = nil
             errorMessage = nil
         }
+        .sheet(isPresented: $showingTakeoverDesktop) {
+            ComputerDesktopSheet(
+                store: store,
+                initialMode: .control,
+                taskID: interaction.taskID,
+                interactionID: interaction.id,
+                prompt: interaction.prompt,
+                onDoneContinue: {
+                    await submitResumeTakeoverAsync()
+                }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(NoriColors.sheetBackground)
+            .presentationCornerRadius(NoriRadius.sheet)
+        }
     }
 
     @ViewBuilder
@@ -278,7 +302,7 @@ public struct InteractionCardView: View {
         if interaction.status == .expired || interaction.resolution?.kind == .expired {
             return ("clock", NoriColors.ink3)
         }
-        if interaction.resolution?.kind == .decline {
+        if interaction.resolution?.kind == .decline || interaction.resolution?.kind == .cancel {
             return ("minus.circle", NoriColors.ink3)
         }
         return ("checkmark", NoriColors.ok)
@@ -301,8 +325,12 @@ public struct InteractionCardView: View {
             switch interaction.kind {
             case .signIn: base = "Not now"
             case .approval: base = "Denied"
-            case .question, .accountSelection: base = "Declined"
+            case .question, .accountSelection, .computerTakeover: base = "Declined"
             }
+        case .resume:
+            base = "Resumed"
+        case .cancel:
+            base = "Cancelled"
         case .chooseAccount:
             base = "Account chosen"
         case .expired:
@@ -368,6 +396,45 @@ public struct InteractionCardView: View {
                 onDecline: { submitDecline() },
                 onHaptic: { triggerNotificationHaptic($0) }
             )
+        case .computerTakeover(let payload):
+            VStack(alignment: .leading, spacing: 10) {
+                Text(interaction.prompt.isEmpty ? (payload.reason ?? "Nori needs your help on the desktop.") : interaction.prompt)
+                    .font(.system(size: 13.5))
+                    .foregroundStyle(NoriColors.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let urlStr = payload.url, let host = URL(string: urlStr)?.host, !host.isEmpty {
+                    Text(host)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(NoriColors.ink3)
+                }
+
+                HStack(spacing: 8) {
+                    Button {
+                        showingTakeoverDesktop = true
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "desktopcomputer")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("Open Desktop")
+                        }
+                    }
+                    .buttonStyle(NoriButtonStyle(.primary, compact: true))
+                    .disabled(isSubmitting)
+
+                    Button(submittingAction == "resume" ? "Resuming…" : "Done, continue") {
+                        submitResumeTakeover()
+                    }
+                    .buttonStyle(NoriButtonStyle(.neutral, compact: true))
+                    .disabled(isSubmitting)
+
+                    Button("Cancel") {
+                        submitCancelTakeover()
+                    }
+                    .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                    .disabled(isSubmitting)
+                }
+            }
         case .unknown:
             VStack(alignment: .leading, spacing: 10) {
                 Text("This interaction requires a newer client version.")
@@ -474,6 +541,34 @@ public struct InteractionCardView: View {
                 rememberAsDefault: rememberAccountAsDefault
             )
             handleSubmitOutcome(outcome, successHaptic: .success)
+            isSubmitting = false
+            submittingAction = nil
+        }
+    }
+
+    private func submitResumeTakeover() {
+        Task { await submitResumeTakeoverAsync() }
+    }
+
+    private func submitResumeTakeoverAsync() async {
+        errorMessage = nil
+        conflictState = nil
+        isSubmitting = true
+        submittingAction = "resume"
+        let outcome = await store.resumeComputerTakeover(interaction)
+        handleSubmitOutcome(outcome, successHaptic: .success)
+        isSubmitting = false
+        submittingAction = nil
+    }
+
+    private func submitCancelTakeover() {
+        errorMessage = nil
+        conflictState = nil
+        isSubmitting = true
+        submittingAction = "cancel"
+        Task {
+            let outcome = await store.cancelComputerTakeover(interaction)
+            handleSubmitOutcome(outcome, successHaptic: .warning)
             isSubmitting = false
             submittingAction = nil
         }

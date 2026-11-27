@@ -547,7 +547,8 @@ func (a *Activities) ToolRef(ctx context.Context, in RefToolInput) (out RefToolO
 		return out, e
 	}
 	var result map[string]any
-	if in.ReadOnly && call.Name != "compose" && agent.PolicyFor(call.Name, in.Exec).Effect != "read" {
+	dynamicComputerTool := in.Exec != nil && strings.HasPrefix(in.Exec.Binding.Target, "nori.computer/")
+	if in.ReadOnly && call.Name != "compose" && !dynamicComputerTool && agent.PolicyFor(call.Name, in.Exec).Effect != "read" {
 		result = map[string]any{
 			"outcome":      "needs_input",
 			"error":        prompts.Runtime("reads-only", nil),

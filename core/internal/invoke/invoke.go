@@ -17,16 +17,20 @@ import (
 )
 
 type Call struct {
-	RunID       string
-	Revision    int64
-	OperationID string
-	Attempt     int
-	Exec        extensions.Exec
-	Args        map[string]any
-	Grant       *connections.Grant
-	Progress    func(text string)
-	TimeZone    string
-	Upload      func(ctx context.Context, id string) (name, mediaType string, data []byte, err error)
+	RunID        string
+	Revision     int64
+	OperationID  string
+	Attempt      int
+	Exec         extensions.Exec
+	Args         map[string]any
+	Grant        *connections.Grant
+	Progress     func(text string)
+	TimeZone     string
+	ReadOnly     bool
+	UserSources  []string
+	Upload       func(ctx context.Context, id string) (name, mediaType string, data []byte, err error)
+	InspectImage func(ctx context.Context, label, instruction, question string, data []byte, mediaType string) (map[string]any, error)
+	PublishFile  func(ctx context.Context, title, fileName, mediaType string, data []byte) (state.Result, error)
 }
 
 type Prepared struct {
@@ -173,4 +177,15 @@ type SignInStart struct {
 
 type SignInChecker interface {
 	SignInNeeded(ctx context.Context, call Call, returnTo string) (*SignInStart, error)
+}
+
+type TakeoverRequest struct {
+	Prompt     string
+	URL        string
+	Reason     string
+	ComputerID string
+}
+
+type TakeoverRequester interface {
+	TakeoverNeeded(ctx context.Context, call Call) (*TakeoverRequest, error)
 }

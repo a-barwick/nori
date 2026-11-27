@@ -101,6 +101,7 @@ type Runner struct {
 	NewTicker        func(time.Duration) (<-chan time.Time, func())
 	SyncWork         bool
 	OnDelta          func(turnID, text string)
+	OnForget         func(ctx context.Context, tags []string)
 }
 
 func (r *Runner) runWork(work *sync.WaitGroup, fn func()) {
@@ -496,6 +497,22 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 			continue
 		}
 		if e == nil {
+			if r.OnForget != nil && len(t.Attempt.Memory) > 0 {
+				var tags []string
+				for _, m := range t.Attempt.Memory {
+					if m.Kind == state.MemoryForget && m.Error == "" {
+						if v := strings.TrimSpace(m.About); v != "" {
+							tags = append(tags, v)
+						}
+						if v := strings.TrimSpace(m.ID); v != "" {
+							tags = append(tags, v)
+						}
+					}
+				}
+				if len(tags) > 0 {
+					r.OnForget(ctx, tags)
+				}
+			}
 			span.SetAttributes(attribute.String("nori.reply.status", string(t.Attempt.Status)), attribute.Bool("nori.output.present", text != ""))
 			if t.Attempt.Status == state.AttemptError {
 				span.SetStatus(codes.Error, "conversation reply failed")

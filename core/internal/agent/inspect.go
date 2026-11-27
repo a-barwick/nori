@@ -14,6 +14,13 @@ import (
 
 const inspectOutputTokens = 2048
 
+// InspectImage runs Nori's isolated no-tools vision inspector on image bytes
+// (used by upload_inspect and computer_browser screenshot inspection so image
+// text can never invoke tools or accumulate raw screenshots in task history).
+func (s *Service) InspectImage(ctx context.Context, idKey, id, instruction, question string, data []byte, mediaType string) (map[string]any, error) {
+	return s.inspect(ctx, idKey, id, instruction, question, data, mediaType)
+}
+
 func (s *Service) inspect(ctx context.Context, idKey, id, instruction, question string, data []byte, mediaType string) (result map[string]any, err error) {
 	provider, model := s.Model.Provider(), s.Model.Name()
 	ctx, span := otel.Tracer("nori/agent").Start(ctx, "inspect_image "+model, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(

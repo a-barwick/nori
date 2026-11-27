@@ -130,6 +130,10 @@ func (a *Assistant) libraryItem(result state.Result, overlay *state.Resource) li
 	}
 	if result.URL != "" {
 		item.Provenance = provenance{Content: "live", SourceURL: result.URL}
+	} else if result.Kind == state.ResultFile && result.ID != "" {
+		// Provide an authenticated Library download URL for stored generated binary files
+		// without changing Provenance from "generated".
+		item.URL = "/api/v1/library/" + result.ID + "/file"
 	}
 	if result.Kind == "file" && result.Text == "" {
 		item.IndexStatus = "unsupported"
@@ -447,7 +451,7 @@ func (a *Assistant) deleteLibraryItem(ctx context.Context, id, requestID string,
 			return state.MutationReceipt{}, err
 		}
 	}
-	return a.Store.Mutate(ctx, state.Mutation{
+	receipt, err := a.Store.Mutate(ctx, state.Mutation{
 		RequestID: requestID, Method: "DELETE", Target: "/v1/library/" + id, ExpectedRevision: expected, Payload: value,
 		Collection: collectionLibrary, ID: id,
 		Apply: func(current *state.Resource, read func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
@@ -496,6 +500,11 @@ func (a *Assistant) deleteLibraryItem(ctx context.Context, id, requestID string,
 			return state.MutationResult{Writes: writes, Receipt: state.MutationReceipt{Status: "applied", Resource: data, HTTPStatus: 200}}, nil
 		},
 	})
+	if err == nil && value.Scope == "all_versions" && a.OnLibraryDelete != nil {
+		allIDs := append([]string{id}, siblings...)
+		a.OnLibraryDelete(ctx, allIDs)
+	}
+	return receipt, err
 }
 
 func (a *Assistant) libraryFile(w http.ResponseWriter, r *http.Request) {

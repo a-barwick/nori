@@ -309,6 +309,18 @@ public protocol NoriTransport: Sendable {
     func approveHomePairing(_ code: String) async throws
     func testHomeConnector(_ id: String) async throws -> HomeConnectorTest
     func revokeHomeConnector(_ id: String) async throws
+
+    // Personal Agent Computer
+    func fetchComputerStatus() async throws -> ComputerStatus
+    func wakeComputer() async throws -> ComputerStatus
+    func sleepComputer() async throws
+    func resetComputer() async throws -> ComputerStatus
+    func createComputerCheckpoint(label: String?) async throws -> ComputerCheckpoint
+    func restoreComputerCheckpoint(checkpointID: String?) async throws -> ComputerStatus
+    func createComputerSession(_ request: CreateComputerSessionRequest) async throws -> CreateComputerSessionResponse
+    func updateComputerSessionMode(sessionID: String, mode: ComputerSessionMode) async throws -> ComputerSessionSummary
+    func endComputerSession(sessionID: String) async throws
+    func computerDesktopWebSocketRequest(for session: CreateComputerSessionResponse) async throws -> URLRequest
 }
 
 public extension NoriTransport {
@@ -537,4 +549,44 @@ public extension NoriTransport {
     }
 
     func fetchAutomationOccurrences(id: String) async throws -> [AutomationOccurrence] { [] }
+
+    func fetchComputerStatus() async throws -> ComputerStatus {
+        ComputerStatus(enabled: false)
+    }
+
+    func wakeComputer() async throws -> ComputerStatus {
+        throw NoriAPIError(message: "Nori Computer is not supported by this transport.")
+    }
+
+    func sleepComputer() async throws {
+        throw NoriAPIError(message: "Nori Computer is not supported by this transport.")
+    }
+
+    func resetComputer() async throws -> ComputerStatus {
+        throw NoriAPIError(message: "Nori Computer is not supported by this transport.")
+    }
+
+    func createComputerCheckpoint(label: String?) async throws -> ComputerCheckpoint {
+        throw NoriAPIError(message: "Nori Computer is not supported by this transport.")
+    }
+
+    func restoreComputerCheckpoint(checkpointID: String?) async throws -> ComputerStatus {
+        throw NoriAPIError(message: "Nori Computer is not supported by this transport.")
+    }
+
+    func createComputerSession(_ request: CreateComputerSessionRequest) async throws -> CreateComputerSessionResponse {
+        throw NoriAPIError(message: "Nori Computer is not supported by this transport.")
+    }
+
+    func updateComputerSessionMode(sessionID: String, mode: ComputerSessionMode) async throws -> ComputerSessionSummary {
+        throw NoriAPIError(message: "Nori Computer is not supported by this transport.")
+    }
+
+    func endComputerSession(sessionID: String) async throws {
+        throw NoriAPIError(message: "Nori Computer is not supported by this transport.")
+    }
+
+    func computerDesktopWebSocketRequest(for session: CreateComputerSessionResponse) async throws -> URLRequest {
+        throw NoriAPIError(message: "Nori Computer is not supported by this transport.")
+    }
 }

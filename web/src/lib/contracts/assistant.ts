@@ -75,8 +75,17 @@ export type QuestionPayload = Schemas["QuestionPayload"];
 export type ApprovalPayload = Schemas["ApprovalPayload"];
 export type AccountSelectionPayload = Schemas["AccountSelectionPayload"];
 export type SignInPayload = Schemas["SignInPayload"];
+export type ComputerTakeoverPayload = Schemas["ComputerTakeoverPayload"];
 export type Interaction = Schemas["Interaction"];
 export type InteractionResponse = Schemas["InteractionResponse"];
+
+// Personal Agent Computer
+export type ComputerCheckpoint = Schemas["ComputerCheckpoint"];
+export type ComputerSessionSummary = Schemas["ComputerSessionSummary"];
+export type ComputerStatus = Schemas["ComputerStatus"];
+export type CreateComputerSessionRequest = Schemas["CreateComputerSessionRequest"];
+export type CreateComputerSessionResponse = Schemas["CreateComputerSessionResponse"];
+export type UpdateComputerSessionRequest = Schemas["UpdateComputerSessionRequest"];
 
 // Automations & inbox
 export type Trigger = Schemas["Trigger"];

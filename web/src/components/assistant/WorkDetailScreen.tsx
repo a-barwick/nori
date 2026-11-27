@@ -16,6 +16,7 @@ import {
   FileText,
   Maximize2,
   MessageSquare,
+  Monitor,
   Play,
   Search,
   Square,
@@ -34,6 +35,7 @@ import type { LibraryItem, OperationProjection, RunEvent, WorkItem } from "@/lib
 import { MAX_MESSAGE_BYTES, messageTooLong } from "@/lib/submission";
 import { cn } from "@/lib/utils";
 import { InteractionCard } from "./InteractionCard";
+import { ComputerDesktopDrawer } from "./ComputerDesktopDrawer";
 import { groupOperations, operationOutcomePill, shownOperations, stepName, type OperationRowItem } from "./WorkOperations";
 import { statusPill } from "./WorkScreen";
 import { Empty, Failure, Loading, Notice, Pill, Row, Rows, Screen, Section } from "./ui";
@@ -668,6 +670,7 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
   );
   const commands = runtime.taskCommands.filter((command) => command.command.run_id === taskID);
   const [draft, setDraft] = useState("");
+  const [desktopOpen, setDesktopOpen] = useState(false);
   const [retryState, setRetryState] = useState<{ taskID: string; count: number }>({ taskID, count: 0 });
   const retries = retryState.taskID === taskID ? retryState.count : 0;
   const settling = !item && isRetryableWorkDetailError(error) && retries < MAX_TRANSIENT_RETRIES;
@@ -755,6 +758,16 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
       actions={
         <>
           <Pill tone={pill.tone}>{pill.label}</Pill>
+          {running && has("computer") && (
+            <Button
+              size="sm"
+              variant="tonal"
+              onClick={() => setDesktopOpen(true)}
+            >
+              <Monitor size={13} strokeWidth={1.85} aria-hidden />
+              Watch desktop
+            </Button>
+          )}
           {running && (
             <Button
               size="sm"
@@ -1038,6 +1051,14 @@ export function WorkDetailScreen({ taskID }: { taskID: string }) {
       <StepsDisclosure steps={steps} running={running} />
 
       <PlainDetailsSection item={item} continuedBy={continuedBy} />
+      {has("computer") && (
+        <ComputerDesktopDrawer
+          open={desktopOpen}
+          onOpenChange={setDesktopOpen}
+          initialMode="view"
+          taskId={taskID}
+        />
+      )}
     </Screen>
   );
 }

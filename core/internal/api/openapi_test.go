@@ -19,6 +19,8 @@ import (
 	"github.com/getkin/kin-openapi/routers/gorillamux"
 	"github.com/google/uuid"
 
+	"nori/internal/computer"
+	"nori/internal/computer/fake"
 	"nori/internal/connections"
 	"nori/internal/connectors/mcp"
 	"nori/internal/conversation"
@@ -562,6 +564,69 @@ func TestOpenAPIHandlersMatchSpec(t *testing.T) {
 
 	// 12. Validate HomeConnectors response shape directly against schema (HomeAISettings.Service requires Postgres)
 	validateHomeConnectorsWireShape(t, ctx, router, fixedNow)
+
+	// 13. Validate Personal Computer endpoints against OpenAPI schema
+	validateComputerOpenAPI(t, ctx, router)
+}
+
+func validateComputerOpenAPI(t *testing.T, ctx context.Context, router routers.Router) {
+	t.Helper()
+	mgr := computer.NewManager(fake.New(), computer.NewMemoryStore(), computer.Config{})
+	comp := &ComputerAPI{Manager: mgr, UserID: "openapi-user"}
+	mux := http.NewServeMux()
+	comp.register(mux)
+
+	check := func(method, target string, body any, wantStatus int) []byte {
+		t.Helper()
+		var reqBody []byte
+		if body != nil {
+			reqBody, _ = json.Marshal(body)
+		}
+		req := httptest.NewRequest(method, target, bytes.NewReader(reqBody))
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		route, pathParams, err := router.FindRoute(req)
+		if err != nil {
+			t.Fatalf("find route %s %s: %v", method, target, err)
+		}
+		reqVal := &openapi3filter.RequestValidationInput{
+			Request: req, PathParams: pathParams, Route: route,
+			Options: &openapi3filter.Options{AuthenticationFunc: openapi3filter.NoopAuthenticationFunc},
+		}
+		if err := openapi3filter.ValidateRequest(ctx, reqVal); err != nil {
+			t.Fatalf("request validation failed %s %s: %v", method, target, err)
+		}
+		req.Body = io.NopCloser(bytes.NewReader(reqBody))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != wantStatus {
+			t.Fatalf("%s %s status=%d want=%d body=%s", method, target, rec.Code, wantStatus, rec.Body.String())
+		}
+		respVal := &openapi3filter.ResponseValidationInput{
+			RequestValidationInput: reqVal, Status: rec.Code, Header: rec.Header(),
+			Body:    io.NopCloser(bytes.NewReader(rec.Body.Bytes())),
+			Options: &openapi3filter.Options{IncludeResponseStatus: true},
+		}
+		if err := openapi3filter.ValidateResponse(ctx, respVal); err != nil {
+			t.Fatalf("response validation failed %s %s: %v\nbody=%s", method, target, err, rec.Body.String())
+		}
+		return rec.Body.Bytes()
+	}
+
+	check(http.MethodGet, "/v1/computer", nil, http.StatusOK)
+	check(http.MethodPost, "/v1/computer/wake", nil, http.StatusOK)
+	sessRaw := check(http.MethodPost, "/v1/computer/sessions", map[string]any{"mode": "view", "task_id": "task-1"}, http.StatusCreated)
+	var sess createComputerSessionResponse
+	_ = json.Unmarshal(sessRaw, &sess)
+	check(http.MethodPatch, "/v1/computer/sessions/"+sess.ID, map[string]any{"mode": "control"}, http.StatusOK)
+	check(http.MethodDelete, "/v1/computer/sessions/"+sess.ID, nil, http.StatusNoContent)
+	ckptRaw := check(http.MethodPost, "/v1/computer/checkpoints", map[string]any{"label": "pre-upgrade"}, http.StatusCreated)
+	var ckpt computer.CheckpointInfo
+	_ = json.Unmarshal(ckptRaw, &ckpt)
+	check(http.MethodPost, "/v1/computer/restore", map[string]any{"checkpoint_id": ckpt.ID}, http.StatusOK)
+	check(http.MethodPost, "/v1/computer/reset", nil, http.StatusOK)
+	check(http.MethodPost, "/v1/computer/sleep", nil, http.StatusNoContent)
 }
 
 func validateHomeConnectorsWireShape(t *testing.T, ctx context.Context, router routers.Router, now time.Time) {

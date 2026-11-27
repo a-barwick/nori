@@ -9,9 +9,10 @@
 # when CI applies it.
 
 locals {
-  sentry_core_dsn = "https://773c0d8018d7fac6907eab4b67f6800d@o4507087334670336.ingest.us.sentry.io/4512349076389888"
-  sentry_web_dsn  = "https://45c82826f97d90746eee0c98a9a365db@o4507087334670336.ingest.us.sentry.io/4512349065838592"
-  home_ai_release = "https://github.com/${local.github_repo}/releases/download/nori-v0.1.0"
+  sentry_core_dsn   = "https://773c0d8018d7fac6907eab4b67f6800d@o4507087334670336.ingest.us.sentry.io/4512349076389888"
+  sentry_web_dsn    = "https://45c82826f97d90746eee0c98a9a365db@o4507087334670336.ingest.us.sentry.io/4512349065838592"
+  home_ai_release   = "https://github.com/${local.github_repo}/releases/download/nori-v0.1.0"
+  computer_provider = "disabled"
 
   # Environment shared by Core, Worker and the migration job.
   runtime_env = {
@@ -38,6 +39,9 @@ locals {
   # Core and Worker also serve the Google connection and Home AI.
   feature_env = merge(
     {
+      NORI_COMPUTER_MAX_DISK_GB          = "10"
+      NORI_COMPUTER_MEMORY_WATCHDOG_MB   = "3072"
+      NORI_COMPUTER_PROVIDER             = local.computer_provider
       NORI_GOOGLE_WORKSPACE_CLIENT_ID    = "886773017404-30r5muoab6n8skn4sbkphpi5qkvbj4a4.apps.googleusercontent.com"
       NORI_GOOGLE_WORKSPACE_REDIRECT_URL = "${local.web_origin}/api/v1/connections/oauth/callback"
       NORI_HOME_AI_DOWNLOAD_LINUX_AMD64  = "${local.home_ai_release}/nori-connector-0.1.0-amd64.deb"
@@ -51,10 +55,15 @@ locals {
       NORI_GOOGLE_WORKSPACE_TEST_USERS = local.private.google_workspace_test_users
     },
   )
-  feature_secrets = {
-    NORI_GOOGLE_WORKSPACE_CLIENT_SECRET = "nori-google-workspace-beta-client-secret:1"
-    NORI_HOME_AI_KEY                    = "nori-home-ai-key:1"
-  }
+  feature_secrets = merge(
+    {
+      NORI_GOOGLE_WORKSPACE_CLIENT_SECRET = "nori-google-workspace-beta-client-secret:1"
+      NORI_HOME_AI_KEY                    = "nori-home-ai-key:1"
+    },
+    local.computer_provider == "sprites" ? {
+      NORI_SPRITES_API_TOKEN = "nori-sprites-api-key:latest"
+    } : {},
+  )
 
   # Each map is NAME => { value } or NAME => { secret, version }, sorted by name.
   env = {
