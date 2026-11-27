@@ -1,6 +1,6 @@
 # Nori Project Rules
 
-1. **CI/CD owns deploys.** On authorized closeout (“wrap up,” “send it,” or “good to close thread?”), run `make check`, commit, merge solo work into `main`, and push `origin/main`. Leave rollout and release verification to CI/CD. Use PRs for team work, preserve local Xcode signing, and clean up finished worktrees and branches.
+1. **CI/CD owns deploys.** On authorized closeout (“wrap up,” “send it,” or “good to close thread?”), run `make check`, commit, merge solo work into `main`, and push `origin/main`. Leave rollout and release verification to CI/CD. Use PRs for team work, preserve local Xcode signing, and clean up finished worktrees and branches. Change GCP only in `infra/` (Terraform) and ship it through `main`. Never change GCP resources with `gcloud` or the Console, because the next Infrastructure run reverts changed resources and fails on new ones.
 2. **Use Inkling Mini 2 for all model-backed local development and tests.** Use cloud LLMs only when Austin explicitly asks. If Inkling is unavailable or lacks a required capability, report the gap and continue with checks that can run locally. Use Nori’s guarded model client.
 3. **Verify the requested outcome.** Exercise the affected flow through its normal entry point. For background work, verify completion and delivery to the expected destination.
 4. **Match checks to the change.** Start with focused checks. Use deterministic simulations for durable work, retries, and approvals. Measure performance claims against a representative baseline.
