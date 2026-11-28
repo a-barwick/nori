@@ -166,6 +166,7 @@ extension NoriStore {
         }
         if snapshot.didLoadServiceKeys {
             self.serviceKeys = snapshot.serviceKeys
+            markRefreshed(.serviceKeys)
         }
         if hasLoadedPreferences && hasLoadedSession {
             hasLoadedSnapshot = true

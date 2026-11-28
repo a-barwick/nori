@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 import NoriCore
 import NoriFeatures
@@ -26,5 +27,55 @@ struct MoreTabRedesignTests {
         let groups = MemoryTopicGrouping.group(facts)
         #expect(groups.map(\.topic) == ["About you", "Preferences", "Travel & Food", "Guitar"])
         #expect(groups.map { $0.items.count } == [2, 1, 1, 1])
+    }
+
+    @Test("PersonalizationPreferences encodes and decodes structured fields")
+    @MainActor
+    func personalizationCodableRoundTrip() throws {
+        let prefs = Preferences(
+            personalization: PersonalizationPreferences(
+                name: "Austin",
+                replyStyle: "Bullets first",
+                customInstructions: "Lead with the answer.",
+                focus: ["Engineering", "Research"],
+                workingOn: "Nori"
+            )
+        )
+        let data = try JSONEncoder().encode(prefs)
+        let decoded = try JSONDecoder().decode(Preferences.self, from: data)
+        #expect(decoded.personalization?.name == "Austin")
+        #expect(decoded.personalization?.replyStyle == "Bullets first")
+        #expect(decoded.personalization?.customInstructions == "Lead with the answer.")
+        #expect(decoded.personalization?.focus == ["Engineering", "Research"])
+        #expect(decoded.personalization?.workingOn == "Nori")
+        #expect(PersonalizationSettingsView.responseStyleOptions.count == 3)
+    }
+
+    @Test("NoriStore detects missing Exa key and Google Drive connection state")
+    @MainActor
+    func storeKeyAlertsAndDriveNudge() {
+        let store = NoriStore()
+        #expect(store.needsExaKeySetup == false)
+
+        store.serviceKeys = ServiceKeysResponse(
+            allowBYOK: true,
+            services: [ServiceKeyStatus(service: "exa", label: "Exa Web Search", configured: false, source: "none")]
+        )
+        #expect(store.needsExaKeySetup == true)
+        #expect(store.needsAnyKeySetup == true)
+
+        store.serviceKeys = ServiceKeysResponse(
+            allowBYOK: true,
+            services: [ServiceKeyStatus(service: "exa", label: "Exa Web Search", configured: true, source: "byok")]
+        )
+        #expect(store.needsExaKeySetup == false)
+
+        store.serviceKeys = ServiceKeysResponse(
+            allowBYOK: true,
+            services: [ServiceKeyStatus(service: "exa", label: "Exa Web Search", configured: false, source: "platform")]
+        )
+        #expect(store.needsExaKeySetup == false)
+
+        #expect(store.isGoogleDriveConnected == false)
     }
 }

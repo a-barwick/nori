@@ -3064,6 +3064,28 @@ components:
         dictation_language:
           type: string
 
+    PersonalizationPreferences:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 120
+        reply_style:
+          type: string
+          maxLength: 120
+        custom_instructions:
+          type: string
+          maxLength: 4000
+        focus:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            maxLength: 80
+        working_on:
+          type: string
+          maxLength: 240
+
     Preferences:
       type: object
       required:
@@ -3098,6 +3120,8 @@ components:
           $ref: "#/components/schemas/InputPreferences"
         proactivity:
           $ref: "#/components/schemas/ProactivityPreferences"
+        personalization:
+          $ref: "#/components/schemas/PersonalizationPreferences"
         onboarding_completed_at:
           $ref: "#/components/schemas/Instant"
         data_reset_at:
@@ -3138,6 +3162,8 @@ components:
           $ref: "#/components/schemas/InputPreferences"
         proactivity:
           $ref: "#/components/schemas/ProactivityPreferences"
+        personalization:
+          $ref: "#/components/schemas/PersonalizationPreferences"
         onboarding_completed_at:
           $ref: "#/components/schemas/Instant"
 

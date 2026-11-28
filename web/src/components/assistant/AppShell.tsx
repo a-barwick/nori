@@ -10,7 +10,7 @@ import { NoriTabIcon } from "@/components/mark/NoriMark";
 import { AppFrame } from "@/components/shell/AppFrame";
 import { Button } from "@/components/ui/primitives";
 import { useAppearance } from "@/lib/appearance";
-import { AssistantProvider, ResourceCacheProvider, useAssistant } from "@/lib/assistant/context";
+import { AssistantProvider, ResourceCacheProvider, useAssistant, useAssistantConfig } from "@/lib/assistant/context";
 import {
   ACCOUNT_DELETED_REDIRECT,
   APIError,
@@ -20,8 +20,9 @@ import {
   resetUserData,
   type ModelKeysResponse,
   type ModelSettings,
+  type ServiceKeysResponse,
 } from "@/lib/assistant/api";
-import { hasSelectedHomeChat, needsByokSetup } from "@/lib/assistant/modelSetup";
+import { hasSelectedHomeChat, needsByokSetup, needsExaSetup } from "@/lib/assistant/modelSetup";
 import { shouldShowOnboarding } from "@/lib/assistant/onboarding";
 import { useHydrated } from "@/lib/hooks";
 import {
@@ -272,10 +273,12 @@ function readLocalOnboardingDone(scope: string): string | null {
 
 function Frame({ scope, children }: { scope: string; children: ReactNode }) {
   const { runtime } = useAssistant();
+  const { capabilities } = useAssistantConfig();
   const summary = useSummary();
   const pendingInteractions = usePendingInteractions();
   const preferences = useResource<Preferences>("/preferences", { poll: 30_000, versioned: false });
   const modelKeys = useResource<ModelKeysResponse>("/settings/model-keys", { poll: 60_000, versioned: false });
+  const serviceKeys = useResource<ServiceKeysResponse>("/settings/service-keys", { poll: 60_000, versioned: false });
   const models = useResource<ModelSettings>("/settings/models", { poll: 60_000 });
   const path = usePathname();
   const router = useRouter();
@@ -327,8 +330,10 @@ function Frame({ scope, children }: { scope: string; children: ReactNode }) {
     ? pendingInteractions.items.filter(isActionableInteraction).length
     : (summary.needs_you ?? 0);
   const appsAttention = summary.apps_attention ?? 0;
-  const requiresByok = needsByokSetup(modelKeys.data, hasSelectedHomeChat(models.data));
-  const settingsAttention = appsAttention > 0 || requiresByok;
+  const requiresByok = needsByokSetup(modelKeys.data, hasSelectedHomeChat(models.data), capabilities);
+  const requiresExa = needsExaSetup(serviceKeys.data, capabilities);
+  const missingKeys = requiresByok || requiresExa;
+  const settingsAttention = appsAttention > 0 || missingKeys;
   const { busy } = runtime;
 
   const items: NavItem[] = [
@@ -358,9 +363,15 @@ function Frame({ scope, children }: { scope: string; children: ReactNode }) {
     path.startsWith("/memory") ||
     path.startsWith("/settings") ||
     path.startsWith("/connector");
-  const settingsDotLabel = appsAttention > 0
-    ? (appsAttention === 1 ? "1 app requires attention" : `${appsAttention} apps require attention`)
-    : "model setup required";
+  const settingsDotLabel = requiresByok && requiresExa
+    ? "AI model key and web search key needed"
+    : requiresByok
+      ? "AI model key needed"
+      : requiresExa
+        ? "web search key needed"
+        : appsAttention === 1
+          ? "1 app requires attention"
+          : `${appsAttention} apps require attention`;
 
   const onNavClick = (item: NavItem, active: boolean) => (event: React.MouseEvent<HTMLAnchorElement>) => {
     if (active && item.href === "/") {
@@ -408,7 +419,10 @@ function Frame({ scope, children }: { scope: string; children: ReactNode }) {
       {settingsAttention ? (
         <span
           aria-hidden="true"
-          className="absolute top-1.5 right-1.5 size-[7px] rounded-full bg-accent ring-2 ring-canvas"
+          className={cn(
+            "absolute top-1.5 right-1.5 size-[7px] rounded-full ring-2 ring-canvas",
+            missingKeys ? "bg-danger" : "bg-accent",
+          )}
         />
       ) : null}
     </Link>

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"nori/internal/state"
 )
@@ -24,20 +26,21 @@ const (
 var hhmmRe = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
 
 type Preferences struct {
-	Revision              int64                   `json:"revision"`
-	Timezone              string                  `json:"timezone"`
-	Locale                string                  `json:"locale,omitempty"`
-	WorkingHours          WorkingHours            `json:"working_hours"`
-	QuietHours            *QuietHours             `json:"quiet_hours,omitempty"`
-	DefaultDestinationIDs []string                `json:"default_destination_ids"`
-	AccountDefaults       map[string]string       `json:"account_defaults"`
-	Budgets               Budgets                 `json:"budgets"`
-	Input                 *InputPreferences       `json:"input,omitempty"`
-	Proactivity           *ProactivityPreferences `json:"proactivity,omitempty"`
-	OnboardingCompletedAt *time.Time              `json:"onboarding_completed_at,omitempty"`
-	DataResetAt           string                  `json:"data_reset_at,omitempty"`
-	DataResetPending      bool                    `json:"data_reset_pending,omitempty"`
-	UpdatedAt             *time.Time              `json:"updated_at,omitempty"`
+	Revision              int64                       `json:"revision"`
+	Timezone              string                      `json:"timezone"`
+	Locale                string                      `json:"locale,omitempty"`
+	WorkingHours          WorkingHours                `json:"working_hours"`
+	QuietHours            *QuietHours                 `json:"quiet_hours,omitempty"`
+	DefaultDestinationIDs []string                    `json:"default_destination_ids"`
+	AccountDefaults       map[string]string           `json:"account_defaults"`
+	Budgets               Budgets                     `json:"budgets"`
+	Input                 *InputPreferences           `json:"input,omitempty"`
+	Proactivity           *ProactivityPreferences     `json:"proactivity,omitempty"`
+	Personalization       *PersonalizationPreferences `json:"personalization,omitempty"`
+	OnboardingCompletedAt *time.Time                  `json:"onboarding_completed_at,omitempty"`
+	DataResetAt           string                      `json:"data_reset_at,omitempty"`
+	DataResetPending      bool                        `json:"data_reset_pending,omitempty"`
+	UpdatedAt             *time.Time                  `json:"updated_at,omitempty"`
 }
 
 type WorkingHours []WorkingInterval
@@ -122,17 +125,37 @@ type InputPreferences struct {
 	DictationLanguage string `json:"dictation_language,omitempty"`
 }
 
+type PersonalizationPreferences struct {
+	Name               string   `json:"name,omitempty"`
+	ReplyStyle         string   `json:"reply_style,omitempty"`
+	CustomInstructions string   `json:"custom_instructions,omitempty"`
+	Focus              []string `json:"focus,omitempty"`
+	WorkingOn          string   `json:"working_on,omitempty"`
+}
+
+func (p *PersonalizationPreferences) IsEmpty() bool {
+	if p == nil {
+		return true
+	}
+	return strings.TrimSpace(p.Name) == "" &&
+		strings.TrimSpace(p.ReplyStyle) == "" &&
+		strings.TrimSpace(p.CustomInstructions) == "" &&
+		len(p.Focus) == 0 &&
+		strings.TrimSpace(p.WorkingOn) == ""
+}
+
 type PreferencesEditable struct {
-	Timezone              string                  `json:"timezone"`
-	Locale                string                  `json:"locale,omitempty"`
-	WorkingHours          WorkingHours            `json:"working_hours"`
-	QuietHours            *QuietHours             `json:"quiet_hours,omitempty"`
-	DefaultDestinationIDs []string                `json:"default_destination_ids"`
-	AccountDefaults       map[string]string       `json:"account_defaults"`
-	Budgets               Budgets                 `json:"budgets"`
-	Input                 *InputPreferences       `json:"input,omitempty"`
-	Proactivity           *ProactivityPreferences `json:"proactivity,omitempty"`
-	OnboardingCompletedAt *time.Time              `json:"onboarding_completed_at,omitempty"`
+	Timezone              string                      `json:"timezone"`
+	Locale                string                      `json:"locale,omitempty"`
+	WorkingHours          WorkingHours                `json:"working_hours"`
+	QuietHours            *QuietHours                 `json:"quiet_hours,omitempty"`
+	DefaultDestinationIDs []string                    `json:"default_destination_ids"`
+	AccountDefaults       map[string]string           `json:"account_defaults"`
+	Budgets               Budgets                     `json:"budgets"`
+	Input                 *InputPreferences           `json:"input,omitempty"`
+	Proactivity           *ProactivityPreferences     `json:"proactivity,omitempty"`
+	Personalization       *PersonalizationPreferences `json:"personalization,omitempty"`
+	OnboardingCompletedAt *time.Time                  `json:"onboarding_completed_at,omitempty"`
 }
 
 var (
@@ -280,6 +303,55 @@ func validateQuietHours(q *QuietHours) bool {
 	return hhmmRe.MatchString(q.Start) && hhmmRe.MatchString(q.End)
 }
 
+func validatePersonalization(p *PersonalizationPreferences) bool {
+	if p == nil {
+		return true
+	}
+	if utf8.RuneCountInString(p.Name) > 120 ||
+		utf8.RuneCountInString(p.ReplyStyle) > 120 ||
+		utf8.RuneCountInString(p.CustomInstructions) > 4000 ||
+		utf8.RuneCountInString(p.WorkingOn) > 240 ||
+		len(p.Focus) > 20 {
+		return false
+	}
+	for _, item := range p.Focus {
+		if utf8.RuneCountInString(item) > 80 {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizePersonalization(p *PersonalizationPreferences) *PersonalizationPreferences {
+	if p == nil {
+		return nil
+	}
+	out := &PersonalizationPreferences{
+		Name:               strings.TrimSpace(p.Name),
+		ReplyStyle:         strings.TrimSpace(p.ReplyStyle),
+		CustomInstructions: strings.TrimSpace(p.CustomInstructions),
+		WorkingOn:          strings.TrimSpace(p.WorkingOn),
+	}
+	if len(p.Focus) > 0 {
+		seen := make(map[string]struct{}, len(p.Focus))
+		for _, item := range p.Focus {
+			trimmed := strings.TrimSpace(item)
+			if trimmed == "" {
+				continue
+			}
+			if _, ok := seen[trimmed]; ok {
+				continue
+			}
+			seen[trimmed] = struct{}{}
+			out.Focus = append(out.Focus, trimmed)
+		}
+	}
+	if out.IsEmpty() {
+		return nil
+	}
+	return out
+}
+
 func defaultPreferences(zone string) Preferences {
 	if _, err := time.LoadLocation(zone); zone == "" || err != nil {
 		zone = DefaultTimezone
@@ -321,7 +393,7 @@ func (s *Service) SavePreferences(ctx context.Context, requestID string, expecte
 	if _, err := time.LoadLocation(value.Timezone); err != nil || value.Budgets.TaskUSD <= 0 {
 		return state.MutationReceipt{}, state.ErrInvalidResource
 	}
-	if !validateQuietHours(value.QuietHours) || !validateProactivity(value.Proactivity) {
+	if !validateQuietHours(value.QuietHours) || !validateProactivity(value.Proactivity) || !validatePersonalization(value.Personalization) {
 		return state.MutationReceipt{}, state.ErrInvalidResource
 	}
 	return s.Store.Mutate(ctx, state.Mutation{
@@ -348,6 +420,8 @@ func (s *Service) SavePreferences(ctx context.Context, requestID string, expecte
 			onboardingCompletedAt := value.OnboardingCompletedAt
 			quietHours := value.QuietHours
 			proactivity := value.Proactivity
+			personalization := value.Personalization
+			personalizationExplicit := value.Personalization != nil
 			if current != nil {
 				revision = current.Revision + 1
 				var existing Preferences
@@ -361,13 +435,20 @@ func (s *Service) SavePreferences(ctx context.Context, requestID string, expecte
 					if proactivity == nil {
 						proactivity = existing.Proactivity
 					}
+					if !personalizationExplicit {
+						personalization = existing.Personalization
+					}
 				}
+			}
+			if personalizationExplicit {
+				personalization = normalizePersonalization(personalization)
 			}
 			prefs := Preferences{
 				Revision: revision, Timezone: value.Timezone, Locale: value.Locale, WorkingHours: value.WorkingHours,
 				QuietHours: quietHours, DefaultDestinationIDs: nonNil(value.DefaultDestinationIDs),
 				AccountDefaults: value.AccountDefaults, Budgets: value.Budgets, Input: value.Input,
 				Proactivity:           proactivity,
+				Personalization:       personalization,
 				OnboardingCompletedAt: onboardingCompletedAt,
 			}
 			if prefs.AccountDefaults == nil {

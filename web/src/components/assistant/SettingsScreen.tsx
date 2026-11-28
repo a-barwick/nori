@@ -17,6 +17,7 @@ import {
   Sparkles,
   Sun,
   UserCircle,
+  Wand2,
   X,
 } from "lucide-react";
 import { NoriMark } from "@/components/mark/NoriMark";
@@ -50,6 +51,7 @@ import { cn } from "@/lib/utils";
 import { ApiCosts } from "./ApiCosts";
 import { AppBrandIcon } from "./BrandIcons";
 import { ModelsSettings } from "./ModelsSettings";
+import { PersonalizationSettings } from "./PersonalizationSettings";
 import { NotificationsSettings } from "./ProactivitySettings";
 import { SignOutForm } from "./SignOutForm";
 import { OperationRows, shownOperations } from "./WorkScreen";
@@ -74,6 +76,7 @@ type List<T> = { items: T[] };
 export type SettingsSection =
   | "notifications"
   | "permissions"
+  | "personalization"
   | "preferences"
   | "api-costs"
   | "appearance"
@@ -94,6 +97,7 @@ const SECTIONS: {
 }[] = [
   { id: "notifications", title: "Notifications", icon: Bell, feature: "preferences" },
   { id: "permissions", title: "Permissions", icon: ShieldCheck, feature: "permissions" },
+  { id: "personalization", title: "Personalization", icon: Wand2, feature: "preferences" },
   { id: "preferences", title: "Preferences", icon: SlidersHorizontal, feature: "preferences" },
   { id: "api-costs", title: "Usage & Budgets", icon: BarChart3 },
   { id: "appearance", title: "Appearance", icon: Monitor },
@@ -187,6 +191,8 @@ export function SettingsScreen({ section, userEmail }: { section: SettingsSectio
         <NotificationsSettings pushAvailable={capabilities?.assistant_features?.push_notifications} />
       ) : section === "permissions" ? (
         <Permissions />
+      ) : section === "personalization" ? (
+        <PersonalizationSettings />
       ) : section === "preferences" ? (
         <PreferencesForm />
       ) : section === "api-costs" ? (

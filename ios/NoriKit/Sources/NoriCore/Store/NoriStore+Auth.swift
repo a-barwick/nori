@@ -229,6 +229,18 @@ extension NoriStore {
             var nextPrefs = preferences
             nextPrefs.timezone = TimeZone.current.identifier
             nextPrefs.onboardingCompletedAt = ISO8601DateFormatter().string(from: Date())
+            if saveAboutYou {
+                let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                let trimmedStyle = replyStyle.trimmingCharacters(in: .whitespacesAndNewlines)
+                let trimmedWorking = workingOn.trimmingCharacters(in: .whitespacesAndNewlines)
+                nextPrefs.personalization = PersonalizationPreferences(
+                    name: trimmedName.isEmpty ? nil : trimmedName,
+                    replyStyle: trimmedStyle.isEmpty ? nil : trimmedStyle,
+                    customInstructions: preferences.personalization?.customInstructions,
+                    focus: focus.isEmpty ? nil : focus,
+                    workingOn: trimmedWorking.isEmpty ? nil : trimmedWorking
+                )
+            }
             do {
                 let receipt = try await transport.savePreferences(
                     nextPrefs,
@@ -266,6 +278,7 @@ extension NoriStore {
         isDeletingAccount = true
         defer { isDeletingAccount = false }
         let onboardingKey = onboardingDoneKey
+        let driveNudgeKey = driveNudgeDismissedKey
         let observedKey = observedResetKey
         let legacyResetKey = authState.email.map { "nori.data-reset.completion." + $0.lowercased() }
         do {
@@ -280,6 +293,7 @@ extension NoriStore {
             throw error
         }
         if let key = onboardingKey { UserDefaults.standard.removeObject(forKey: key) }
+        clearDriveNudgeDismissed(forKey: driveNudgeKey)
         if let key = observedKey { UserDefaults.standard.removeObject(forKey: key) }
         if let legacyResetKey { UserDefaults.standard.removeObject(forKey: legacyResetKey) }
         accountDeletePending = false
@@ -404,6 +418,7 @@ extension NoriStore {
         let signedInState = authState
         let currentConnectionState = connectionState
         if let key = onboardingDoneKey { UserDefaults.standard.removeObject(forKey: key) }
+        clearDriveNudgeDismissed(forKey: driveNudgeDismissedKey)
         if case .signedIn(let email) = signedInState {
             UserDefaults.standard.removeObject(forKey: "nori.diagnostics.modelSelection.v1." + email.lowercased())
         }

@@ -904,6 +904,44 @@ public struct InputPreferences: Sendable, Codable, Hashable {
     }
 }
 
+public struct PersonalizationPreferences: Sendable, Codable, Hashable {
+    public var name: String?
+    public var replyStyle: String?
+    public var customInstructions: String?
+    public var focus: [String]?
+    public var workingOn: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case replyStyle = "reply_style"
+        case customInstructions = "custom_instructions"
+        case focus
+        case workingOn = "working_on"
+    }
+
+    public init(
+        name: String? = nil,
+        replyStyle: String? = nil,
+        customInstructions: String? = nil,
+        focus: [String]? = nil,
+        workingOn: String? = nil
+    ) {
+        self.name = name
+        self.replyStyle = replyStyle
+        self.customInstructions = customInstructions
+        self.focus = focus
+        self.workingOn = workingOn
+    }
+
+    public var isEmpty: Bool {
+        (name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) &&
+        (replyStyle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) &&
+        (customInstructions?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) &&
+        (focus?.isEmpty ?? true) &&
+        (workingOn?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+    }
+}
+
 public struct Preferences: Sendable, Codable, Hashable {
     public var revision: Int
     public var timezone: String
@@ -915,6 +953,7 @@ public struct Preferences: Sendable, Codable, Hashable {
     public var budgets: BudgetPreferences
     public var input: InputPreferences?
     public var proactivity: ProactivityPreferences?
+    public var personalization: PersonalizationPreferences?
     public var onboardingCompletedAt: String?
     public var dataResetAt: String?
     public var dataResetPending: Bool?
@@ -931,6 +970,7 @@ public struct Preferences: Sendable, Codable, Hashable {
         case budgets
         case input
         case proactivity
+        case personalization
         case onboardingCompletedAt = "onboarding_completed_at"
         case dataResetAt = "data_reset_at"
         case dataResetPending = "data_reset_pending"
@@ -948,6 +988,7 @@ public struct Preferences: Sendable, Codable, Hashable {
         budgets: BudgetPreferences = BudgetPreferences(),
         input: InputPreferences? = nil,
         proactivity: ProactivityPreferences? = nil,
+        personalization: PersonalizationPreferences? = nil,
         onboardingCompletedAt: String? = nil,
         dataResetAt: String? = nil,
         dataResetPending: Bool? = nil,
@@ -963,6 +1004,7 @@ public struct Preferences: Sendable, Codable, Hashable {
         self.budgets = budgets
         self.input = input
         self.proactivity = proactivity
+        self.personalization = personalization
         self.onboardingCompletedAt = onboardingCompletedAt
         self.dataResetAt = dataResetAt
         self.dataResetPending = dataResetPending

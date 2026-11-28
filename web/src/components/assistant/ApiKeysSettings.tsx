@@ -241,7 +241,7 @@ export function ApiKeysContent({
 
         {requiresKey && (
           <Notice tone="warning">
-            Add your {primaryLabel} API key below to start chatting and running tasks with Nori.
+            Add your {primaryLabel} API key below so Nori can chat and run tasks for you.
           </Notice>
         )}
 
@@ -460,12 +460,23 @@ export function ServiceKeysContent({
     }
   };
 
-  return (
-    <Section title="Web search">
-      <div className="space-y-3">
-        {!allowByok && showTrialNotice && <Notice>{TRIAL_BYOK_NOTICE}</Notice>}
+  const needsExaKey =
+    allowByok &&
+    services.some((item) => item.service === "exa" && !item.configured && item.source !== "platform");
 
-        {!!error && <Failure error={error} onRetry={onRetry} />}
+  return (
+    <div id="web-search">
+      <Section title="Web search">
+        <div className="space-y-3">
+          {!allowByok && showTrialNotice && <Notice>{TRIAL_BYOK_NOTICE}</Notice>}
+
+          {needsExaKey && (
+            <Notice tone="neutral">
+              For the best experience, enable web search by adding an Exa API key below.
+            </Notice>
+          )}
+
+          {!!error && <Failure error={error} onRetry={onRetry} />}
 
         {services.length > 0 && (
           <Rows label="Web search">
@@ -584,5 +595,6 @@ export function ServiceKeysContent({
         )}
       </div>
     </Section>
+    </div>
   );
 }

@@ -81,7 +81,7 @@ public struct ModelsSettingsView: View {
                     }
                     if store.needsModelKeySetup && !hasPairedHomeDevice {
                         NoriNotice(
-                            title: "Add a provider API key to use Chat and Work.",
+                            title: "Add an AI model key below so Nori can chat and run tasks for you.",
                             tone: .warning,
                             systemImage: "key.fill"
                         )
@@ -125,6 +125,14 @@ public struct ModelsSettingsView: View {
 
                 VStack(alignment: .leading, spacing: 0) {
                     NoriSectionHeader("Web search")
+                    if store.needsExaKeySetup {
+                        NoriNotice(
+                            title: "For the best experience, enable web search by adding an Exa API key below.",
+                            tone: .neutral,
+                            systemImage: "globe"
+                        )
+                        .padding(.bottom, 10)
+                    }
                     if let serviceKeyLoadError, store.serviceKeys.services.isEmpty {
                         NoriNotice(title: "Could not load web search keys", detail: serviceKeyLoadError, tone: .danger) {
                             Button("Retry") { Task { await reloadServiceKeys() } }

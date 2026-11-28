@@ -196,7 +196,7 @@ export function Pill({ tone = "neutral", children }: { tone?: Tone; children: Re
   return (
     <span
       className={cn(
-        "inline-flex h-[23px] shrink-0 items-center whitespace-nowrap rounded-full px-2.5 text-[11.5px] font-semibold",
+        "inline-flex h-[23px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-[11.5px] font-semibold",
         TONES[tone],
       )}
     >

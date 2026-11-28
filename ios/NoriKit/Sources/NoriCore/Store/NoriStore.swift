@@ -231,6 +231,7 @@ public final class NoriStore {
         case memory
         case permissionsAndPreferences
         case modelKeys
+        case serviceKeys
         case computerStatus
     }
 
@@ -412,6 +413,73 @@ public final class NoriStore {
         allowBYOK && modelKeys.byokRequired && !hasConfiguredModelKey && !hasSelectedHomeChat
     }
 
+    public var needsExaKeySetup: Bool {
+        guard serviceKeys.allowBYOK != nil || capabilities != nil else { return false }
+        guard allowBYOK else { return false }
+        if !serviceKeys.services.isEmpty {
+            guard let exa = serviceKeys.services.first(where: { $0.service == "exa" }) else {
+                return false
+            }
+            return !exa.configured && exa.source != "platform"
+        }
+        if let caps = capabilities?.serviceKeys {
+            return !caps.exaConfigured && !caps.platformExaAvailable
+        }
+        return false
+    }
+
+    public var needsAnyKeySetup: Bool {
+        needsModelKeySetup || needsExaKeySetup
+    }
+
+    public var driveNudgeDismissedKey: String? {
+        authState.email.map { "nori.nudge.google_drive.dismissed." + $0.lowercased() }
+    }
+
+    public private(set) var driveNudgeDismissedRevision: Int = 0
+
+    public var isGoogleDriveNudgeDismissed: Bool {
+        _ = driveNudgeDismissedRevision
+        guard let key = driveNudgeDismissedKey else { return false }
+        return UserDefaults.standard.bool(forKey: key)
+    }
+
+    public func dismissGoogleDriveNudge() {
+        guard let key = driveNudgeDismissedKey else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        driveNudgeDismissedRevision &+= 1
+    }
+
+    func clearDriveNudgeDismissed(forKey key: String?) {
+        if let key {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+        driveNudgeDismissedRevision &+= 1
+    }
+
+    public var isGoogleIntegrationAvailable: Bool {
+        integrations.contains { $0.id == "google" && $0.availability == "available" }
+    }
+
+    public var isGoogleDriveConnected: Bool {
+        connections.contains { connection in
+            guard connection.integrationID == "google",
+                  connection.status != .disconnected,
+                  connection.status != .disconnecting,
+                  let providerID = connection.account?.providerID,
+                  !providerID.isEmpty,
+                  let capabilities = connection.capabilities
+            else {
+                return false
+            }
+            return capabilities.contains("files.read") && capabilities.contains("files.write")
+        }
+    }
+
+    public var hasLoadedConnectionsForNudge: Bool {
+        connectionsRead == .loaded && integrationsRead == .loaded
+    }
+
     public var activeBillingAccessBlock: BillingAccessBlock? {
         if let entitlement = capabilities?.entitlement {
             if entitlement.suspended {
@@ -493,15 +561,23 @@ public final class NoriStore {
             _ = await (workTask, libraryTask, automationsTask, computerTask)
         case .more:
             let shouldRefreshCaps = force || capabilities == nil
+            let shouldRefreshServiceKeys = !isRefreshFresh(.serviceKeys, force: force)
             async let summaryTask: Void = refreshSummary(force: force)
             async let modelKeysTask: Void = refreshModelKeys(force: force)
+            async let serviceKeysTask: Void = {
+                if shouldRefreshServiceKeys {
+                    if (try? await self.refreshServiceKeysThrowing()) != nil {
+                        await self.markRefreshed(.serviceKeys)
+                    }
+                }
+            }()
             async let prefsTask: Void = refreshPermissionsAndPreferences(force: force)
             async let capsTask: Void = {
                 if shouldRefreshCaps {
                     await self.refreshCapabilities()
                 }
             }()
-            _ = await (summaryTask, modelKeysTask, prefsTask, capsTask)
+            _ = await (summaryTask, modelKeysTask, serviceKeysTask, prefsTask, capsTask)
         }
     }
 

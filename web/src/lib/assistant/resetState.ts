@@ -36,6 +36,7 @@ function clearLocalData(scope: string) {
   try {
     for (const key of [
       `nori.onboarding.done:${scope}`,
+      `nori.nudge.google_drive.dismissed:${scope}`,
       `nori-draft-assistant-v1:${scope}`,
       "nori-diagnostics-debug",
       "nori.appearance",

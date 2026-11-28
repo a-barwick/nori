@@ -1729,6 +1729,7 @@ public actor LiveNoriTransport: NoriTransport {
             let budgets: BudgetPreferences
             let input: InputPreferences?
             let proactivity: ProactivityPreferences?
+            let personalization: PersonalizationPreferences?
             let onboarding_completed_at: String?
         }
         let val = PrefVal(
@@ -1741,6 +1742,7 @@ public actor LiveNoriTransport: NoriTransport {
             budgets: preferences.budgets,
             input: preferences.input,
             proactivity: preferences.proactivity,
+            personalization: preferences.personalization,
             onboarding_completed_at: preferences.onboardingCompletedAt
         )
         return try await mutateEnvelope(

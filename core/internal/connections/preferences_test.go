@@ -92,3 +92,103 @@ func TestPreferencesProactivityDefaultsAndNilPreservation(t *testing.T) {
 		t.Fatalf("expected ErrInvalidResource for bogus push_policy, got %v", err)
 	}
 }
+
+func TestPreferencesPersonalizationPersistenceAndValidation(t *testing.T) {
+	ctx := context.Background()
+	store := records.NewShared(memstore.New(), users.User{
+		ID:       "11111111-1111-4111-8111-111111111111",
+		Email:    "owner@example.com",
+		TimeZone: "America/Los_Angeles",
+	}, 1)
+	svc := New(store, secret.Unavailable{}, "https://nori.test/callback")
+
+	// 1. Save explicit personalization with whitespace trimming and focus deduplication.
+	_, err := svc.SavePreferences(ctx, "req-p1", 0, PreferencesEditable{
+		Timezone:              "America/Los_Angeles",
+		WorkingHours:          WorkingHours{},
+		DefaultDestinationIDs: []string{},
+		AccountDefaults:       map[string]string{},
+		Budgets:               Budgets{TaskUSD: 5.0},
+		Personalization: &PersonalizationPreferences{
+			Name:               "  Austin  ",
+			ReplyStyle:         "Concise & direct",
+			CustomInstructions: "  Lead with the answer. ",
+			Focus:              []string{"Engineering", "  ", "Engineering", "Research"},
+			WorkingOn:          " Building Nori ",
+		},
+	})
+	if err != nil {
+		t.Fatalf("SavePreferences(p1): %v", err)
+	}
+
+	got, _, err := svc.Preferences(ctx)
+	if err != nil {
+		t.Fatalf("Preferences: %v", err)
+	}
+	if got.Personalization == nil ||
+		got.Personalization.Name != "Austin" ||
+		got.Personalization.ReplyStyle != "Concise & direct" ||
+		got.Personalization.CustomInstructions != "Lead with the answer." ||
+		got.Personalization.WorkingOn != "Building Nori" ||
+		len(got.Personalization.Focus) != 2 ||
+		got.Personalization.Focus[0] != "Engineering" ||
+		got.Personalization.Focus[1] != "Research" {
+		t.Fatalf("unexpected personalization: %+v", got.Personalization)
+	}
+
+	// 2. Saving with Personalization == nil preserves existing personalization.
+	_, err = svc.SavePreferences(ctx, "req-p2", got.Revision, PreferencesEditable{
+		Timezone:              "America/New_York",
+		WorkingHours:          WorkingHours{},
+		DefaultDestinationIDs: []string{},
+		AccountDefaults:       map[string]string{},
+		Budgets:               Budgets{TaskUSD: 5.0},
+	})
+	if err != nil {
+		t.Fatalf("SavePreferences(p2): %v", err)
+	}
+	preserved, _, err := svc.Preferences(ctx)
+	if err != nil {
+		t.Fatalf("Preferences(preserved): %v", err)
+	}
+	if preserved.Personalization == nil || preserved.Personalization.Name != "Austin" {
+		t.Fatalf("expected personalization preserved on nil save, got %+v", preserved.Personalization)
+	}
+
+	// 3. Explicit empty Personalization struct clears saved personalization.
+	_, err = svc.SavePreferences(ctx, "req-p3", preserved.Revision, PreferencesEditable{
+		Timezone:              "America/New_York",
+		WorkingHours:          WorkingHours{},
+		DefaultDestinationIDs: []string{},
+		AccountDefaults:       map[string]string{},
+		Budgets:               Budgets{TaskUSD: 5.0},
+		Personalization:       &PersonalizationPreferences{},
+	})
+	if err != nil {
+		t.Fatalf("SavePreferences(p3): %v", err)
+	}
+	cleared, _, err := svc.Preferences(ctx)
+	if err != nil {
+		t.Fatalf("Preferences(cleared): %v", err)
+	}
+	if cleared.Personalization != nil {
+		t.Fatalf("expected personalization cleared, got %+v", cleared.Personalization)
+	}
+
+	// 4. Over-limit custom_instructions is rejected.
+	tooLong := make([]byte, 4001)
+	for i := range tooLong {
+		tooLong[i] = 'a'
+	}
+	_, err = svc.SavePreferences(ctx, "req-p4", cleared.Revision, PreferencesEditable{
+		Timezone:              "America/New_York",
+		WorkingHours:          WorkingHours{},
+		DefaultDestinationIDs: []string{},
+		AccountDefaults:       map[string]string{},
+		Budgets:               Budgets{TaskUSD: 5.0},
+		Personalization:       &PersonalizationPreferences{CustomInstructions: string(tooLong)},
+	})
+	if !errors.Is(err, state.ErrInvalidResource) {
+		t.Fatalf("expected ErrInvalidResource for oversized custom_instructions, got %v", err)
+	}
+}

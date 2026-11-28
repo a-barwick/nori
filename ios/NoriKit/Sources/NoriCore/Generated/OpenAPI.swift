@@ -6798,6 +6798,36 @@ public enum OpenAPI {
         }
     }
 
+    public struct PersonalizationPreferences: Sendable, Codable, Hashable {
+        public var name: String?
+        public var replyStyle: String?
+        public var customInstructions: String?
+        public var focus: [String]?
+        public var workingOn: String?
+
+        public init(
+            name: String? = nil,
+            replyStyle: String? = nil,
+            customInstructions: String? = nil,
+            focus: [String]? = nil,
+            workingOn: String? = nil
+        ) {
+            self.name = name
+            self.replyStyle = replyStyle
+            self.customInstructions = customInstructions
+            self.focus = focus
+            self.workingOn = workingOn
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case name
+            case replyStyle = "reply_style"
+            case customInstructions = "custom_instructions"
+            case focus
+            case workingOn = "working_on"
+        }
+    }
+
     public struct PinnedProfile: Sendable, Codable, Hashable {
         public var backend: String?
         public var model: String?
@@ -6855,6 +6885,7 @@ public enum OpenAPI {
         public var budgets: OpenAPI.BudgetPreferences
         public var input: OpenAPI.InputPreferences?
         public var proactivity: OpenAPI.ProactivityPreferences?
+        public var personalization: OpenAPI.PersonalizationPreferences?
         public var onboardingCompletedAt: OpenAPI.Instant?
         public var dataResetAt: OpenAPI.Instant?
         public var dataResetPending: Bool?
@@ -6871,6 +6902,7 @@ public enum OpenAPI {
             budgets: OpenAPI.BudgetPreferences,
             input: OpenAPI.InputPreferences? = nil,
             proactivity: OpenAPI.ProactivityPreferences? = nil,
+            personalization: OpenAPI.PersonalizationPreferences? = nil,
             onboardingCompletedAt: OpenAPI.Instant? = nil,
             dataResetAt: OpenAPI.Instant? = nil,
             dataResetPending: Bool? = nil,
@@ -6886,6 +6918,7 @@ public enum OpenAPI {
             self.budgets = budgets
             self.input = input
             self.proactivity = proactivity
+            self.personalization = personalization
             self.onboardingCompletedAt = onboardingCompletedAt
             self.dataResetAt = dataResetAt
             self.dataResetPending = dataResetPending
@@ -6903,6 +6936,7 @@ public enum OpenAPI {
             case budgets
             case input
             case proactivity
+            case personalization
             case onboardingCompletedAt = "onboarding_completed_at"
             case dataResetAt = "data_reset_at"
             case dataResetPending = "data_reset_pending"
@@ -6942,6 +6976,7 @@ public enum OpenAPI {
         public var budgets: OpenAPI.BudgetPreferences
         public var input: OpenAPI.InputPreferences?
         public var proactivity: OpenAPI.ProactivityPreferences?
+        public var personalization: OpenAPI.PersonalizationPreferences?
         public var onboardingCompletedAt: OpenAPI.Instant?
 
         public init(
@@ -6954,6 +6989,7 @@ public enum OpenAPI {
             budgets: OpenAPI.BudgetPreferences,
             input: OpenAPI.InputPreferences? = nil,
             proactivity: OpenAPI.ProactivityPreferences? = nil,
+            personalization: OpenAPI.PersonalizationPreferences? = nil,
             onboardingCompletedAt: OpenAPI.Instant? = nil
         ) {
             self.timezone = timezone
@@ -6965,6 +7001,7 @@ public enum OpenAPI {
             self.budgets = budgets
             self.input = input
             self.proactivity = proactivity
+            self.personalization = personalization
             self.onboardingCompletedAt = onboardingCompletedAt
         }
 
@@ -6978,6 +7015,7 @@ public enum OpenAPI {
             case budgets
             case input
             case proactivity
+            case personalization
             case onboardingCompletedAt = "onboarding_completed_at"
         }
     }

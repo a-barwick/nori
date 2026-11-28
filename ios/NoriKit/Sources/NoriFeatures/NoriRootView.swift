@@ -80,7 +80,20 @@ public struct NoriRootView: View {
     }
 
     private var hasSettingsAttention: Bool {
-        store.appsAttentionCount > 0 || store.needsModelKeySetup
+        store.appsAttentionCount > 0 || store.needsAnyKeySetup
+    }
+
+    private var settingsAttentionAccessibilityValue: String {
+        if store.needsModelKeySetup && store.needsExaKeySetup {
+            return "AI model key and web search key needed"
+        }
+        if store.needsModelKeySetup {
+            return "AI model key needed"
+        }
+        if store.needsExaKeySetup {
+            return "Web search key needed"
+        }
+        return store.appsAttentionCount > 0 ? "Requires attention" : ""
     }
 
     private var activePillFill: Color {
@@ -349,6 +362,8 @@ public struct NoriRootView: View {
                                 AppsView(store: store)
                             case .mcpDetail(let serverID):
                                 MCPDetailView(store: store, serverID: serverID)
+                            case .personalization:
+                                PersonalizationSettingsView(store: store)
                             case .memory:
                                 MemoryView(store: store)
                             case .permissions:
@@ -593,7 +608,7 @@ public struct NoriRootView: View {
             .overlay(alignment: .topTrailing) {
                 if hasSettingsAttention {
                     Circle()
-                        .fill(NoriColors.brandPrimary)
+                        .fill(store.needsAnyKeySetup ? NoriColors.danger : NoriColors.brandPrimary)
                         .frame(width: 7, height: 7)
                         .overlay(Circle().stroke(NoriColors.canvas, lineWidth: 1.5))
                         .padding(.top, dotInset)
@@ -605,7 +620,7 @@ public struct NoriRootView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Settings")
-        .accessibilityValue(hasSettingsAttention ? "Requires attention" : "")
+        .accessibilityValue(settingsAttentionAccessibilityValue)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         #if os(iOS)
         .accessibilityShowsLargeContentViewer()

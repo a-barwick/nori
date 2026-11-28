@@ -87,6 +87,7 @@ export type PushDevice = Schemas["PushDevice"];
 export type BriefItem = Schemas["BriefItem"];
 export type BudgetPreferences = Schemas["BudgetPreferences"];
 export type InputPreferences = Schemas["InputPreferences"];
+export type PersonalizationPreferences = Schemas["PersonalizationPreferences"];
 export type Preferences = Schemas["Preferences"];
 export type PreferencesEditable = Schemas["PreferencesEditable"];
 export type PreferencesChange = Schemas["PreferencesChange"];

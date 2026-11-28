@@ -1834,6 +1834,13 @@ export interface components {
         InputPreferences: {
             dictation_language?: string;
         };
+        PersonalizationPreferences: {
+            name?: string;
+            reply_style?: string;
+            custom_instructions?: string;
+            focus?: string[];
+            working_on?: string;
+        };
         Preferences: {
             revision: components["schemas"]["Revision"];
             timezone: components["schemas"]["Timezone"];
@@ -1847,6 +1854,7 @@ export interface components {
             budgets: components["schemas"]["BudgetPreferences"];
             input?: components["schemas"]["InputPreferences"];
             proactivity?: components["schemas"]["ProactivityPreferences"];
+            personalization?: components["schemas"]["PersonalizationPreferences"];
             onboarding_completed_at?: components["schemas"]["Instant"];
             data_reset_at?: components["schemas"]["Instant"];
             data_reset_pending?: boolean;
@@ -1864,6 +1872,7 @@ export interface components {
             budgets: components["schemas"]["BudgetPreferences"];
             input?: components["schemas"]["InputPreferences"];
             proactivity?: components["schemas"]["ProactivityPreferences"];
+            personalization?: components["schemas"]["PersonalizationPreferences"];
             onboarding_completed_at?: components["schemas"]["Instant"];
         };
         PreferencesChange: {

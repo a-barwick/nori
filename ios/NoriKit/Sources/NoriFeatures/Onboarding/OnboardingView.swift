@@ -37,6 +37,11 @@ public struct OnboardingView: View {
 
     public init(store: NoriStore) {
         self.store = store
+        let p = store.preferences.personalization
+        self._name = State(initialValue: p?.name ?? "")
+        self._replyStyle = State(initialValue: (p?.replyStyle?.isEmpty == false ? p?.replyStyle : nil) ?? "Concise & direct")
+        self._selectedFocus = State(initialValue: Set(p?.focus ?? []))
+        self._workingOn = State(initialValue: p?.workingOn ?? "")
     }
 
     private var appearance: NoriAppearance {

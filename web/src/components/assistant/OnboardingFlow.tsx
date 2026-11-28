@@ -103,10 +103,12 @@ export function OnboardingFlow({
   const [selectedProvider, setSelectedProvider] = useState("");
   const [savedProvider, setSavedProvider] = useState<{ id: string; label: string } | null>(null);
 
-  const [name, setName] = useState("");
-  const [replyStyle, setReplyStyle] = useState<string>(REPLY_STYLE_OPTIONS[0]);
-  const [focus, setFocus] = useState<string[]>([]);
-  const [workingOn, setWorkingOn] = useState("");
+  const [name, setName] = useState(() => preferences?.personalization?.name ?? "");
+  const [replyStyle, setReplyStyle] = useState<string>(
+    () => preferences?.personalization?.reply_style || REPLY_STYLE_OPTIONS[0],
+  );
+  const [focus, setFocus] = useState<string[]>(() => [...(preferences?.personalization?.focus ?? [])]);
+  const [workingOn, setWorkingOn] = useState(() => preferences?.personalization?.working_on ?? "");
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState<string | null>(null);
   const lastSaveAboutYou = useRef(true);
@@ -255,6 +257,15 @@ export function OnboardingFlow({
         account_defaults: currentPrefs?.account_defaults ?? {},
         budgets: currentPrefs?.budgets ?? { task_usd: 5 },
         input: currentPrefs?.input,
+        personalization: saveAboutYou
+          ? {
+              name: name.trim() || undefined,
+              reply_style: replyStyle.trim() || undefined,
+              custom_instructions: currentPrefs?.personalization?.custom_instructions,
+              focus: focus.length > 0 ? [...focus] : undefined,
+              working_on: workingOn.trim() || undefined,
+            }
+          : currentPrefs?.personalization,
         onboarding_completed_at: new Date().toISOString(),
       };
 
