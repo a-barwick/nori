@@ -659,6 +659,12 @@ def run_single_persona(
                     cwd=work_tmp, env=env, timeout=60,
                 )
 
+            # These isolated accounts use a loopback model. Trials only admit Nori-hosted calls.
+            run_cmd(
+                str(nori_user_bin), "set-tier", "--user-id", user_id, "--tier", "byok",
+                cwd=work_tmp, env=env, timeout=60,
+            )
+
             log_file = (out_dir / "nori-sim.log").open("w", encoding="utf-8")
             stack.callback(log_file.close)
             sim_cmd = [str(nori_sim_bin), "--start-time", sim_start_utc.strftime("%Y-%m-%dT%H:%M:%SZ")]

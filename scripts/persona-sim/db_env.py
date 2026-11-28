@@ -221,6 +221,7 @@ def persona_runtime_env(
     for forbidden in (
         "NORI_MODEL_GATEWAY_URL",
         "NORI_MODEL_GATEWAY_API_KEY",
+        "NORI_PLATFORM_AI_GATEWAY_KEY",
         "NORI_MODEL_PROVIDER",
         "NORI_OUTER_PROVIDER",
         "NORI_INNER_PROVIDER",
