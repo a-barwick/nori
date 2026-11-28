@@ -345,6 +345,7 @@ func wireBackgroundRuntime(result *App, cfg settings.Settings, user users.User, 
 
 	result.Runner, result.Tasks = runner, tasks
 	wireAssistantCallbacks(result, user.ID, leases, waker, services, tasks, runner)
+	wireConversationPushHook(runner, services.Connections, result.PushWorker, user.ID)
 }
 
 func wireAssistantCallbacks(result *App, userID string, leases docstore.LeaseStore, waker wake.Waker, services *platform.AssistantServices, tasks *conversation.Tasks, runner *conversation.Runner) {
@@ -523,25 +524,28 @@ func wireSchedulerProactivityHooks(sched *scheduler.Service, store state.Convers
 	}
 	if pushWorker != nil && userID != "" {
 		sched.OnPush = func(ctx context.Context, d scheduler.Delivery) error {
-			policy := connections.PushPolicyUrgentAndApprovals
+			proactivity := connections.Preferences{}.EffectiveProactivity()
 			if conns != nil {
 				if prefs, _, err := conns.Preferences(ctx); err == nil {
-					policy = prefs.EffectiveProactivity().PushPolicy
+					proactivity = prefs.EffectiveProactivity()
 				}
-			}
-			if policy == connections.PushPolicyQuietOnly {
-				return nil
 			}
 			var kind push.NotificationKind
 			switch {
 			case d.InteractionID != "":
+				if !proactivity.IsPushUrgentAndApprovalsEnabled() {
+					return nil
+				}
 				kind = push.KindApproval
 			case d.AutomationID == scheduler.MorningBriefAutomationID:
-				if policy != connections.PushPolicyIncludeBrief {
+				if !proactivity.IsPushMorningBriefEnabled() {
 					return nil
 				}
 				kind = push.KindBrief
 			case d.Outcome == scheduler.OutcomeAlert:
+				if !proactivity.IsPushUrgentAndApprovalsEnabled() {
+					return nil
+				}
 				kind = push.KindUrgent
 			default:
 				return nil
@@ -555,6 +559,42 @@ func wireSchedulerProactivityHooks(sched *scheduler.Service, store state.Convers
 			})
 			return err
 		}
+	}
+}
+
+func wireConversationPushHook(runner *conversation.Runner, conns *connections.Service, pushWorker *push.OutboxWorker, userID string) {
+	if runner == nil || pushWorker == nil || userID == "" {
+		return
+	}
+	runner.OnAssistantReply = func(ctx context.Context, turnID string) {
+		if turnID == "" {
+			return
+		}
+		proactivity := connections.Preferences{}.EffectiveProactivity()
+		if conns != nil {
+			if prefs, _, err := conns.Preferences(ctx); err == nil {
+				proactivity = prefs.EffectiveProactivity()
+				qh := prefs.EffectiveQuietHours()
+				if qh.IsEnabled() {
+					now := time.Now().UTC()
+					if runner.Now != nil {
+						now = runner.Now()
+					}
+					if inQuiet, _ := scheduler.InQuietHours(now, qh, prefs.Timezone); inQuiet {
+						return
+					}
+				}
+			}
+		}
+		if !proactivity.IsPushChatsEnabled() {
+			return
+		}
+		_, _, _ = pushWorker.Enqueue(ctx, push.EnqueueRequest{
+			DeliveryID: "chat_" + turnID,
+			UserID:     userID,
+			CollapseID: "chat_assistant",
+			Kind:       push.KindUpdate,
+		})
 	}
 }
 

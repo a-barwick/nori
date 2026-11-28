@@ -50,14 +50,38 @@ public enum ProactivityTimeFormatting {
     }
 }
 
-struct ProactivitySectionView: View {
-    @Bindable var store: NoriStore
+public struct NotificationsSettingsView: View {
+    @Bindable private var store: NoriStore
 
     @State private var showQuietHoursSheet = false
     @State private var showMorningBriefSheet = false
 
-    private var currentPushPolicy: PushPolicy {
-        store.preferences.proactivity?.pushPolicy ?? .urgentAndApprovals
+    public init(store: NoriStore) {
+        self.store = store
+    }
+
+    private var proactivity: ProactivityPreferences {
+        store.preferences.proactivity ?? ProactivityPreferences()
+    }
+
+    private var isMorningBriefScheduled: Bool {
+        proactivity.morningBriefEnabled ?? true
+    }
+
+    private var pushChatsEnabled: Bool {
+        proactivity.isPushChatsEnabled
+    }
+
+    private var pushUrgentEnabled: Bool {
+        proactivity.isPushUrgentAndApprovalsEnabled
+    }
+
+    private var pushBriefEnabled: Bool {
+        isMorningBriefScheduled && proactivity.isPushMorningBriefEnabled
+    }
+
+    private var allPushOff: Bool {
+        !pushChatsEnabled && !pushUrgentEnabled && !pushBriefEnabled
     }
 
     private var quietHoursValue: String {
@@ -68,29 +92,99 @@ struct ProactivitySectionView: View {
         ProactivityTimeFormatting.morningBriefLabel(store.preferences.proactivity)
     }
 
-    var body: some View {
-        NoriRows {
-            Button {
-                showQuietHoursSheet = true
-            } label: {
-                singleLineRow(title: "Quiet hours", value: quietHoursValue, showDivider: true)
-            }
-            .buttonStyle(.plain)
+    public var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 0) {
+                    NoriSectionHeader("Push notifications")
+                    NoriRows {
+                        toggleRow(
+                            title: "Chats",
+                            isOn: Binding(
+                                get: { pushChatsEnabled },
+                                set: { savePushFlags(chats: $0, urgent: pushUrgentEnabled, brief: proactivity.isPushMorningBriefEnabled) }
+                            ),
+                            disabled: false,
+                            showDivider: true
+                        )
 
-            Button {
-                cyclePushPolicy()
-            } label: {
-                singleLineRow(title: "Push notifications", value: currentPushPolicy.displayLabel, showDivider: true)
-            }
-            .buttonStyle(.plain)
+                        toggleRow(
+                            title: "Urgent & approvals",
+                            isOn: Binding(
+                                get: { pushUrgentEnabled },
+                                set: { savePushFlags(chats: pushChatsEnabled, urgent: $0, brief: proactivity.isPushMorningBriefEnabled) }
+                            ),
+                            disabled: false,
+                            showDivider: true
+                        )
 
-            Button {
-                showMorningBriefSheet = true
-            } label: {
-                singleLineRow(title: "Morning brief", value: morningBriefValue, showDivider: false)
+                        toggleRow(
+                            title: "Morning brief",
+                            isOn: Binding(
+                                get: { pushBriefEnabled },
+                                set: { savePushFlags(chats: pushChatsEnabled, urgent: pushUrgentEnabled, brief: $0) }
+                            ),
+                            disabled: !isMorningBriefScheduled,
+                            showDivider: false
+                        )
+                    }
+
+                    if allPushOff {
+                        Text("Push notifications are off. Updates still appear in Chat.")
+                            .font(NoriTypography.caption)
+                            .foregroundStyle(NoriColors.ink3)
+                            .padding(.top, 8)
+                            .padding(.horizontal, 4)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 0) {
+                    NoriSectionHeader("Schedule")
+                    NoriRows {
+                        Button {
+                            showQuietHoursSheet = true
+                        } label: {
+                            NoriRow(title: "Quiet hours", showChevron: true, showDivider: true) {
+                                Text(quietHoursValue)
+                                    .font(NoriTypography.meta)
+                                    .monospacedDigit()
+                                    .foregroundStyle(NoriColors.ink2)
+                            }
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            showMorningBriefSheet = true
+                        } label: {
+                            NoriRow(title: "Morning brief", showChevron: true, showDivider: false) {
+                                Text(morningBriefValue)
+                                    .font(NoriTypography.meta)
+                                    .monospacedDigit()
+                                    .foregroundStyle(NoriColors.ink2)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
             }
-            .buttonStyle(.plain)
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 96)
         }
+        .task {
+            if !store.hasLoadedPreferences {
+                try? await store.refreshPreferencesThrowing()
+            }
+        }
+        .refreshable {
+            try? await store.refreshPreferencesThrowing()
+        }
+        .background(NoriColors.canvas)
+        .navigationTitle("Notifications")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        #endif
         .sheet(isPresented: $showQuietHoursSheet) {
             QuietHoursEditorSheet(store: store)
                 .presentationDetents([.medium])
@@ -107,24 +201,24 @@ struct ProactivitySectionView: View {
         }
     }
 
-    private func singleLineRow(title: String, value: String, showDivider: Bool) -> some View {
+    private func toggleRow(title: String, isOn: Binding<Bool>, disabled: Bool, showDivider: Bool) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Text(title)
                     .font(NoriTypography.rowTitle)
-                    .foregroundStyle(NoriColors.ink)
+                    .foregroundStyle(disabled ? NoriColors.disabled : NoriColors.ink)
                     .lineLimit(1)
 
                 Spacer(minLength: 8)
 
-                Text(value)
-                    .font(.system(size: 13.5, weight: .medium))
-                    .foregroundStyle(NoriColors.ink2)
-                    .lineLimit(1)
+                Toggle("", isOn: isOn)
+                    .labelsHidden()
+                    .tint(NoriColors.brandPrimary)
+                    .disabled(disabled)
             }
             .padding(.horizontal, 15)
-            .padding(.vertical, 13)
-            .contentShape(Rectangle())
+            .padding(.vertical, 10)
+            .opacity(disabled ? 0.55 : 1)
 
             if showDivider {
                 Rectangle()
@@ -135,14 +229,17 @@ struct ProactivitySectionView: View {
         }
     }
 
-    private func cyclePushPolicy() {
+    private func savePushFlags(chats: Bool, urgent: Bool, brief: Bool) {
         #if os(iOS)
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         #endif
         var updated = store.preferences
-        var proactivity = updated.proactivity ?? ProactivityPreferences()
-        proactivity.pushPolicy = currentPushPolicy.next
-        updated.proactivity = proactivity
+        var nextProactivity = updated.proactivity ?? ProactivityPreferences()
+        nextProactivity.pushChats = chats
+        nextProactivity.pushUrgentAndApprovals = urgent
+        nextProactivity.pushMorningBrief = brief
+        nextProactivity.pushPolicy = ProactivityPreferences.derivedPushPolicy(chats: chats, urgent: urgent, brief: brief)
+        updated.proactivity = nextProactivity
         store.preferences = updated
         Task {
             await store.updatePreferences(updated)
@@ -162,7 +259,7 @@ private struct QuietHoursEditorSheet: View {
     init(store: NoriStore) {
         self.store = store
         let qh = store.preferences.quietHours
-        self._enabled = State(initialValue: qh?.isEnabled ?? false)
+        self._enabled = State(initialValue: qh?.isEnabled ?? true)
         self._startDate = State(initialValue: ProactivityTimeFormatting.dateFromHHMM(qh?.start ?? "21:00", fallbackHour: 21, fallbackMinute: 0))
         self._endDate = State(initialValue: ProactivityTimeFormatting.dateFromHHMM(qh?.end ?? "07:30", fallbackHour: 7, fallbackMinute: 30))
     }

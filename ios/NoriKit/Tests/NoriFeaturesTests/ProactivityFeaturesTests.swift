@@ -160,6 +160,18 @@ struct ProactivityFeaturesTests {
         #expect(ProactivityTimeFormatting.morningBriefLabel(nil) == "8:00 AM")
         #expect(ProactivityTimeFormatting.morningBriefLabel(ProactivityPreferences(morningBriefTime: "07:45", morningBriefEnabled: true)) == "7:45 AM")
         #expect(ProactivityTimeFormatting.morningBriefLabel(ProactivityPreferences(morningBriefTime: "08:00", morningBriefEnabled: false)) == "Off")
+
+        let defaultPrefs = ProactivityPreferences()
+        #expect(defaultPrefs.isPushChatsEnabled == true)
+        #expect(defaultPrefs.isPushUrgentAndApprovalsEnabled == true)
+        #expect(defaultPrefs.isPushMorningBriefEnabled == false)
+
+        let customPrefs = ProactivityPreferences(pushChats: false, pushUrgentAndApprovals: false, pushMorningBrief: true)
+        #expect(customPrefs.isPushChatsEnabled == false)
+        #expect(customPrefs.isPushUrgentAndApprovalsEnabled == false)
+        #expect(customPrefs.isPushMorningBriefEnabled == true)
+        #expect(ProactivityPreferences.derivedPushPolicy(chats: false, urgent: false, brief: false) == .quietOnly)
+        #expect(ProactivityPreferences.derivedPushPolicy(chats: true, urgent: true, brief: true) == .includeBrief)
     }
 
     @Test("AutomationTrigger.compactCadenceLabel matches calm single-line row grammar")

@@ -242,6 +242,8 @@ public struct NoriRootView: View {
                                 MemoryView(store: store)
                             case .permissions:
                                 StandingPermissionsView(store: store)
+                            case .notifications:
+                                NotificationsSettingsView(store: store)
                             case .preferences:
                                 PreferencesBudgetsView(store: store)
                             case .apiCosts:

@@ -2843,6 +2843,12 @@ components:
       properties:
         push_policy:
           $ref: "#/components/schemas/PushPolicy"
+        push_chats:
+          type: boolean
+        push_urgent_and_approvals:
+          type: boolean
+        push_morning_brief:
+          type: boolean
         morning_brief_time:
           type: string
           pattern: "^([01]\\d|2[0-3]):[0-5]\\d$"

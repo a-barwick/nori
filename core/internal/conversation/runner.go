@@ -98,6 +98,7 @@ type Runner struct {
 	process          sync.Mutex
 	Clock            Clock
 	Now              func() time.Time
+	OnAssistantReply func(ctx context.Context, turnID string)
 	NewID            func() string
 	After            func(time.Duration) <-chan time.Time
 	NewTicker        func(time.Duration) (<-chan time.Time, func())
@@ -523,6 +524,9 @@ func (r *Runner) processTurn(ctx context.Context, c state.ConversationControl, t
 				observability.Event(ctx, "conversation.completed")
 			}
 			recordReplies(ctx, t, text, r.now())
+			if r.OnAssistantReply != nil && strings.TrimSpace(text) != "" {
+				r.OnAssistantReply(ctx, t.ID)
+			}
 		}
 		return e
 	}

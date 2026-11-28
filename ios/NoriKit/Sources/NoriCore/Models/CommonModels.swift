@@ -672,12 +672,18 @@ public enum PushPolicy: String, Sendable, Codable, Hashable, CaseIterable {
 
 public struct ProactivityPreferences: Sendable, Codable, Hashable {
     public var pushPolicy: PushPolicy?
+    public var pushChats: Bool?
+    public var pushUrgentAndApprovals: Bool?
+    public var pushMorningBrief: Bool?
     public var morningBriefTime: String?
     public var morningBriefEnabled: Bool?
     public var dailyProactiveBudgetUSD: Double?
 
     enum CodingKeys: String, CodingKey {
         case pushPolicy = "push_policy"
+        case pushChats = "push_chats"
+        case pushUrgentAndApprovals = "push_urgent_and_approvals"
+        case pushMorningBrief = "push_morning_brief"
         case morningBriefTime = "morning_brief_time"
         case morningBriefEnabled = "morning_brief_enabled"
         case dailyProactiveBudgetUSD = "daily_proactive_budget_usd"
@@ -685,14 +691,41 @@ public struct ProactivityPreferences: Sendable, Codable, Hashable {
 
     public init(
         pushPolicy: PushPolicy? = nil,
+        pushChats: Bool? = nil,
+        pushUrgentAndApprovals: Bool? = nil,
+        pushMorningBrief: Bool? = nil,
         morningBriefTime: String? = nil,
         morningBriefEnabled: Bool? = nil,
         dailyProactiveBudgetUSD: Double? = nil
     ) {
         self.pushPolicy = pushPolicy
+        self.pushChats = pushChats
+        self.pushUrgentAndApprovals = pushUrgentAndApprovals
+        self.pushMorningBrief = pushMorningBrief
         self.morningBriefTime = morningBriefTime
         self.morningBriefEnabled = morningBriefEnabled
         self.dailyProactiveBudgetUSD = dailyProactiveBudgetUSD
+    }
+
+    public var isPushChatsEnabled: Bool {
+        if let pushChats { return pushChats }
+        return pushPolicy != .quietOnly
+    }
+
+    public var isPushUrgentAndApprovalsEnabled: Bool {
+        if let pushUrgentAndApprovals { return pushUrgentAndApprovals }
+        return pushPolicy != .quietOnly
+    }
+
+    public var isPushMorningBriefEnabled: Bool {
+        if let pushMorningBrief { return pushMorningBrief }
+        return pushPolicy == .includeBrief
+    }
+
+    public static func derivedPushPolicy(chats: Bool, urgent: Bool, brief: Bool) -> PushPolicy {
+        if !chats && !urgent && !brief { return .quietOnly }
+        if brief { return .includeBrief }
+        return .urgentAndApprovals
     }
 }
 

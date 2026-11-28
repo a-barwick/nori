@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   ArrowUpRight,
   BarChart3,
+  Bell,
   Brain,
   History,
   Monitor,
@@ -46,6 +47,7 @@ import { cn } from "@/lib/utils";
 import { ApiCosts } from "./ApiCosts";
 import { AppBrandIcon } from "./BrandIcons";
 import { ModelsSettings } from "./ModelsSettings";
+import { NotificationsSettings } from "./ProactivitySettings";
 import { SignOutForm } from "./SignOutForm";
 import { OperationRows, shownOperations } from "./WorkScreen";
 import {
@@ -67,6 +69,7 @@ import {
 
 type List<T> = { items: T[] };
 export type SettingsSection =
+  | "notifications"
   | "permissions"
   | "preferences"
   | "api-costs"
@@ -86,6 +89,7 @@ const SECTIONS: {
   backLabel?: string;
   feature?: Parameters<ReturnType<typeof useAssistant>["has"]>[0];
 }[] = [
+  { id: "notifications", title: "Notifications", icon: Bell, feature: "preferences" },
   { id: "permissions", title: "Permissions", icon: ShieldCheck, feature: "permissions" },
   { id: "preferences", title: "Preferences", icon: SlidersHorizontal, feature: "preferences" },
   { id: "api-costs", title: "Usage & Budgets", icon: BarChart3 },
@@ -131,7 +135,9 @@ export function SettingsScreen({ section, userEmail }: { section: SettingsSectio
   }
   return (
     <Screen title={meta.title} back={back} backLabel={backLabel}>
-      {section === "permissions" ? (
+      {section === "notifications" ? (
+        <NotificationsSettings />
+      ) : section === "permissions" ? (
         <Permissions />
       ) : section === "preferences" ? (
         <PreferencesForm />

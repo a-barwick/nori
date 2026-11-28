@@ -6752,17 +6752,26 @@ public enum OpenAPI {
 
     public struct ProactivityPreferences: Sendable, Codable, Hashable {
         public var pushPolicy: OpenAPI.PushPolicy?
+        public var pushChats: Bool?
+        public var pushUrgentAndApprovals: Bool?
+        public var pushMorningBrief: Bool?
         public var morningBriefTime: String?
         public var morningBriefEnabled: Bool?
         public var dailyProactiveBudgetUSD: Double?
 
         public init(
             pushPolicy: OpenAPI.PushPolicy? = nil,
+            pushChats: Bool? = nil,
+            pushUrgentAndApprovals: Bool? = nil,
+            pushMorningBrief: Bool? = nil,
             morningBriefTime: String? = nil,
             morningBriefEnabled: Bool? = nil,
             dailyProactiveBudgetUSD: Double? = nil
         ) {
             self.pushPolicy = pushPolicy
+            self.pushChats = pushChats
+            self.pushUrgentAndApprovals = pushUrgentAndApprovals
+            self.pushMorningBrief = pushMorningBrief
             self.morningBriefTime = morningBriefTime
             self.morningBriefEnabled = morningBriefEnabled
             self.dailyProactiveBudgetUSD = dailyProactiveBudgetUSD
@@ -6770,6 +6779,9 @@ public enum OpenAPI {
 
         enum CodingKeys: String, CodingKey {
             case pushPolicy = "push_policy"
+            case pushChats = "push_chats"
+            case pushUrgentAndApprovals = "push_urgent_and_approvals"
+            case pushMorningBrief = "push_morning_brief"
             case morningBriefTime = "morning_brief_time"
             case morningBriefEnabled = "morning_brief_enabled"
             case dailyProactiveBudgetUSD = "daily_proactive_budget_usd"

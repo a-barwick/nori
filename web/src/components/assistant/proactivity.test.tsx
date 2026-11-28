@@ -13,11 +13,13 @@ import type { Part } from "@/lib/types";
 import { BriefCard, briefItemStatus, day1BodyText } from "./BriefCard";
 import { MoreScreen } from "./MoreScreen";
 import {
+  derivePushPolicy,
   formatMorningBrief,
   formatQuietHours,
-  nextPushPolicy,
-  ProactivitySection,
-  PUSH_POLICY_LABELS,
+  isPushChatsEnabled,
+  isPushMorningBriefEnabled,
+  isPushUrgentAndApprovalsEnabled,
+  NotificationsSettings,
   saveProactivityPreferences,
 } from "./ProactivitySettings";
 import { parseReviewDraft, ReviewApprovalPanel } from "./ReviewApprovalSheet";
@@ -414,7 +416,7 @@ describe("Work → Automations single-line row grammar", () => {
   });
 });
 
-describe("More / Settings Proactivity preferences controls", () => {
+describe("More / Settings Notifications controls", () => {
   let origFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
@@ -425,7 +427,7 @@ describe("More / Settings Proactivity preferences controls", () => {
     globalThis.fetch = origFetch;
   });
 
-  test("formats quiet hours, morning brief, and cycles push policy labels cleanly", () => {
+  test("formats quiet hours, morning brief, and resolves push notification toggles cleanly", () => {
     assert.equal(formatTime12h("08:00"), "8:00 AM");
     assert.equal(formatTime12h("21:00"), "9:00 PM");
     assert.equal(formatTime12h("07:30"), "7:30 AM");
@@ -434,36 +436,39 @@ describe("More / Settings Proactivity preferences controls", () => {
     assert.equal(formatMorningBrief({ morning_brief_enabled: true, morning_brief_time: "08:00" }), "8:00 AM");
     assert.equal(formatMorningBrief({ morning_brief_enabled: false, morning_brief_time: "08:00" }), "Off");
 
-    assert.equal(PUSH_POLICY_LABELS.urgent_and_approvals, "Urgent & approvals");
-    assert.equal(PUSH_POLICY_LABELS.include_brief, "Include morning brief");
-    assert.equal(PUSH_POLICY_LABELS.quiet_only, "Quiet only");
-    assert.equal(nextPushPolicy("urgent_and_approvals"), "include_brief");
-    assert.equal(nextPushPolicy("include_brief"), "quiet_only");
-    assert.equal(nextPushPolicy("quiet_only"), "urgent_and_approvals");
+    assert.equal(isPushChatsEnabled({ push_policy: "urgent_and_approvals" }), true);
+    assert.equal(isPushChatsEnabled({ push_policy: "quiet_only" }), false);
+    assert.equal(isPushChatsEnabled({ push_chats: false, push_policy: "urgent_and_approvals" }), false);
+    assert.equal(isPushUrgentAndApprovalsEnabled({ push_policy: "urgent_and_approvals" }), true);
+    assert.equal(isPushMorningBriefEnabled({ push_policy: "urgent_and_approvals" }), false);
+    assert.equal(isPushMorningBriefEnabled({ push_policy: "include_brief" }), true);
+    assert.equal(derivePushPolicy({ chats: false, urgent: false, brief: false }), "quiet_only");
+    assert.equal(derivePushPolicy({ chats: true, urgent: true, brief: true }), "include_brief");
+    assert.equal(derivePushPolicy({ chats: true, urgent: true, brief: false }), "urgent_and_approvals");
   });
 
-  test("renders 3 clean single-line rows in ProactivitySection and MoreScreen and saves via PUT /v1/preferences", async () => {
+  test("moves Proactivity out of MoreScreen into Settings → Notifications and saves via PUT /v1/preferences", async () => {
     const prefs = makePreferences();
-    const sectionHtml = renderToStaticMarkup(<ProactivitySection current={prefs} />);
-    assert.match(sectionHtml, /Proactivity/);
-    assert.match(sectionHtml, /Quiet hours/);
-    assert.match(sectionHtml, /9:00 PM – 7:30 AM/);
-    assert.match(sectionHtml, /Push notifications/);
-    assert.match(sectionHtml, /Urgent &amp; approvals/);
-    assert.match(sectionHtml, /Morning brief/);
-    assert.match(sectionHtml, /8:00 AM/);
-    assert.equal(sectionHtml.includes('role="switch"'), false);
-    assert.equal(sectionHtml.toLowerCase().includes("needs you"), false);
+    const notificationsHtml = renderToStaticMarkup(<NotificationsSettings current={prefs} />);
+    assert.match(notificationsHtml, /Push notifications/);
+    assert.match(notificationsHtml, /Chats/);
+    assert.match(notificationsHtml, /Urgent &amp; approvals/);
+    assert.match(notificationsHtml, /Morning brief/);
+    assert.match(notificationsHtml, /Schedule/);
+    assert.match(notificationsHtml, /Quiet hours/);
+    assert.match(notificationsHtml, /9:00 PM – 7:30 AM/);
+    assert.match(notificationsHtml, /8:00 AM/);
+    assert.equal(notificationsHtml.includes('role="switch"'), true);
+    assert.equal(notificationsHtml.toLowerCase().includes("needs you"), false);
 
     const moreHtml = renderToStaticMarkup(
       <AssistantProvider localMode>
         <MoreScreen />
       </AssistantProvider>,
     );
-    assert.match(moreHtml, /Proactivity/);
-    assert.match(moreHtml, /Quiet hours/);
-    assert.match(moreHtml, /Push notifications/);
-    assert.match(moreHtml, /Morning brief/);
+    assert.equal(moreHtml.includes("Proactivity"), false);
+    assert.match(moreHtml, /Notifications/);
+    assert.match(moreHtml, /\/settings\/notifications/);
 
     const calls: { url: string; method: string; body?: Record<string, unknown> }[] = [];
     globalThis.fetch = asFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -478,16 +483,28 @@ describe("More / Settings Proactivity preferences controls", () => {
         resource: {
           ...prefs,
           revision: prefs.revision + 1,
-          proactivity: { ...prefs.proactivity, push_policy: "include_brief" },
+          proactivity: {
+            ...prefs.proactivity,
+            push_chats: true,
+            push_urgent_and_approvals: true,
+            push_morning_brief: true,
+            push_policy: "include_brief",
+          },
         },
       });
     });
 
     const updated = await saveProactivityPreferences(prefs, {
-      proactivity: { ...prefs.proactivity, push_policy: "include_brief" },
+      proactivity: {
+        ...prefs.proactivity,
+        push_chats: true,
+        push_urgent_and_approvals: true,
+        push_morning_brief: true,
+        push_policy: "include_brief",
+      },
     });
     assert.equal(updated.revision, prefs.revision + 1);
-    assert.equal(updated.proactivity?.push_policy, "include_brief");
+    assert.equal(updated.proactivity?.push_morning_brief, true);
 
     assert.equal(calls.length, 1);
     assert.equal(calls[0].url, "/api/v1/preferences");
@@ -495,6 +512,9 @@ describe("More / Settings Proactivity preferences controls", () => {
     assert.equal(calls[0].body?.expected_revision, prefs.revision);
     assert.deepEqual((calls[0].body?.value as Record<string, unknown>)?.proactivity, {
       push_policy: "include_brief",
+      push_chats: true,
+      push_urgent_and_approvals: true,
+      push_morning_brief: true,
       morning_brief_enabled: true,
       morning_brief_time: "08:00",
     });

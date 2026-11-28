@@ -13,7 +13,7 @@ import type {
   QuietHours,
 } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
-import { inputBase, Notice, Row, Rows, Section } from "./ui";
+import { Failure, inputBase, Loading, Notice, Row, Rows, Section, Switch } from "./ui";
 
 export const DEFAULT_QUIET_HOURS: QuietHours = {
   enabled: true,
@@ -23,21 +23,33 @@ export const DEFAULT_QUIET_HOURS: QuietHours = {
 
 export const DEFAULT_MORNING_BRIEF_TIME = "08:00";
 
-export const PUSH_POLICY_ORDER: PushPolicy[] = [
-  "urgent_and_approvals",
-  "include_brief",
-  "quiet_only",
-];
+export function isPushChatsEnabled(proactivity?: ProactivityPreferences): boolean {
+  if (proactivity?.push_chats !== undefined) return proactivity.push_chats;
+  return proactivity?.push_policy !== "quiet_only";
+}
 
-export const PUSH_POLICY_LABELS: Record<PushPolicy, string> = {
-  urgent_and_approvals: "Urgent & approvals",
-  include_brief: "Include morning brief",
-  quiet_only: "Quiet only",
-};
+export function isPushUrgentAndApprovalsEnabled(proactivity?: ProactivityPreferences): boolean {
+  if (proactivity?.push_urgent_and_approvals !== undefined) return proactivity.push_urgent_and_approvals;
+  return proactivity?.push_policy !== "quiet_only";
+}
 
-export function nextPushPolicy(current?: PushPolicy): PushPolicy {
-  const index = current ? PUSH_POLICY_ORDER.indexOf(current) : 0;
-  return PUSH_POLICY_ORDER[(index + 1) % PUSH_POLICY_ORDER.length];
+export function isPushMorningBriefEnabled(proactivity?: ProactivityPreferences): boolean {
+  if (proactivity?.push_morning_brief !== undefined) return proactivity.push_morning_brief;
+  return proactivity?.push_policy === "include_brief";
+}
+
+export function derivePushPolicy({
+  chats,
+  urgent,
+  brief,
+}: {
+  chats: boolean;
+  urgent: boolean;
+  brief: boolean;
+}): PushPolicy {
+  if (!chats && !urgent && !brief) return "quiet_only";
+  if (brief) return "include_brief";
+  return "urgent_and_approvals";
 }
 
 export function formatQuietHours(quietHours?: QuietHours): string {
@@ -90,7 +102,7 @@ export async function saveProactivityPreferences(
   return receipt.resource as Preferences;
 }
 
-export function ProactivitySection({
+export function NotificationsSettings({
   current,
   onSaved,
 }: {
@@ -109,14 +121,27 @@ export function ProactivitySection({
   const [briefEnabled, setBriefEnabled] = useState(true);
   const [briefTime, setBriefTime] = useState(DEFAULT_MORNING_BRIEF_TIME);
 
-  const policy: PushPolicy = prefs?.proactivity?.push_policy ?? "urgent_and_approvals";
+  if (!current && remote.loading && !remote.data) return <Loading />;
+  if (!prefs) {
+    return (
+      <Failure
+        error={remote.error ?? "Notification settings unavailable."}
+        onRetry={() => void remote.reload()}
+      />
+    );
+  }
+
+  const pushChats = isPushChatsEnabled(prefs.proactivity);
+  const pushUrgent = isPushUrgentAndApprovalsEnabled(prefs.proactivity);
+  const briefScheduleEnabled = prefs.proactivity?.morning_brief_enabled !== false;
+  const pushBrief = briefScheduleEnabled && isPushMorningBriefEnabled(prefs.proactivity);
+  const allPushOff = !pushChats && !pushUrgent && !pushBrief;
 
   const commit = (
     name: string,
     patch: Partial<Pick<PreferencesEditable, "quiet_hours" | "proactivity">>,
     announcement: string,
   ) => {
-    if (!prefs) return;
     void action.run(
       name,
       async () => {
@@ -135,8 +160,31 @@ export function ProactivitySection({
     );
   };
 
+  const togglePush = (
+    key: "push_chats" | "push_urgent_and_approvals" | "push_morning_brief",
+    nextValue: boolean,
+    label: string,
+  ) => {
+    if (action.pending) return;
+    const nextChats = key === "push_chats" ? nextValue : pushChats;
+    const nextUrgent = key === "push_urgent_and_approvals" ? nextValue : pushUrgent;
+    const nextBrief = key === "push_morning_brief" ? nextValue : isPushMorningBriefEnabled(prefs.proactivity);
+    commit(
+      key,
+      {
+        proactivity: {
+          ...prefs.proactivity,
+          push_chats: nextChats,
+          push_urgent_and_approvals: nextUrgent,
+          push_morning_brief: nextBrief,
+          push_policy: derivePushPolicy({ chats: nextChats, urgent: nextUrgent, brief: nextBrief }),
+        },
+      },
+      `${label} notifications ${nextValue ? "enabled" : "disabled"}.`,
+    );
+  };
+
   const openQuietEditor = () => {
-    if (!prefs) return;
     setQuietEnabled(prefs.quiet_hours?.enabled !== false);
     setQuietStart(prefs.quiet_hours?.start || DEFAULT_QUIET_HOURS.start);
     setQuietEnd(prefs.quiet_hours?.end || DEFAULT_QUIET_HOURS.end);
@@ -144,181 +192,195 @@ export function ProactivitySection({
   };
 
   const openBriefEditor = () => {
-    if (!prefs) return;
     setBriefEnabled(prefs.proactivity?.morning_brief_enabled !== false);
     setBriefTime(prefs.proactivity?.morning_brief_time || DEFAULT_MORNING_BRIEF_TIME);
     setEditing("morning_brief");
   };
 
-  const cyclePushPolicy = () => {
-    if (!prefs || action.pending) return;
-    const next = nextPushPolicy(policy);
-    commit(
-      "push_policy",
-      {
-        proactivity: {
-          ...prefs.proactivity,
-          push_policy: next,
-        },
-      },
-      `Push notifications set to ${PUSH_POLICY_LABELS[next]}.`,
-    );
-  };
-
   return (
-    <Section title="Proactivity">
-      {action.error && (
-        <div className="mb-3">
-          <Notice tone="danger">{action.error}</Notice>
-        </div>
-      )}
-      <Rows label="Proactivity">
-        {editing === "quiet_hours" ? (
-          <li className="px-4 py-3">
-            <form
-              className="flex flex-wrap items-center gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                commit(
-                  "quiet_hours",
-                  {
-                    quiet_hours: {
-                      enabled: quietEnabled,
-                      start: quietStart,
-                      end: quietEnd,
+    <div className="space-y-6">
+      {action.error && <Notice tone="danger">{action.error}</Notice>}
+
+      <Section title="Push notifications">
+        <Rows label="Push notifications">
+          <li className="flex items-center justify-between gap-3 px-4 py-3">
+            <span className="min-w-0 flex-1 text-row font-semibold text-ink">Chats</span>
+            <Switch
+              checked={pushChats}
+              disabled={!!action.pending}
+              label="Chats"
+              onCheckedChange={(next) => togglePush("push_chats", next, "Chats")}
+            />
+          </li>
+          <li className="flex items-center justify-between gap-3 px-4 py-3">
+            <span className="min-w-0 flex-1 text-row font-semibold text-ink">Urgent &amp; approvals</span>
+            <Switch
+              checked={pushUrgent}
+              disabled={!!action.pending}
+              label="Urgent & approvals"
+              onCheckedChange={(next) => togglePush("push_urgent_and_approvals", next, "Urgent & approvals")}
+            />
+          </li>
+          <li
+            className={cn(
+              "flex items-center justify-between gap-3 px-4 py-3",
+              !briefScheduleEnabled && "opacity-50",
+            )}
+          >
+            <span className="min-w-0 flex-1 text-row font-semibold text-ink">Morning brief</span>
+            <Switch
+              checked={pushBrief}
+              disabled={!!action.pending || !briefScheduleEnabled}
+              label="Morning brief"
+              onCheckedChange={(next) => togglePush("push_morning_brief", next, "Morning brief")}
+            />
+          </li>
+        </Rows>
+        {allPushOff && (
+          <p className="mt-2 px-1 text-caption text-ink-3">
+            Push notifications are off. Updates still appear in Chat.
+          </p>
+        )}
+      </Section>
+
+      <Section title="Schedule">
+        <Rows label="Schedule">
+          {editing === "quiet_hours" ? (
+            <li className="px-4 py-3">
+              <form
+                className="flex flex-wrap items-center gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  commit(
+                    "quiet_hours",
+                    {
+                      quiet_hours: {
+                        enabled: quietEnabled,
+                        start: quietStart,
+                        end: quietEnd,
+                      },
                     },
-                  },
-                  "Quiet hours updated.",
-                );
-              }}
-            >
-              <span className="min-w-0 flex-1 text-row font-semibold text-ink">Quiet hours</span>
-              <button
-                type="button"
-                onClick={() => setQuietEnabled((on) => !on)}
-                className={cn(
-                  "inline-flex h-8 items-center rounded-full px-3 text-caption font-semibold transition-colors",
-                  quietEnabled ? "bg-accent-subtle text-accent-text" : "bg-fill-1 text-ink-2",
-                )}
+                    "Quiet hours updated.",
+                  );
+                }}
               >
-                {quietEnabled ? "On" : "Off"}
-              </button>
-              {quietEnabled && (
-                <span className="flex items-center gap-1.5">
-                  <input
-                    aria-label="Quiet hours start"
-                    type="time"
-                    value={quietStart}
-                    disabled={!!action.pending}
-                    onChange={(event) => setQuietStart(event.target.value)}
-                    className={cn(inputBase, "h-9 w-[6.5rem] px-2 py-0 tabular-nums")}
-                  />
-                  <span className="text-ink-3" aria-hidden>
-                    –
+                <span className="min-w-0 flex-1 text-row font-semibold text-ink">Quiet hours</span>
+                <button
+                  type="button"
+                  onClick={() => setQuietEnabled((on) => !on)}
+                  className={cn(
+                    "inline-flex h-8 items-center rounded-full px-3 text-caption font-semibold transition-colors",
+                    quietEnabled ? "bg-accent-subtle text-accent-text" : "bg-fill-1 text-ink-2",
+                  )}
+                >
+                  {quietEnabled ? "On" : "Off"}
+                </button>
+                {quietEnabled && (
+                  <span className="flex items-center gap-1.5">
+                    <input
+                      aria-label="Quiet hours start"
+                      type="time"
+                      value={quietStart}
+                      disabled={!!action.pending}
+                      onChange={(event) => setQuietStart(event.target.value)}
+                      className={cn(inputBase, "h-9 w-[6.5rem] px-2 py-0 tabular-nums")}
+                    />
+                    <span className="text-ink-3" aria-hidden>
+                      –
+                    </span>
+                    <input
+                      aria-label="Quiet hours end"
+                      type="time"
+                      value={quietEnd}
+                      disabled={!!action.pending}
+                      onChange={(event) => setQuietEnd(event.target.value)}
+                      className={cn(inputBase, "h-9 w-[6.5rem] px-2 py-0 tabular-nums")}
+                    />
                   </span>
+                )}
+                <Button type="submit" size="sm" variant="primary" disabled={!!action.pending}>
+                  {action.pending === "quiet_hours" ? "Saving…" : "Save"}
+                </Button>
+                <Button type="button" size="sm" variant="quiet" disabled={!!action.pending} onClick={() => setEditing(null)}>
+                  Cancel
+                </Button>
+              </form>
+            </li>
+          ) : (
+            <Row
+              title="Quiet hours"
+              onClick={openQuietEditor}
+              chevron
+              trailing={
+                <span className="text-meta font-medium tabular-nums text-ink-2">
+                  {formatQuietHours(prefs.quiet_hours)}
+                </span>
+              }
+            />
+          )}
+
+          {editing === "morning_brief" ? (
+            <li className="px-4 py-3">
+              <form
+                className="flex flex-wrap items-center gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  commit(
+                    "morning_brief",
+                    {
+                      proactivity: {
+                        ...prefs.proactivity,
+                        morning_brief_enabled: briefEnabled,
+                        morning_brief_time: briefTime,
+                      },
+                    },
+                    "Morning brief updated.",
+                  );
+                }}
+              >
+                <span className="min-w-0 flex-1 text-row font-semibold text-ink">Morning brief</span>
+                <button
+                  type="button"
+                  onClick={() => setBriefEnabled((on) => !on)}
+                  className={cn(
+                    "inline-flex h-8 items-center rounded-full px-3 text-caption font-semibold transition-colors",
+                    briefEnabled ? "bg-accent-subtle text-accent-text" : "bg-fill-1 text-ink-2",
+                  )}
+                >
+                  {briefEnabled ? "On" : "Off"}
+                </button>
+                {briefEnabled && (
                   <input
-                    aria-label="Quiet hours end"
+                    aria-label="Morning brief time"
                     type="time"
-                    value={quietEnd}
+                    value={briefTime}
                     disabled={!!action.pending}
-                    onChange={(event) => setQuietEnd(event.target.value)}
+                    onChange={(event) => setBriefTime(event.target.value)}
                     className={cn(inputBase, "h-9 w-[6.5rem] px-2 py-0 tabular-nums")}
                   />
-                </span>
-              )}
-              <Button type="submit" size="sm" variant="primary" disabled={!!action.pending}>
-                {action.pending === "quiet_hours" ? "Saving…" : "Save"}
-              </Button>
-              <Button type="button" size="sm" variant="quiet" disabled={!!action.pending} onClick={() => setEditing(null)}>
-                Cancel
-              </Button>
-            </form>
-          </li>
-        ) : (
-          <Row
-            title="Quiet hours"
-            onClick={prefs ? openQuietEditor : undefined}
-            chevron={false}
-            trailing={
-              <span className="text-meta font-medium tabular-nums text-ink-2">
-                {formatQuietHours(prefs?.quiet_hours)}
-              </span>
-            }
-          />
-        )}
-
-        <Row
-          title="Push notifications"
-          onClick={prefs ? cyclePushPolicy : undefined}
-          chevron={false}
-          trailing={
-            <span className="text-meta font-medium text-ink-2">
-              {PUSH_POLICY_LABELS[policy]}
-            </span>
-          }
-        />
-
-        {editing === "morning_brief" ? (
-          <li className="px-4 py-3">
-            <form
-              className="flex flex-wrap items-center gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                commit(
-                  "morning_brief",
-                  {
-                    proactivity: {
-                      ...prefs?.proactivity,
-                      morning_brief_enabled: briefEnabled,
-                      morning_brief_time: briefTime,
-                    },
-                  },
-                  "Morning brief updated.",
-                );
-              }}
-            >
-              <span className="min-w-0 flex-1 text-row font-semibold text-ink">Morning brief</span>
-              <button
-                type="button"
-                onClick={() => setBriefEnabled((on) => !on)}
-                className={cn(
-                  "inline-flex h-8 items-center rounded-full px-3 text-caption font-semibold transition-colors",
-                  briefEnabled ? "bg-accent-subtle text-accent-text" : "bg-fill-1 text-ink-2",
                 )}
-              >
-                {briefEnabled ? "On" : "Off"}
-              </button>
-              {briefEnabled && (
-                <input
-                  aria-label="Morning brief time"
-                  type="time"
-                  value={briefTime}
-                  disabled={!!action.pending}
-                  onChange={(event) => setBriefTime(event.target.value)}
-                  className={cn(inputBase, "h-9 w-[6.5rem] px-2 py-0 tabular-nums")}
-                />
-              )}
-              <Button type="submit" size="sm" variant="primary" disabled={!!action.pending}>
-                {action.pending === "morning_brief" ? "Saving…" : "Save"}
-              </Button>
-              <Button type="button" size="sm" variant="quiet" disabled={!!action.pending} onClick={() => setEditing(null)}>
-                Cancel
-              </Button>
-            </form>
-          </li>
-        ) : (
-          <Row
-            title="Morning brief"
-            onClick={prefs ? openBriefEditor : undefined}
-            chevron={false}
-            trailing={
-              <span className="text-meta font-medium tabular-nums text-ink-2">
-                {formatMorningBrief(prefs?.proactivity)}
-              </span>
-            }
-          />
-        )}
-      </Rows>
-    </Section>
+                <Button type="submit" size="sm" variant="primary" disabled={!!action.pending}>
+                  {action.pending === "morning_brief" ? "Saving…" : "Save"}
+                </Button>
+                <Button type="button" size="sm" variant="quiet" disabled={!!action.pending} onClick={() => setEditing(null)}>
+                  Cancel
+                </Button>
+              </form>
+            </li>
+          ) : (
+            <Row
+              title="Morning brief"
+              onClick={openBriefEditor}
+              chevron
+              trailing={
+                <span className="text-meta font-medium tabular-nums text-ink-2">
+                  {formatMorningBrief(prefs.proactivity)}
+                </span>
+              }
+            />
+          )}
+        </Rows>
+      </Section>
+    </div>
   );
 }

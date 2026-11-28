@@ -1730,6 +1730,9 @@ export interface components {
         PushPolicy: "urgent_and_approvals" | "include_brief" | "quiet_only";
         ProactivityPreferences: {
             push_policy?: components["schemas"]["PushPolicy"];
+            push_chats?: boolean;
+            push_urgent_and_approvals?: boolean;
+            push_morning_brief?: boolean;
             morning_brief_time?: string;
             morning_brief_enabled?: boolean;
             daily_proactive_budget_usd?: number;

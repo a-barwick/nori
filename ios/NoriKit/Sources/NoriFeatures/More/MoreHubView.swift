@@ -7,6 +7,7 @@ public enum MoreRoute: Hashable, Sendable {
     case mcpDetail(String)
     case memory
     case permissions
+    case notifications
     case preferences
     case apiCosts
     case models
@@ -42,9 +43,6 @@ public struct MoreHubView: View {
                     }
                     .padding(.bottom, 12)
                 }
-
-                NoriSectionHeader("Proactivity")
-                ProactivitySectionView(store: store)
 
                 NoriSectionHeader("Nori")
                 noriRows
@@ -115,6 +113,17 @@ public struct MoreHubView: View {
 
     private var settingsRows: some View {
         NoriRows {
+            NavigationLink(value: MoreRoute.notifications) {
+                NoriRow(
+                    title: "Notifications",
+                    systemImage: "bell",
+                    iconTone: .neutral,
+                    showChevron: true,
+                    showDivider: true
+                )
+            }
+            .buttonStyle(.plain)
+
             NavigationLink(value: MoreRoute.models) {
                 NoriRow(
                     title: "Models",

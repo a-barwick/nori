@@ -1,14 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { BarChart3, Brain, LayoutGrid, Monitor, Moon, ShieldCheck, SlidersHorizontal, Sparkles, Sun, UserCircle } from "lucide-react";
+import { BarChart3, Bell, Brain, LayoutGrid, Monitor, Moon, ShieldCheck, SlidersHorizontal, Sparkles, Sun, UserCircle } from "lucide-react";
 import { useAppearance, type NoriAppearance } from "@/lib/appearance";
 import type { ModelKeysResponse, ModelSettings } from "@/lib/assistant/api";
 import { useAssistant } from "@/lib/assistant/context";
 import { hasSelectedHomeChat, needsByokSetup } from "@/lib/assistant/modelSetup";
 import { useSummary } from "@/lib/assistant/sources";
 import { useResource } from "@/lib/assistant/useResource";
-import { ProactivitySection } from "./ProactivitySettings";
 import { Notice, Pill, Row, Rows, Screen, Section } from "./ui";
 
 const APPEARANCE_ICON: Record<NoriAppearance, typeof Monitor> = {
@@ -56,8 +55,6 @@ export function MoreScreen({ userEmail: _userEmail }: { userEmail?: string } = {
         </div>
       )}
 
-      <ProactivitySection />
-
       <Section title="Nori">
         <Rows label="Nori">
           <Row
@@ -93,6 +90,15 @@ export function MoreScreen({ userEmail: _userEmail }: { userEmail?: string } = {
 
       <Section title="Settings">
         <Rows label="Settings">
+          <Row
+            href="/settings/notifications"
+            leading={
+              <span className="grid size-9 place-items-center rounded-[10px] bg-fill-1 text-ink-2">
+                <Bell size={18} strokeWidth={1.85} aria-hidden />
+              </span>
+            }
+            title="Notifications"
+          />
           <Row
             href="/settings/models"
             leading={

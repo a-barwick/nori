@@ -64,9 +64,45 @@ func (q *QuietHours) IsEnabled() bool {
 
 type ProactivityPreferences struct {
 	PushPolicy              string  `json:"push_policy,omitempty"`
+	PushChats               *bool   `json:"push_chats,omitempty"`
+	PushUrgentAndApprovals  *bool   `json:"push_urgent_and_approvals,omitempty"`
+	PushMorningBrief        *bool   `json:"push_morning_brief,omitempty"`
 	MorningBriefTime        string  `json:"morning_brief_time,omitempty"`
 	MorningBriefEnabled     *bool   `json:"morning_brief_enabled,omitempty"`
 	DailyProactiveBudgetUSD float64 `json:"daily_proactive_budget_usd,omitempty"`
+}
+
+// IsPushChatsEnabled reports whether chat & background work completion pushes are enabled (defaults to true unless legacy push_policy is quiet_only).
+func (p *ProactivityPreferences) IsPushChatsEnabled() bool {
+	if p == nil {
+		return true
+	}
+	if p.PushChats != nil {
+		return *p.PushChats
+	}
+	return p.PushPolicy != PushPolicyQuietOnly
+}
+
+// IsPushUrgentAndApprovalsEnabled reports whether urgent alert & approval pushes are enabled (defaults to true unless legacy push_policy is quiet_only).
+func (p *ProactivityPreferences) IsPushUrgentAndApprovalsEnabled() bool {
+	if p == nil {
+		return true
+	}
+	if p.PushUrgentAndApprovals != nil {
+		return *p.PushUrgentAndApprovals
+	}
+	return p.PushPolicy != PushPolicyQuietOnly
+}
+
+// IsPushMorningBriefEnabled reports whether morning brief pushes are enabled (defaults to true when legacy push_policy is include_brief, false otherwise).
+func (p *ProactivityPreferences) IsPushMorningBriefEnabled() bool {
+	if p == nil {
+		return false
+	}
+	if p.PushMorningBrief != nil {
+		return *p.PushMorningBrief
+	}
+	return p.PushPolicy == PushPolicyIncludeBrief
 }
 
 // IsMorningBriefEnabled reports whether the Morning Brief is enabled (defaults to true when nil).
@@ -117,9 +153,27 @@ func defaultQuietHours() *QuietHours {
 func defaultProactivityPreferences() *ProactivityPreferences {
 	return &ProactivityPreferences{
 		PushPolicy:              PushPolicyUrgentAndApprovals,
+		PushChats:               boolPtr(true),
+		PushUrgentAndApprovals:  boolPtr(true),
+		PushMorningBrief:        boolPtr(false),
 		MorningBriefTime:        DefaultMorningBriefTime,
 		MorningBriefEnabled:     boolPtr(true),
 		DailyProactiveBudgetUSD: DefaultDailyProactiveBudgetUSD,
+	}
+}
+
+func normalizeProactivityPushFlags(p *ProactivityPreferences) {
+	if p.PushPolicy == "" {
+		p.PushPolicy = PushPolicyUrgentAndApprovals
+	}
+	if p.PushChats == nil {
+		p.PushChats = boolPtr(p.PushPolicy != PushPolicyQuietOnly)
+	}
+	if p.PushUrgentAndApprovals == nil {
+		p.PushUrgentAndApprovals = boolPtr(p.PushPolicy != PushPolicyQuietOnly)
+	}
+	if p.PushMorningBrief == nil {
+		p.PushMorningBrief = boolPtr(p.PushPolicy == PushPolicyIncludeBrief)
 	}
 }
 
@@ -147,9 +201,7 @@ func (p Preferences) EffectiveProactivity() ProactivityPreferences {
 		return *defaultProactivityPreferences()
 	}
 	out := *p.Proactivity
-	if out.PushPolicy == "" {
-		out.PushPolicy = PushPolicyUrgentAndApprovals
-	}
+	normalizeProactivityPushFlags(&out)
 	if out.MorningBriefTime == "" {
 		out.MorningBriefTime = DefaultMorningBriefTime
 	}
@@ -188,9 +240,7 @@ func applyReadDefaults(prefs *Preferences) {
 	if prefs.Proactivity == nil {
 		prefs.Proactivity = defaultProactivityPreferences()
 	} else {
-		if prefs.Proactivity.PushPolicy == "" {
-			prefs.Proactivity.PushPolicy = PushPolicyUrgentAndApprovals
-		}
+		normalizeProactivityPushFlags(prefs.Proactivity)
 		if prefs.Proactivity.MorningBriefTime == "" {
 			prefs.Proactivity.MorningBriefTime = DefaultMorningBriefTime
 		}

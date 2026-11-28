@@ -29,7 +29,7 @@ func TestPreferencesProactivityDefaultsAndNilPreservation(t *testing.T) {
 	if prefs.QuietHours == nil || !prefs.QuietHours.IsEnabled() || prefs.QuietHours.Start != DefaultQuietHoursStart || prefs.QuietHours.End != DefaultQuietHoursEnd {
 		t.Fatalf("unexpected default QuietHours: %+v", prefs.QuietHours)
 	}
-	if prefs.Proactivity == nil || prefs.Proactivity.PushPolicy != PushPolicyUrgentAndApprovals || prefs.Proactivity.MorningBriefTime != DefaultMorningBriefTime || prefs.Proactivity.DailyProactiveBudgetUSD != DefaultDailyProactiveBudgetUSD {
+	if prefs.Proactivity == nil || prefs.Proactivity.PushPolicy != PushPolicyUrgentAndApprovals || !prefs.Proactivity.IsPushChatsEnabled() || !prefs.Proactivity.IsPushUrgentAndApprovalsEnabled() || prefs.Proactivity.IsPushMorningBriefEnabled() || prefs.Proactivity.MorningBriefTime != DefaultMorningBriefTime || prefs.Proactivity.DailyProactiveBudgetUSD != DefaultDailyProactiveBudgetUSD {
 		t.Fatalf("unexpected default Proactivity: %+v", prefs.Proactivity)
 	}
 

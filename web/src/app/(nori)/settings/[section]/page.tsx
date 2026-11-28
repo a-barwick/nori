@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { SettingsScreen, type SettingsSection } from "@/components/assistant/SettingsScreen";
 import { resolveUser } from "@/lib/runtime/auth";
 
-const SECTIONS = ["permissions", "preferences", "api-costs", "appearance", "models", "reset", "account", "history", "diagnostics"];
+const SECTIONS = ["notifications", "permissions", "preferences", "api-costs", "appearance", "models", "reset", "account", "history", "diagnostics"];
 
 export default async function Page({
   params,
