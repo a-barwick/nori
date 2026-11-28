@@ -108,9 +108,17 @@ type storedKey struct {
 }
 
 type Service struct {
-	Store      secret.CredentialStore
-	HTTPClient *http.Client
-	Now        func() time.Time
+	Store           secret.CredentialStore
+	HTTPClient      *http.Client
+	Now             func() time.Time
+	OnMutate        func(ctx context.Context, provider string)
+	HostedAvailable bool
+}
+
+func (s *Service) notifyMutated(ctx context.Context, provider string) {
+	if s != nil && s.OnMutate != nil {
+		s.OnMutate(ctx, provider)
+	}
 }
 
 func (s *Service) now() time.Time {
@@ -152,7 +160,7 @@ func (s *Service) readRecord(ctx context.Context, provider string) (storedKey, b
 // List returns the BYOK requirement flag and status for every registered provider.
 func (s *Service) List(ctx context.Context) (ListResponse, error) {
 	out := ListResponse{
-		BYOKRequired: true,
+		BYOKRequired: s == nil || !s.HostedAvailable,
 		Providers:    make([]ProviderStatus, 0, len(providerRegistry)),
 	}
 	for _, def := range providerRegistry {
@@ -219,6 +227,7 @@ func (s *Service) Set(ctx context.Context, provider, apiKey string) (ProviderSta
 	if err := s.saveCredential(ctx, credID, payload); err != nil {
 		return ProviderStatus{}, err
 	}
+	s.notifyMutated(ctx, def.ID)
 
 	updated := rec.UpdatedAt
 	return ProviderStatus{
@@ -243,6 +252,7 @@ func (s *Service) Delete(ctx context.Context, provider string) (ProviderStatus, 
 	if err := s.Store.Delete(ctx, CredentialID(provider)); err != nil {
 		return ProviderStatus{}, err
 	}
+	s.notifyMutated(ctx, def.ID)
 	return ProviderStatus{
 		Provider:   def.ID,
 		Label:      def.Label,

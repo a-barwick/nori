@@ -4,9 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"nori/internal/agent"
 	"nori/internal/extensions"
+	"nori/internal/llmguard"
 	"nori/internal/prompts"
 	"nori/internal/state"
 )
@@ -147,6 +149,22 @@ func (s *runSession) runParallelReadBatch(step Step, batch []state.TaskCallRef) 
 	}
 
 	tCtx, tCancel := s.stepCtx(stepTimeoutLong)
+	var obsMu sync.Mutex
+	var obsCost float64
+	var obsUnknown bool
+	tCtx = llmguard.WithCostObserver(tCtx, func(costUSD float64, costKnown, sent bool) {
+		if !sent {
+			return
+		}
+		obsMu.Lock()
+		if costUSD > 0 {
+			obsCost += costUSD
+		}
+		if !costKnown {
+			obsUnknown = true
+		}
+		obsMu.Unlock()
+	})
 	out, err := s.act.ToolBatchRef(tCtx, RefToolBatchInput{
 		Step:     step,
 		Ref:      s.ctrl.Ref,
@@ -154,15 +172,30 @@ func (s *runSession) runParallelReadBatch(step Step, batch []state.TaskCallRef) 
 		Items:    items,
 	})
 	tCancel()
+	obsMu.Lock()
+	observedCost, observedUnknown := obsCost, obsUnknown
+	obsMu.Unlock()
 	if res, stopped := s.checkStopped(); stopped {
 		return res
 	}
 	if err != nil {
+		var obsSpend *state.SpendUpdate
+		if observedCost > 0 || observedUnknown {
+			obsSpend = &state.SpendUpdate{
+				RunID:       s.runID,
+				Spent:       s.acct.spent + observedCost,
+				Budget:      s.acct.budget,
+				CostUnknown: s.acct.costUnknown || observedUnknown,
+			}
+		}
 		switch {
 		case errors.Is(err, state.ErrSuperseded), errors.Is(err, state.ErrPaused):
 			next := s.ctrl
 			next.CallsRevised = true
-			if res := s.saveCtrl(next); res.done {
+			if observedUnknown {
+				next.EstimatedUnknownUSD += unknownModelStepExposureUSD
+			}
+			if res := s.saveOrAdvance(next, obsSpend); res.done {
 				return res
 			}
 			if errors.Is(err, state.ErrPaused) {
@@ -170,12 +203,21 @@ func (s *runSession) runParallelReadBatch(step Step, batch []state.TaskCallRef) 
 			}
 			return stepContinue()
 		case errors.Is(err, state.ErrCancelled):
-			return s.transitionFailure(state.RunCancelled, state.ErrCancelled.Error(), true, nil)
+			return s.transitionFailure(state.RunCancelled, state.ErrCancelled.Error(), true, obsSpend)
 		case errors.Is(err, state.ErrBusy):
 			return s.handleBusy()
 		default:
 			if isPermanentTaskError(err) {
-				return s.transitionFailure(state.RunFailed, err.Error(), false, nil)
+				return s.transitionFailure(state.RunFailed, err.Error(), false, obsSpend)
+			}
+			if obsSpend != nil {
+				next := s.ctrl
+				if observedUnknown {
+					next.EstimatedUnknownUSD += unknownModelStepExposureUSD
+				}
+				if res := s.saveOrAdvance(next, obsSpend); res.done {
+					return res
+				}
 			}
 			return s.backoff(err)
 		}
@@ -208,13 +250,18 @@ func (s *runSession) runParallelReadBatch(step Step, batch []state.TaskCallRef) 
 		advanceCallCursor(&next)
 	}
 
+	totalCost := max(out.TotalCost, observedCost)
+	totalUnknown := out.CostUnknown || observedUnknown
+	if totalUnknown && !out.CostUnknown {
+		next.EstimatedUnknownUSD += unknownModelStepExposureUSD
+	}
 	var spend *state.SpendUpdate
-	if out.TotalCost > 0 || out.CostUnknown {
+	if totalCost > 0 || totalUnknown {
 		spend = &state.SpendUpdate{
 			RunID:       s.runID,
-			Spent:       s.acct.spent + out.TotalCost,
+			Spent:       s.acct.spent + totalCost,
 			Budget:      s.acct.budget,
-			CostUnknown: s.acct.costUnknown || out.CostUnknown,
+			CostUnknown: s.acct.costUnknown || totalUnknown,
 		}
 	}
 	if loopDetected {
@@ -228,8 +275,8 @@ func (s *runSession) runParallelReadBatch(step Step, batch []state.TaskCallRef) 
 			Text:               detail,
 			StopConfirmed:      true,
 			ExpectedIncomplete: true,
-			Spent:              s.acct.spent + out.TotalCost,
-			CostUnknown:        s.acct.costUnknown || out.CostUnknown,
+			Spent:              s.acct.spent + totalCost,
+			CostUnknown:        s.acct.costUnknown || totalUnknown,
 			BypassRouting:      false,
 		}
 		next.Phase = state.TaskPhasePublish
@@ -382,6 +429,26 @@ func (s *runSession) runToolCall(step Step, call state.TaskCallRef) stepResult {
 
 	policy := agent.PolicyFor(call.Name, call.Exec)
 	tCtx, tCancel := s.stepCtx(stepTimeoutLong)
+	var paidTracker *composePaidTracker
+	if call.Name == "compose" {
+		tCtx, paidTracker = withComposePaidTracker(tCtx, max(0, defaultMaxPaidTools-s.ctrl.PaidTools))
+	}
+	var obsMu sync.Mutex
+	var obsCost float64
+	var obsUnknown bool
+	tCtx = llmguard.WithCostObserver(tCtx, func(costUSD float64, costKnown, sent bool) {
+		if !sent {
+			return
+		}
+		obsMu.Lock()
+		if costUSD > 0 {
+			obsCost += costUSD
+		}
+		if !costKnown {
+			obsUnknown = true
+		}
+		obsMu.Unlock()
+	})
 	output, err := s.act.ToolRef(tCtx, RefToolInput{
 		Step:        step,
 		Ref:         s.ctrl.Ref,
@@ -391,14 +458,35 @@ func (s *runSession) runToolCall(step Step, call state.TaskCallRef) stepResult {
 		Exec:        call.Exec,
 	})
 	tCancel()
+	obsMu.Lock()
+	observedCost, observedUnknown := obsCost, obsUnknown
+	obsMu.Unlock()
 	if res, stopped := s.checkStopped(); stopped {
 		return res
 	}
 	if err != nil {
+		var obsSpend *state.SpendUpdate
+		if observedCost > 0 || observedUnknown {
+			obsSpend = &state.SpendUpdate{
+				RunID:       s.runID,
+				Spent:       s.acct.spent + observedCost,
+				Budget:      s.acct.budget,
+				CostUnknown: s.acct.costUnknown || observedUnknown,
+			}
+		}
 		switch {
 		case errors.Is(err, state.ErrSuperseded), errors.Is(err, state.ErrPaused):
 			next := s.ctrl
 			next.Tools++
+			if observedUnknown {
+				next.EstimatedUnknownUSD += unknownModelStepExposureUSD
+			}
+			if obsSpend != nil {
+				if res := s.advanceStep(next, obsSpend); res.done {
+					return res
+				}
+				next = s.ctrl
+			}
 			return s.appendSkippedCall(step, call, map[string]any{
 				"skipped":      true,
 				"outcome":      "skipped",
@@ -406,33 +494,48 @@ func (s *runSession) runToolCall(step Step, call state.TaskCallRef) stepResult {
 				"reason":       prompts.Runtime("workflow-execution-admission-changed-before-this-call-ran", nil),
 			}, next, true, errors.Is(err, state.ErrPaused))
 		case errors.Is(err, state.ErrCancelled):
-			return s.transitionFailure(state.RunCancelled, state.ErrCancelled.Error(), true, nil)
+			return s.transitionFailure(state.RunCancelled, state.ErrCancelled.Error(), true, obsSpend)
 		case errors.Is(err, state.ErrBusy):
 			return s.handleBusy()
 		default:
 			if isPermanentTaskError(err) {
 				var failSpend *state.SpendUpdate
-				if policy.InterruptedCostUSD > 0 || policy.InterruptedCostUnknown {
+				extraCost := max(policy.InterruptedCostUSD, observedCost)
+				extraUnknown := policy.InterruptedCostUnknown || observedUnknown
+				if extraCost > 0 || extraUnknown {
 					failSpend = &state.SpendUpdate{
 						RunID:       s.runID,
-						Spent:       s.acct.spent + policy.InterruptedCostUSD,
+						Spent:       s.acct.spent + extraCost,
 						Budget:      s.acct.budget,
-						CostUnknown: s.acct.costUnknown || policy.InterruptedCostUnknown,
+						CostUnknown: s.acct.costUnknown || extraUnknown,
 					}
 				}
 				return s.transitionFailure(state.RunFailed, err.Error(), false, failSpend)
+			}
+			if obsSpend != nil {
+				next := s.ctrl
+				if observedUnknown {
+					next.EstimatedUnknownUSD += unknownModelStepExposureUSD
+				}
+				if res := s.saveOrAdvance(next, obsSpend); res.done {
+					return res
+				}
 			}
 			return s.backoff(err)
 		}
 	}
 
+	effectiveCost := max(output.Cost, observedCost)
+	effectiveUnknown := output.CostUnknown || observedUnknown
 	next := s.ctrl
 	next.Ref = output.Ref
 	next.Tools++
-	if isPaidTool(policy) || output.Cost > 0 || output.CostUnknown {
+	if call.Name == "compose" && paidTracker != nil {
+		next.PaidTools += int(paidTracker.executed.Load())
+	} else if isPaidTool(policy) || effectiveCost > 0 || effectiveUnknown {
 		next.PaidTools++
 	}
-	if output.CostUnknown {
+	if effectiveUnknown {
 		next.EstimatedUnknownUSD += unknownModelStepExposureUSD
 	}
 	if applyAfterTool(&next, output, s.runID) {
@@ -441,12 +544,12 @@ func (s *runSession) runToolCall(step Step, call state.TaskCallRef) stepResult {
 	advanceCallCursor(&next)
 
 	var spend *state.SpendUpdate
-	if output.Cost > 0 || output.CostUnknown {
+	if effectiveCost > 0 || effectiveUnknown {
 		spend = &state.SpendUpdate{
 			RunID:       s.runID,
-			Spent:       s.acct.spent + output.Cost,
+			Spent:       s.acct.spent + effectiveCost,
 			Budget:      s.acct.budget,
-			CostUnknown: s.acct.costUnknown || output.CostUnknown,
+			CostUnknown: s.acct.costUnknown || effectiveUnknown,
 		}
 	}
 	var loopDetected bool
@@ -462,8 +565,8 @@ func (s *runSession) runToolCall(step Step, call state.TaskCallRef) stepResult {
 			Text:               detail,
 			StopConfirmed:      true,
 			ExpectedIncomplete: true,
-			Spent:              s.acct.spent + output.Cost,
-			CostUnknown:        s.acct.costUnknown || output.CostUnknown,
+			Spent:              s.acct.spent + effectiveCost,
+			CostUnknown:        s.acct.costUnknown || effectiveUnknown,
 			BypassRouting:      false,
 		}
 		next.Phase = state.TaskPhasePublish

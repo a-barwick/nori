@@ -47,6 +47,7 @@ type OpenAIModel struct {
 	AllowGatewayReasoning bool
 	GoogleCompatibility   bool
 	BYOKProviderLabel     string
+	BillingMode           string
 	LocalOnly             bool
 	Now                   func() time.Time
 	NewID                 func() string
@@ -54,6 +55,20 @@ type OpenAIModel struct {
 	RetryBaseDelay        time.Duration
 	MaxRetryAfter         time.Duration
 	Sleep                 func(context.Context, time.Duration) error
+}
+
+func (m *OpenAIModel) billingMode() string {
+	switch m.BillingMode {
+	case state.UsageBillingHosted, state.UsageBillingBYOK, state.UsageBillingLocal:
+		return m.BillingMode
+	}
+	if m.ProviderName == llmguard.ProviderHome || m.LocalOnly {
+		return state.UsageBillingLocal
+	}
+	if m.BYOKProviderLabel != "" {
+		return state.UsageBillingBYOK
+	}
+	return state.UsageBillingHosted
 }
 
 func (m *OpenAIModel) guard() *llmguard.Guard {
@@ -64,11 +79,14 @@ func (m *OpenAIModel) guard() *llmguard.Guard {
 }
 
 func (m *OpenAIModel) httpClient() *http.Client {
+	billingMode := m.billingMode()
 	return m.guard().WrapClient(m.Client, 75*time.Second, llmguard.CallMeta{
 		UserID:   m.UserID,
 		Scope:    llmguard.ScopeOuter,
 		Provider: m.provider(),
 		Model:    m.name,
+		Billing:  billingMode,
+		BYOK:     billingMode == state.UsageBillingBYOK,
 	})
 }
 
@@ -143,11 +161,27 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 		span.SetAttributes(a)
 	}
 	defer func() {
+		sent := reply.Usage.RequestStatus != "not_sent"
+		if sent {
+			cost, costKnown := 0.0, false
+			if reply.Usage.CostStatus == "local" || m.ProviderName == llmguard.ProviderHome {
+				costKnown = true
+			} else if reply.Usage.CostUSD != nil {
+				cost, costKnown = *reply.Usage.CostUSD, true
+			}
+			llmguard.ObserveCallCost(ctx, cost, costKnown, true)
+		}
 		m.observeCall(ctx, span, requestStarted, reply, err)
 	}()
-	reply.Usage = state.Usage{
-		ID: m.newID(), Provider: "outer", Model: m.name, CostStatus: "unknown", RequestStatus: "not_sent", CreatedAt: m.now().UTC(),
+	billingMode := m.billingMode()
+	reply.Usage = usage.AttemptWithMeta(ctx, "outer", m.name, billingMode, state.UsageCategoryLLM)
+	if m.NewID != nil {
+		reply.Usage.ID = m.newID()
 	}
+	if m.Now != nil {
+		reply.Usage.CreatedAt = m.now().UTC()
+	}
+	reply.Usage.RequestStatus = "not_sent"
 	if m.ProviderName == llmguard.ProviderHome {
 		zero := float64(0)
 		reply.Usage.CostUSD, reply.Usage.CostStatus = &zero, "local"
@@ -177,11 +211,12 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 		Scope:           scope,
 		Provider:        m.provider(),
 		Model:           m.name,
+		Billing:         billingMode,
 		MaxOutputTokens: 4096,
-		BYOK:            m.BYOKProviderLabel != "",
+		BYOK:            billingMode == state.UsageBillingBYOK,
 	}
 	reqCtx := llmguard.WithMeta(ctx, meta)
-	if m.BYOKProviderLabel != "" {
+	if billingMode != state.UsageBillingLocal {
 		reply.Usage.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
 	}
 	if _, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, bytes.NewReader(body)); err != nil {
@@ -207,20 +242,16 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 			prev.RequestStatus = "unknown"
 		}
 		_ = usage.Finish(ctx, usage.Func(request.RecordUsage), prev)
-		nextUsage := prev
-		nextUsage.ID = m.newID()
-		nextUsage.CreatedAt = m.now().UTC()
-		nextUsage.RequestStatus = "pending"
-		nextUsage.CostStatus = "unknown"
-		nextUsage.CostUSD = nil
-		if m.BYOKProviderLabel == "" {
-			nextUsage.EstimatedExposureUSD = 0
+		nextUsage := usage.AttemptWithMeta(ctx, "outer", m.name, billingMode, state.UsageCategoryLLM)
+		if m.NewID != nil {
+			nextUsage.ID = m.newID()
 		}
-		nextUsage.InputTokens = nil
-		nextUsage.OutputTokens = nil
-		nextUsage.TotalTokens = nil
-		nextUsage.CachedTokens = nil
-		nextUsage.CacheWriteTokens = nil
+		if m.Now != nil {
+			nextUsage.CreatedAt = m.now().UTC()
+		}
+		if billingMode != state.UsageBillingLocal {
+			nextUsage.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
+		}
 		reply.Usage = nextUsage
 		if err := request.RecordUsage(ctx, reply.Usage); err != nil {
 			reply.Usage.RequestStatus = "not_sent"
@@ -415,6 +446,9 @@ func (m *OpenAIModel) decodeOpenAIReply(res *http.Response, reply Reply, noDispa
 			if json.Unmarshal(response.Usage.Cost, &cost) == nil {
 				usage.RecordReportedCost(&reply.Usage, cost)
 			}
+			if reply.Usage.CostUSD == nil && !m.LocalOnly {
+				m.applyTariffFallback(&reply.Usage, response.Model, response.Tier, response.Usage.Input, response.Usage.Output, response.Usage.Total, response.Usage.OutputDetails.Reasoning, cached, written)
+			}
 			if reply.Usage.CostUSD == nil && m.LocalOnly {
 				reply.Usage.CostStatus = "local"
 			}
@@ -482,6 +516,58 @@ func (m *OpenAIModel) decodeOpenAIReply(res *http.Response, reply Reply, noDispa
 		return reply, fmt.Errorf("model returned neither a reply nor a task command")
 	}
 	return reply, nil
+}
+
+func (m *OpenAIModel) applyTariffFallback(record *state.Usage, servedModel, tier string, input, output, total *int64, reasoning, cached, written int64) {
+	if input == nil || output == nil {
+		return
+	}
+	effTotal := total
+	if effTotal == nil {
+		sum := *input + *output
+		effTotal = &sum
+	}
+	effTier := strings.TrimSpace(tier)
+	if effTier == "" {
+		effTier = "default"
+	}
+	separateReasoning := reasoning > 0 && *effTotal == *input+*output+reasoning
+	candidates := []string{strings.TrimSpace(servedModel), strings.TrimSpace(m.name)}
+	for _, raw := range candidates {
+		if raw == "" {
+			continue
+		}
+		low := strings.ToLower(raw)
+		if m.GoogleCompatibility || strings.HasPrefix(low, "google/") || strings.HasPrefix(low, "gemini-") {
+			if _, _, _, ok := usage.GoogleTariff(low); ok {
+				var cost float64
+				var err error
+				if separateReasoning {
+					cost, err = usage.GoogleCostWithReasoning(low, *input, *output, reasoning, cached)
+				} else {
+					cost, err = usage.GoogleCost(low, *input, *output, cached)
+				}
+				if err == nil {
+					record.CostUSD, record.CostStatus = &cost, "calculated"
+					return
+				}
+			}
+		}
+		if strings.HasPrefix(low, "openai/") || isSupportedDirectOpenAIModel(low) {
+			stripped := strings.TrimPrefix(low, "openai/")
+			if cost, err := usage.OpenAICostWithWrites(stripped, effTier, input, output, effTotal, cached, written); err == nil {
+				record.CostUSD, record.CostStatus = &cost, "calculated"
+				return
+			}
+		}
+		if strings.HasPrefix(low, "anthropic/") || strings.HasPrefix(low, "claude-") {
+			uncached := max(*input-cached-written, 0)
+			if cost, err := usage.AnthropicCost(low, uncached, *output, cached, written); err == nil {
+				record.CostUSD, record.CostStatus = &cost, "calculated"
+				return
+			}
+		}
+	}
 }
 
 type providerHTTPError struct {

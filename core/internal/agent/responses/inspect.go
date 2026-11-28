@@ -14,6 +14,7 @@ import (
 	"nori/internal/agent"
 	"nori/internal/llmguard"
 	"nori/internal/modelgateway"
+	"nori/internal/state"
 	"nori/internal/usage"
 )
 
@@ -40,7 +41,11 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 	if err != nil {
 		return out, errors.New("inspection request could not be encoded")
 	}
-	meta := llmguard.CallMeta{UserID: c.UserID, Scope: llmguard.ScopeTask, Provider: c.Provider(), Model: c.ModelName, MaxOutputTokens: req.MaxOutputTokens, BYOK: c.Byok}
+	billingMode := c.billingMode()
+	meta := llmguard.CallMeta{
+		UserID: c.UserID, Scope: llmguard.ScopeTask, Provider: c.Provider(), Model: c.ModelName,
+		Billing: billingMode, MaxOutputTokens: req.MaxOutputTokens, BYOK: billingMode == state.UsageBillingBYOK,
+	}
 	reqCtx := llmguard.WithMeta(ctx, meta)
 	buildReq := func() (*http.Request, error) {
 		httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.endpoint(), bytes.NewReader(body))
@@ -54,15 +59,18 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 	if _, err := buildReq(); err != nil {
 		return out, err
 	}
-	record := usage.Attempt(ctx, c.Provider(), c.ModelName)
-	if c.Byok {
+	record := usage.AttemptWithMeta(ctx, c.Provider(), c.ModelName, billingMode, state.UsageCategoryLLM)
+	if billingMode != state.UsageBillingLocal {
 		record.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
 	}
 	if err := c.Meter.RecordUsage(ctx, record); err != nil {
 		return out, err
 	}
 	record.RequestStatus = "unknown"
-	defer func() { err = errors.Join(err, usage.Finish(ctx, c.Meter, record)) }()
+	defer func() {
+		llmguard.ObserveCallCost(ctx, out.Cost, out.CostKnown, out.Sent)
+		err = errors.Join(err, usage.Finish(ctx, c.Meter, record))
+	}()
 	out.Sent = true
 	onRetry := func(statusCode int) error {
 		prev := record
@@ -72,8 +80,8 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 			prev.RequestStatus = "unknown"
 		}
 		_ = usage.Finish(ctx, c.Meter, prev)
-		record = usage.Attempt(ctx, c.Provider(), c.ModelName)
-		if c.Byok {
+		record = usage.AttemptWithMeta(ctx, c.Provider(), c.ModelName, billingMode, state.UsageCategoryLLM)
+		if billingMode != state.UsageBillingLocal {
 			record.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
 		}
 		if err := c.Meter.RecordUsage(ctx, record); err != nil {
@@ -87,6 +95,12 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 	if err != nil {
 		if errors.Is(err, usage.ErrUserQuotaExceeded) {
 			record.RequestStatus = "not_sent"
+			out.Sent = false
+			return out, err
+		}
+		if llmguard.IsGuardError(err) {
+			record.RequestStatus = "not_sent"
+			out.Sent = false
 			return out, err
 		}
 		if ctx.Err() != nil {
@@ -124,6 +138,11 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 		return out, errors.New("inspection model returned an unreadable response")
 	}
 	out.Cost, out.CostKnown = c.recordCost(&record, response.Model, response.Tier, response.Usage)
+	if !out.CostKnown {
+		if cost, ok := c.applyTariffFallback(&record, response.Model, response.Tier, response.Usage); ok {
+			out.Cost, out.CostKnown = cost, true
+		}
+	}
 	if out.CostKnown && out.Cost > 0 {
 		llmguard.RecordResponseCost(res, out.Cost)
 	}

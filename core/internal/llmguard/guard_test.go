@@ -600,3 +600,95 @@ func TestGuard_MeteredBodyConcurrentRecordCostAndClose(t *testing.T) {
 	_ = resp.Body.Close()
 	<-done
 }
+
+func TestGuard_Rolling24hWindowResetsHostedSpend(t *testing.T) {
+	now := time.Date(2026, 11, 25, 16, 0, 0, 0, time.UTC)
+	g := New(Config{
+		Now:             func() time.Time { return now },
+		MaxEstimatedUSD: 0.025,
+	})
+	rt := g.Transport(fakeRT{fn: func(*http.Request) (*http.Response, error) {
+		return okResp(), nil
+	}}, CallMeta{UserID: "u-roll24", Scope: ScopeSearch, Provider: "exa", Billing: "hosted"})
+
+	// First Exa call ($0.013) succeeds.
+	req1, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/search", strings.NewReader(`{"q":"1"}`))
+	resp1, err := rt.RoundTrip(req1)
+	if err != nil {
+		t.Fatalf("first hosted search failed: %v", err)
+	}
+	RecordResponseCost(resp1, 0.013)
+	_ = resp1.Body.Close()
+
+	// Second Exa call ($0.013 + $0.013 = $0.026 > $0.025) is blocked.
+	req2, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/search", strings.NewReader(`{"q":"2"}`))
+	if _, err := rt.RoundTrip(req2); !errors.Is(err, ErrBudgetExceeded) {
+		t.Fatalf("expected ErrBudgetExceeded within 24h window, got %v", err)
+	}
+
+	// Advancing 23h59m still blocks.
+	now = now.Add(23*time.Hour + 59*time.Minute)
+	req3, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/search", strings.NewReader(`{"q":"3"}`))
+	if _, err := rt.RoundTrip(req3); !errors.Is(err, ErrBudgetExceeded) {
+		t.Fatalf("expected ErrBudgetExceeded at 23h59m, got %v", err)
+	}
+
+	// Advancing past 24h expires the old entry and admits a new call.
+	now = now.Add(2 * time.Minute)
+	if st := g.Stats(); st.RecordedActualUSD != 0 {
+		t.Fatalf("expected rolling 24h spend to decay to 0, got %+v", st)
+	}
+	req4, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/search", strings.NewReader(`{"q":"4"}`))
+	resp4, err := rt.RoundTrip(req4)
+	if err != nil {
+		t.Fatalf("expected call after 24h window to succeed, got %v", err)
+	}
+	_ = resp4.Body.Close()
+}
+
+func TestGuard_SpendCapScopedStrictlyToHosted(t *testing.T) {
+	now := time.Date(2026, 11, 25, 16, 0, 0, 0, time.UTC)
+	g := New(Config{
+		Now:             func() time.Time { return now },
+		MaxEstimatedUSD: 0.02,
+	})
+
+	// Exhaust hosted budget completely.
+	g.RecordActualCost(0.02)
+
+	// Hosted call is blocked.
+	rtHosted := g.Transport(fakeRT{fn: func(*http.Request) (*http.Response, error) {
+		return okResp(), nil
+	}}, CallMeta{UserID: "u-scope", Scope: ScopeOuter, Billing: "hosted"})
+	reqH, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/chat", strings.NewReader(`{"h":1}`))
+	if _, err := rtHosted.RoundTrip(reqH); !errors.Is(err, ErrBudgetExceeded) {
+		t.Fatalf("expected hosted call blocked by spend cap, got %v", err)
+	}
+
+	// BYOK call is NOT blocked and does NOT inflate hosted spend stats.
+	rtBYOK := g.Transport(fakeRT{fn: func(*http.Request) (*http.Response, error) {
+		return okResp(), nil
+	}}, CallMeta{UserID: "u-scope", Scope: ScopeOuter, Billing: "byok", BYOK: true})
+	reqB, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/chat", strings.NewReader(`{"b":1}`))
+	respB, err := rtBYOK.RoundTrip(reqB)
+	if err != nil {
+		t.Fatalf("expected BYOK call to bypass hosted spend cap, got %v", err)
+	}
+	RecordResponseCost(respB, 5.00)
+	_ = respB.Body.Close()
+
+	// Local call is NOT blocked either.
+	rtLocal := g.Transport(fakeRT{fn: func(*http.Request) (*http.Response, error) {
+		return okResp(), nil
+	}}, CallMeta{UserID: "u-scope", Scope: ScopeOuter, Provider: ProviderHome, Billing: "local"})
+	reqL, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:9999/v1/chat", strings.NewReader(`{"l":1}`))
+	respL, err := rtLocal.RoundTrip(reqL)
+	if err != nil {
+		t.Fatalf("expected local call to bypass hosted spend cap, got %v", err)
+	}
+	_ = respL.Body.Close()
+
+	if st := g.Stats(); st.RecordedActualUSD != 0.02 || st.EstimatedUnknownUSD != 0 {
+		t.Fatalf("expected BYOK/local spend not to pollute hosted spend stats, got %+v", st)
+	}
+}

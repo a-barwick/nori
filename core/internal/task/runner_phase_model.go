@@ -3,8 +3,10 @@ package task
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
+	"nori/internal/llmguard"
 	"nori/internal/prompts"
 	"nori/internal/state"
 )
@@ -28,6 +30,23 @@ func (s *runSession) stepModel() stepResult {
 	}
 
 	mCtx, mCancel := s.stepCtx(stepTimeoutLong)
+	var obsMu sync.Mutex
+	var obsCost float64
+	var obsUnknown, obsSent bool
+	mCtx = llmguard.WithCostObserver(mCtx, func(costUSD float64, costKnown, sent bool) {
+		if !sent {
+			return
+		}
+		obsMu.Lock()
+		obsSent = true
+		if costUSD > 0 {
+			obsCost += costUSD
+		}
+		if !costKnown {
+			obsUnknown = true
+		}
+		obsMu.Unlock()
+	})
 	model, err := s.act.ModelRef(mCtx, RefModelInput{
 		Step:    Step{RunID: s.runID, Revision: s.ctrl.Revision},
 		ModelID: s.ctrl.PendingModelID,
@@ -35,6 +54,19 @@ func (s *runSession) stepModel() stepResult {
 		Subtask: s.ctrl.Subtask,
 	})
 	mCancel()
+	obsMu.Lock()
+	if obsSent {
+		if obsCost > model.Cost {
+			model.Cost = obsCost
+		}
+		if obsCost > 0 && model.NotSent {
+			model.NotSent = false
+		}
+		if obsUnknown && !model.NotSent {
+			model.CostKnown = false
+		}
+	}
+	obsMu.Unlock()
 	if res, stopped := s.checkStopped(); stopped {
 		return res
 	}
@@ -145,6 +177,9 @@ func (s *runSession) handleModelErr(model RefModelOutcome, err error) stepResult
 		next := s.ctrl
 		if sent {
 			next.Models++
+			if !model.CostKnown {
+				next.EstimatedUnknownUSD += unknownModelStepExposureUSD
+			}
 		}
 		next.PendingModelID = ""
 		next.ModelStepStartedAt = nil
@@ -172,6 +207,15 @@ func (s *runSession) handleModelErr(model RefModelOutcome, err error) stepResult
 				CostUnknown: true,
 			}
 			return s.transitionFailure(state.RunFailed, err.Error(), false, failSpend)
+		}
+		if spend != nil {
+			next := s.ctrl
+			if sent && !model.CostKnown {
+				next.EstimatedUnknownUSD += unknownModelStepExposureUSD
+			}
+			if res := s.saveOrAdvance(next, spend); res.done {
+				return res
+			}
 		}
 		return s.backoff(err)
 	}

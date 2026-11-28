@@ -3,10 +3,15 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+
+	"nori/internal/llmguard"
+	"nori/internal/state"
+	"nori/internal/usage"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -103,4 +108,112 @@ func TestWebSearchUnavailableWithoutKeys(t *testing.T) {
 	if res["available"] != false {
 		t.Fatalf("expected available=false, got %#v", res)
 	}
+}
+
+func TestWebSearchMetersHostedAndBYOKExa(t *testing.T) {
+	t.Run("hosted Exa metering reserves $0.013 and finalizes exact costDollars.total", func(t *testing.T) {
+		var gotKey string
+		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			gotKey = r.Header.Get("x-api-key")
+			return jsonResponse(http.StatusOK, `{"results":[{"title":"R","url":"https://example.com"}],"costDollars":{"total":0.009}}`), nil
+		})}
+		var records []state.Usage
+		svc := &Service{
+			HTTP:         client,
+			Capabilities: Capabilities{ExaSearchKey: "platform-exa-key"},
+		}
+		ConfigureSearch(svc, SearchOptions{
+			Meter:  usage.Func(func(_ context.Context, u state.Usage) error { records = append(records, u); return nil }),
+			Guard:  llmguard.New(llmguard.DefaultConfig()),
+			UserID: "u-hosted-exa",
+		})
+		// Verify shallow copy (like task.Activities.agentForRun) preserves SearchOptions.
+		copied := *svc
+		res, err := copied.webSearch(context.Background(), "nori pricing")
+		if err != nil {
+			t.Fatalf("webSearch failed: %v", err)
+		}
+		if gotKey != "platform-exa-key" {
+			t.Fatalf("got key %q, want platform-exa-key", gotKey)
+		}
+		if res["cost_usd"] != 0.009 {
+			t.Fatalf("cost_usd = %v, want 0.009", res["cost_usd"])
+		}
+		if len(records) != 2 {
+			t.Fatalf("expected pending + finalized records, got %d", len(records))
+		}
+		pending, final := records[0], records[1]
+		if pending.Billing != state.UsageBillingHosted || pending.Category != state.UsageCategorySearch || pending.EstimatedExposureUSD != 0.013 || pending.RequestStatus != "pending" {
+			t.Fatalf("unexpected pending Exa record: %+v", pending)
+		}
+		if final.Billing != state.UsageBillingHosted || final.Category != state.UsageCategorySearch || final.CostUSD == nil || *final.CostUSD != 0.009 || final.CostStatus != "provider" {
+			t.Fatalf("unexpected finalized Exa record: %+v", final)
+		}
+	})
+
+	t.Run("BYOK Exa used when allowed and skips hosted llmguard spend cap", func(t *testing.T) {
+		var gotKey string
+		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			gotKey = r.Header.Get("x-api-key")
+			return jsonResponse(http.StatusOK, `{"results":[{"title":"BYOK","url":"https://example.com"}]}`), nil
+		})}
+		g := llmguard.New(llmguard.Config{MaxEstimatedUSD: 0.001}) // tighter than $0.013
+		g.RecordActualCost(0.001)                                  // hosted cap exhausted
+		var records []state.Usage
+		svc := &Service{
+			HTTP:         client,
+			Capabilities: Capabilities{ExaSearchKey: "platform-exa-key"},
+		}
+		ConfigureSearch(svc, SearchOptions{
+			Meter:          usage.Func(func(_ context.Context, u state.Usage) error { records = append(records, u); return nil }),
+			Guard:          g,
+			UserID:         "u-byok-exa",
+			AllowBYOK:      func(context.Context) (bool, error) { return true, nil },
+			ResolveBYOKKey: func(context.Context) (string, bool, error) { return "user-exa-key", true, nil },
+		})
+		res, err := svc.webSearch(context.Background(), "byok search")
+		if err != nil {
+			t.Fatalf("expected BYOK Exa to bypass hosted guard cap, got %v", err)
+		}
+		if gotKey != "user-exa-key" {
+			t.Fatalf("expected BYOK key, got %q", gotKey)
+		}
+		if res["cost_usd"] != ExaSearchCostUSD {
+			t.Fatalf("expected fallback cost %v, got %v", ExaSearchCostUSD, res["cost_usd"])
+		}
+		if len(records) != 2 || records[1].Billing != state.UsageBillingBYOK || records[1].Category != state.UsageCategorySearch || records[1].CostUSD == nil || *records[1].CostUSD != 0.013 {
+			t.Fatalf("unexpected BYOK Exa usage records: %+v", records)
+		}
+	})
+
+	t.Run("trial tier ignores BYOK Exa and enforces hosted ScopeSearch guard", func(t *testing.T) {
+		var gotKey string
+		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			gotKey = r.Header.Get("x-api-key")
+			return jsonResponse(http.StatusOK, `{"results":[]}`), nil
+		})}
+		g := llmguard.New(llmguard.Config{MaxEstimatedUSD: 0.005}) // tighter than $0.013
+		var records []state.Usage
+		svc := &Service{
+			HTTP:         client,
+			Capabilities: Capabilities{ExaSearchKey: "platform-exa-key"},
+		}
+		ConfigureSearch(svc, SearchOptions{
+			Meter:          usage.Func(func(_ context.Context, u state.Usage) error { records = append(records, u); return nil }),
+			Guard:          g,
+			UserID:         "u-trial-exa",
+			AllowBYOK:      func(context.Context) (bool, error) { return false, nil },
+			ResolveBYOKKey: func(context.Context) (string, bool, error) { return "user-exa-key", true, nil },
+		})
+		_, err := svc.webSearch(context.Background(), "trial search")
+		if !errors.Is(err, llmguard.ErrBudgetExceeded) {
+			t.Fatalf("expected hosted ScopeSearch guard ErrBudgetExceeded, got %v", err)
+		}
+		if gotKey != "" {
+			t.Fatalf("expected blocked search not to send HTTP request, got key %q", gotKey)
+		}
+		if len(records) != 2 || records[1].RequestStatus != "not_sent" || records[1].Billing != state.UsageBillingHosted {
+			t.Fatalf("expected blocked hosted Exa record marked not_sent, got %+v", records)
+		}
+	})
 }

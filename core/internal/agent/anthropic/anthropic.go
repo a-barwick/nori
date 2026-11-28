@@ -17,6 +17,7 @@ import (
 	"nori/internal/httpretry"
 	"nori/internal/llmguard"
 	"nori/internal/modelgateway"
+	"nori/internal/state"
 	"nori/internal/transcript"
 	"nori/internal/usage"
 )
@@ -37,7 +38,19 @@ type Client struct {
 	TestURL           string
 	DefaultReasoning  string
 	BYOKProviderLabel string
+	BillingMode       string
 	gatewayURL        string
+}
+
+func (c *Client) billingMode() string {
+	switch c.BillingMode {
+	case state.UsageBillingHosted, state.UsageBillingBYOK, state.UsageBillingLocal:
+		return c.BillingMode
+	}
+	if c.BYOKProviderLabel != "" {
+		return state.UsageBillingBYOK
+	}
+	return state.UsageBillingHosted
 }
 
 func New(key, model string, meter usage.Meter) *Client {
@@ -65,11 +78,14 @@ func (c *Client) guard() *llmguard.Guard {
 }
 
 func (c *Client) httpClient() *http.Client {
+	billingMode := c.billingMode()
 	return c.guard().WrapClient(c.HTTP, 2*time.Minute, llmguard.CallMeta{
 		UserID:   c.UserID,
 		Scope:    llmguard.ScopeTask,
 		Provider: c.Provider(),
 		Model:    c.ModelName,
+		Billing:  billingMode,
+		BYOK:     billingMode == state.UsageBillingBYOK,
 	})
 }
 
@@ -107,7 +123,8 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		return out, errors.New("anthropic task model name must be configured")
 	}
 
-	messages, err := anthropicMessages(req.Messages, c.BYOKProviderLabel != "")
+	preserveState := c.BYOKProviderLabel != "" || c.gatewayURL != ""
+	messages, err := anthropicMessages(req.Messages, preserveState)
 	if err != nil {
 		return out, err
 	}
@@ -176,24 +193,29 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	if scope == "" {
 		scope = llmguard.ScopeTask
 	}
+	billingMode := c.billingMode()
 	meta := llmguard.CallMeta{
 		UserID:          c.UserID,
 		Scope:           scope,
 		Provider:        c.Provider(),
 		Model:           c.ModelName,
+		Billing:         billingMode,
 		MaxOutputTokens: maxTokens,
-		BYOK:            c.BYOKProviderLabel != "",
+		BYOK:            billingMode == state.UsageBillingBYOK,
 	}
 	reqCtx := llmguard.WithMeta(ctx, meta)
-	record := usage.Attempt(ctx, c.Provider(), c.ModelName)
-	if c.BYOKProviderLabel != "" {
+	record := usage.AttemptWithMeta(ctx, c.Provider(), c.ModelName, billingMode, state.UsageCategoryLLM)
+	if billingMode != state.UsageBillingLocal {
 		record.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
 	}
 	if err := c.Meter.RecordUsage(ctx, record); err != nil {
 		return out, err
 	}
 	record.RequestStatus = "unknown"
-	defer func() { err = errors.Join(err, usage.Finish(ctx, c.Meter, record)) }()
+	defer func() {
+		llmguard.ObserveCallCost(ctx, out.Cost, out.CostKnown, !out.NotSent)
+		err = errors.Join(err, usage.Finish(ctx, c.Meter, record))
+	}()
 
 	out.NotSent = false
 	onRetry := func(statusCode int) error {
@@ -204,8 +226,8 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 			prev.RequestStatus = "unknown"
 		}
 		_ = usage.Finish(ctx, c.Meter, prev)
-		record = usage.Attempt(ctx, c.Provider(), c.ModelName)
-		if c.BYOKProviderLabel != "" {
+		record = usage.AttemptWithMeta(ctx, c.Provider(), c.ModelName, billingMode, state.UsageCategoryLLM)
+		if billingMode != state.UsageBillingLocal {
 			record.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
 		}
 		if err := c.Meter.RecordUsage(ctx, record); err != nil {
@@ -251,10 +273,11 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		StopReason string            `json:"stop_reason"`
 		Content    []json.RawMessage `json:"content"`
 		Usage      *struct {
-			Input      int64 `json:"input_tokens"`
-			Output     int64 `json:"output_tokens"`
-			CacheRead  int64 `json:"cache_read_input_tokens"`
-			CacheWrite int64 `json:"cache_creation_input_tokens"`
+			Input      int64    `json:"input_tokens"`
+			Output     int64    `json:"output_tokens"`
+			CacheRead  int64    `json:"cache_read_input_tokens"`
+			CacheWrite int64    `json:"cache_creation_input_tokens"`
+			Cost       *float64 `json:"cost"`
 		} `json:"usage"`
 	}
 	if err := json.NewDecoder(io.LimitReader(res.Body, 2<<20)).Decode(&response); err != nil {
@@ -279,14 +302,21 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 			CacheWriteTokens: int32(written),
 			TotalTokens:      int32(total),
 		}
-		modelName := response.Model
-		if modelName == "" {
-			modelName = c.ModelName
-		}
-		if cost, costErr := usage.AnthropicCost(modelName, u.Input, u.Output, cached, written); costErr == nil {
-			record.CostUSD, record.CostStatus = &cost, "calculated"
-			out.Cost, out.CostKnown = cost, true
-			llmguard.RecordResponseCost(res, cost)
+		if usage.RecordReportedCost(&record, u.Cost) {
+			out.Cost, out.CostKnown = *u.Cost, true
+			llmguard.RecordResponseCost(res, *u.Cost)
+		} else {
+			for _, modelName := range []string{strings.TrimSpace(response.Model), strings.TrimSpace(c.ModelName)} {
+				if modelName == "" {
+					continue
+				}
+				if cost, costErr := usage.AnthropicCost(modelName, u.Input, u.Output, cached, written); costErr == nil {
+					record.CostUSD, record.CostStatus = &cost, "calculated"
+					out.Cost, out.CostKnown = cost, true
+					llmguard.RecordResponseCost(res, cost)
+					break
+				}
+			}
 		}
 	}
 
@@ -295,7 +325,7 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	}
 
 	message := &transcript.Message{Role: transcript.RoleModel}
-	if c.BYOKProviderLabel != "" {
+	if preserveState {
 		saved, err := json.Marshal(response.Content)
 		if err != nil {
 			return out, errors.New("task model returned invalid content")
@@ -371,20 +401,22 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 	if strings.TrimSpace(req.Instructions) != "" {
 		fields["system"] = req.Instructions
 	}
-	if c.BYOKProviderLabel != "" && c.DefaultReasoning != "" {
+	if (c.BYOKProviderLabel != "" || c.gatewayURL != "") && c.DefaultReasoning != "" {
 		fields["output_config"] = map[string]string{"effort": c.DefaultReasoning}
 	}
 	body, err := json.Marshal(fields)
 	if err != nil {
 		return out, errors.New("inspection request could not be encoded")
 	}
+	billingMode := c.billingMode()
 	meta := llmguard.CallMeta{
 		UserID:          c.UserID,
 		Scope:           llmguard.ScopeTask,
 		Provider:        c.Provider(),
 		Model:           c.ModelName,
+		Billing:         billingMode,
 		MaxOutputTokens: maxTokens,
-		BYOK:            c.BYOKProviderLabel != "",
+		BYOK:            billingMode == state.UsageBillingBYOK,
 	}
 	reqCtx := llmguard.WithMeta(ctx, meta)
 	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.endpoint(), bytes.NewReader(body))
@@ -393,19 +425,27 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 	}
 	c.setAuthHeaders(httpReq)
 
-	record := usage.Attempt(ctx, c.Provider(), c.ModelName)
-	if c.BYOKProviderLabel != "" {
+	record := usage.AttemptWithMeta(ctx, c.Provider(), c.ModelName, billingMode, state.UsageCategoryLLM)
+	if billingMode != state.UsageBillingLocal {
 		record.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
 	}
 	if err := c.Meter.RecordUsage(ctx, record); err != nil {
 		return out, err
 	}
 	record.RequestStatus = "unknown"
-	defer func() { err = errors.Join(err, usage.Finish(ctx, c.Meter, record)) }()
+	defer func() {
+		llmguard.ObserveCallCost(ctx, out.Cost, out.CostKnown, out.Sent)
+		err = errors.Join(err, usage.Finish(ctx, c.Meter, record))
+	}()
 	out.Sent = true
 
 	res, err := c.httpClient().Do(httpReq)
 	if err != nil {
+		if errors.Is(err, usage.ErrUserQuotaExceeded) || llmguard.IsGuardError(err) {
+			record.RequestStatus = "not_sent"
+			out.Sent = false
+			return out, err
+		}
 		if ctx.Err() != nil {
 			return out, ctx.Err()
 		}
@@ -429,10 +469,11 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 			Text string `json:"text"`
 		} `json:"content"`
 		Usage *struct {
-			Input      int64 `json:"input_tokens"`
-			Output     int64 `json:"output_tokens"`
-			CacheRead  int64 `json:"cache_read_input_tokens"`
-			CacheWrite int64 `json:"cache_creation_input_tokens"`
+			Input      int64    `json:"input_tokens"`
+			Output     int64    `json:"output_tokens"`
+			CacheRead  int64    `json:"cache_read_input_tokens"`
+			CacheWrite int64    `json:"cache_creation_input_tokens"`
+			Cost       *float64 `json:"cost"`
 		} `json:"usage"`
 	}
 	if err := json.NewDecoder(io.LimitReader(res.Body, 2<<20)).Decode(&response); err != nil {
@@ -446,14 +487,21 @@ func (c *Client) Inspect(ctx context.Context, req agent.InspectRequest) (out age
 		written := u.CacheWrite
 		record.InputTokens, record.OutputTokens, record.TotalTokens = &totalIn, &outTok, &total
 		record.CachedTokens, record.CacheWriteTokens = &cached, &written
-		modelName := response.Model
-		if modelName == "" {
-			modelName = c.ModelName
-		}
-		if cost, costErr := usage.AnthropicCost(modelName, u.Input, u.Output, cached, written); costErr == nil {
-			record.CostUSD, record.CostStatus = &cost, "calculated"
-			out.Cost, out.CostKnown = cost, true
-			llmguard.RecordResponseCost(res, cost)
+		if usage.RecordReportedCost(&record, u.Cost) {
+			out.Cost, out.CostKnown = *u.Cost, true
+			llmguard.RecordResponseCost(res, *u.Cost)
+		} else {
+			for _, modelName := range []string{strings.TrimSpace(response.Model), strings.TrimSpace(c.ModelName)} {
+				if modelName == "" {
+					continue
+				}
+				if cost, costErr := usage.AnthropicCost(modelName, u.Input, u.Output, cached, written); costErr == nil {
+					record.CostUSD, record.CostStatus = &cost, "calculated"
+					out.Cost, out.CostKnown = cost, true
+					llmguard.RecordResponseCost(res, cost)
+					break
+				}
+			}
 		}
 	}
 	var texts []string

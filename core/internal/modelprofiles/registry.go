@@ -7,7 +7,8 @@ import (
 )
 
 const (
-	BackendHome = "home"
+	BackendHome   = "home"
+	BackendHosted = "hosted"
 
 	AdapterChatCompletions = "chat_completions"
 	AdapterResponses       = "responses"

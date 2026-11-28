@@ -8,11 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"nori/internal/connections"
 	"nori/internal/extensions"
 	"nori/internal/invoke"
+	"nori/internal/llmguard"
 	"nori/internal/permissions"
 	"nori/internal/state"
 )
@@ -42,13 +45,76 @@ func (a *Activities) externalSleep(ctx context.Context, d time.Duration) error {
 	return a.sleep(ctx, d)
 }
 
+type externalInspectSpend struct {
+	mu      sync.Mutex
+	cost    float64
+	unknown bool
+}
+
+func (s *externalInspectSpend) add(cost float64, unknown bool) {
+	if s == nil || (cost <= 0 && !unknown) {
+		return
+	}
+	s.mu.Lock()
+	if cost > 0 {
+		s.cost += cost
+	}
+	if unknown {
+		s.unknown = true
+	}
+	s.mu.Unlock()
+}
+
+func (s *externalInspectSpend) snapshot() (float64, bool) {
+	if s == nil {
+		return 0, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cost, s.unknown
+}
+
 type externalPlan struct {
-	adapter   invoke.Adapter
-	call      invoke.Call
-	prepared  invoke.Prepared
-	digest    string
-	authority permissions.Decision
-	permReq   permissions.Request
+	adapter          invoke.Adapter
+	call             invoke.Call
+	prepared         invoke.Prepared
+	digest           string
+	authority        permissions.Decision
+	permReq          permissions.Request
+	extraCost        float64
+	extraCostUnknown bool
+	execInspect      *externalInspectSpend
+}
+
+func addCostToOutput(out map[string]any, cost float64, unknown bool) {
+	if out == nil || (cost <= 0 && !unknown) {
+		return
+	}
+	if cost > 0 {
+		prev, _ := out["cost_usd"].(float64)
+		out["cost_usd"] = prev + cost
+	}
+	if unknown {
+		out["cost_unknown"] = true
+	}
+}
+
+func (a *Activities) chargeRunSpend(ctx context.Context, runID string, run state.Run, cost float64, unknown bool) {
+	if a == nil || a.Store == nil || (cost <= 0 && !unknown) {
+		return
+	}
+	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	current := run
+	if latest, err := a.Store.GetRun(saveCtx, runID); err == nil {
+		current = latest
+	}
+	_ = a.Store.Spend(saveCtx, state.SpendUpdate{
+		RunID:       runID,
+		Spent:       current.Spent + cost,
+		Budget:      current.Budget,
+		CostUnknown: current.CostUnknown || unknown,
+	})
 }
 
 func denial(in ToolInput, effect, outcome, message string, extra map[string]any) map[string]any {
@@ -86,13 +152,41 @@ func interactionID(prefix, operationID, digest string) string {
 	return prefix + hex.EncodeToString(sum[:16])
 }
 
-func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *state.OperationRecord) (*externalPlan, map[string]any, error) {
+func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *state.OperationRecord) (planOut *externalPlan, stopOut map[string]any, errOut error) {
 	recovering := saved != nil
 	effect := string(in.Exec.Policy.Effect)
 	run, err := a.Store.GetRun(ctx, in.RunID)
 	if err != nil {
 		return nil, nil, err
 	}
+	var inPrepare atomic.Bool
+	prepareSpend := &externalInspectSpend{}
+	reviewSpend := &externalInspectSpend{}
+	execInspect := &externalInspectSpend{}
+	defer func() {
+		pCost, pUnk := prepareSpend.snapshot()
+		rCost, rUnk := reviewSpend.snapshot()
+		totalCost := pCost + rCost
+		totalUnk := pUnk || rUnk
+		if planOut != nil {
+			planOut.execInspect = execInspect
+		}
+		if totalCost <= 0 && !totalUnk {
+			return
+		}
+		if planOut != nil {
+			planOut.extraCost += totalCost
+			planOut.extraCostUnknown = planOut.extraCostUnknown || totalUnk
+			return
+		}
+		if stopOut != nil {
+			addCostToOutput(stopOut, totalCost, totalUnk)
+			return
+		}
+		if errOut != nil {
+			a.chargeRunSpend(ctx, in.RunID, run, totalCost, totalUnk)
+		}
+	}()
 	origin, automationID := taskOrigin(run)
 	unattended := isUnattendedOrigin(run)
 	proactiveComputer := unattended && isPersonalComputerTool(in.Exec)
@@ -133,7 +227,21 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 			if a.Agent == nil {
 				return nil, errors.New("vision inspector is unavailable")
 			}
-			return a.Agent.InspectImage(ctx, "source", label, instruction, question, data, mediaType)
+			insp, iErr := a.agentForRun(ctx, run).InspectImage(ctx, "source", label, instruction, question, data, mediaType)
+			var c float64
+			var unk bool
+			if insp != nil {
+				c, _ = insp["cost_usd"].(float64)
+				unk, _ = insp["cost_unknown"].(bool)
+			}
+			if c > 0 || unk {
+				if inPrepare.Load() {
+					prepareSpend.add(c, unk)
+				} else {
+					execInspect.add(c, unk)
+				}
+			}
+			return insp, iErr
 		},
 		PublishFile: func(ctx context.Context, title, fileName, mediaType string, data []byte) (state.Result, error) {
 			id := state.ResultID(in.RunID, in.OperationID, fileName)
@@ -228,7 +336,9 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 			Spec: intent.Spec, Keys: intent.Keys}
 		return &externalPlan{adapter: adapter, call: call, prepared: prepared, digest: intent.Digest}, nil, nil
 	}
+	inPrepare.Store(true)
 	prepared, err := adapter.Prepare(ctx, call)
+	inPrepare.Store(false)
 	if err != nil {
 		if errors.Is(err, invoke.ErrInvalidArguments) {
 			return nil, denial(in, effect, "failed", err.Error(), nil), nil
@@ -253,7 +363,9 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 			editedCall := call
 			editedCall.Args = cloneArgsMap(call.Args)
 			applyAllowlistedEditsToArgs(editedCall.Args, repl.EditedFields)
+			inPrepare.Store(true)
 			editedPrepared, prepErr := adapter.Prepare(ctx, editedCall)
+			inPrepare.Store(false)
 			if prepErr != nil {
 				return nil, denial(in, effect, "failed", "The approved edited action could not be prepared: "+prepErr.Error(), nil), nil
 			}
@@ -312,7 +424,17 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 			reviewer = permissions.DeterministicAutoReviewer{}
 		}
 		if reviewer != nil {
-			review, reviewErr := reviewer.ReviewAction(ctx, permissions.AutoReviewRequest{
+			reviewCtx := llmguard.WithCostObserver(ctx, func(costUSD float64, costKnown, sent bool) {
+				if !sent {
+					return
+				}
+				if costKnown {
+					reviewSpend.add(costUSD, false)
+				} else {
+					reviewSpend.add(costUSD, true)
+				}
+			})
+			review, reviewErr := reviewer.ReviewAction(reviewCtx, permissions.AutoReviewRequest{
 				ToolID:         in.Exec.Tool.ID,
 				Summary:        prepared.Summary,
 				Effect:         string(prepared.Effect),
@@ -688,10 +810,13 @@ func (a *Activities) runExternal(ctx context.Context, in ToolInput, op *state.Op
 		if output == nil {
 			output = map[string]any{}
 		}
-		if result.CostUSD > 0 {
-			output["cost_usd"] = result.CostUSD
+		execCost, execUnknown := plan.execInspect.snapshot()
+		totalCost := max(result.CostUSD, execCost) + plan.extraCost
+		totalUnknown := result.CostUnknown || execUnknown || plan.extraCostUnknown
+		if totalCost > 0 {
+			output["cost_usd"] = totalCost
 		}
-		if result.CostUnknown {
+		if totalUnknown {
 			output["cost_unknown"] = true
 		}
 		if len(result.ProviderRefs) > 0 {
@@ -730,9 +855,13 @@ func (a *Activities) runExternal(ctx context.Context, in ToolInput, op *state.Op
 		}
 	}
 	if _, err := a.Store.Guard(ctx, in.RunID, in.Revision); err != nil {
-		if _, saveErr := persist("skipped", nil, err); saveErr != nil {
+		out := map[string]any{}
+		addCostToOutput(out, plan.extraCost, plan.extraCostUnknown)
+		if _, saveErr := persist("skipped", out, err); saveErr != nil {
+			a.chargeRunSpend(ctx, in.RunID, state.Run{ID: in.RunID}, plan.extraCost, plan.extraCostUnknown)
 			return nil, saveErr
 		}
+		a.chargeRunSpend(ctx, in.RunID, state.Run{ID: in.RunID}, plan.extraCost, plan.extraCostUnknown)
 		return nil, err
 	}
 	// Re-check standing permission rules at execution time (not only plan time).
@@ -740,14 +869,18 @@ func (a *Activities) runExternal(ctx context.Context, in ToolInput, op *state.Op
 		plan.prepared.Effect != extensions.EffectRead && plan.prepared.Effect != extensions.EffectControl {
 		recheck, err := a.Executor.Permissions.RecheckStandingRules(ctx, plan.permReq, plan.authority)
 		if err != nil {
+			a.chargeRunSpend(ctx, in.RunID, state.Run{ID: in.RunID}, plan.extraCost, plan.extraCostUnknown)
 			return nil, err
 		}
 		if recheck.Result != "allow" {
-			return persist("denied", map[string]any{"admitted": false, "rechecked": true}, errors.New(recheck.Reason))
+			out := map[string]any{"admitted": false, "rechecked": true}
+			addCostToOutput(out, plan.extraCost, plan.extraCostUnknown)
+			return persist("denied", out, errors.New(recheck.Reason))
 		}
 	}
 	op.Attempt++
 	if err := a.Store.PutOperation(ctx, in.RunID, *op); err != nil {
+		a.chargeRunSpend(ctx, in.RunID, state.Run{ID: in.RunID}, plan.extraCost, plan.extraCostUnknown)
 		return nil, err
 	}
 	plan.call.Attempt = op.Attempt
@@ -772,6 +905,8 @@ func (a *Activities) runExternal(ctx context.Context, in ToolInput, op *state.Op
 		cancel()
 	}
 	if errors.Is(ctx.Err(), context.Canceled) && in.Exec.Policy.Effect == extensions.EffectRead && in.Exec.Policy.Retry == "safe" {
+		execCost, execUnknown := plan.execInspect.snapshot()
+		a.chargeRunSpend(ctx, in.RunID, state.Run{ID: in.RunID}, max(result.CostUSD, execCost)+plan.extraCost, result.CostUnknown || execUnknown || plan.extraCostUnknown)
 		return nil, context.Cause(ctx)
 	}
 	if result.Outcome == "" {
