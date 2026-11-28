@@ -62,10 +62,12 @@ locals {
   )
   feature_secrets = merge(
     {
-      NORI_APNS_PRIVATE_KEY               = "nori-apns-private-key:latest"
       NORI_GOOGLE_WORKSPACE_CLIENT_SECRET = "nori-google-workspace-beta-client-secret:1"
       NORI_HOME_AI_KEY                    = "nori-home-ai-key:1"
     },
+    lookup(local.private, "apns_key_id", "") != "" && lookup(local.private, "apns_team_id", "") != "" ? {
+      NORI_APNS_PRIVATE_KEY = "nori-apns-private-key:latest"
+    } : {},
     local.computer_provider == "sprites" ? {
       NORI_SPRITES_API_TOKEN = "nori-sprites-api-key:latest"
     } : {},
