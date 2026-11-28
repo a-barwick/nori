@@ -552,14 +552,8 @@ func (c *ComputerAPI) proxyDesktopWS(w http.ResponseWriter, r *http.Request) {
 	defer upstream.Close(websocket.StatusNormalClosure, "")
 	upstream.SetReadLimit(16 << 20)
 
-	clientConn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		Subprotocols:       []string{"binary"},
-		InsecureSkipVerify: true, // Protected by Nori auth + single-use short-lived user-bound session token.
-	})
-	if err != nil {
-		slog.WarnContext(r.Context(), "computer desktop client websocket accept failed", "session_id", sessionID, "err", err)
-		return
-	}
+	var clientConn *websocket.Conn
+	clientReady := make(chan struct{})
 	var closeOnce sync.Once
 	var closeDone chan struct{}
 	proxyCtx, cancel := context.WithCancel(r.Context())
@@ -574,30 +568,27 @@ func (c *ComputerAPI) proxyDesktopWS(w http.ResponseWriter, r *http.Request) {
 			closeDone = done
 			go func() {
 				defer close(done)
-				_ = clientConn.Close(code, reason)
+				<-clientReady
+				if clientConn != nil {
+					_ = clientConn.Close(code, reason)
+				}
 				cancel()
 			}()
 		})
 	}
 	defer func() {
 		closeOnce.Do(func() {
-			_ = clientConn.Close(websocket.StatusNormalClosure, "")
+			if clientConn != nil {
+				_ = clientConn.Close(websocket.StatusNormalClosure, "")
+			}
 			cancel()
 		})
 		if closeDone != nil {
 			<-closeDone
 		}
 	}()
-	clientConn.SetReadLimit(4 << 20)
-
-	// Enforce 2-hour hard maximum WebSocket session lifetime (close code 4001).
-	lifetimeTimer := time.AfterFunc(c.wsMaxLifetime(), func() {
-		closeClient(DesktopWSCloseMaxLifetime, "max session lifetime reached")
-	})
-	defer lifetimeTimer.Stop()
-
-	// Track active WS connection on both Manager and handler so entitlement:<uid> notify
-	// and sleep/revocation hooks can immediately close all live desktop sockets with the right code.
+	// Register before sending the upgrade response so a sleep or revocation during
+	// the handshake can queue a close frame for the accepted socket.
 	onCloseReason := func(reason computer.DesktopCloseReason) {
 		code, msg := desktopCloseCodeForReason(reason)
 		closeClient(code, msg)
@@ -622,6 +613,23 @@ func (c *ComputerAPI) proxyDesktopWS(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 	defer unsub()
+
+	clientConn, err = websocket.Accept(w, r, &websocket.AcceptOptions{
+		Subprotocols:       []string{"binary"},
+		InsecureSkipVerify: true, // Protected by Nori auth + single-use short-lived user-bound session token.
+	})
+	close(clientReady)
+	if err != nil {
+		slog.WarnContext(r.Context(), "computer desktop client websocket accept failed", "session_id", sessionID, "err", err)
+		return
+	}
+	clientConn.SetReadLimit(4 << 20)
+
+	// Enforce 2-hour hard maximum WebSocket session lifetime (close code 4001).
+	lifetimeTimer := time.AfterFunc(c.wsMaxLifetime(), func() {
+		closeClient(DesktopWSCloseMaxLifetime, "max session lifetime reached")
+	})
+	defer lifetimeTimer.Stop()
 
 	// Cross-replica poll fallback (5s cadence): enforces live entitlement/suspension/credit checks (4003),
 	// computer sleeping/idle timeout (4002), and DB revocation (4004).

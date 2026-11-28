@@ -239,6 +239,20 @@ func TestRFBClientParserFragmentedAndCoalesced(t *testing.T) {
 	}
 }
 
+type upgradeHookWriter struct {
+	http.ResponseWriter
+	onUpgrade func()
+}
+
+func (w upgradeHookWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (w upgradeHookWriter) WriteHeader(status int) {
+	w.ResponseWriter.WriteHeader(status)
+	if status == http.StatusSwitchingProtocols {
+		w.onUpgrade()
+	}
+}
+
 func TestDesktopWSHardeningCapsSingleUseLifetimePollAndForceClose(t *testing.T) {
 	upstreamSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"binary"}})
@@ -266,7 +280,7 @@ func TestDesktopWSHardeningCapsSingleUseLifetimePollAndForceClose(t *testing.T) 
 	mgr.SetBilling(bsvc)
 	rl := NewRateLimiter(settings.DefaultRateLimit())
 
-	newServer := func(userID string, maxLife, poll time.Duration) (*ComputerAPI, *httptest.Server) {
+	newServer := func(userID string, maxLife, poll time.Duration, onUpgrade func()) (*ComputerAPI, *httptest.Server) {
 		compAPI := &ComputerAPI{
 			Manager:        mgr,
 			UserID:         userID,
@@ -277,7 +291,13 @@ func TestDesktopWSHardeningCapsSingleUseLifetimePollAndForceClose(t *testing.T) 
 		}
 		mux := http.NewServeMux()
 		compAPI.register(mux)
-		return compAPI, httptest.NewServer(mux)
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if onUpgrade != nil {
+				w = upgradeHookWriter{ResponseWriter: w, onUpgrade: onUpgrade}
+			}
+			mux.ServeHTTP(w, r)
+		})
+		return compAPI, httptest.NewServer(handler)
 	}
 
 	createSess := func(t *testing.T, baseURL string) createComputerSessionResponse {
@@ -296,7 +316,7 @@ func TestDesktopWSHardeningCapsSingleUseLifetimePollAndForceClose(t *testing.T) 
 	defer cancel()
 
 	// 1. Standard tier (MaxDesktopWS = 1): single-use token + WS concurrency cap + CloseDesktopSessions.
-	stdAPI, stdSrv := newServer("user-std", 2*time.Hour, 5*time.Second)
+	stdAPI, stdSrv := newServer("user-std", 2*time.Hour, 5*time.Second, nil)
 	defer stdSrv.Close()
 
 	s1 := createSess(t, stdSrv.URL)
@@ -340,7 +360,7 @@ func TestDesktopWSHardeningCapsSingleUseLifetimePollAndForceClose(t *testing.T) 
 	replayResp.Body.Close()
 
 	// 2. Power tier (MaxDesktopWS = 2): 2 concurrent sockets succeed, 3rd returns 429.
-	_, pwrSrv := newServer("user-pwr", 2*time.Hour, 5*time.Second)
+	_, pwrSrv := newServer("user-pwr", 2*time.Hour, 5*time.Second, nil)
 	defer pwrSrv.Close()
 
 	p1 := createSess(t, pwrSrv.URL)
@@ -363,7 +383,7 @@ func TestDesktopWSHardeningCapsSingleUseLifetimePollAndForceClose(t *testing.T) 
 	r3.Body.Close()
 
 	// 3. Max WS lifetime closes connection automatically with close code 4001.
-	_, shortSrv := newServer("user-std", 80*time.Millisecond, 5*time.Second)
+	_, shortSrv := newServer("user-std", 80*time.Millisecond, 5*time.Second, nil)
 	defer shortSrv.Close()
 	sShort := createSess(t, shortSrv.URL)
 	cShort, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(shortSrv.URL, "http")+sShort.WSPath+"?token="+sShort.Token, &websocket.DialOptions{Subprotocols: []string{"binary"}})
@@ -381,9 +401,12 @@ func TestDesktopWSHardeningCapsSingleUseLifetimePollAndForceClose(t *testing.T) 
 		t.Fatalf("MaxWSLifetime WS close code = %d, want %d (4001)", code, DesktopWSCloseMaxLifetime)
 	}
 
-	// 4. Computer sleep closes active WS with close code 4002.
+	// 4. Computer sleep during the upgrade closes the WS with close code 4002.
 	time.Sleep(50 * time.Millisecond)
-	_, sleepSrv := newServer("user-std", 2*time.Hour, 5*time.Second)
+	sleepResult := make(chan error, 1)
+	_, sleepSrv := newServer("user-std", 2*time.Hour, 5*time.Second, func() {
+		sleepResult <- mgr.Sleep(ctx, "user-std")
+	})
 	defer sleepSrv.Close()
 	sSleep := createSess(t, sleepSrv.URL)
 	cSleep, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(sleepSrv.URL, "http")+sSleep.WSPath+"?token="+sSleep.Token, &websocket.DialOptions{Subprotocols: []string{"binary"}})
@@ -391,8 +414,13 @@ func TestDesktopWSHardeningCapsSingleUseLifetimePollAndForceClose(t *testing.T) 
 		t.Fatalf("sleep dial: %v", err)
 	}
 	defer cSleep.Close(websocket.StatusNormalClosure, "")
-	if err := mgr.Sleep(ctx, "user-std"); err != nil {
-		t.Fatalf("mgr.Sleep: %v", err)
+	select {
+	case err := <-sleepResult:
+		if err != nil {
+			t.Fatalf("mgr.Sleep: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for computer sleep during desktop upgrade")
 	}
 	sleepCtx, sleepCancel := context.WithTimeout(ctx, 2*time.Second)
 	_, _, sleepErr := cSleep.Read(sleepCtx)
@@ -406,7 +434,7 @@ func TestDesktopWSHardeningCapsSingleUseLifetimePollAndForceClose(t *testing.T) 
 
 	// 5. Periodic entitlement poll closes open WS cleanly with close code 4003 when user is suspended mid-session.
 	time.Sleep(50 * time.Millisecond)
-	_, pollSrv := newServer("user-std", 2*time.Hour, 40*time.Millisecond)
+	_, pollSrv := newServer("user-std", 2*time.Hour, 40*time.Millisecond, nil)
 	defer pollSrv.Close()
 	sPoll := createSess(t, pollSrv.URL)
 	cPoll, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(pollSrv.URL, "http")+sPoll.WSPath+"?token="+sPoll.Token, &websocket.DialOptions{Subprotocols: []string{"binary"}})
