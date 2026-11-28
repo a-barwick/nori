@@ -261,4 +261,70 @@ struct ProactivityTests {
         #expect(rule.actionClasses.isEmpty)
         #expect(rule.title == "Always allow Calendar")
     }
+
+    @Test("Budget approval interactions decode cleanly for both full and legacy payloads without falling back to unknown")
+    func budgetApprovalDecodingResilience() throws {
+        // Legacy payload emitted before schema fields were added (reproduces Austin's screenshot).
+        let legacyJSON = """
+        {
+          "id": "int_budget_legacy1",
+          "revision": 1,
+          "kind": "approval",
+          "status": "pending",
+          "prompt": "\\"Check personal computer billing error and API credits\\" is projected to bring daily proactive spend to $3.15/day, above your $1.00/day limit. Approve to continue?",
+          "action_digest": "deadbeef",
+          "payload": {
+            "approval_once": true,
+            "projected_daily_usd": 3.15,
+            "daily_cap_usd": 1.0,
+            "reason": "budget_exceeded",
+            "automation_title": "Check personal computer billing error and API credits"
+          }
+        }
+        """
+        let legacy = try JSONDecoder().decode(Interaction.self, from: Data(legacyJSON.utf8))
+        guard case .approval(let legacyPayload) = legacy.payload else {
+            Issue.record("Expected legacy budget interaction to decode as .approval, got \(legacy.payload)")
+            return
+        }
+        #expect(legacyPayload.isBudgetConfirmation == true)
+        #expect(legacyPayload.approvalOnce == true)
+        #expect(legacyPayload.displaySummary == "Allow \"Check personal computer billing error and API credits\" to run proactively.")
+        #expect(legacyPayload.displayWarning == "Projected daily proactive spend is $3.15/day, above your $1.00/day limit.")
+
+        // Full schema-compliant payload emitted by updated governor.go.
+        let fullJSON = """
+        {
+          "id": "int_budget_full1",
+          "revision": 1,
+          "kind": "approval",
+          "status": "pending",
+          "prompt": "Approve proactive spend?",
+          "action_digest": "cafebabe",
+          "expires_at": "2099-01-01T00:00:00Z",
+          "payload": {
+            "summary": "Allow \\"High-freq watch\\" to run proactively.",
+            "tool_id": "nori/assistant/proactive-budget",
+            "warning": "Projected daily proactive spend is $14.40/day, above your $1.00/day limit.",
+            "effect": "reversible_write",
+            "account": { "connection_id": "", "label": "" },
+            "resources": [],
+            "approval_once": true,
+            "projected_daily_usd": 14.40,
+            "daily_cap_usd": 1.0,
+            "reason": "budget_exceeded",
+            "automation_title": "High-freq watch"
+          }
+        }
+        """
+        let full = try JSONDecoder().decode(Interaction.self, from: Data(fullJSON.utf8))
+        guard case .approval(let fullPayload) = full.payload else {
+            Issue.record("Expected full budget interaction to decode as .approval, got \(full.payload)")
+            return
+        }
+        #expect(fullPayload.isBudgetConfirmation == true)
+        #expect(fullPayload.isScheduleCreation == false)
+        #expect(fullPayload.displaySummary == "Allow \"High-freq watch\" to run proactively.")
+        #expect(fullPayload.displayWarning == "Projected daily proactive spend is $14.40/day, above your $1.00/day limit.")
+    }
 }

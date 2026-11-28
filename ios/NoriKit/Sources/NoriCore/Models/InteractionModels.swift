@@ -133,6 +133,10 @@ public struct ApprovalPayload: Sendable, Codable, Hashable {
     public var materialEffects: [String]?
     public var approvalOnce: Bool?
     public var card: CardPart?
+    public var reason: String?
+    public var automationTitle: String?
+    public var projectedDailyUSD: Double?
+    public var dailyCapUSD: Double?
 
     enum CodingKeys: String, CodingKey {
         case summary
@@ -145,6 +149,10 @@ public struct ApprovalPayload: Sendable, Codable, Hashable {
         case materialEffects = "material_effects"
         case approvalOnce = "approval_once"
         case card
+        case reason
+        case automationTitle = "automation_title"
+        case projectedDailyUSD = "projected_daily_usd"
+        case dailyCapUSD = "daily_cap_usd"
     }
 
     public init(
@@ -157,7 +165,11 @@ public struct ApprovalPayload: Sendable, Codable, Hashable {
         recipients: [String]? = nil,
         materialEffects: [String]? = nil,
         approvalOnce: Bool? = nil,
-        card: CardPart? = nil
+        card: CardPart? = nil,
+        reason: String? = nil,
+        automationTitle: String? = nil,
+        projectedDailyUSD: Double? = nil,
+        dailyCapUSD: Double? = nil
     ) {
         self.summary = summary
         self.toolID = toolID
@@ -169,10 +181,39 @@ public struct ApprovalPayload: Sendable, Codable, Hashable {
         self.materialEffects = materialEffects
         self.approvalOnce = approvalOnce
         self.card = card
+        self.reason = reason
+        self.automationTitle = automationTitle
+        self.projectedDailyUSD = projectedDailyUSD
+        self.dailyCapUSD = dailyCapUSD
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        self.toolID = try c.decodeIfPresent(String.self, forKey: .toolID)
+        self.warning = try c.decodeIfPresent(String.self, forKey: .warning)
+        self.effect = try c.decodeIfPresent(Effect.self, forKey: .effect) ?? .reversibleWrite
+        self.account = try c.decodeIfPresent(ApprovalAccount.self, forKey: .account)
+            ?? ApprovalAccount(connectionID: "", label: "")
+        self.resources = try c.decodeIfPresent([ResourceRef].self, forKey: .resources) ?? []
+        self.recipients = try c.decodeIfPresent([String].self, forKey: .recipients)
+        self.materialEffects = try c.decodeIfPresent([String].self, forKey: .materialEffects)
+        self.approvalOnce = try c.decodeIfPresent(Bool.self, forKey: .approvalOnce)
+        self.card = try c.decodeIfPresent(CardPart.self, forKey: .card)
+        self.reason = try c.decodeIfPresent(String.self, forKey: .reason)
+        self.automationTitle = try c.decodeIfPresent(String.self, forKey: .automationTitle)
+        self.projectedDailyUSD = try c.decodeIfPresent(Double.self, forKey: .projectedDailyUSD)
+        self.dailyCapUSD = try c.decodeIfPresent(Double.self, forKey: .dailyCapUSD)
     }
 
     public var hasAccountLabel: Bool {
         !account.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    public var isBudgetConfirmation: Bool {
+        let normalizedTool = (toolID ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedReason = (reason ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalizedTool == "nori/assistant/proactive-budget" || normalizedReason == "budget_exceeded"
     }
 
     public var isScheduleCreation: Bool {
@@ -188,24 +229,46 @@ public struct ApprovalPayload: Sendable, Codable, Hashable {
             && !hasAccountLabel
     }
 
+    public var displaySummary: String {
+        let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            return summary
+        }
+        if isBudgetConfirmation,
+           let title = automationTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty {
+            return "Allow \"\(title)\" to run proactively."
+        }
+        return card?.fallback ?? ""
+    }
+
     public var displayWarning: String? {
-        guard var trimmed = warning?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
-            return nil
-        }
-        if isInternalNoriSchedule {
-            let externalPrefixes = [
-                "this modifies external records.",
-                "this modifies external records"
-            ]
-            let lower = trimmed.lowercased()
-            for prefix in externalPrefixes where lower.hasPrefix(prefix) {
-                trimmed = String(trimmed.dropFirst(prefix.count))
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                break
+        if var trimmed = warning?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty {
+            if isInternalNoriSchedule {
+                let externalPrefixes = [
+                    "this modifies external records.",
+                    "this modifies external records"
+                ]
+                let lower = trimmed.lowercased()
+                for prefix in externalPrefixes where lower.hasPrefix(prefix) {
+                    trimmed = String(trimmed.dropFirst(prefix.count))
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    break
+                }
+                return trimmed.isEmpty ? nil : trimmed
             }
-            return trimmed.isEmpty ? nil : trimmed
+            return trimmed
         }
-        return trimmed
+        if isBudgetConfirmation,
+           let projected = projectedDailyUSD,
+           let cap = dailyCapUSD {
+            return String(
+                format: "Projected daily proactive spend is $%.2f/day, above your $%.2f/day limit.",
+                projected,
+                cap
+            )
+        }
+        return nil
     }
 }
 

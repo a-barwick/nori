@@ -102,6 +102,9 @@ extension Interaction {
             return "Connect app"
         }
         if kind == .approval, case .approval(let payload) = payload {
+            if payload.isBudgetConfirmation {
+                return "Approve proactive spend?"
+            }
             if payload.isScheduleCreation {
                 let firstLine = payload.summary
                     .components(separatedBy: .newlines)
@@ -419,10 +422,11 @@ public struct InteractionCardView: View {
                 Text("This interaction requires a newer client version.")
                     .font(NoriTypography.meta)
                     .foregroundStyle(NoriColors.ink2)
-                Button("Dismiss") {
+                Button(submittingAction == "decline" ? "Dismissing…" : "Dismiss") {
                     submitDecline()
                 }
                 .buttonStyle(NoriButtonStyle(.neutral, compact: true))
+                .disabled(isSubmitting)
             }
         }
     }

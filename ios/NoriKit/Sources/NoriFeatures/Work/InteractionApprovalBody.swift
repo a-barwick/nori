@@ -193,7 +193,11 @@ struct InteractionApprovalBody: View {
                     Button {
                         onApprove(false)
                     } label: {
-                        Text(submittingAction == "approve_once" ? "Allowing…" : "Allow once")
+                        Text(
+                            payload.isBudgetConfirmation
+                                ? (submittingAction == "approve_once" ? "Approving…" : "Approve")
+                                : (submittingAction == "approve_once" ? "Allowing…" : "Allow once")
+                        )
                     }
                     .buttonStyle(NoriButtonStyle(.primary, fullWidth: true, compact: compact))
                     .disabled(isSubmitting)
@@ -201,9 +205,19 @@ struct InteractionApprovalBody: View {
                     Button {
                         onDecline()
                     } label: {
-                        Text(submittingAction == "decline" ? "Denying…" : "Deny")
+                        Text(
+                            payload.isBudgetConfirmation
+                                ? (submittingAction == "decline" ? "Declining…" : "Decline")
+                                : (submittingAction == "decline" ? "Denying…" : "Deny")
+                        )
                     }
-                    .buttonStyle(NoriButtonStyle(.danger, fullWidth: true, compact: compact))
+                    .buttonStyle(
+                        NoriButtonStyle(
+                            payload.isBudgetConfirmation ? .neutral : .danger,
+                            fullWidth: true,
+                            compact: compact
+                        )
+                    )
                     .disabled(isSubmitting)
                 }
 
@@ -233,7 +247,7 @@ struct InteractionApprovalBody: View {
     }
 
     private func parseApprovalSummary(_ payload: ApprovalPayload) -> (head: String?, quotedBody: String?) {
-        let primaryText = payload.summary.isEmpty ? (payload.card?.fallback ?? "") : payload.summary
+        let primaryText = payload.displaySummary
         if payload.toolID == "google/mail/mail-send" {
             return (nil, primaryText)
         }

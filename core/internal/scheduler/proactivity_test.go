@@ -850,3 +850,136 @@ func TestAntiNaggingEngagementPreventsDropAndWatchAlertEnqueuesEvent(t *testing.
 		t.Fatalf("engaged finding_key should not be dropped by anti_nag, got %+v", occ2After)
 	}
 }
+
+func TestGovernorSkipsExhaustedAndOtherDayOnceRemindersAndEmitsValidApprovalPayload(t *testing.T) {
+	ctx := context.Background()
+	start := time.Date(2026, 11, 25, 16, 0, 0, 0, time.UTC) // 08:00 PT
+	h := newProactivityHarness(t, start, "America/Los_Angeles")
+	h.prefs.Proactivity.DailyProactiveBudgetUSD = 1.0
+
+	// Enable Morning Brief ($0.15/day).
+	if _, err := h.sched.EnsureMorningBrief(ctx, h.prefs); err != nil {
+		t.Fatalf("EnsureMorningBrief: %v", err)
+	}
+
+	// Create and fire two historical one-time reminders with $1.00 budget each
+	// (simulating legacy reminders already stored with status=enabled, Created=1, NextAt=nil).
+	h.prefs.Proactivity.DailyProactiveBudgetUSD = 10.0
+	for i, offset := range []time.Duration{time.Minute, 2 * time.Minute} {
+		at := start.Add(offset)
+		rec, err := h.sched.Save(ctx, "", "req-past-once-"+string(rune('1'+i)), 0, scheduler.Editable{
+			Title:          "Old reminder",
+			Instruction:    "Remind me",
+			Trigger:        scheduler.Trigger{Kind: "once", At: &at},
+			BudgetUSD:      1.0,
+			MaxActiveRuns:  1,
+			DestinationIDs: []string{scheduler.ChatDestination},
+		})
+		if err != nil || rec.Status != "applied" {
+			t.Fatalf("save old reminder %d: status=%q err=%v", i, rec.Status, err)
+		}
+	}
+	// Fire both past reminders so they remain status=enabled with NextAt=nil and Created=1.
+	h.now = start.Add(5 * time.Minute)
+	if _, err := h.sched.Tick(ctx); err != nil {
+		t.Fatalf("Tick past reminders: %v", err)
+	}
+
+	// Also schedule a future one-time reminder on a DIFFERENT day (2 days out).
+	twoDaysOut := start.Add(48 * time.Hour)
+	if rec, err := h.sched.Save(ctx, "", "req-other-day-once", 0, scheduler.Editable{
+		Title:          "Later reminder",
+		Instruction:    "Remind me later",
+		Trigger:        scheduler.Trigger{Kind: "once", At: &twoDaysOut},
+		BudgetUSD:      0.50,
+		MaxActiveRuns:  1,
+		DestinationIDs: []string{scheduler.ChatDestination},
+	}); err != nil || rec.Status != "applied" {
+		t.Fatalf("save other-day reminder: status=%q err=%v", rec.Status, err)
+	}
+
+	// Restore default $1.00/day cap. Creating a one-time reminder for tomorrow at 10am
+	// must NOT count the two already-fired $1.00 reminders or the different-day reminder.
+	h.prefs.Proactivity.DailyProactiveBudgetUSD = 1.0
+	tomorrow10am := time.Date(2026, 11, 26, 18, 0, 0, 0, time.UTC) // 10:00 AM PST
+	rec, err := h.sched.Save(ctx, "", "req-tomorrow-10am", 0, scheduler.Editable{
+		Title:          "Check personal computer billing error and API credits",
+		Instruction:    "Remind me to check on that",
+		Trigger:        scheduler.Trigger{Kind: "once", At: &tomorrow10am},
+		BudgetUSD:      0.15,
+		MaxActiveRuns:  1,
+		DestinationIDs: []string{scheduler.ChatDestination},
+	})
+	if err != nil {
+		t.Fatalf("Save tomorrow reminder: %v", err)
+	}
+	if rec.Status != "applied" {
+		t.Fatalf("tomorrow one-time reminder status = %q, want applied (resource=%s)", rec.Status, string(rec.Resource))
+	}
+
+	// Verify over-budget watch emits an OpenAPI-compliant ApprovalPayload with task context and expiry.
+	rev := int64(3)
+	taskCtx := scheduler.WithBudgetInteractionContext(ctx, scheduler.BudgetInteractionContext{
+		TaskID:              "task-watch-1",
+		InstructionRevision: &rev,
+		ConversationID:      "assistant",
+	})
+	expensive := scheduler.Editable{
+		Title:       "Every 5 min inbox watch",
+		Instruction: "Watch inbox",
+		Trigger: scheduler.Trigger{
+			Kind:               "watch",
+			Source:             &scheduler.ResourceRef{ConnectionID: "conn_1", Kind: "gmail", ProviderID: "inbox"},
+			PredicateRef:       "urgent",
+			MinIntervalSeconds: 300,
+		},
+		BudgetUSD:      0.05,
+		MaxActiveRuns:  1,
+		DestinationIDs: []string{scheduler.ChatDestination},
+	}
+	confRec, err := h.sched.Save(taskCtx, "", "req-watch-payload-1", 0, expensive)
+	if err != nil || confRec.Status != scheduler.StatusNeedsConfirmation {
+		t.Fatalf("over-budget Save = (%q, %v), want needs_confirmation", confRec.Status, err)
+	}
+	var conf scheduler.BudgetConfirmation
+	if err := json.Unmarshal(confRec.Resource, &conf); err != nil {
+		t.Fatalf("unmarshal conf: %v", err)
+	}
+	inter, err := h.perms.Interaction(ctx, conf.InteractionID)
+	if err != nil {
+		t.Fatalf("Interaction: %v", err)
+	}
+	if inter.Kind != "approval" || inter.Prompt != "Approve proactive spend?" {
+		t.Fatalf("unexpected interaction header: kind=%q prompt=%q", inter.Kind, inter.Prompt)
+	}
+	if inter.TaskID != "task-watch-1" || inter.InstructionRevision == nil || *inter.InstructionRevision != 3 {
+		t.Fatalf("expected task metadata on budget interaction, got task=%q rev=%v", inter.TaskID, inter.InstructionRevision)
+	}
+	if inter.ExpiresAt == nil || !inter.ExpiresAt.After(h.now) {
+		t.Fatalf("expected future expires_at on budget interaction, got %v", inter.ExpiresAt)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(inter.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	for _, key := range []string{"summary", "tool_id", "warning", "effect", "account", "resources", "approval_once"} {
+		if _, ok := payload[key]; !ok {
+			t.Fatalf("budget ApprovalPayload missing required OpenAPI field %q: %v", key, payload)
+		}
+	}
+	if payload["tool_id"] != scheduler.BudgetApprovalToolID {
+		t.Fatalf("tool_id = %v, want %q", payload["tool_id"], scheduler.BudgetApprovalToolID)
+	}
+
+	// Approving the interaction allows a retry with a DIFFERENT requestID (as happens on task resume).
+	if _, _, err := h.perms.Respond(ctx, inter.ID, "resp-approve-watch", inter.Revision, permissions.Response{
+		Kind:         "approve",
+		ActionDigest: inter.ActionDigest,
+	}); err != nil {
+		t.Fatalf("Respond approve: %v", err)
+	}
+	savedRec, err := h.sched.Save(taskCtx, "", "req-watch-payload-retry-new-id", 0, expensive)
+	if err != nil || savedRec.Status != "applied" {
+		t.Fatalf("approved retry with new requestID = (%q, %v), want applied", savedRec.Status, err)
+	}
+}

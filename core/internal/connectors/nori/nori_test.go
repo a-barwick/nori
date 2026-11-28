@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"nori/internal/connections"
 	"nori/internal/connectors/nori"
 	"nori/internal/extensions"
 	"nori/internal/invoke"
@@ -209,6 +210,88 @@ func TestAutomationCreatePrepareAndExecute(t *testing.T) {
 		}
 		if _, err := adapter.Prepare(ctx, changeCall); err == nil || !strings.Contains(err.Error(), invoke.ErrToolForbiddenForOrigin.Error()) {
 			t.Fatalf("Prepare automation_change from automation origin = %v, want ErrToolForbiddenForOrigin", err)
+		}
+	})
+
+	t.Run("simple_reminder_alongside_morning_brief_saves_without_budget_prompt_and_over_budget_watch_pauses_cleanly", func(t *testing.T) {
+		// Seed Morning Brief ($0.15/day) under default $1.00/day cap.
+		if _, err := adapter.Scheduler.EnsureMorningBrief(ctx, connections.Preferences{
+			Timezone: "America/Los_Angeles",
+		}); err != nil {
+			t.Fatalf("EnsureMorningBrief: %v", err)
+		}
+
+		// Simple one-time reminder defaults to $0.15 -> $0.30/day <= $1.00/day -> confirmed!
+		reminderCall := invoke.Call{
+			RunID:       "run-rem-1",
+			Revision:    1,
+			OperationID: "op-rem-tomorrow",
+			Exec:        exec,
+			TimeZone:    "America/Los_Angeles",
+			Args: map[string]any{
+				"title":       "Check personal computer billing error and API credits",
+				"instruction": "Remind me to check on that",
+				"trigger": map[string]any{
+					"kind": "once",
+					"at":   "2026-11-26T18:00:00Z",
+				},
+			},
+		}
+		remRes := adapter.Execute(ctx, reminderCall, invoke.Prepared{})
+		if remRes.Outcome != "confirmed" || remRes.Err != nil {
+			t.Fatalf("reminder Execute = (%s, %v), want confirmed", remRes.Outcome, remRes.Err)
+		}
+		if _, ok := remRes.Content["reminder_card"].(map[string]any); !ok {
+			t.Fatalf("expected reminder_card on saved reminder, got %+v", remRes.Content)
+		}
+
+		// High-frequency watch exceeds $1.00/day -> Execute MUST return needs_interaction (never confirmed!).
+		watchCall := invoke.Call{
+			RunID:       "run-watch-budget",
+			Revision:    2,
+			OperationID: "op-watch-1",
+			Exec:        exec,
+			TimeZone:    "America/Los_Angeles",
+			Args: map[string]any{
+				"title":       "High-frequency inbox monitor",
+				"instruction": "Check inbox every 5 minutes",
+				"trigger": map[string]any{
+					"kind":                 "watch",
+					"source":               map[string]any{"connection_id": "conn_1", "kind": "gmail", "provider_id": "inbox"},
+					"predicate_ref":        "urgent",
+					"min_interval_seconds": 300,
+				},
+			},
+		}
+		watchRes := adapter.Execute(ctx, watchCall, invoke.Prepared{})
+		if watchRes.Outcome != "needs_interaction" {
+			t.Fatalf("over-budget watch Execute outcome = %q, want needs_interaction (content=%+v)", watchRes.Outcome, watchRes.Content)
+		}
+		interID, _ := watchRes.Content["interaction_id"].(string)
+		digest, _ := watchRes.Content["action_digest"].(string)
+		if interID == "" || digest == "" {
+			t.Fatalf("expected interaction_id and action_digest, got %+v", watchRes.Content)
+		}
+		inter, err := adapter.Scheduler.Permissions.Interaction(ctx, interID)
+		if err != nil {
+			t.Fatalf("Interaction(%s): %v", interID, err)
+		}
+		if inter.TaskID != "run-watch-budget" {
+			t.Fatalf("interaction TaskID = %q, want run-watch-budget", inter.TaskID)
+		}
+
+		// User approves the interaction, then the resumed task retries with a fresh OperationID.
+		if _, _, err := adapter.Scheduler.Permissions.Respond(ctx, inter.ID, "resp-approve-nori-watch", inter.Revision, permissions.Response{
+			Kind:         "approve",
+			ActionDigest: digest,
+		}); err != nil {
+			t.Fatalf("Respond approve: %v", err)
+		}
+		retryCall := watchCall
+		retryCall.OperationID = "op-watch-2-after-approval"
+		savedRes := adapter.Execute(ctx, retryCall, invoke.Prepared{})
+		if savedRes.Outcome != "confirmed" || savedRes.Err != nil {
+			t.Fatalf("approved watch retry Execute = (%s, %v), want confirmed", savedRes.Outcome, savedRes.Err)
 		}
 	})
 }

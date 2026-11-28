@@ -253,11 +253,19 @@ func (a Adapter) Execute(ctx context.Context, call invoke.Call, _ invoke.Prepare
 			value.MaxActiveRuns = 1
 		}
 		if value.BudgetUSD == 0 {
-			value.BudgetUSD = 1
+			if value.Trigger.Kind == "once" && len(value.ConnectionIDs) == 0 && value.RequestedAuthority == nil {
+				value.BudgetUSD = 0.15
+			} else {
+				value.BudgetUSD = 0.25
+			}
 		}
-		receipt, err := a.Scheduler.Save(ctx, "", requestID(call), 0, value)
+		saveCtx := withBudgetTaskContext(ctx, call)
+		receipt, err := a.Scheduler.Save(saveCtx, "", requestID(call), 0, value)
 		if err != nil {
 			return failed(err)
+		}
+		if receipt.Status == scheduler.StatusNeedsConfirmation {
+			return budgetConfirmationResult(receipt)
 		}
 		var created scheduler.Automation
 		_ = json.Unmarshal(receipt.Resource, &created)
@@ -303,13 +311,47 @@ func (a Adapter) Execute(ctx context.Context, call invoke.Call, _ invoke.Prepare
 			}
 			action.Until = &t
 		}
-		receipt, err := a.Scheduler.Act(ctx, current.ID, requestID(call), current.Revision, action)
+		actCtx := withBudgetTaskContext(ctx, call)
+		receipt, err := a.Scheduler.Act(actCtx, current.ID, requestID(call), current.Revision, action)
 		if err != nil {
 			return failed(err)
+		}
+		if receipt.Status == scheduler.StatusNeedsConfirmation {
+			return budgetConfirmationResult(receipt)
 		}
 		return invoke.Result{Outcome: "confirmed", Content: map[string]any{"automation": json.RawMessage(receipt.Resource)}}
 	}
 	return failed(errors.New("unknown Nori tool"))
+}
+
+func withBudgetTaskContext(ctx context.Context, call invoke.Call) context.Context {
+	if call.RunID == "" {
+		return ctx
+	}
+	rev := call.Revision
+	return scheduler.WithBudgetInteractionContext(ctx, scheduler.BudgetInteractionContext{
+		TaskID:              call.RunID,
+		InstructionRevision: &rev,
+	})
+}
+
+func budgetConfirmationResult(receipt state.MutationReceipt) invoke.Result {
+	var conf scheduler.BudgetConfirmation
+	_ = json.Unmarshal(receipt.Resource, &conf)
+	return invoke.Result{
+		Outcome: "needs_interaction",
+		Content: map[string]any{
+			"status":              conf.Status,
+			"interaction_id":      conf.InteractionID,
+			"interaction_kind":    "approval",
+			"prompt":              conf.Prompt,
+			"action_digest":       conf.ActionDigest,
+			"projected_daily_usd": conf.ProjectedDailyUSD,
+			"daily_cap_usd":       conf.DailyCapUSD,
+			"reason":              conf.Reason,
+			"error":               "This automation exceeds the daily proactive spend limit and waits for the user's approval.",
+		},
+	}
 }
 
 func Register(registry *invoke.Registry, adapter Adapter) {

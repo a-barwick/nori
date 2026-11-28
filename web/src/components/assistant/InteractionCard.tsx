@@ -84,6 +84,17 @@ function useRespond(interaction: Interaction, onResolved?: OnInteractionResolved
   return { respond, ...action, current, legacy };
 }
 
+type BudgetApprovalPayloadMeta = Partial<ApprovalPayload> & {
+  reason?: string;
+  automation_title?: string;
+  projected_daily_usd?: number;
+  daily_cap_usd?: number;
+};
+
+function isBudgetApproval(payload: BudgetApprovalPayloadMeta) {
+  return payload.tool_id === "nori/assistant/proactive-budget" || payload.reason === "budget_exceeded";
+}
+
 function isRoutineApproval(payload: Partial<ApprovalPayload>) {
   return payload.tool_id === "nori/assistant/automation-create" || !!payload.tool_id?.startsWith("nori/assistant/automation");
 }
@@ -138,7 +149,10 @@ function heading(interaction: Interaction) {
     }
     return "Connect app";
   }
-  const payload = interaction.payload as Partial<ApprovalPayload>;
+  const payload = interaction.payload as BudgetApprovalPayloadMeta;
+  if (interaction.kind === "approval" && isBudgetApproval(payload)) {
+    return "Approve proactive spend?";
+  }
   if (interaction.kind === "approval" && isRoutineApproval(payload)) {
     return routineSummaryParts(payload.summary).title;
   }
@@ -188,7 +202,7 @@ export function InteractionCard({
       data-interaction-id={shown.id}
       data-interaction-status={shown.status}
       className={cn(
-        "rounded-[18px] transition-[border-color,background-color]",
+        "rounded-[20px] transition-[border-color,background-color]",
         resolved
           ? "border border-card-border bg-sidebar px-4 py-3"
           : "border border-card-border bg-surface px-4 py-3.5 shadow-card",
@@ -503,8 +517,10 @@ function Approval({
 }) {
   const [quotedExpanded, setQuotedExpanded] = useState(false);
   const busy = !!state.pending;
-  const digest = interaction.action_digest!;
+  const digest = interaction.action_digest ?? "";
   const buttonSize = inline ? "sm" : "md";
+  const budgetPayload = payload as BudgetApprovalPayloadMeta;
+  const budgetApproval = isBudgetApproval(budgetPayload);
 
   if (isRoutineApproval(payload)) {
     const { detail } = routineSummaryParts(payload.summary);
@@ -538,14 +554,26 @@ function Approval({
   }
 
   const send = payload.effect === "sensitive_send";
-  const cut = send ? payload.summary.indexOf("\n") : -1;
-  const summaryHeading = cut >= 0 ? payload.summary.slice(0, cut) : payload.summary;
-  const message = cut >= 0 ? payload.summary.slice(cut + 1) : "";
+  const rawSummary =
+    payload.summary?.trim()
+      ? payload.summary
+      : budgetApproval && budgetPayload.automation_title?.trim()
+        ? `Allow "${budgetPayload.automation_title.trim()}" to run proactively.`
+        : "";
+  const cut = send ? rawSummary.indexOf("\n") : -1;
+  const summaryHeading = cut >= 0 ? rawSummary.slice(0, cut) : rawSummary;
+  const message = cut >= 0 ? rawSummary.slice(cut + 1) : "";
   const canClampQuoted =
     !payload.approval_once &&
     cut >= 0 &&
     (message.split("\n").length > 4 || message.length > 160);
-  const rawWarning = payload.warning?.trim();
+  const rawWarning =
+    payload.warning?.trim() ||
+    (budgetApproval &&
+    typeof budgetPayload.projected_daily_usd === "number" &&
+    typeof budgetPayload.daily_cap_usd === "number"
+      ? `Projected daily proactive spend is $${budgetPayload.projected_daily_usd.toFixed(2)}/day, above your $${budgetPayload.daily_cap_usd.toFixed(2)}/day limit.`
+      : "");
   const internalSchedule = isInternalScheduleApproval(payload);
   const warning = internalSchedule && rawWarning
     ? rawWarning.replace(/^This modifies external records\.?\s*/i, "").trim()
@@ -557,9 +585,11 @@ function Approval({
 
   return (
     <div>
-      <p className="text-[13.5px] leading-relaxed whitespace-pre-line text-ink-2 [overflow-wrap:anywhere]">
-        {summaryHeading}
-      </p>
+      {summaryHeading && (
+        <p className="text-[13.5px] leading-relaxed whitespace-pre-line text-ink-2 [overflow-wrap:anywhere]">
+          {summaryHeading}
+        </p>
+      )}
       {cut >= 0 && (
         <>
           <div className="mt-2 rounded-tile bg-fill-1 px-3 py-2">
@@ -638,7 +668,9 @@ function Approval({
           disabled={busy}
           onClick={() => void state.respond(buildApprovalResponse("allow_once", digest), "allow_once")}
         >
-          {state.pending === "allow_once" ? "Allowing…" : "Allow once"}
+          {budgetApproval
+            ? state.pending === "allow_once" ? "Approving…" : "Approve"
+            : state.pending === "allow_once" ? "Allowing…" : "Allow once"}
         </Button>
         {!payload.approval_once && (
           <Button
@@ -653,11 +685,13 @@ function Approval({
         <Button
           variant="neutral"
           size={buttonSize}
-          className="text-danger hover:bg-danger-bg"
+          className={budgetApproval ? undefined : "text-danger hover:bg-danger-bg"}
           disabled={busy}
           onClick={() => void state.respond(buildApprovalResponse("deny", digest), "deny")}
         >
-          {state.pending === "deny" ? "Denying…" : "Deny"}
+          {budgetApproval
+            ? state.pending === "deny" ? "Declining…" : "Decline"
+            : state.pending === "deny" ? "Denying…" : "Deny"}
         </Button>
       </div>
     </div>

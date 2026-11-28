@@ -480,6 +480,75 @@ describe("InteractionCard and inline chat stream rendering", () => {
     const laterMsgIdx = chronoHtml.indexOf("Nevermind, next topic");
     assert.ok(firstMsgIdx >= 0 && cardIdx > firstMsgIdx && laterMsgIdx > cardIdx);
   });
+
+  test("InteractionCard renders full and legacy proactive budget approval cards with warning callout and Approve/Decline buttons", () => {
+    const legacyBudget = {
+      id: "int_budget_legacy",
+      revision: 1,
+      kind: "approval",
+      status: "pending",
+      prompt: '"Check personal computer billing error and API credits" is projected to bring daily proactive spend to $3.15/day, above your $1.00/day limit. Approve to continue?',
+      action_digest: "deadbeef",
+      payload: {
+        approval_once: true,
+        projected_daily_usd: 3.15,
+        daily_cap_usd: 1.0,
+        reason: "budget_exceeded",
+        automation_title: "Check personal computer billing error and API credits",
+      },
+    } as unknown as Interaction;
+
+    const legacyHtml = renderToStaticMarkup(
+      <AssistantProvider localMode>
+        <InteractionCard interaction={legacyBudget} inline />
+      </AssistantProvider>,
+    );
+    assert.match(legacyHtml, /Approve proactive spend\?/);
+    assert.match(legacyHtml, /Check personal computer billing error and API credits/);
+    assert.match(legacyHtml, /data-approval-warning/);
+    assert.match(legacyHtml, /\$3\.15\/day/);
+    assert.match(legacyHtml, /\$1\.00\/day/);
+    assert.match(legacyHtml, />Approve</);
+    assert.match(legacyHtml, />Decline</);
+    assert.equal(legacyHtml.includes("Always allow"), false);
+    assert.equal(legacyHtml.includes("newer client"), false);
+
+    const fullBudget = {
+      id: "int_budget_full",
+      revision: 1,
+      kind: "approval",
+      status: "pending",
+      prompt: "Approve proactive spend?",
+      action_digest: "cafebabe",
+      expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+      payload: {
+        summary: 'Allow "High-freq watch" to run proactively.',
+        tool_id: "nori/assistant/proactive-budget",
+        warning: "Projected daily proactive spend is $14.40/day, above your $1.00/day limit.",
+        effect: "reversible_write",
+        account: { connection_id: "", label: "" },
+        resources: [],
+        approval_once: true,
+        projected_daily_usd: 14.4,
+        daily_cap_usd: 1.0,
+        reason: "budget_exceeded",
+        automation_title: "High-freq watch",
+      },
+    } as unknown as Interaction;
+
+    const fullHtml = renderToStaticMarkup(
+      <AssistantProvider localMode>
+        <InteractionCard interaction={fullBudget} inline />
+      </AssistantProvider>,
+    );
+    assert.match(fullHtml, /Approve proactive spend\?/);
+    assert.match(fullHtml, /High-freq watch/);
+    assert.match(fullHtml, /data-approval-warning/);
+    assert.match(fullHtml, /\$14\.40\/day/);
+    assert.match(fullHtml, />Approve</);
+    assert.match(fullHtml, />Decline</);
+    assert.equal(fullHtml.includes("Always allow"), false);
+  });
 });
 
 describe("3-state custom permission rules UI and helpers", () => {

@@ -188,4 +188,27 @@ struct ProactivityFeaturesTests {
         let weekdays = AutomationTrigger(kind: "recurring", localStart: "2026-11-27T09:30:00", rrule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR")
         #expect(weekdays.compactCadenceLabel == "Weekdays 9:30 AM")
     }
+
+    @Test("Budget approval interaction uses concise Approve proactive spend? heading")
+    func budgetApprovalDisplayHeading() {
+        let budget = Interaction(
+            id: "int_budget_1",
+            kind: .approval,
+            status: .pending,
+            prompt: "\"Check billing\" is projected to bring daily proactive spend to $3.15/day, above your $1.00/day limit. Approve to continue?",
+            payload: .approval(
+                ApprovalPayload(
+                    summary: "",
+                    effect: .reversibleWrite,
+                    account: ApprovalAccount(connectionID: "", label: ""),
+                    approvalOnce: true,
+                    reason: "budget_exceeded",
+                    automationTitle: "Check billing",
+                    projectedDailyUSD: 3.15,
+                    dailyCapUSD: 1.0
+                )
+            )
+        )
+        #expect(budget.displayHeading == "Approve proactive spend?")
+    }
 }
