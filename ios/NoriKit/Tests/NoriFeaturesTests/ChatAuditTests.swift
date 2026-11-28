@@ -104,19 +104,14 @@ struct ChatAuditTests {
         #expect(InlineNeedsYouCopy.subtitle(interaction: interaction, totalPendingCount: 1) == "Action needed")
     }
 
-    @Test("NoriThinkingWords matches calm plain verb list")
-    func calmThinkingWords() {
-        let expected = [
-            "Thinking…",
-            "Working on it…",
-            "Reading…",
-            "Checking…",
-            "Looking into it…",
-            "Putting it together…",
-            "Reviewing…",
-            "Drafting…"
-        ]
-        #expect(NoriThinkingWords.all == expected)
+    @Test("NoriThinkingWords includes Nori's playful thinking phrases")
+    func playfulThinkingWords() {
+        #expect(NoriThinkingWords.all.count == 35)
+        #expect(NoriThinkingWords.all.contains("Norifying…"))
+        #expect(NoriThinkingWords.all.contains("Rolling the nori…"))
+        for word in NoriThinkingWords.all {
+            #expect(word.hasSuffix("…"))
+        }
     }
 
     @Test("ChatErrorCard handles both model_key_required and missing_api_key")

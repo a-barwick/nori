@@ -241,11 +241,12 @@ describe("Area A: Chat UI audit fixes (Web)", () => {
     assert.equal(html.includes(">Done<"), false);
   });
 
-  test("THINKING_WORDS uses calm plain verbs without novelty puns", () => {
-    assert.ok(THINKING_WORDS.length >= 6);
-    assert.ok(THINKING_WORDS.includes("Thinking…"));
+  test("THINKING_WORDS includes Nori's playful thinking phrases", () => {
+    assert.ok(THINKING_WORDS.length >= 30);
+    assert.ok(THINKING_WORDS.includes("Norifying…"));
+    assert.ok(THINKING_WORDS.includes("Rolling the nori…"));
     for (const word of THINKING_WORDS) {
-      assert.equal(/onigiri|wasabi|sushi|umami|matcha|mochi/i.test(word), false, `Unexpected whimsical word: ${word}`);
+      assert.ok(word.endsWith("…"), `Expected ellipsis on thinking word: ${word}`);
     }
   });
 });

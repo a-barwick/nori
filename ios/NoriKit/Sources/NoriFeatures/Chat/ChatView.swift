@@ -740,14 +740,43 @@ private struct InlineNeedsYouBanner: View {
 
 enum NoriThinkingWords {
     static let all: [String] = [
-        "Thinking…",
-        "Working on it…",
-        "Reading…",
-        "Checking…",
-        "Looking into it…",
-        "Putting it together…",
-        "Reviewing…",
-        "Drafting…"
+        // Whimsical (Claude-style)
+        "Onigirifying…",
+        "Umamifying…",
+        "Norifying…",
+        "Makifying…",
+        "Temaki-ing…",
+        "Wasabi-ing…",
+        "Sushifying…",
+        "Dashi-ing…",
+        "Omakase-ing…",
+        "Kombulating…",
+        "Mirinating…",
+        "Musubifying…",
+        "Bentofying…",
+        "Misofying…",
+        "Furikake-ing…",
+        "Yuzufying…",
+        "Matchafying…",
+        "Mochifying…",
+        // Cozy sushi prep
+        "Rolling the nori…",
+        "Seasoning the rice…",
+        "Toasting the seaweed…",
+        "Pressing the onigiri…",
+        "Simmering dashi…",
+        "Grating wasabi…",
+        "Plating…",
+        "Fanning the rice…",
+        "Tucking in the filling…",
+        "Sprinkling sesame seeds…",
+        "Folding the tamago…",
+        "Slicing the maki…",
+        "Brushing with soy…",
+        "Shaving bonito flakes…",
+        "Pickling the ginger…",
+        "Pouring green tea…",
+        "Setting the chopsticks…"
     ]
 }
 
