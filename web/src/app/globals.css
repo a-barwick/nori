@@ -426,10 +426,6 @@
   box-shadow: var(--shadow-float);
 }
 
-.nori-top-wash {
-  background: linear-gradient(180deg, var(--bg-wash-top) 0%, var(--bg-canvas) 100%);
-}
-
 .nori-hero-card {
   border-radius: var(--radius-hero);
   background: linear-gradient(135deg, var(--bg-hero-from) 0%, var(--bg-hero-to) 100%);

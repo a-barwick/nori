@@ -36,7 +36,7 @@ export function Screen({
     <main className="nori-screen flex min-h-0 flex-1 flex-col overflow-clip" aria-label={title}>
       {hideHeaderTitle && <h1 className="sr-only">{title}</h1>}
       {showHeader && (
-        <header className={cn("shrink-0", hideHeaderTitle ? "bg-canvas" : "nori-top-wash", !tabs && "border-b border-hairline")}>
+        <header className="shrink-0 bg-canvas">
           <div
             className={cn(
               "nori-page-col",

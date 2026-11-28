@@ -36,7 +36,7 @@ export function DocumentViewer({
           aria-describedby={undefined}
           className="sheet-right fixed inset-y-0 right-0 z-50 flex w-[min(560px,100vw)] flex-col border-l border-hairline bg-sheet text-ink shadow-sheet focus-visible:outline-none sm:top-[60px]"
         >
-          <header className="flex h-[54px] shrink-0 items-center gap-3 border-b border-hairline bg-wash-top px-5">
+          <header className="flex h-[54px] shrink-0 items-center gap-3 border-b border-hairline bg-sheet px-5">
             <div className="min-w-0 flex-1">
               <Dialog.Title className="truncate text-row font-semibold text-ink">{title}</Dialog.Title>
               <p className="text-caption text-ink-3">Saved reply · {document && shortDate(document.at)}</p>
