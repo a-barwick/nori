@@ -1,1 +1,1 @@
-On it—I've kicked off all {{.Count}} and will update you as they finish.
+On it—starting all {{.Count}}.

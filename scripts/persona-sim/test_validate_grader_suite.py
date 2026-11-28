@@ -680,6 +680,63 @@ class GraderTests(unittest.TestCase):
             self.assertIn("e17_stale_cancel", ids)
             self.assertIn("int_4", ids)
 
+    def test_grader_brevity_checks_short_acks_pass_and_bloated_acks_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            # Short texting-style acks + Muse-style TL;DR with <card> pass Tier A.
+            run_ok = self._make_run_bundle(Path(tmp) / "ok")
+            pdir_ok = run_ok / "01-maya-lin"
+            trace_ok = [
+                {
+                    "id": "e01",
+                    "kind": "chat",
+                    "user_text": "Research Austin for me",
+                    "nori_reply": "Here's a quick summary of Austin.<card title=\"Austin Research\">" + ("Detailed bio paragraph. " * 40) + "</card>",
+                    "assistant_messages": [
+                        {"id": "m1", "turn_id": "t1", "text": "On it, looking into Austin.", "has_actions": True, "has_card": False, "chat_words": 5, "chat_chars": 27},
+                        {"id": "m2", "turn_id": "t2", "text": "Here's a quick summary of Austin.<card title=\"Austin Research\">" + ("Detailed bio paragraph. " * 40) + "</card>", "has_actions": False, "has_card": True, "chat_words": 6, "chat_chars": 33},
+                    ],
+                },
+            ]
+            (pdir_ok / "trace.jsonl").write_text("\n".join(json.dumps(x) for x in trace_ok) + "\n", encoding="utf-8")
+            ta_ok = grader._check_tier_a(pdir_ok)
+            self.assertTrue(ta_ok["passed"], ta_ok["failures"])
+            self.assertEqual(ta_ok["brevity"]["ack_count"], 1)
+            self.assertEqual(ta_ok["brevity"]["ack_max_words"], 5)
+            self.assertEqual(ta_ok["brevity"]["bloated_acks"], [])
+            self.assertEqual(ta_ok["brevity"]["chat_median_words"], 6)
+            self.assertEqual(ta_ok["brevity"]["card_reply_count"], 1)
+
+            # Bloated 4-sentence paragraph ack fails Tier A.
+            run_bad = self._make_run_bundle(Path(tmp) / "bad")
+            pdir_bad = run_bad / "01-maya-lin"
+            bloated_text = (
+                "I'll start a background research task right now to look up Austin across public web sources. "
+                "I'll search for profiles, recent articles, projects, and background details I can find online. "
+                "Note that I only have access to public web search right now unless additional apps are connected. "
+                "I'll put everything together and follow up here as soon as the task finishes!"
+            )
+            trace_bad = [
+                {
+                    "id": "e02",
+                    "kind": "chat",
+                    "user_text": "Research Austin",
+                    "nori_reply": bloated_text,
+                    "assistant_messages": [
+                        {"id": "m3", "turn_id": "t3", "text": bloated_text, "has_actions": True, "has_card": False, "chat_words": len(bloated_text.split()), "chat_chars": len(bloated_text)},
+                    ],
+                },
+            ]
+            (pdir_bad / "trace.jsonl").write_text("\n".join(json.dumps(x) for x in trace_bad) + "\n", encoding="utf-8")
+            ta_bad = grader._check_tier_a(pdir_bad)
+            self.assertFalse(ta_bad["passed"])
+            self.assertEqual(len(ta_bad["brevity"]["bloated_acks"]), 1)
+            self.assertTrue(any("Bloated task acknowledgment" in f for f in ta_bad["failures"]))
+
+            sc = grader.grade_run(run_ok, deterministic_only=True)
+            md = (run_ok / "scorecard.md").read_text(encoding="utf-8")
+            self.assertIn("## Response Brevity", md)
+            self.assertEqual(sc["personas"][0]["tier_a"]["brevity"]["ack_max_words"], 5)
+
 
 class SuiteTests(unittest.TestCase):
     def test_area_selection_and_cli_precedence(self) -> None:

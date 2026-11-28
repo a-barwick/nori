@@ -429,6 +429,61 @@ func TestConversationPrompt_PreservesHypotheticalAndAmbiguityInstructions(t *tes
 	}
 }
 
+func TestPrompts_EnforceConciseResponsesAndShortAcks(t *testing.T) {
+	for _, needle := range []string{
+		"## End of Runtime & Safety Rules",
+		"## Nori's Soul & Voice",
+		"3–7 words",
+		"1–3 short sentences",
+		"2–3 sentence TL;DR",
+		"<card title=",
+		"Never mention it on a turn with `actions`",
+	} {
+		if !strings.Contains(prompts.Conversation, needle) {
+			t.Fatalf("prompts.Conversation missing brevity/voice rule %q", needle)
+		}
+	}
+	if strings.Index(prompts.Conversation, "## Nori's Soul & Voice") < strings.Index(prompts.Conversation, "## End of Runtime & Safety Rules") {
+		t.Fatalf("expected Soul & Voice section after runtime/safety fence for recency weight")
+	}
+	for _, needle := range []string{"3–7 word", "1–3 short sentences"} {
+		if !strings.Contains(prompts.CommandPlan, needle) {
+			t.Fatalf("prompts.CommandPlan missing brevity rule %q", needle)
+		}
+	}
+	for _, needle := range []string{"1–3 crisp sentences", "2–3 sentence summary"} {
+		if !strings.Contains(prompts.TaskWorker, needle) {
+			t.Fatalf("prompts.TaskWorker missing brevity rule %q", needle)
+		}
+	}
+	const maxConversationPromptBytes = 13500
+	if got := len(prompts.Conversation); got > maxConversationPromptBytes {
+		t.Fatalf("prompts.Conversation bloated to %d bytes (limit %d)", got, maxConversationPromptBytes)
+	}
+	ackCases := []struct {
+		name string
+		data any
+	}{
+		{"task-accepted", nil},
+		{"tasks-accepted", map[string]any{"Count": 3}},
+		{"steer-accepted", nil},
+		{"stop-accepted", nil},
+		{"answer-accepted", nil},
+		{"hold-accepted", nil},
+		{"subtask-accepted", nil},
+	}
+	for _, tc := range ackCases {
+		text := strings.TrimSpace(prompts.Runtime(tc.name, tc.data))
+		words := len(strings.Fields(text))
+		if words == 0 || words > 8 {
+			t.Fatalf("runtime ack %q should be 1–8 words, got %d words (%q)", tc.name, words, text)
+		}
+		if strings.Contains(text, "\n") {
+			t.Fatalf("runtime ack %q should be single-line, got %q", tc.name, text)
+		}
+	}
+}
+
 func TestAppendAdvisoryContext_IncludesCapabilitiesAndModelAfterBreakpoints(t *testing.T) {
 	r := &Runner{
 		UserFacts: `{"display_name":"Austin"}`,

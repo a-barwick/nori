@@ -671,6 +671,22 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
     );
     assert.equal(modelsRes.status, 200);
 
+    const serviceKeysRes = await settingsRoute.GET(
+      new Request(`${APP_ORIGIN}/api/v1/settings/service-keys`, { method: "GET", headers: await authHeaders(email) }),
+      { params: Promise.resolve({ path: ["service-keys"] }) },
+    );
+    assert.equal(serviceKeysRes.status, 200);
+
+    const putExaRes = await settingsRoute.PUT(
+      new Request(`${APP_ORIGIN}/api/v1/settings/service-keys/exa`, {
+        method: "PUT",
+        headers: await authHeaders(email, { "content-type": "application/json" }),
+        body: JSON.stringify({ api_key: "exa_test_key" }),
+      }),
+      { params: Promise.resolve({ path: ["service-keys", "exa"] }) },
+    );
+    assert.equal(putExaRes.status, 200);
+
     const nestedModelsRes = await settingsRoute.GET(
       new Request(`${APP_ORIGIN}/api/v1/settings/models/extra`, { method: "GET", headers }),
       { params: Promise.resolve({ path: ["models", "extra"] }) },

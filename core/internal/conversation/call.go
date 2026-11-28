@@ -379,7 +379,7 @@ func (r *Runner) appendAdvisoryContext(
 	if len(recalled) > 0 {
 		advisoryPayload["relevant_memory_logs"] = recalled
 	}
-	if r.DiscoveryHint != nil && slices.ContainsFunc(t.Inputs, state.ConversationInput.IsUser) && !isPureAckInputs(t.Inputs) {
+	if r.DiscoveryHint != nil && slices.ContainsFunc(t.Inputs, state.ConversationInput.IsUser) && !isPureAckInputs(t.Inputs) && !isActionHint(hint) {
 		var userParts []string
 		for _, in := range t.Inputs {
 			if in.IsUser() && strings.TrimSpace(in.Text) != "" {
@@ -399,6 +399,18 @@ func (r *Runner) appendAdvisoryContext(
 	messages = append(messages, advisory)
 	t.Attempt.ContextBytes += len(advisory)
 	return messages, breakpoints, advisory
+}
+
+func isActionHint(hint Classification) bool {
+	if !hint.Available {
+		return false
+	}
+	switch hint.Intent {
+	case RequestWork, Steer, Control, ProvideInput:
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *Runner) invokeOuterModel(

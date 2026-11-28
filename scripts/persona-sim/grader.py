@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 import urllib.error
@@ -14,6 +15,87 @@ from typing import Any, Callable
 from llm_client import LLMClient, load_dotenv, resolve_dotenv_path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+MAX_ACK_WORDS = 15
+_CARD_BLOCK_RE = re.compile(r"<card\b[^>]*>.*?</card>", re.IGNORECASE | re.DOTALL)
+
+
+def _strip_cards(text: str) -> tuple[str, bool]:
+    has_card = bool(_CARD_BLOCK_RE.search(text or ""))
+    chat_only = _CARD_BLOCK_RE.sub(" ", text or "").strip()
+    return chat_only, has_card
+
+
+def _percentile(sorted_vals: list[int], pct: float) -> int:
+    if not sorted_vals:
+        return 0
+    idx = min(len(sorted_vals) - 1, max(0, int(round((len(sorted_vals) - 1) * pct))))
+    return sorted_vals[idx]
+
+
+def _analyze_response_brevity(persona_dir: Path) -> dict[str, Any]:
+    """Compute ack and chat-reply brevity metrics from trace.jsonl."""
+    trace_path = persona_dir / "trace.jsonl"
+    ack_words: list[int] = []
+    chat_words: list[int] = []
+    card_replies = 0
+    bloated_acks: list[dict[str, Any]] = []
+
+    if trace_path.is_file():
+        for raw in trace_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                ev = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(ev, dict) or ev.get("kind") != "chat":
+                continue
+            msgs = ev.get("assistant_messages")
+            if isinstance(msgs, list) and msgs:
+                for m in msgs:
+                    if not isinstance(m, dict):
+                        continue
+                    text = str(m.get("text", "") or "").strip()
+                    if not text:
+                        continue
+                    chat_only, has_card = _strip_cards(text)
+                    has_card = bool(m.get("has_card")) or has_card
+                    words = int(m["chat_words"]) if isinstance(m.get("chat_words"), int) else len(chat_only.split())
+                    if m.get("has_actions"):
+                        ack_words.append(words)
+                        if words > MAX_ACK_WORDS:
+                            bloated_acks.append({
+                                "event_id": ev.get("id", ""),
+                                "words": words,
+                                "preview": text[:140],
+                            })
+                    else:
+                        chat_words.append(words)
+                        if has_card:
+                            card_replies += 1
+            elif ev.get("nori_reply"):
+                chat_only, has_card = _strip_cards(str(ev.get("nori_reply", "")))
+                if chat_only:
+                    chat_words.append(len(chat_only.split()))
+                if has_card:
+                    card_replies += 1
+
+    ack_sorted = sorted(ack_words)
+    chat_sorted = sorted(chat_words)
+    return {
+        "max_ack_words_limit": MAX_ACK_WORDS,
+        "ack_count": len(ack_sorted),
+        "ack_avg_words": round(sum(ack_sorted) / len(ack_sorted), 1) if ack_sorted else 0.0,
+        "ack_max_words": ack_sorted[-1] if ack_sorted else 0,
+        "bloated_acks": bloated_acks,
+        "chat_reply_count": len(chat_sorted),
+        "chat_median_words": _percentile(chat_sorted, 0.5),
+        "chat_p90_words": _percentile(chat_sorted, 0.9),
+        "chat_max_words": chat_sorted[-1] if chat_sorted else 0,
+        "card_reply_count": card_replies,
+    }
 
 
 def compute_tier_b_score(items: list[dict[str, Any]]) -> float | None:
@@ -311,6 +393,21 @@ def _check_tier_a(persona_dir: Path) -> dict[str, Any]:
 
         probe_det_results[pid] = p_errs
 
+    brevity = _analyze_response_brevity(persona_dir)
+    if brevity["ack_count"] > 0:
+        checks_total += 1
+        if not brevity["bloated_acks"]:
+            checks_passed += 1
+        else:
+            sample = "; ".join(
+                f"{b['event_id']} ({b['words']}w: {b['preview']!r})"
+                for b in brevity["bloated_acks"][:3]
+            )
+            failures.append(
+                f"Bloated task acknowledgment(s) > {MAX_ACK_WORDS} words "
+                f"({len(brevity['bloated_acks'])}/{brevity['ack_count']}): {sample}"
+            )
+
     return {
         "passed": len(failures) == 0,
         "checks_passed": checks_passed,
@@ -321,6 +418,7 @@ def _check_tier_a(persona_dir: Path) -> dict[str, Any]:
         "harness_timeouts": harness_timeouts,
         "ui_error_count": ui_error_count,
         "inconclusive_probes": inconclusive_probes,
+        "brevity": brevity,
         "final_core_count": len(final_snap.get("core_memories") or []),
         "final_core_bytes": final_snap.get("core_bytes", 0),
         "final_daily_log_entries": final_snap.get("daily_log_entry_count", 0),
@@ -671,6 +769,27 @@ def _render_markdown(sc: dict[str, Any]) -> str:
             f"{ta['final_fts_chunks']} | {ta['mcp_call_count']}/{ta['mcp_write_count']} | "
             f"{timeouts} | {inconcl} | {jerr} | {cost_str} | {tb_str} |"
         )
+
+    brevity_rows = [
+        p for p in sc["personas"]
+        if (p["tier_a"].get("brevity") or {}).get("ack_count", 0) > 0
+        or (p["tier_a"].get("brevity") or {}).get("chat_reply_count", 0) > 0
+    ]
+    if brevity_rows:
+        lines.extend([
+            "",
+            "## Response Brevity",
+            "",
+            "| Persona | Acks (avg / max words) | Bloated Acks | Chat Replies (med / p90 / max words) | Card Replies |",
+            "|---|---:|---:|---:|---:|",
+        ])
+        for p in brevity_rows:
+            br = p["tier_a"]["brevity"]
+            ack_str = f"{br['ack_avg_words']} / {br['ack_max_words']} ({br['ack_count']})" if br["ack_count"] else "—"
+            chat_str = f"{br['chat_median_words']} / {br['chat_p90_words']} / {br['chat_max_words']} ({br['chat_reply_count']})" if br["chat_reply_count"] else "—"
+            lines.append(
+                f"| `{p['slug']}` | {ack_str} | {len(br['bloated_acks'])} | {chat_str} | {br['card_reply_count']} |"
+            )
 
     if sc.get("baseline_diff"):
         lines.extend(["", "## Diff vs Baseline", "", "| Persona | Tier A | Semantic Before | Semantic After | Delta |", "|---|:---:|---:|---:|---:|"])

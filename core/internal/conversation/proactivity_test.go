@@ -64,6 +64,28 @@ func TestOuterLoopDiscoveryHintInjection(t *testing.T) {
 	if strings.Contains(decodeModelContent(t, ackAdvisory), `"discovery_hint"`) {
 		t.Fatalf("did not expect discovery_hint on pure-ack turn, got: %s", string(ackAdvisory))
 	}
+
+	// Action-intent turns should suppress discovery_hint so task acknowledgments stay ultra-short.
+	for _, intent := range []Intent{RequestWork, Steer, Control, ProvideInput} {
+		_, _, adv := r.appendAdvisoryContext(
+			context.Background(), turn, nil, &view, "", msgs, bps, TaskContext{},
+			Classification{Available: true, Intent: intent}, nil,
+		)
+		if strings.Contains(decodeModelContent(t, adv), `"discovery_hint"`) {
+			t.Fatalf("did not expect discovery_hint on %q intent turn, got: %s", intent, string(adv))
+		}
+	}
+
+	// Conversational intents should still allow discovery_hint when relevant.
+	for _, intent := range []Intent{Converse, Ask} {
+		_, _, adv := r.appendAdvisoryContext(
+			context.Background(), turn, nil, &view, "", msgs, bps, TaskContext{},
+			Classification{Available: true, Intent: intent}, nil,
+		)
+		if !strings.Contains(decodeModelContent(t, adv), `"discovery_hint"`) {
+			t.Fatalf("expected discovery_hint on %q intent turn, got: %s", intent, string(adv))
+		}
+	}
 }
 
 func TestUntrustedProactiveDataTaggingInOuterLoop(t *testing.T) {

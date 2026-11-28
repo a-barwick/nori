@@ -253,17 +253,33 @@ def upload_attachment(base_url: str, user_id: str, file_path: Path) -> str:
     return str(res.get("id") or uid)
 
 
-def latest_assistant_turn(
+_CARD_BLOCK_RE = re.compile(r"<card\b[^>]*>.*?</card>", re.IGNORECASE | re.DOTALL)
+
+
+def _strip_cards_for_brevity(text: str) -> tuple[str, bool]:
+    """Return (chat_text_outside_cards, has_card)."""
+    has_card = bool(_CARD_BLOCK_RE.search(text or ""))
+    chat_only = _CARD_BLOCK_RE.sub(" ", text or "").strip()
+    return chat_only, has_card
+
+
+def _assistant_turn_details(
     base_url: str,
     user_id: str,
     since_msg_id: str = "",
-) -> tuple[str, str, list[dict[str, Any]]]:
-    """Return (latest_msg_id, latest_msg_text, untruncated_show_results_cards)."""
+) -> tuple[str, str, list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return (latest_msg_id, latest_msg_text, untruncated_show_results_cards, assistant_messages)."""
     st, snap = http_json(base_url, "GET", f"/users/{user_id}/v1/snapshot")
     if st != 200 or not isinstance(snap, dict):
-        return "", "", []
+        return "", "", [], []
 
     msgs = snap.get("messages") or []
+    action_turn_ids = {
+        str(tr.get("turn_id", ""))
+        for tr in (snap.get("traces") or [])
+        if isinstance(tr, dict) and tr.get("turn_id") and (tr.get("actions") or [])
+    }
+
     latest_id = ""
     latest_text = ""
     for m in reversed(msgs):
@@ -288,9 +304,27 @@ def latest_assistant_turn(
 
     ordered_rids: list[str] = []
     seen_rids: set[str] = set()
+    assistant_messages: list[dict[str, Any]] = []
     for m in msgs[start_idx:]:
         if m.get("role") != "assistant":
             continue
+        raw_text = str(m.get("text", "") or "")
+        chat_text, has_card = _strip_cards_for_brevity(raw_text)
+        turn_id = str(m.get("turn_id", "") or "")
+        if not has_card:
+            for part in (m.get("parts") or []):
+                if isinstance(part, dict) and str(part.get("type", "")).lower() in ("card", "artifact", "document"):
+                    has_card = True
+                    break
+        assistant_messages.append({
+            "id": str(m.get("id", "") or ""),
+            "turn_id": turn_id,
+            "text": raw_text,
+            "has_actions": bool(turn_id and turn_id in action_turn_ids),
+            "has_card": has_card,
+            "chat_words": len(chat_text.split()),
+            "chat_chars": len(chat_text),
+        })
         for rid in (m.get("result_ids") or m.get("resultIds") or []):
             s_rid = str(rid or "").strip()
             if s_rid and s_rid not in seen_rids:
@@ -331,6 +365,16 @@ def latest_assistant_turn(
                 "unmet": card_src.get("unmet") or [],
             })
 
+    return latest_id, latest_text, show_results, assistant_messages
+
+
+def latest_assistant_turn(
+    base_url: str,
+    user_id: str,
+    since_msg_id: str = "",
+) -> tuple[str, str, list[dict[str, Any]]]:
+    """Return (latest_msg_id, latest_msg_text, untruncated_show_results_cards)."""
+    latest_id, latest_text, show_results, _ = _assistant_turn_details(base_url, user_id, since_msg_id)
     return latest_id, latest_text, show_results
 
 
@@ -875,11 +919,12 @@ def run_single_persona(
                 if wait_reply:
                     drain_res = _drain(180)
                     rec["drain"] = drain_res
-                    msg_id, probe_nori_reply, probe_show_results = latest_assistant_turn(base_url, user_id, last_msg_id)
+                    msg_id, probe_nori_reply, probe_show_results, turn_assistant_msgs = _assistant_turn_details(base_url, user_id, last_msg_id)
                     if msg_id:
                         last_msg_id = msg_id
                     rec["nori_reply"] = probe_nori_reply
                     rec["show_results"] = probe_show_results
+                    rec["assistant_messages"] = turn_assistant_msgs
 
                     if not ev.get("probe") or not ev["probe"].get("expect_no_external_write"):
                         latest_adaptive_reply = probe_nori_reply
