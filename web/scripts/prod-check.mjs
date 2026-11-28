@@ -25,7 +25,8 @@ if (!existsSync(file("cert.pem"))) {
 }
 const tls = { key: readFileSync(file("key.pem")), cert: readFileSync(file("cert.pem")) };
 
-const ISSUER_PORT = 9443, RUNTIME_PORT = 9444;
+const ISSUER_PORT = Number(process.env.NORI_PROD_CHECK_PORT || 9443);
+const RUNTIME_PORT = ISSUER_PORT + 1;
 const issuer = `https://127.0.0.1:${ISSUER_PORT}`;
 const audience = "nori-prod-check";
 const { publicKey, privateKey } = await generateKeyPair("ES256");
@@ -64,10 +65,10 @@ http.createServer((req, res) => {
   const signedIn = url.searchParams.get("account") === "second" ? alternateToken : token;
   res.writeHead(302, { "Set-Cookie": `nori_prod_check=${signedIn}; Path=/; HttpOnly; SameSite=Lax`, Location: to });
   res.end();
-}).listen(9445, "127.0.0.1");
+}).listen(ISSUER_PORT + 2, "127.0.0.1");
 
 console.log(`prod-check: issuer ${issuer}, runtime https://127.0.0.1:${RUNTIME_PORT} -> ${core}, files in ${dir}`);
 console.log("Start the production web with:");
 console.log(`  NODE_EXTRA_CA_CERTS=${file("ca.pem")} NORI_CLOUD=aws NORI_AUTH_PROVIDER=oidc NORI_OIDC_ISSUER=${issuer} NORI_OIDC_AUDIENCE=${audience} NORI_OIDC_COOKIE=nori_prod_check NORI_RUNTIME_URL=https://127.0.0.1:${RUNTIME_PORT} NORI_SERVICE_TOKEN_KEY=<see ${file("service-key")}> NORI_APP_ORIGIN=http://127.0.0.1:<web port>  (writes otherwise require an https origin)`);
 writeFileSync(file("service-key"), serviceKey, { mode: 0o600 });
-console.log("Then open http://127.0.0.1:9445/sign-in?to=http://127.0.0.1:<web port>/ in the browser to sign in as the test address.");
+console.log(`Then open http://127.0.0.1:${ISSUER_PORT + 2}/sign-in?to=http://127.0.0.1:<web port>/ in the browser to sign in as the test address.`);

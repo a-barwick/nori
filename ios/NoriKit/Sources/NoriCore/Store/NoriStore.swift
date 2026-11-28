@@ -297,8 +297,7 @@ public final class NoriStore {
         }
         if isOnboardingLocallyCompleted { return false }
         if let completedAt = preferences.onboardingCompletedAt, !completedAt.isEmpty { return false }
-        if !session.messages.isEmpty { return false }
-        return true
+        return session.nextCursor?.isEmpty != false && !session.messages.contains { $0.role == .user }
     }
 
     public var serverHost: String {

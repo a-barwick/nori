@@ -43,6 +43,14 @@ func (m unavailableHostedTask) Inspect(context.Context, agent.InspectRequest) (a
 	return agent.Inspection{}, errors.New("selected hosted model is unavailable")
 }
 
+func hostedGatewayBase(models settings.Models, profile modelprofiles.Profile) string {
+	if models.TestURL != "" {
+		// Settings accepts this override only for an HTTP loopback server in local development.
+		return strings.TrimRight(models.TestURL, "/") + "/v1"
+	}
+	return cmp.Or(strings.TrimSpace(profile.Endpoint), vercelGatewayBaseURL)
+}
+
 // ReplyModelForHosted builds a guarded Chat model routed through Nori's platform
 // Vercel AI Gateway key. Only strictly allowlisted known-tariff models are admitted,
 // and all usage records are explicitly tagged Billing="hosted".
@@ -50,20 +58,15 @@ func ReplyModelForHosted(models settings.Models, userID string, p modelprofiles.
 	if strings.TrimSpace(platformGatewayKey) == "" || !IsHostedModelAllowed(p.Model) {
 		return unavailableHostedModel{name: p.Model}
 	}
-	base := strings.TrimSpace(p.Endpoint)
-	if base == "" {
-		base = vercelGatewayBaseURL
-	}
+	base := hostedGatewayBase(models, p)
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(p.Model)), "anthropic/") {
 		model := conversation.NewGatewayAnthropicModel(base, platformGatewayKey, p.Model)
-		model.TestURL = models.TestURL
 		model.Client = cmp.Or(models.CloudDispatchClient, model.Client)
 		model.Guard, model.UserID, model.ReasoningEffort = modelGuard(models, userID), userID, reasoning
 		model.BillingMode = state.UsageBillingHosted
 		return model
 	}
 	model := conversation.NewGatewayModel(base, platformGatewayKey, p.Model)
-	model.TestURL = models.TestURL
 	model.Client = cmp.Or(models.CloudDispatchClient, model.Client)
 	model.Guard, model.UserID, model.ReasoningEffort = modelGuard(models, userID), userID, reasoning
 	model.AllowGatewayReasoning = true
@@ -78,20 +81,15 @@ func TaskModelForHosted(models settings.Models, meter usage.Meter, userID string
 	if strings.TrimSpace(platformGatewayKey) == "" || !IsHostedModelAllowed(p.Model) {
 		return unavailableHostedTask{name: p.Model}
 	}
-	base := strings.TrimSpace(p.Endpoint)
-	if base == "" {
-		base = vercelGatewayBaseURL
-	}
+	base := hostedGatewayBase(models, p)
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(p.Model)), "anthropic/") {
 		model := anthropic.NewGateway(base, platformGatewayKey, p.Model, meter)
-		model.TestURL = models.TestURL
 		model.HTTP = cmp.Or(models.CloudDispatchClient, model.HTTP)
 		model.Guard, model.UserID, model.DefaultReasoning = modelGuard(models, userID), userID, reasoning
 		model.BillingMode = state.UsageBillingHosted
 		return model
 	}
 	model := responses.NewGateway(base, platformGatewayKey, p.Model, meter)
-	model.TestURL = models.TestURL
 	model.HTTP = cmp.Or(models.CloudDispatchClient, model.HTTP)
 	model.Guard, model.UserID, model.DefaultReasoning = modelGuard(models, userID), userID, reasoning
 	model.AllowGatewayReasoning = true

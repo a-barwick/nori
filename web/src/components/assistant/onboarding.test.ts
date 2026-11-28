@@ -19,12 +19,23 @@ describe("shouldShowOnboarding", () => {
         forceReplay: false,
         preferences: basePreferences,
         preferencesLoaded: true,
-        messageCount: 0,
+        session: { messages: [] },
         sessionLoaded: true,
         localCompleted: false,
       }),
       true,
     );
+  });
+
+  test("keeps onboarding open when Nori's welcome arrives before setup finishes", () => {
+    assert.equal(shouldShowOnboarding({
+      forceReplay: false,
+      preferences: basePreferences,
+      preferencesLoaded: true,
+      session: { messages: [{ role: "assistant" }] },
+      sessionLoaded: true,
+      localCompleted: false,
+    }), true);
   });
 
   test("does not show for existing users who already have messages", () => {
@@ -33,12 +44,22 @@ describe("shouldShowOnboarding", () => {
         forceReplay: false,
         preferences: basePreferences,
         preferencesLoaded: true,
-        messageCount: 3,
+        session: { messages: [{ role: "assistant" }, { role: "user" }] },
         sessionLoaded: true,
         localCompleted: false,
       }),
       false,
     );
+  });
+
+  test("recognizes returning accounts with older chat history", () => {
+    assert.equal(shouldShowOnboarding({
+      forceReplay: false,
+      preferencesLoaded: true,
+      session: { messages: [{ role: "assistant" }], next_cursor: "earlier" },
+      sessionLoaded: true,
+      localCompleted: false,
+    }), false);
   });
 
   test("does not show once onboarding_completed_at is persisted", () => {
@@ -47,7 +68,7 @@ describe("shouldShowOnboarding", () => {
         forceReplay: false,
         preferences: { ...basePreferences, onboarding_completed_at: "2026-11-25T18:50:00Z" },
         preferencesLoaded: true,
-        messageCount: 0,
+        session: { messages: [] },
         sessionLoaded: true,
         localCompleted: false,
       }),
@@ -61,7 +82,7 @@ describe("shouldShowOnboarding", () => {
         forceReplay: false,
         preferences: { ...basePreferences, data_reset_at: "2026-11-25T18:50:00Z" },
         preferencesLoaded: true,
-        messageCount: 1,
+        session: { messages: [{ role: "assistant" }] },
         sessionLoaded: true,
         localCompleted: false,
       }),
@@ -75,7 +96,7 @@ describe("shouldShowOnboarding", () => {
         forceReplay: true,
         preferences: { ...basePreferences, onboarding_completed_at: "2026-11-25T18:50:00Z" },
         preferencesLoaded: true,
-        messageCount: 10,
+        session: { messages: [{ role: "user" }] },
         sessionLoaded: true,
         localCompleted: true,
       }),

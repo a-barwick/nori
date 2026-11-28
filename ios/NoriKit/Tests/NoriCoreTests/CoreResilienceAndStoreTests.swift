@@ -1342,6 +1342,19 @@ struct MemoryReceiptsAndStoreTests {
         #expect(store.authState == .signedOut)
     }
 
+    @Test("Nori's first welcome keeps onboarding open until the user participates")
+    @MainActor
+    func onboardingWithWelcome() {
+        let store = NoriStore(transport: MockNoriTransport(), authProvider: AuthTokenProvider(tokenStore: InMemoryTokenStore()))
+        store.authState = .signedIn(email: "welcome-\(UUID().uuidString)@example.com")
+        store.hasLoadedSnapshot = true
+        store.session = Session(messages: [Message(id: "welcome", role: .assistant, text: "Welcome", createdAt: "2026-11-27T10:00:00Z")])
+        #expect(store.shouldShowOnboarding)
+
+        store.session.messages.append(Message(id: "reply", role: .user, text: "Hi", createdAt: "2026-11-27T10:01:00Z"))
+        #expect(!store.shouldShowOnboarding)
+    }
+
     @Test("A reset event clears a second device's stale state and shows onboarding")
     @MainActor
     func remoteResetEvent() async {

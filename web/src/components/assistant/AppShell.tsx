@@ -297,7 +297,7 @@ function Frame({ scope, children }: { scope: string; children: ReactNode }) {
     forceReplay,
     preferences: preferences.data,
     preferencesLoaded: !preferences.loading && (!!preferences.data || !!preferences.error),
-    messageCount: runtime.session?.messages?.length ?? 0,
+    session: runtime.session ?? undefined,
     sessionLoaded: !runtime.loading && !!runtime.session,
     localCompleted: localCompletion === (preferences.data?.data_reset_at ?? "1"),
   });

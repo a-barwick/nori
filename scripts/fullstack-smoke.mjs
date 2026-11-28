@@ -44,7 +44,7 @@ function freePort() {
   });
 }
 
-async function freePortPair() {
+async function freePortBlock(size) {
   for (let attempt = 0; attempt < 20; attempt++) {
     const port = await freePort();
     const nextPort = port === 8081 ? 8082 : port + 1;
@@ -56,7 +56,7 @@ async function freePortPair() {
     });
     if (ok) return port;
   }
-  throw new Error("Could not find an available adjacent port pair for ws-server.mjs");
+  throw new Error("Could not find available adjacent loopback ports");
 }
 
 function startModelStub() {
@@ -153,7 +153,10 @@ async function main() {
     modelStub = await startModelStub();
     const modelURL = `http://127.0.0.1:${modelStub.address().port}`;
     const corePort = await freePort();
-    const webPort = await freePortPair();
+    const webPort = await freePortBlock(5);
+    const issuerPort = webPort + 2;
+    const issuer = `https://127.0.0.1:${issuerPort}`;
+    const runtime = `https://127.0.0.1:${issuerPort + 1}`;
 
     const coreEnv = {
       ...process.env,
@@ -172,7 +175,7 @@ async function main() {
       NORI_INNER_PROVIDER: "openai",
       NORI_AGENT_MODEL: "gpt-6.1-sol",
       MODEL_NAME: "gpt-6.1-terra",
-      OPENAI_TEST_API_KEY: "nori-loopback-stub",
+      NORI_PLATFORM_AI_GATEWAY_KEY: "nori-loopback-stub",
       NORI_MODEL_TEST_URL: modelURL,
       PORT: String(corePort),
     };
@@ -184,7 +187,7 @@ async function main() {
     });
     execFileSync(
       join(binDir, "nori-user"),
-      ["bind-identity", "--id", userID, "--issuer", "https://127.0.0.1:9443", "--subject", `prod-check:${SMOKE_EMAIL}`],
+      ["bind-identity", "--id", userID, "--issuer", issuer, "--subject", `prod-check:${SMOKE_EMAIL}`],
       { env: coreEnv, stdio: "inherit" },
     );
 
@@ -199,7 +202,7 @@ async function main() {
     const bridge = startProc(
       process.execPath,
       [join(WEB_DIR, "scripts/prod-check.mjs"), `http://127.0.0.1:${corePort}`, SMOKE_EMAIL],
-      { cwd: WEB_DIR, env: { ...process.env, NORI_PROD_CHECK_DIR: prodCheckDir } },
+      { cwd: WEB_DIR, env: { ...process.env, NORI_PROD_CHECK_DIR: prodCheckDir, NORI_PROD_CHECK_PORT: String(issuerPort) } },
     );
     const serviceKey = await waitFor("prod-check service-key", async () => {
       if (bridge.exitCode !== null) throw new Error(`prod-check exited ${bridge.exitCode}:\n${bridge.getLogs()}`);
@@ -224,10 +227,10 @@ async function main() {
         PORT: String(webPort),
         NORI_CLOUD: "aws",
         NORI_AUTH_PROVIDER: "oidc",
-        NORI_OIDC_ISSUER: "https://127.0.0.1:9443",
+        NORI_OIDC_ISSUER: issuer,
         NORI_OIDC_AUDIENCE: "nori-prod-check",
         NORI_OIDC_COOKIE: "nori_prod_check",
-        NORI_RUNTIME_URL: "https://127.0.0.1:9444",
+        NORI_RUNTIME_URL: runtime,
         NORI_SERVICE_TOKEN_KEY: serviceKey,
         NORI_APP_ORIGIN: `http://127.0.0.1:${webPort}`,
         NODE_EXTRA_CA_CERTS: join(prodCheckDir, "ca.pem"),
@@ -270,7 +273,7 @@ async function main() {
     assert.equal(unauth.status, 403, `Expected 403 unauthenticated, got ${unauth.status}`);
 
     // 2. Sign in through prod-check OIDC redirect to obtain the session cookie.
-    const signIn = await fetch(`http://127.0.0.1:9445/sign-in?to=${encodeURIComponent(`${webBase}/`)}`, {
+    const signIn = await fetch(`http://127.0.0.1:${issuerPort + 2}/sign-in?to=${encodeURIComponent(`${webBase}/`)}`, {
       redirect: "manual",
     });
     assert.equal(signIn.status, 302);
@@ -284,6 +287,9 @@ async function main() {
     const caps = await capsRes.json();
     assert.equal(caps.service, "nori");
     assert.equal(caps.contract, "nori-chat-2");
+    assert.equal(caps.entitlement.tier, "trial");
+    assert.equal(caps.entitlement.credit_grant_usd, 5);
+    assert.equal(caps.entitlement.allow_byok, false);
 
     const snapRes = await fetch(`${webBase}/api/v1/snapshot`, { headers: browser });
     assert.equal(snapRes.status, 200, `snapshot status=${snapRes.status}`);

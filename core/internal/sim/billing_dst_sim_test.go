@@ -42,6 +42,7 @@ import (
 	"nori/internal/state"
 	"nori/internal/state/docstore"
 	"nori/internal/state/records"
+	"nori/internal/task"
 	"nori/internal/usage"
 	"nori/internal/users"
 	"nori/internal/worker"
@@ -838,6 +839,7 @@ func TestDST_BillingMidTaskSuspensionCrossInstanceNotifyEviction(t *testing.T) {
 	if err := sharedBackend.WakeUser(ctx, alice.ID, docstore.LaneConversation, time.Time{}); err != nil {
 		t.Fatalf("WakeUser: %v", err)
 	}
+	taskClaimed := make(chan docstore.TaskLease, 1)
 	workStarted := make(chan struct{}, 1)
 	workCanceled := make(chan struct{}, 1)
 	evictDone := make(chan string, 2)
@@ -853,6 +855,11 @@ func TestDST_BillingMidTaskSuspensionCrossInstanceNotifyEviction(t *testing.T) {
 		Now:            clock.Now,
 		PollInterval:   5 * time.Millisecond,
 		RepairInterval: time.Hour,
+		DrainTimeout:   50 * time.Millisecond,
+		RunTask: func(_ context.Context, _ *app.App, claim docstore.TaskLease, _ <-chan struct{}) (task.RunOutcome, error) {
+			taskClaimed <- claim
+			return task.OutcomeDone, nil
+		},
 		RunConversation: func(runCtx context.Context, _ *app.App) error {
 			select {
 			case workStarted <- struct{}{}:
@@ -1046,17 +1053,37 @@ func TestDST_BillingMidTaskSuspensionCrossInstanceNotifyEviction(t *testing.T) {
 	}
 
 	// 7. Unsuspend MUST re-arm parked tasks (waiting_reason="account_suspended") AND conversation/scheduler wakes!
-	// First seed a parked task lease with waiting_reason="account_suspended" and a parked scheduler wake.
 	const parkedRunID = "run-parked-suspended"
 	if _, err := sharedBackend.EnsureTaskLease(ctx, alice.ID, parkedRunID, time.Time{}); err != nil {
-		t.Fatalf("EnsureTaskLease: %v", err)
+		t.Fatal(err)
 	}
-	claimedTask, ok, err := sharedBackend.ClaimTaskByID(ctx, alice.ID, parkedRunID, "sim-parker", time.Minute)
-	if err != nil || !ok {
-		t.Fatalf("ClaimTaskByID: ok=%v err=%v", ok, err)
+	// Let the running worker park this lease through its normal suspension check.
+	var parkedSeq int64
+	deadline = time.Now().Add(2 * time.Second)
+	for parkedSeq == 0 {
+		leases, err := sharedBackend.ListTaskLeases(ctx, alice.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, lease := range leases {
+			if lease.RunID == parkedRunID && lease.WaitingReason == docstore.WaitAccountSuspended {
+				parkedSeq = lease.WakeSeq
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("suspended worker did not park task: %+v", leases)
+		}
+		if parkedSeq == 0 {
+			time.Sleep(time.Millisecond)
+		}
 	}
-	if parked, err := sharedBackend.ParkTask(ctx, alice.ID, parkedRunID, "sim-parker", claimedTask.WakeSeq, docstore.WaitAccountSuspended); err != nil || !parked {
-		t.Fatalf("ParkTask account_suspended: parked=%v err=%v", parked, err)
+	wakesBefore, err := sharedBackend.ListUserWakes(ctx, alice.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	priorSequence := map[string]int64{}
+	for _, w := range wakesBefore {
+		priorSequence[w.Lane] = w.WakeSeq
 	}
 
 	// Drain any stale workStarted signal before unsuspending.
@@ -1074,20 +1101,14 @@ func TestDST_BillingMidTaskSuspensionCrossInstanceNotifyEviction(t *testing.T) {
 		t.Fatal("timed out waiting for Instance B HandleEntitlementChanged after Unsuspend")
 	}
 
-	// Verify parked task lease was woken (WaitingReason cleared, Runnable=true).
-	taskLeases, err := sharedBackend.ListTaskLeases(ctx, alice.ID)
-	if err != nil {
-		t.Fatalf("ListTaskLeases after Unsuspend: %v", err)
-	}
-	var foundTask *docstore.TaskLease
-	for i := range taskLeases {
-		if taskLeases[i].RunID == parkedRunID {
-			foundTask = &taskLeases[i]
-			break
+	// Observe delivery of the re-armed lease, since a fast worker can finish it before inspection.
+	select {
+	case claim := <-taskClaimed:
+		if claim.RunID != parkedRunID || claim.WaitingReason != docstore.WaitNone || claim.WakeSeq <= parkedSeq {
+			t.Fatalf("unexpected task claim after Unsuspend: %+v", claim)
 		}
-	}
-	if foundTask == nil || !foundTask.Runnable || foundTask.WaitingReason != docstore.WaitNone {
-		t.Fatalf("expected parked task re-armed after Unsuspend, got %+v", foundTask)
+	case <-time.After(2 * time.Second):
+		t.Fatal("parked task was not delivered after Unsuspend")
 	}
 
 	// Verify conversation & scheduler wakes were re-armed and Instance B worker pool resumed conversation!
@@ -1097,7 +1118,7 @@ func TestDST_BillingMidTaskSuspensionCrossInstanceNotifyEviction(t *testing.T) {
 	}
 	seenLanes := map[string]bool{}
 	for _, w := range wakesAfterUnsuspend {
-		if w.Runnable || w.Owner != "" {
+		if w.WakeSeq > priorSequence[w.Lane] {
 			seenLanes[w.Lane] = true
 		}
 	}

@@ -4,7 +4,7 @@ export function shouldShowOnboarding(params: {
   forceReplay: boolean;
   preferences?: Preferences;
   preferencesLoaded: boolean;
-  messageCount: number;
+  session?: { messages?: ReadonlyArray<{ role: string }>; next_cursor?: string };
   sessionLoaded: boolean;
   localCompleted: boolean;
 }): boolean {
@@ -13,6 +13,5 @@ export function shouldShowOnboarding(params: {
   if (!params.preferencesLoaded || !params.sessionLoaded) return false;
   if (params.preferences?.onboarding_completed_at) return false;
   if (params.preferences?.data_reset_at) return true;
-  if (params.messageCount > 0) return false;
-  return true;
+  return !params.session?.next_cursor && !params.session?.messages?.some(message => message.role === "user");
 }

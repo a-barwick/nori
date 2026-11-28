@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"nori/internal/app"
+	"nori/internal/billing"
 	"nori/internal/platform"
 	"nori/internal/settings"
 	"nori/internal/state"
@@ -794,6 +795,10 @@ func TestSplitRoleSIGKILLCrashRecovery(t *testing.T) {
 	}
 	if err := svc.Users.Create(ctx, testUser); err != nil {
 		t.Fatalf("create user: %v", err)
+	}
+	// This fixture exercises a local model, which requires the BYOK entitlement.
+	if _, err := storage.BillingStore().SetTier(ctx, testUser.ID, billing.TierBYOK, billing.SetTierOptions{}); err != nil {
+		t.Fatalf("set crash fixture tier: %v", err)
 	}
 	ownerShard := "owners/" + testUser.DataOwner()
 	userApp, releaseUser, err := svc.AcquireByID(ctx, testUser.ID)
