@@ -326,3 +326,55 @@ func assertRateLimited429(t *testing.T, rec *httptest.ResponseRecorder, wantCode
 		t.Fatalf("missing error message in body=%s", rec.Body.String())
 	}
 }
+
+func TestRateLimiterAcquireDesktopWS(t *testing.T) {
+	rl := api.NewRateLimiter(settings.DefaultRateLimit())
+
+	// max <= 0 fails closed.
+	if rel, ok := rl.AcquireDesktopWS("u1", 0); ok || rel != nil {
+		t.Fatal("expected max=0 to reject")
+	}
+	if rl.Stats().DesktopWSRejected != 1 {
+		t.Fatalf("DesktopWSRejected = %d, want 1", rl.Stats().DesktopWSRejected)
+	}
+
+	// Tier with max=1 allows 1 concurrent WS, blocks 2nd, isolates other users.
+	rel1, ok := rl.AcquireDesktopWS("u1", 1)
+	if !ok || rel1 == nil {
+		t.Fatal("expected first desktop WS slot to succeed")
+	}
+	if _, ok := rl.AcquireDesktopWS("u1", 1); ok {
+		t.Fatal("expected second desktop WS slot for u1 (max=1) to be rejected")
+	}
+	rel2, ok := rl.AcquireDesktopWS("u2", 2)
+	if !ok || rel2 == nil {
+		t.Fatal("expected u2 first slot to succeed")
+	}
+	rel2b, ok := rl.AcquireDesktopWS("u2", 2)
+	if !ok || rel2b == nil {
+		t.Fatal("expected u2 second slot (max=2) to succeed")
+	}
+	if _, ok := rl.AcquireDesktopWS("u2", 2); ok {
+		t.Fatal("expected u2 third slot (max=2) to be rejected")
+	}
+	if st := rl.Stats(); st.ActiveDesktopWS != 3 || st.DesktopWSRejected != 3 {
+		t.Fatalf("unexpected stats: %+v", st)
+	}
+
+	// Release is idempotent.
+	rel1()
+	rel1()
+	if st := rl.Stats(); st.ActiveDesktopWS != 2 {
+		t.Fatalf("ActiveDesktopWS after double release = %d, want 2", st.ActiveDesktopWS)
+	}
+	rel1Again, ok := rl.AcquireDesktopWS("u1", 1)
+	if !ok {
+		t.Fatal("expected u1 slot to be available after release")
+	}
+	rel1Again()
+	rel2()
+	rel2b()
+	if st := rl.Stats(); st.ActiveDesktopWS != 0 {
+		t.Fatalf("ActiveDesktopWS after releasing all = %d, want 0", st.ActiveDesktopWS)
+	}
+}

@@ -37,6 +37,7 @@ const (
 	WakeKindScheduler    WakeKind = "scheduler"
 	WakeKindPause        WakeKind = "pause"
 	WakeKindResync       WakeKind = "resync"
+	WakeKindEntitlement  WakeKind = "entitlement"
 )
 
 type ParsedWake struct {
@@ -47,6 +48,7 @@ type ParsedWake struct {
 
 func TaskWakePayload(userID, runID string) string { return "t:" + userID + ":" + runID }
 func UserTasksWakePayload(userID string) string   { return "t:" + userID + ":*" }
+func EntitlementWakePayload(userID string) string { return "entitlement:" + userID }
 
 func UserWakePayload(userID, lane string) string {
 	if lane == LaneScheduler {
@@ -64,6 +66,9 @@ func ParseWakePayload(payload string) ParsedWake {
 	}
 	if payload == WakePayloadAllTask {
 		return ParsedWake{Kind: WakeKindTask}
+	}
+	if userID, ok := strings.CutPrefix(payload, "entitlement:"); ok && userID != "" {
+		return ParsedWake{Kind: WakeKindEntitlement, UserID: userID}
 	}
 	if rest, ok := strings.CutPrefix(payload, "t:"); ok {
 		userID, runID, ok := strings.Cut(rest, ":")

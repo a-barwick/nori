@@ -9,6 +9,8 @@ import (
 type UsageCostRecord struct {
 	CreatedAt     time.Time `firestore:"created_at"`
 	Model         string    `firestore:"model"`
+	Billing       string    `firestore:"billing"`
+	Category      string    `firestore:"category"`
 	CostUSD       *float64  `firestore:"cost_usd"`
 	CostStatus    string    `firestore:"cost_status"`
 	RequestStatus string    `firestore:"request_status"`
@@ -32,7 +34,7 @@ func (c *Client) ReadUsageCosts(ctx context.Context, path string, start, end tim
 	query := Query{client: c, spec: QuerySpec{Collection: path}}
 	rows := query.
 		Where("created_at", ">=", start).Where("created_at", "<", end).
-		Select("created_at", "model", "cost_usd", "cost_status", "request_status").Documents(ctx)
+		Select("created_at", "model", "billing", "category", "cost_usd", "cost_status", "request_status").Documents(ctx)
 	defer rows.Stop()
 	for {
 		row, err := rows.Next()

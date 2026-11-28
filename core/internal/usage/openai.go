@@ -17,7 +17,7 @@ func SolCost(model, tier string, input, output, total *int64, cached int64) (flo
 
 func SolCostWithWrites(model, tier string, input, output, total *int64, cached, written int64) (float64, error) {
 	if (!matchOpenAIModel(model, "gpt-6.1-sol") && !matchOpenAIModel(model, "gpt-6.2-sol")) || tier != "default" || input == nil || output == nil || total == nil ||
-		*input < 0 || *input > 272_000 || *output < 0 || *output > 4096 || *total != *input+*output || cached < 0 || written < 0 ||
+		*input < 0 || *input > 272_000 || *output < 0 || *output > 8192 || *total != *input+*output || cached < 0 || written < 0 ||
 		cached+written > *input {
 		return 0, errors.New("OpenAI usage does not match the configured tariff")
 	}

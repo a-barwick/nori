@@ -33,14 +33,16 @@ const (
 	RateLimitRead    RateLimitCategory = "read"
 )
 
-// RateLimitStats snapshots rejection counts and active SSE streams.
+// RateLimitStats snapshots rejection counts and active SSE/Desktop WS streams.
 type RateLimitStats struct {
-	ResolveRejected int64
-	WriteRejected   int64
-	UploadRejected  int64
-	ReadRejected    int64
-	SSERejected     int64
-	ActiveSSE       int64
+	ResolveRejected   int64
+	WriteRejected     int64
+	UploadRejected    int64
+	ReadRejected      int64
+	SSERejected       int64
+	ActiveSSE         int64
+	DesktopWSRejected int64
+	ActiveDesktopWS   int64
 }
 
 type tokenBucket struct {
@@ -54,20 +56,24 @@ type rateLimitShard struct {
 	entries map[string]*tokenBucket
 }
 
-// RateLimiter enforces sharded, bounded per-key token-bucket rate limits and per-user concurrent SSE caps.
+// RateLimiter enforces sharded, bounded per-key token-bucket rate limits and per-user concurrent SSE/Desktop WS caps.
 type RateLimiter struct {
-	cfg           settings.RateLimit
-	now           func() time.Time
-	shards        [rateLimitShards]rateLimitShard
-	maxPerShard   int
-	sseMu         sync.Mutex
-	sseByUser     map[string]int
-	activeSSE     atomic.Int64
-	resolveReject atomic.Int64
-	writeReject   atomic.Int64
-	uploadReject  atomic.Int64
-	readReject    atomic.Int64
-	sseReject     atomic.Int64
+	cfg             settings.RateLimit
+	now             func() time.Time
+	shards          [rateLimitShards]rateLimitShard
+	maxPerShard     int
+	sseMu           sync.Mutex
+	sseByUser       map[string]int
+	activeSSE       atomic.Int64
+	desktopWSMu     sync.Mutex
+	desktopWSByUser map[string]int
+	activeDesktopWS atomic.Int64
+	desktopWSReject atomic.Int64
+	resolveReject   atomic.Int64
+	writeReject     atomic.Int64
+	uploadReject    atomic.Int64
+	readReject      atomic.Int64
+	sseReject       atomic.Int64
 }
 
 // NewRateLimiter constructs a RateLimiter with the provided settings.
@@ -89,10 +95,11 @@ func NewRateLimiterWithClock(cfg settings.RateLimit, now func() time.Time) *Rate
 		maxPerShard = 1
 	}
 	rl := &RateLimiter{
-		cfg:         cfg,
-		now:         now,
-		maxPerShard: maxPerShard,
-		sseByUser:   make(map[string]int),
+		cfg:             cfg,
+		now:             now,
+		maxPerShard:     maxPerShard,
+		sseByUser:       make(map[string]int),
+		desktopWSByUser: make(map[string]int),
 	}
 	for i := range rl.shards {
 		rl.shards[i].entries = make(map[string]*tokenBucket)
@@ -233,18 +240,60 @@ func (rl *RateLimiter) AcquireSSE(userID string) (release func(), ok bool) {
 	}, true
 }
 
-// Stats returns current rejection counters and active SSE stream count.
+// AcquireDesktopWS reserves one concurrent Desktop VNC WebSocket slot for userID up to max.
+// The returned release function is idempotent and must be deferred by the caller.
+func (rl *RateLimiter) AcquireDesktopWS(userID string, max int) (release func(), ok bool) {
+	if rl == nil {
+		return func() {}, true
+	}
+	if max <= 0 {
+		rl.desktopWSReject.Add(1)
+		return nil, false
+	}
+
+	rl.desktopWSMu.Lock()
+	if rl.desktopWSByUser == nil {
+		rl.desktopWSByUser = make(map[string]int)
+	}
+	current := rl.desktopWSByUser[userID]
+	if current >= max {
+		rl.desktopWSMu.Unlock()
+		rl.desktopWSReject.Add(1)
+		return nil, false
+	}
+	rl.desktopWSByUser[userID] = current + 1
+	rl.desktopWSMu.Unlock()
+	rl.activeDesktopWS.Add(1)
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			rl.desktopWSMu.Lock()
+			if n := rl.desktopWSByUser[userID]; n <= 1 {
+				delete(rl.desktopWSByUser, userID)
+			} else {
+				rl.desktopWSByUser[userID] = n - 1
+			}
+			rl.desktopWSMu.Unlock()
+			rl.activeDesktopWS.Add(-1)
+		})
+	}, true
+}
+
+// Stats returns current rejection counters and active SSE/Desktop WS counts.
 func (rl *RateLimiter) Stats() RateLimitStats {
 	if rl == nil {
 		return RateLimitStats{}
 	}
 	return RateLimitStats{
-		ResolveRejected: rl.resolveReject.Load(),
-		WriteRejected:   rl.writeReject.Load(),
-		UploadRejected:  rl.uploadReject.Load(),
-		ReadRejected:    rl.readReject.Load(),
-		SSERejected:     rl.sseReject.Load(),
-		ActiveSSE:       rl.activeSSE.Load(),
+		ResolveRejected:   rl.resolveReject.Load(),
+		WriteRejected:     rl.writeReject.Load(),
+		UploadRejected:    rl.uploadReject.Load(),
+		ReadRejected:      rl.readReject.Load(),
+		SSERejected:       rl.sseReject.Load(),
+		ActiveSSE:         rl.activeSSE.Load(),
+		DesktopWSRejected: rl.desktopWSReject.Load(),
+		ActiveDesktopWS:   rl.activeDesktopWS.Load(),
 	}
 }
 

@@ -10,8 +10,15 @@ import (
 	"slices"
 	"time"
 
+	"nori/internal/billing"
 	"nori/internal/state/docstore"
 )
+
+type BillingSnapshot struct {
+	Entitlements []billing.Entitlement
+	Grants       []billing.CreditGrant
+	GlobalBudget []billing.GlobalBudgetUsage
+}
 
 type BackendSnapshot struct {
 	Collections  map[string]map[string]map[string]any
@@ -19,6 +26,7 @@ type BackendSnapshot struct {
 	TaskLeases   []docstore.TaskLease
 	UserWakes    []docstore.UserWake
 	MemoryChunks []docstore.MemoryChunk
+	Billing      BillingSnapshot
 }
 
 type ArtifactsSnapshot struct {
@@ -69,12 +77,63 @@ func (b *Backend) Snapshot() BackendSnapshot {
 	}
 	slices.SortFunc(memoryChunks, compareMemoryChunkKeyOrder)
 
+	entitlements := make([]billing.Entitlement, 0, len(b.billing.entitlements))
+	for _, ent := range b.billing.entitlements {
+		entitlements = append(entitlements, ent.Clone())
+	}
+	slices.SortFunc(entitlements, func(a, b billing.Entitlement) int {
+		if a.UserID < b.UserID {
+			return -1
+		}
+		if a.UserID > b.UserID {
+			return 1
+		}
+		return 0
+	})
+	grants := make([]billing.CreditGrant, 0, len(b.billing.grants))
+	for _, g := range b.billing.grants {
+		grants = append(grants, g.Clone())
+	}
+	slices.SortFunc(grants, func(a, b billing.CreditGrant) int {
+		if a.ID < b.ID {
+			return -1
+		}
+		if a.ID > b.ID {
+			return 1
+		}
+		return 0
+	})
+	budgets := make([]billing.GlobalBudgetUsage, 0, len(b.billing.globalBudget))
+	for _, row := range b.billing.globalBudget {
+		budgets = append(budgets, row)
+	}
+	slices.SortFunc(budgets, func(a, b billing.GlobalBudgetUsage) int {
+		if a.Day != b.Day {
+			if a.Day < b.Day {
+				return -1
+			}
+			return 1
+		}
+		if a.Scope < b.Scope {
+			return -1
+		}
+		if a.Scope > b.Scope {
+			return 1
+		}
+		return 0
+	})
+
 	return BackendSnapshot{
 		Collections:  cols,
 		Sequences:    seqs,
 		TaskLeases:   taskLeases,
 		UserWakes:    userWakes,
 		MemoryChunks: memoryChunks,
+		Billing: BillingSnapshot{
+			Entitlements: entitlements,
+			Grants:       grants,
+			GlobalBudget: budgets,
+		},
 	}
 }
 
@@ -121,11 +180,29 @@ func (b *Backend) Restore(snap BackendSnapshot) {
 		memoryChunks[memoryChunkKey{owner: cp.Owner, chunkID: cp.ChunkID}] = cp
 	}
 
+	bs := newBillingState()
+	bs.trialMaxDay = b.billing.trialMaxDay
+	for _, ent := range snap.Billing.Entitlements {
+		cp := ent.Clone()
+		bs.entitlements[cp.UserID] = cp
+		if cp.AppAccountToken != "" {
+			bs.byAppToken[cp.AppAccountToken] = cp.UserID
+		}
+	}
+	for _, g := range snap.Billing.Grants {
+		cp := g.Clone()
+		bs.grants[cp.ID] = cp
+	}
+	for _, row := range snap.Billing.GlobalBudget {
+		bs.globalBudget[billingBudgetKey{day: row.Day, scope: row.Scope}] = row
+	}
+
 	b.docs = docs
 	b.seqs = seqs
 	b.taskLeases = taskLeases
 	b.userWakes = userWakes
 	b.memoryChunks = memoryChunks
+	b.billing = bs
 	b.notifyLocked()
 }
 

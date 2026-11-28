@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"nori/internal/billing"
 	"nori/internal/state/docstore"
 )
 
@@ -41,6 +42,7 @@ type Backend struct {
 	taskLeases     map[docstore.TaskKey]docstore.TaskLease
 	userWakes      map[userWakeKey]docstore.UserWake
 	memoryChunks   map[memoryChunkKey]docstore.MemoryChunk
+	billing        billingState
 	wakeSubs       map[uint64]chan docstore.WakeEvent
 	wakeSubNotify  chan struct{}
 	dropWakeEvents bool
@@ -71,6 +73,7 @@ func New(opts ...Option) *Backend {
 		taskLeases:    map[docstore.TaskKey]docstore.TaskLease{},
 		userWakes:     map[userWakeKey]docstore.UserWake{},
 		memoryChunks:  map[memoryChunkKey]docstore.MemoryChunk{},
+		billing:       newBillingState(),
 		wakeSubs:      map[uint64]chan docstore.WakeEvent{},
 		wakeSubNotify: make(chan struct{}),
 		notify:        make(chan struct{}),
@@ -398,6 +401,7 @@ type transaction struct {
 	seqDeltas       map[string]int64
 	wakeOps         []stagedWakeOp
 	chunkWrites     map[memoryChunkKey]*docstore.MemoryChunk
+	trialProvisions []stagedTrialProvision
 }
 
 var (
@@ -438,9 +442,35 @@ func (b *Backend) beginTx(readOnly bool) *transaction {
 
 func (b *Backend) commitTx(tx *transaction) error {
 	inj := b.faultInjector()
-	mutated := len(tx.writes) > 0 || len(tx.seqDeltas) > 0 || len(tx.wakeOps) > 0 || len(tx.chunkWrites) > 0
+	mutated := len(tx.writes) > 0 || len(tx.seqDeltas) > 0 || len(tx.wakeOps) > 0 || len(tx.chunkWrites) > 0 || len(tx.trialProvisions) > 0
 
 	b.mu.Lock()
+	// Pre-validate staged trial signup caps before mutating state so rejection rolls back cleanly.
+	if len(tx.trialProvisions) > 0 {
+		addedByDay := map[string]int{}
+		for _, p := range tx.trialProvisions {
+			if _, exists := b.billing.entitlements[p.userID]; exists {
+				continue
+			}
+			now := p.now
+			if now.IsZero() {
+				now = b.now()
+			}
+			day := now.UTC().Format("2006-01-02")
+			maxCap := p.maxTrialsPerDay
+			if maxCap <= 0 {
+				maxCap = b.billing.trialMaxDay
+			}
+			if maxCap > 0 {
+				cur := b.billing.globalBudget[billingBudgetKey{day: day, scope: billing.ScopeTrialsCreated}].Count + addedByDay[day]
+				if cur+1 > maxCap {
+					b.mu.Unlock()
+					return billing.ErrTrialLimitExceeded
+				}
+			}
+			addedByDay[day]++
+		}
+	}
 	for k := range tx.readDocs {
 		snapVal, snapOK := lookupRaw(tx.snapDocs, k)
 		currVal, currOK := lookupRaw(b.docs, k)
@@ -509,6 +539,12 @@ func (b *Backend) commitTx(tx *transaction) error {
 			delete(b.memoryChunks, k)
 		} else {
 			b.memoryChunks[k] = *chunk
+		}
+	}
+	for _, p := range tx.trialProvisions {
+		if _, err := b.provisionTrialLocked(p.userID, p.now, p.maxTrialsPerDay); err != nil {
+			b.mu.Unlock()
+			return err
 		}
 	}
 	var wakeEvents []docstore.WakeEvent

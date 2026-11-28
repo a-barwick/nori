@@ -83,6 +83,9 @@ func (u *Users) FindOrCreateByEmail(ctx context.Context, email, displayName stri
 		if err := tx.Create(u.rows().Doc(candidate.ID), candidate); err != nil {
 			return err
 		}
+		if err := tx.ProvisionTrial(candidate.ID, u.now(), u.TrialMaxSignupsPerDay); err != nil {
+			return err
+		}
 		out = candidate
 		created = true
 		return nil
@@ -227,6 +230,9 @@ func (u *Users) RedeemInviteAndCreateUser(ctx context.Context, code, email, disp
 			return err
 		}
 		if err := tx.Create(u.rows().Doc(candidate.ID), candidate); err != nil {
+			return err
+		}
+		if err := tx.ProvisionTrial(candidate.ID, now, u.TrialMaxSignupsPerDay); err != nil {
 			return err
 		}
 		outUser = candidate

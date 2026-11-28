@@ -3,17 +3,46 @@ package records
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"nori/internal/state"
 	"nori/internal/state/docstore"
 	"nori/internal/users"
 )
 
-type Users struct{ db *docstore.Client }
+type Users struct {
+	db                    *docstore.Client
+	TrialMaxSignupsPerDay int
+	Now                   func() time.Time
+}
+
+var _ users.TrialCapSetter = (*Users)(nil)
 
 func NewUsers(backend docstore.Backend) *Users { return &Users{db: docstore.New(backend)} }
 func NewSharedUsers(backend docstore.Backend) *Users {
 	return &Users{db: docstore.New(unclosedBackend{backend})}
+}
+
+func (u *Users) SetTrialMaxSignupsPerDay(maxPerDay int) {
+	u.TrialMaxSignupsPerDay = maxPerDay
+	for b := u.db.Backend; b != nil; {
+		if setter, ok := b.(users.TrialCapSetter); ok {
+			setter.SetTrialMaxSignupsPerDay(maxPerDay)
+			return
+		}
+		uw, ok := b.(docstore.BackendUnwrapper)
+		if !ok {
+			return
+		}
+		b = uw.Unwrap()
+	}
+}
+
+func (u *Users) now() time.Time {
+	if u != nil && u.Now != nil {
+		return u.Now().UTC()
+	}
+	return time.Time{}
 }
 func (u *Users) Close() error                  { return u.db.Close() }
 func (u *Users) rows() *docstore.CollectionRef { return u.db.Collection("users") }
@@ -86,7 +115,10 @@ func (u *Users) Create(ctx context.Context, row users.User) error {
 		if !isDone(err) {
 			return err
 		}
-		return tx.Create(u.rows().Doc(row.ID), row)
+		if err := tx.Create(u.rows().Doc(row.ID), row); err != nil {
+			return err
+		}
+		return tx.ProvisionTrial(row.ID, u.now(), u.TrialMaxSignupsPerDay)
 	})
 }
 func (u *Users) Paused(ctx context.Context) (bool, error) {
