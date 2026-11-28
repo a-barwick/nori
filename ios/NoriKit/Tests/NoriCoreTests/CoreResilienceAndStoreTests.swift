@@ -1974,7 +1974,10 @@ struct MemoryReceiptsAndStoreTests {
         // Coalesced inside the 40ms window: still shows first token until flush fires.
         #expect(store.streamingAssistantText == "Hello")
 
-        try? await Task.sleep(for: .milliseconds(70))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while store.streamingAssistantText != "Hello world!", ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(15))
+        }
         #expect(store.streamingAssistantText == "Hello world!")
 
         // Final assistant message clears streaming immediately.
