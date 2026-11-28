@@ -289,7 +289,7 @@ jobs:
   images:
     name: Build images
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [check, web-browser, go-race, deep-sim, postgres-integration]
+    needs: [check, web-browser, go-race, postgres-integration]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -309,71 +309,13 @@ jobs:
 
       - name: Build and push the core and web images
         env:
-          REGISTRY: us-central1-docker.pkg.dev/bot-111549/nori-poc
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_WEB || vars.SENTRY_PROJECT }}
         run: |
-          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
-          docker buildx create --name nori-builder --driver docker-container --use
-          docker buildx build --platform linux/amd64 -f core/infrastructure/Dockerfile \
-            --cache-from "type=registry,ref=$REGISTRY/nori-core:buildcache" \
-            --cache-to "type=registry,ref=$REGISTRY/nori-core:buildcache,mode=max" \
-            --build-arg "SENTRY_RELEASE=$GITHUB_SHA" -t "$REGISTRY/nori-core:$GITHUB_SHA" --push core
-          cid=""
-          sentry_token_file=""
-          cleanup() {
-            if [[ -n "$cid" ]]; then docker rm -f "$cid" >/dev/null 2>&1 || true; fi
-            if [[ -n "$sentry_token_file" ]]; then rm -f "$sentry_token_file"; fi
-          }
-          trap cleanup EXIT
-          web_sentry_args=()
-          if [[ -n "${SENTRY_ORG:-}" && -n "${SENTRY_PROJECT:-}" ]]; then
-            sentry_token_file="$(mktemp)"
-            chmod 600 "$sentry_token_file"
-            if gcloud secrets versions access latest --secret=nori-sentry-auth-token --project=bot-111549 > "$sentry_token_file" 2>/dev/null && [[ -s "$sentry_token_file" ]]; then
-              web_sentry_args+=(
-                --build-arg "SENTRY_ORG=$SENTRY_ORG"
-                --build-arg "SENTRY_PROJECT=$SENTRY_PROJECT"
-                --secret "id=sentry_auth_token,src=$sentry_token_file"
-              )
-            else
-              echo "::warning::Skipping Sentry source-map upload: nori-sentry-auth-token is not accessible or empty."
-            fi
-          fi
-          docker buildx build --platform linux/amd64 -f web/Dockerfile \
-            --cache-from "type=registry,ref=$REGISTRY/nori-web:buildcache" \
-            --cache-to "type=registry,ref=$REGISTRY/nori-web:buildcache,mode=max" \
-            --build-arg "SENTRY_RELEASE=$GITHUB_SHA" \
-            "${web_sentry_args[@]}" \
-            -t "$REGISTRY/nori-web:$GITHUB_SHA" --load .
-          cid="$(docker run -d -p 127.0.0.1:18080:8080 "$REGISTRY/nori-web:$GITHUB_SHA")"
-          ready=0
-          for _ in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:18080/api/health >/dev/null 2>&1; then
-              ready=1
-              break
-            fi
-            if ! docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null | grep -qx true; then
-              break
-            fi
-            sleep 1
-          done
-          if [[ "$ready" -ne 1 ]]; then
-            echo "nori-web container failed startup health check:" >&2
-            docker logs "$cid" >&2 || true
-            exit 1
-          fi
-          docker rm -f "$cid" >/dev/null
-          cid=""
-          docker push "$REGISTRY/nori-web:$GITHUB_SHA"
+          scripts/build-image.sh --skip-existing core "$GITHUB_SHA"
+          scripts/build-image.sh --skip-existing web "$GITHUB_SHA"
 
       # A separate step so a broken site build never blocks the core and web images.
       - name: Build and push the site image
         if: hashFiles('site/Dockerfile') != ''
-        env:
-          REGISTRY: us-central1-docker.pkg.dev/bot-111549/nori-poc
-        run: |
-          docker buildx build --platform linux/amd64 -f site/Dockerfile \
-            --cache-from "type=registry,ref=$REGISTRY/nori-site:buildcache" \
-            --cache-to "type=registry,ref=$REGISTRY/nori-site:buildcache,mode=max" \
-            -t "$REGISTRY/nori-site:$GITHUB_SHA" --push site
+        run: scripts/build-image.sh --skip-existing site "$GITHUB_SHA"

@@ -19,7 +19,7 @@ Release Nori Core, Web and the public site to Cloud Run. Scheduled Release runs 
 default and fail if HEAD is not green and built.
 
 Usage:
-  scripts/release.sh [--latest-green] [--quick] [--dry-run] [--core] [--web] [--site] [--force-unverified]
+  scripts/release.sh [--latest-green] [--quick] [--dry-run] [--plan-groups] [--only] [--core] [--web] [--site] [--force-unverified]
   scripts/release.sh rollback core|web|site|all
 
 Releases HEAD (or NORI_RELEASE_SHA) using the images CI built for that commit.
@@ -27,6 +27,10 @@ Releases HEAD (or NORI_RELEASE_SHA) using the images CI built for that commit.
 core and web images exist.
 --quick skips the Deep Deterministic Simulation CI gate and uses a 60s bake by default
 (instead of 600s).
+--plan-groups prints the groups that would ship for HEAD (one per line) and exits without
+checking CI or Artifact Registry images.
+--only restricts the release to the explicitly requested --core / --web / --site groups
+instead of also shipping other changed groups.
 Only groups whose code changed since the live release ship; --core / --web / --site force a group.
   core: nori-migrate job, then nori-core (API + worker)
   web:  nori-web and nori-web-mac (same image)
@@ -137,6 +141,8 @@ rollback() {
 FORCE_CORE=0
 FORCE_WEB=0
 FORCE_SITE=0
+ONLY_FORCED=0
+PLAN_GROUPS=0
 FORCE_UNVERIFIED=0
 LATEST_GREEN=0
 QUICK=0
@@ -151,6 +157,8 @@ for arg in "$@"; do
     --core) FORCE_CORE=1 ;;
     --web) FORCE_WEB=1 ;;
     --site) FORCE_SITE=1 ;;
+    --only) ONLY_FORCED=1 ;;
+    --plan-groups) PLAN_GROUPS=1 ;;
     --force-unverified) FORCE_UNVERIFIED=1 ;;
     --latest-green) LATEST_GREEN=1 ;;
     --quick) QUICK=1 ;;
@@ -158,6 +166,10 @@ for arg in "$@"; do
     *) usage >&2; exit 2 ;;
   esac
 done
+
+if [[ "$ONLY_FORCED" -eq 1 && "$FORCE_CORE" -eq 0 && "$FORCE_WEB" -eq 0 && "$FORCE_SITE" -eq 0 ]]; then
+  die "--only requires at least one of --core, --web, or --site."
+fi
 
 if [[ "$QUICK" -eq 1 ]]; then
   [[ -n "$BAKE_SECONDS_SET" ]] || BAKE_SECONDS=60
@@ -218,7 +230,7 @@ if [[ "${GITHUB_ACTIONS:-}" != true ]]; then
   [[ -z "$(git status --porcelain -- core web api contracts site)" ]] || die "uncommitted changes under core/, web/, api/, contracts/, or site/."
 fi
 
-if [[ "$LATEST_GREEN" -eq 1 ]]; then
+if [[ "$LATEST_GREEN" -eq 1 || "$PLAN_GROUPS" -eq 1 ]]; then
   :
 elif [[ "$FORCE_UNVERIFIED" -eq 1 ]]; then
   printf 'WARNING: releasing %s without verifying CI.\n' "$SHA" >&2
@@ -261,6 +273,10 @@ for group in core web site; do
   [[ "$group" == core && "$FORCE_CORE" -eq 1 ]] && forced=1
   [[ "$group" == web && "$FORCE_WEB" -eq 1 ]] && forced=1
   [[ "$group" == site && "$FORCE_SITE" -eq 1 ]] && forced=1
+  if [[ "$ONLY_FORCED" -eq 1 && "$forced" -eq 0 ]]; then
+    SUMMARY+=("$group: skip (not selected with --only)")
+    continue
+  fi
   change="$(group_change "$group")"
   case "$change" in
     unknown:*) die "${change#*: }." ;;
@@ -271,10 +287,18 @@ for group in core web site; do
       ;;
   esac
   if [[ "$forced" -eq 1 || "$change" == changed:* ]]; then
-    if [[ "$group" == site ]] && ! image_exists "$(group_image site)"; then
-      [[ "$forced" -eq 0 ]] || die "image $(group_image site) does not exist; CI builds it after the checks pass."
-      SUMMARY+=("site: skip (no nori-site image for ${SHA:0:12})")
-      continue
+    if [[ "$group" == site ]]; then
+      if [[ "$PLAN_GROUPS" -eq 1 ]]; then
+        if [[ ! -f site/Dockerfile ]]; then
+          [[ "$forced" -eq 0 ]] || die "site/Dockerfile does not exist."
+          SUMMARY+=("site: skip (no site/Dockerfile)")
+          continue
+        fi
+      elif ! image_exists "$(group_image site)"; then
+        [[ "$forced" -eq 0 ]] || die "image $(group_image site) does not exist; CI builds it after the checks pass."
+        SUMMARY+=("site: skip (no nori-site image for ${SHA:0:12})")
+        continue
+      fi
     fi
     RELEASE_GROUPS+=("$group")
     suffix=""
@@ -284,6 +308,12 @@ for group in core web site; do
     SUMMARY+=("$group: skip ($change)")
   fi
 done
+if [[ "$PLAN_GROUPS" -eq 1 ]]; then
+  if [[ "${#RELEASE_GROUPS[@]}" -gt 0 ]]; then
+    printf '%s\n' "${RELEASE_GROUPS[@]}"
+  fi
+  exit 0
+fi
 log "Release ${SHA:0:12}"
 printf '    %s\n' "${SUMMARY[@]}"
 if [[ "${#RELEASE_GROUPS[@]}" -eq 0 ]]; then

@@ -486,3 +486,35 @@ test("bake filter checks stdout/stderr application ERROR logs alongside 5xx and 
   assert.equal(result.status, 0, result.stderr + result.stdout);
   assert.match(calls, /logging read .*logName:\("run\.googleapis\.com%2Fstdout" OR "run\.googleapis\.com%2Fstderr"\) AND \(severity>=ERROR OR jsonPayload\.level="ERROR"\)/);
 });
+
+test("--plan-groups prints changed groups without checking CI or images", (t) => {
+  const { result, calls } = fixture(t, {
+    change: "web/page.tsx",
+    green: [],
+    missingImages: "nori-core nori-web nori-site",
+    args: ["--plan-groups"],
+  });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.equal(result.stdout.trim(), "web");
+  assert.doesNotMatch(calls, /ci-status /);
+  assert.doesNotMatch(calls, /artifacts docker images/);
+  assert.doesNotMatch(calls, /run deploy /);
+});
+
+test("--only restricts release to explicitly selected groups even when others changed", (t) => {
+  const { result, calls } = fixture(t, {
+    change: "contracts/api.json",
+    missingImages: "nori-web",
+    args: ["--force-unverified", "--only", "--core"],
+  });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.match(calls, /run deploy nori-core /);
+  assert.doesNotMatch(calls, /run deploy nori-web /);
+  assert.doesNotMatch(calls, /run deploy nori-web-mac /);
+});
+
+test("--only without a group flag fails", (t) => {
+  const { result } = fixture(t, { change: "web/page.tsx", args: ["--only"] });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /--only requires at least one of --core, --web, or --site/);
+});
