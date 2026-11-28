@@ -22,7 +22,7 @@ type responseUsage struct {
 }
 
 func (c *Client) recordCost(record *state.Usage, model, tier string, u *responseUsage) (float64, bool) {
-	if c.ProviderName == llmguard.ProviderHome {
+	if c.ProviderName == llmguard.ProviderHome || c.LocalOnly {
 		if u != nil {
 			record.InputTokens, record.OutputTokens, record.TotalTokens = u.Input, u.Output, u.Total
 			cached, written := u.InputDetails.Cached, u.InputDetails.Write

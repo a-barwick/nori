@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 
-const app = "http://127.0.0.1:4317";
+const app = process.env.NORI_E2E_APP_URL ?? `http://127.0.0.1:${process.env.NORI_E2E_APP_PORT ?? "4317"}`;
+const auth = process.env.NORI_E2E_AUTH_URL ?? `http://127.0.0.1:${process.env.NORI_E2E_AUTH_PORT ?? "9445"}`;
+const location = (path: string) => process.env.NORI_MAC_TEST_DIRECT === "1"
+  ? path
+  : `${auth}/sign-in?account=first&to=${encodeURIComponent(app + path)}`;
 
 test("Mac setup asks for background approval before pairing and changes only the selected model route", async ({ page }) => {
   const writes: unknown[] = [];
@@ -55,8 +59,7 @@ test("Mac setup asks for background approval before pairing and changes only the
     }
     await route.fulfill({ json: { model_profiles: { profiles: [profile] }, selection, revision, recommendations: {} } });
   });
-  const direct = process.env.NORI_MAC_TEST_DIRECT === "1";
-  await page.goto(direct ? "/settings/models" : `http://127.0.0.1:9445/sign-in?account=first&to=${encodeURIComponent(app + "/settings/models")}`);
+  await page.goto(location("/settings/models"));
   await page.getByRole("button", { name: "Set up", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("option", { name: "qwen:latest" })).toHaveCount(1);
@@ -123,8 +126,6 @@ test("desktop connection opens Nori in a browser and the browser starts a fresh 
   });
   await page.route("https://old.example/**", async (route) => { oldURLVisited = true; await route.abort(); });
   await page.route("https://fresh.example/**", async (route) => { await route.fulfill({ status: 200, contentType: "text/html", body: "Fresh sign-in" }); });
-  const direct = process.env.NORI_MAC_TEST_DIRECT === "1";
-  const location = (path: string) => direct ? path : `http://127.0.0.1:9445/sign-in?account=first&to=${encodeURIComponent(app + path)}`;
   await page.goto(location("/work"));
   await page.getByRole("button", { name: "Continue in browser" }).click();
   expect(await page.evaluate(() => sessionStorage.getItem("browser-opened"))).toBe("1");

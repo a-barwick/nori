@@ -97,44 +97,51 @@ public struct NotificationsSettingsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 0) {
                     NoriSectionHeader("Push notifications")
-                    NoriRows {
-                        toggleRow(
-                            title: "Chats",
-                            isOn: Binding(
-                                get: { pushChatsEnabled },
-                                set: { savePushFlags(chats: $0, urgent: pushUrgentEnabled, brief: proactivity.isPushMorningBriefEnabled) }
-                            ),
-                            disabled: false,
-                            showDivider: true
-                        )
+                    if store.capabilities?.assistantFeatures?["push_notifications"] == false {
+                        Text("Push delivery is unavailable. Updates still appear in Nori.")
+                            .font(NoriTypography.body)
+                            .foregroundStyle(NoriColors.ink2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        NoriRows {
+                            toggleRow(
+                                title: "Chats",
+                                isOn: Binding(
+                                    get: { pushChatsEnabled },
+                                    set: { savePushFlags(chats: $0, urgent: pushUrgentEnabled, brief: proactivity.isPushMorningBriefEnabled) }
+                                ),
+                                disabled: false,
+                                showDivider: true
+                            )
 
-                        toggleRow(
-                            title: "Urgent & approvals",
-                            isOn: Binding(
-                                get: { pushUrgentEnabled },
-                                set: { savePushFlags(chats: pushChatsEnabled, urgent: $0, brief: proactivity.isPushMorningBriefEnabled) }
-                            ),
-                            disabled: false,
-                            showDivider: true
-                        )
+                            toggleRow(
+                                title: "Urgent & approvals",
+                                isOn: Binding(
+                                    get: { pushUrgentEnabled },
+                                    set: { savePushFlags(chats: pushChatsEnabled, urgent: $0, brief: proactivity.isPushMorningBriefEnabled) }
+                                ),
+                                disabled: false,
+                                showDivider: true
+                            )
 
-                        toggleRow(
-                            title: "Morning brief",
-                            isOn: Binding(
-                                get: { pushBriefEnabled },
-                                set: { savePushFlags(chats: pushChatsEnabled, urgent: pushUrgentEnabled, brief: $0) }
-                            ),
-                            disabled: !isMorningBriefScheduled,
-                            showDivider: false
-                        )
-                    }
+                            toggleRow(
+                                title: "Morning brief",
+                                isOn: Binding(
+                                    get: { pushBriefEnabled },
+                                    set: { savePushFlags(chats: pushChatsEnabled, urgent: pushUrgentEnabled, brief: $0) }
+                                ),
+                                disabled: !isMorningBriefScheduled,
+                                showDivider: false
+                            )
+                        }
 
-                    if allPushOff {
-                        Text("Push notifications are off. Updates still appear in Chat.")
-                            .font(NoriTypography.caption)
-                            .foregroundStyle(NoriColors.ink3)
-                            .padding(.top, 8)
-                            .padding(.horizontal, 4)
+                        if allPushOff {
+                            Text("Push notifications are off. Updates still appear in Chat.")
+                                .font(NoriTypography.caption)
+                                .foregroundStyle(NoriColors.ink3)
+                                .padding(.top, 8)
+                                .padding(.horizontal, 4)
+                        }
                     }
                 }
 

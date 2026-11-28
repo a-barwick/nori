@@ -329,7 +329,7 @@ export async function deleteServiceKey(service: string): Promise<ServiceKeyStatu
 }
 
 export async function resetUserData(resumePending = false): Promise<void> {
-  let failure: unknown;
+  let failure: APIError | undefined;
   beginReset();
   try {
     const response = await fetch(assistantURL("/settings/reset"), {
@@ -346,8 +346,8 @@ export async function resetUserData(resumePending = false): Promise<void> {
     finishReset();
   }
   if (failure) {
-    const noLongerPending = failure instanceof APIError && failure.code === "data_reset_not_pending";
-    requestResetCheck({ resetFailed: !resumePending && !noLongerPending, suppressCompletion: noLongerPending });
+    const noLongerPending = failure.code === "data_reset_not_pending";
+    requestResetCheck({ resetError: !resumePending && !noLongerPending ? failure : undefined, suppressCompletion: noLongerPending });
     throw failure;
   }
 }

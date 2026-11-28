@@ -11,6 +11,45 @@ function signInURL(account: string, path = "/") {
   return `${authBase}/sign-in?account=${account}&to=${encodeURIComponent(app + path)}`;
 }
 
+test.describe("mobile chat", () => {
+  test.use({ viewport: { width: 402, height: 800 }, isMobile: true, hasTouch: true });
+
+  test("fits the visible viewport on keyboard open and restores the shell on blur", async ({ page }) => {
+    const latestText = "The latest reply before an approval";
+    await page.route("**/api/v1/snapshot*", async route => {
+      const messages = Array.from({ length: 30 }, (_, i) => ({
+        id: `keyboard-${i}`, role: i % 2 ? "assistant" : "user", text: i === 29 ? latestText : `Message ${i}`,
+        created_at: new Date(Date.UTC(2025, 0, 1, 0, i)).toISOString(),
+      }));
+      await route.fulfill({ json: { messages, results: [], runs: [], paused: false, position: 0 } });
+    });
+    await page.goto(signInURL("first"));
+    const composer = page.getByRole("textbox", { name: "Message Nori" });
+    await expect(composer).toBeEnabled();
+    const latest = page.getByText(latestText, { exact: true });
+    await expect(page.getByRole("button", { name: "Allow once", exact: true })).toBeVisible();
+    await expect.poll(() => latest.evaluate(node => {
+      const scroller = node.closest('[role="log"]')!.parentElement!;
+      return scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop;
+    })).toBeLessThan(2);
+    await expect(latest).toBeInViewport({ ratio: 1 });
+    expect(await composer.evaluate(el => parseFloat(getComputedStyle(el).fontSize))).toBeGreaterThanOrEqual(16);
+    await composer.focus();
+    await page.evaluate(() => {
+      const viewport = window.visualViewport!;
+      Object.defineProperties(viewport, { height: { value: 460 }, offsetTop: { value: 120 } });
+      viewport.dispatchEvent(new Event("resize"));
+    });
+    const shell = page.locator(".nori-shell");
+    await expect(shell).toHaveCSS("top", "120px");
+    await expect(shell).toHaveCSS("height", "460px");
+    await expect(latest).toBeInViewport({ ratio: 1 });
+    await composer.blur();
+    await expect(shell).toHaveCSS("top", "0px");
+    await expect(shell).toHaveCSS("height", "800px");
+  });
+});
+
 test("verifies authentication, queued turns, reconnect, approvals, account model selection, and downloads", async ({ page }) => {
   const signIn = (account: string) => page.goto(signInURL(account));
   await signIn("first");
@@ -290,6 +329,18 @@ test("sign out closes other tabs and sign in restores the workspace", async ({ p
   await page.goto(signInURL("first", "/more"));
   await expect(page.getByRole("link", { name: "Account" })).toBeVisible();
   await secondTab.close();
+});
+
+test("a busy account reset shows the reason and retries after confirmation", async ({ page, request }) => {
+  expect((await request.post(controlURL("/prepare-reset-alternate"))).status()).toBe(204);
+  await page.goto(signInURL("second", "/settings/reset"));
+  const reason = "Nori is finishing work for this account. Try again in a moment.";
+  await page.route("**/api/v1/settings/reset", route => route.fulfill({ status: 409, json: { error: reason } }), { times: 1 });
+  await page.getByLabel("Type RESET to confirm").fill("RESET");
+  await page.getByRole("button", { name: "Reset data", exact: true }).click();
+  await expect(page.getByRole("alert").filter({ hasText: reason })).toBeVisible();
+  await page.getByRole("button", { name: "Retry reset" }).click();
+  await expect(page.getByRole("heading", { name: "Data reset complete" })).toBeVisible();
 });
 
 test("an interrupted reset can be safely resumed after reload", async ({ page, request }) => {

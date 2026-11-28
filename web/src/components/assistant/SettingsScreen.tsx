@@ -106,9 +106,14 @@ const SECTIONS: {
 ];
 
 export function SettingsIndex() {
-  const { has } = useAssistantConfig();
+  const { capabilities, capabilitiesError, has, refreshCapabilities } = useAssistantConfig();
   return (
     <Screen title="Settings" back="/more" backLabel="More">
+      {capabilitiesError && (
+        <div className="mb-4">
+          <Failure error={capabilitiesError} onRetry={refreshCapabilities} />
+        </div>
+      )}
       <Rows>
         {SECTIONS.map((section) => (
           <Row
@@ -116,7 +121,7 @@ export function SettingsIndex() {
             href={section.href ?? `/settings/${section.id}`}
             leading={<section.icon size={18} className="text-ink-2" aria-hidden />}
             title={section.title}
-            trailing={section.feature && !has(section.feature) ? <Pill>Not yet</Pill> : undefined}
+            trailing={capabilities && !capabilitiesError && section.feature && !has(section.feature) ? <Pill>Not yet</Pill> : undefined}
           />
         ))}
       </Rows>
@@ -179,7 +184,7 @@ export function SettingsScreen({ section, userEmail }: { section: SettingsSectio
     <Screen title={meta.title} back={back} backLabel={backLabel}>
       {section !== "api-costs" && <EntitlementNotice entitlement={capabilities?.entitlement} />}
       {section === "notifications" ? (
-        <NotificationsSettings />
+        <NotificationsSettings pushAvailable={capabilities?.assistant_features?.push_notifications} />
       ) : section === "permissions" ? (
         <Permissions />
       ) : section === "preferences" ? (
@@ -269,7 +274,7 @@ function Permissions() {
       {rules.error && <Failure error={rules.error} onRetry={() => void rules.reload()} />}
       {action.error && <Notice tone="danger">{action.error}</Notice>}
       {!items.length ? (
-        <Empty>Nori asks before making changes or sending messages.</Empty>
+        !rules.error && <Empty>Nori asks before making changes or sending messages.</Empty>
       ) : (
         <>
           {allowed.length > 0 && (

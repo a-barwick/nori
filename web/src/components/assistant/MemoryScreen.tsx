@@ -194,7 +194,7 @@ export function MemoryScreen() {
               );
             })}
           </Rows>
-        ) : (
+        ) : !deepDateLog.error && (
           <Empty>No notes found for {formatLogDate(selectedDate)}.</Empty>
         )}
       </Screen>
@@ -213,6 +213,7 @@ export function MemoryScreen() {
           <ArrowLeft size={14} aria-hidden />
           Memory
         </button>
+        {core.error && <Failure error={core.error} onRetry={() => void core.reload()} />}
         {mutation.error && (
           <div className="mb-4">
             <Notice tone="danger">{mutation.error}</Notice>
@@ -236,7 +237,7 @@ export function MemoryScreen() {
               />
             ))}
           </Rows>
-        ) : (
+        ) : !core.error && (
           <Empty>Nothing left in {resolvedTopic}.</Empty>
         )}
       </Screen>
@@ -346,10 +347,10 @@ export function MemoryScreen() {
               </Section>
             )}
 
-            {!matchingFacts.length && !logHits.length && !searchRes.error && (
+            {!matchingFacts.length && !logHits.length && !searchRes.error && !core.error && (
               searchRes.loading || settledQuery !== trimmed ? (
                 <Loading label="Searching memory…" />
-              ) : (
+              ) : !core.loading && (
                 <Empty>Nothing matches “{trimmed}”.</Empty>
               )
             )}
@@ -372,7 +373,7 @@ export function MemoryScreen() {
               />
             ))}
           </Rows>
-        ) : (
+        ) : !core.error && (
           <Empty>Nori will remember helpful details as you chat.</Empty>
         )}
       </div>

@@ -498,14 +498,30 @@ export function Thread({
 
   useEffect(() => {
     const el = content.current;
-    if (!el) return;
-    let prev = el.offsetHeight;
+    const viewport = scroller.current;
+    if (!el || !viewport) return;
+    let contentHeight = el.offsetHeight;
+    let viewportHeight = viewport.clientHeight;
     const ro = new ResizeObserver(() => {
-      const h = el.offsetHeight;
-      if (h > prev && atBottom.current && scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
-      prev = h;
+      const grew = el.offsetHeight > contentHeight;
+      const shrank = viewport.clientHeight < viewportHeight;
+      if ((grew || shrank) && atBottom.current) {
+        viewport.scrollTop = viewport.scrollHeight;
+        if (shrank && document.activeElement instanceof HTMLTextAreaElement) {
+          // A pending approval below the latest reply can otherwise push that reply out of view.
+          const messages = el.querySelectorAll<HTMLElement>("[data-item-id]");
+          const last = messages[messages.length - 1]?.getBoundingClientRect();
+          if (last) {
+            const clipped = viewport.getBoundingClientRect().top + TOP_MASK + Math.min(last.height, 48) - last.bottom;
+            if (clipped > 0 && clipped <= viewportHeight - viewport.clientHeight) viewport.scrollTop -= clipped;
+          }
+        }
+      }
+      contentHeight = el.offsetHeight;
+      viewportHeight = viewport.clientHeight;
     });
     ro.observe(el);
+    ro.observe(viewport);
     return () => ro.disconnect();
   }, []);
 

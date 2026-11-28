@@ -459,6 +459,10 @@ describe("More / Settings Notifications controls", () => {
     assert.match(notificationsHtml, /9:00 PM – 7:30 AM/);
     assert.match(notificationsHtml, /8:00 AM/);
     assert.equal(notificationsHtml.includes('role="switch"'), true);
+    const unavailable = renderToStaticMarkup(<NotificationsSettings current={prefs} pushAvailable={false} />);
+    assert.match(unavailable, /Push delivery is unavailable/);
+    assert.doesNotMatch(unavailable, /role="switch"/);
+    assert.match(unavailable, /Quiet hours/);
     assert.equal(notificationsHtml.toLowerCase().includes("needs you"), false);
 
     const moreHtml = renderToStaticMarkup(

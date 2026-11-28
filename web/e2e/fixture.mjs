@@ -8,6 +8,11 @@ import { once } from "node:events";
 const identity = "462cef1f-74a0-4706-94c7-3e624ff5cd43";
 const alternate = "5b95e6ef-2c77-46da-9b6a-61e01ed990fd";
 const resultID = "d3d34c1a-0ad7-4222-bff4-8cee91d892c5";
+const accounts = new Map([["frontend@example.com", identity], ["second@example.com", alternate]]);
+const resolutions = new Map();
+const authPort = Number(process.env.NORI_E2E_AUTH_PORT ?? "9445");
+const issuer = `https://127.0.0.1:${authPort - 2}`;
+const runtime = `https://127.0.0.1:${authPort - 1}`;
 await cp(".next/static", ".next/standalone/.next/static", { recursive: true });
 const fixture = await mkdtemp(join(tmpdir(), "nori-browser-"));
 const sessions = new Map();
@@ -112,7 +117,13 @@ const upstream = createServer(async (req, res) => {
   if (!req.headers.authorization?.startsWith("Bearer ")) return json({ error: "Unauthorized" }, 401);
   if (url.pathname === "/api/users/resolve") {
     const { email } = await input();
-    return json({ id: email === "second@example.com" ? alternate : identity });
+    const id = accounts.get(email);
+    if (!id || req.headers["x-nori-identity-issuer"] !== issuer || req.headers["x-nori-identity-subject"] !== `prod-check:${email}`) {
+      return json({ error: "A verified sign-in is required." }, 403);
+    }
+    resolutions.set(email, (resolutions.get(email) ?? 0) + 1);
+    res.setHeader("X-Nori-Identity-Bound", "1");
+    return json({ id });
   }
   const [, , id, ...parts] = url.pathname.split("/");
   const path = parts.join("/");
@@ -241,6 +252,11 @@ const upstream = createServer(async (req, res) => {
 
 await new Promise(resolve => upstream.listen(0, "127.0.0.1", resolve));
 const control = createServer((req, res) => {
+  if (req.method === "GET" && req.url === "/identity-resolutions") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(Object.fromEntries(resolutions)));
+    return;
+  }
   if (req.method === "POST" && req.url === "/prepare-reset-alternate") {
     preferences.set(alternate, {
       revision: 1, timezone: "UTC", working_hours: [], default_destination_ids: [], account_defaults: {},
@@ -308,7 +324,10 @@ const appPort = process.env.NORI_E2E_APP_PORT ?? "4317";
 const appOrigin = process.env.NORI_E2E_APP_URL ?? `http://127.0.0.1:${appPort}`;
 await new Promise(resolve => control.listen(controlPort, "127.0.0.1", resolve));
 const log = { stdio: "inherit" };
-const bridge = spawn(process.execPath, ["scripts/prod-check.mjs", `http://127.0.0.1:${upstream.address().port}`, "frontend@example.com", "second@example.com"], { ...log, env: { ...process.env, NORI_PROD_CHECK_DIR: fixture } });
+const bridge = spawn(process.execPath, ["scripts/prod-check.mjs", `http://127.0.0.1:${upstream.address().port}`, ...accounts.keys()], {
+  ...log,
+  env: { ...process.env, NORI_PROD_CHECK_DIR: fixture, NORI_PROD_CHECK_PORT: String(authPort - 2) },
+});
 let web;
 async function shutdown() {
   web?.kill();
@@ -343,8 +362,8 @@ web = spawn(process.execPath, [".next/standalone/server.js"], {
   ...log,
   env: {
     ...process.env, HOSTNAME: "127.0.0.1", PORT: appPort, NORI_CLOUD: "aws", NORI_AUTH_PROVIDER: "oidc",
-    NORI_OIDC_ISSUER: "https://127.0.0.1:9443", NORI_OIDC_AUDIENCE: "nori-prod-check", NORI_OIDC_COOKIE: "nori_prod_check",
-    NORI_RUNTIME_URL: "https://127.0.0.1:9444", NORI_SERVICE_TOKEN_KEY: serviceKey,
+    NORI_OIDC_ISSUER: issuer, NORI_OIDC_AUDIENCE: "nori-prod-check", NORI_OIDC_COOKIE: "nori_prod_check",
+    NORI_RUNTIME_URL: runtime, NORI_SERVICE_TOKEN_KEY: serviceKey,
     NORI_APP_ORIGIN: appOrigin, NODE_EXTRA_CA_CERTS: join(fixture, "ca.pem"),
   },
 });

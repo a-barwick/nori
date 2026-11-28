@@ -138,6 +138,9 @@ func describeConnectionCapabilities(integrationID string, caps []string) []strin
 
 func buildModelSummary(cfg settings.Settings, models appModels) func(context.Context, *state.ModelSelection) *conversation.ModelSummary {
 	return func(ctx context.Context, sel *state.ModelSelection) *conversation.ModelSummary {
+		if cfg.Models.LocalModel {
+			return &conversation.ModelSummary{Name: cfg.Models.Outer, Provider: "Ollama", Location: "local"}
+		}
 		if cfg.Models.BYOKRequired && models.account != nil {
 			if sel.IsEmpty() || sel.ChatPinned == nil {
 				if current, err := models.account.CurrentSelection(ctx); err == nil && current != nil {

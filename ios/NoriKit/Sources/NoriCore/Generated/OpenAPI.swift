@@ -380,6 +380,7 @@ public enum OpenAPI {
         public var search: Bool?
         public var permissions: Bool?
         public var preferences: Bool?
+        public var pushNotifications: Bool?
         public var memory: Bool?
         public var inbox: Bool?
         public var operations: Bool?
@@ -396,6 +397,7 @@ public enum OpenAPI {
             search: Bool? = nil,
             permissions: Bool? = nil,
             preferences: Bool? = nil,
+            pushNotifications: Bool? = nil,
             memory: Bool? = nil,
             inbox: Bool? = nil,
             operations: Bool? = nil,
@@ -411,10 +413,29 @@ public enum OpenAPI {
             self.search = search
             self.permissions = permissions
             self.preferences = preferences
+            self.pushNotifications = pushNotifications
             self.memory = memory
             self.inbox = inbox
             self.operations = operations
             self.computer = computer
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case integrations
+            case connections
+            case mcp
+            case interactions
+            case work
+            case automations
+            case library
+            case search
+            case permissions
+            case preferences
+            case pushNotifications = "push_notifications"
+            case memory
+            case inbox
+            case operations
+            case computer
         }
     }
 

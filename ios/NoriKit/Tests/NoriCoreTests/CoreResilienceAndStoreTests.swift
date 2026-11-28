@@ -1629,12 +1629,57 @@ struct MemoryReceiptsAndStoreTests {
         #expect(store.memoryRefreshError == nil)
     }
 
+    @Test("Opening Apps after a startup snapshot fetches the integration catalog and retries partial failures")
+    @MainActor
+    func appsCatalogRefreshAfterSnapshot() async {
+        let mock = MockNoriTransport()
+        let store = NoriStore(transport: mock, authProvider: AuthTokenProvider(tokenStore: InMemoryTokenStore()))
+        let server = MCPServer(id: "app", name: "Custom app", observed: MCPObservedState(status: .connected))
+        let google = IntegrationSummary(id: "google", title: "Google", availability: "available")
+        let connection = Connection(id: "account", integrationID: "google", title: "Personal Google", status: .connected)
+        await mock.setCustomSnapshot(NoriFullSnapshot())
+        await mock.setApps(servers: [server], connections: [connection], integrations: [google])
+        await mock.setFailingLists([.integrations])
+
+        await store.refreshAll()
+        #expect(store.integrationsRead == .pending)
+        await store.refreshApps(force: false)
+        #expect(store.integrationsRead == .failed("integrations unavailable"))
+        #expect(store.connections == [connection])
+        #expect(store.mcpServers == [server])
+        #expect(store.mcpTools[server.id]?.first?.name == "issues_list")
+
+        await mock.setFailingLists([.mcpServers])
+        await store.refreshApps(force: false)
+        #expect(store.integrations == [google])
+        #expect(store.integrationsRead == .loaded)
+        #expect(store.mcpServers == [server])
+        #expect(store.mcpServersRead == .failed("mcpServers unavailable"))
+
+        await mock.setFailingLists([.mcpTools, .connections, .integrations])
+        await store.refreshApps(force: false)
+        #expect(store.mcpTools[server.id]?.first?.name == "issues_list")
+        #expect(store.connections == [connection])
+        #expect(store.integrations == [google])
+
+        await mock.setApps(servers: [], connections: [], integrations: [])
+        await mock.setFailingLists([])
+        await store.refreshApps(force: false)
+        #expect(store.mcpServers.isEmpty)
+        #expect(store.mcpTools.isEmpty)
+        #expect(store.mcpServersRead == .loaded)
+        #expect(store.connectionsRead == .loaded)
+        #expect(store.integrationsRead == .loaded)
+    }
+
     @Test("Partial fetchFullSnapshot preserves cached domains that failed while updating domains that succeeded")
     @MainActor
     func partialSnapshotPreservesCachedDomains() async {
         let mock = MockNoriTransport()
         let store = NoriStore(transport: mock, authProvider: AuthTokenProvider(tokenStore: InMemoryTokenStore()))
         let cachedFact = MemoryFact(id: "fact-keep", text: "Keep this cached fact")
+        let cachedItem = LibraryItem(id: "artifact-keep", title: "Keep this artifact")
+        let cachedRule = PermissionRule(id: "rule-keep", effect: .ask)
         let cachedAuto = Automation(
             id: "auto-keep",
             revision: 1,
@@ -1643,20 +1688,62 @@ struct MemoryReceiptsAndStoreTests {
             status: .enabled,
             trigger: AutomationTrigger(kind: "cron", rrule: "FREQ=DAILY")
         )
-        store.coreMemories = [cachedFact]
-        store.automations = [cachedAuto]
+        await mock.setCustomSnapshot(NoriFullSnapshot(
+            libraryItems: [cachedItem],
+            coreMemories: [cachedFact],
+            automations: [cachedAuto],
+            permissions: [cachedRule]
+        ))
+        await store.refreshAll()
+        #expect(store.libraryRead == .loaded)
+        #expect(store.coreMemoriesRead == .loaded)
+        #expect(store.automationsRead == .loaded)
+        #expect(store.permissionsRead == .loaded)
 
         await mock.setCustomSnapshot(NoriFullSnapshot(
-            coreMemories: [],
-            automations: [],
+            didLoadLibraryItems: false,
             didLoadCoreMemories: false,
             didLoadAutomations: false,
-            partialErrors: ["core_memories": "503", "automations": "503"]
+            didLoadPermissions: false,
+            partialErrors: ["library": "503", "core_memories": "503", "automations": "503", "permissions": "503"]
         ))
-
         await store.refreshAll()
+        #expect(store.libraryItems == [cachedItem])
         #expect(store.coreMemories == [cachedFact])
         #expect(store.automations == [cachedAuto])
+        #expect(store.permissions == [cachedRule])
+        #expect(store.libraryRead == .failed("503"))
+        #expect(store.coreMemoriesRead == .failed("503"))
+        #expect(store.memoryRefreshError == "503")
+        #expect(store.automationsRead == .failed("503"))
+        #expect(store.permissionsRead == .failed("503"))
+
+        await mock.setFailingLists([.library, .automations, .permissions])
+        await store.refreshLibrary(force: false)
+        await store.refreshAutomations(force: false)
+        await store.refreshPermissionsAndPreferences(force: false)
+        #expect(store.libraryItems == [cachedItem])
+        #expect(store.automations == [cachedAuto])
+        #expect(store.permissions == [cachedRule])
+        #expect(store.libraryRead == .failed("library unavailable"))
+        #expect(store.automationsRead == .failed("automations unavailable"))
+        #expect(store.permissionsRead == .failed("permissions unavailable"))
+
+        await mock.setFailingLists([])
+        await mock.setPermissions([])
+        await store.refreshLibrary(force: false)
+        await store.refreshAutomations(force: false)
+        try? await store.refreshPermissionsThrowing()
+        await store.refreshMemory(force: false)
+        #expect(store.libraryItems.isEmpty)
+        #expect(store.coreMemories.isEmpty)
+        #expect(store.automations.isEmpty)
+        #expect(store.permissions.isEmpty)
+        #expect(store.libraryRead == .loaded)
+        #expect(store.coreMemoriesRead == .loaded)
+        #expect(store.memoryRefreshError == nil)
+        #expect(store.automationsRead == .loaded)
+        #expect(store.permissionsRead == .loaded)
     }
 
     @Test("Decodes all 6 backend memory action receipt shapes from core/internal/api/memory.go")

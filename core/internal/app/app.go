@@ -147,6 +147,9 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 	model, provider := "", ""
 	if !cfg.Models.BYOKRequired {
 		model, provider = cfg.Models.Outer, cfg.Models.EffectiveOuterProvider()
+		if cfg.Models.LocalModel {
+			provider = "local"
+		}
 	}
 	deltas := api.NewDeltaBroker()
 	result := &App{
@@ -250,7 +253,7 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 		ModelKeys: services.ModelKeys, ServiceKeys: services.ServiceKeys, Models: models.account, AccountBYOK: cfg.Models.BYOKRequired,
 		Billing: opts.billing, PlatformExaAvailable: cfg.ExaSearchKey != "",
 		GetEntitlement: getEnt, GetStorageUsed: getStorageUsed, ReleaseStorageBytes: releaseStorageBytes, OnKeyMutated: onKeyMutated,
-		Features:      AssistantFeatures(services.Connections, cfg.Features.DisableBackgroundTasks),
+		Features:      AssistantFeatures(services.Connections, cfg.Features.DisableBackgroundTasks, opts.pushWorker),
 		NextScheduled: services.Scheduler.NextScheduled, InboxUnread: services.Scheduler.UnreadCount,
 		NormalizeMemory: newMemoryNormalizer(models.summarizer, models.outer, store, cfg),
 		OnPreferencesSaved: func(ctx context.Context, prefs connections.Preferences) {
@@ -690,22 +693,23 @@ func wireConversationPushHook(runner *conversation.Runner, conns *connections.Se
 	}
 }
 
-func AssistantFeatures(conns *connections.Service, disableBackgroundTasks bool) map[string]bool {
+func AssistantFeatures(conns *connections.Service, disableBackgroundTasks bool, pushWorker *push.OutboxWorker) map[string]bool {
 	hasConnections := conns != nil && len(conns.Integrations) > 0
 	return map[string]bool{
-		"integrations": true,
-		"connections":  hasConnections,
-		"interactions": true,
-		"permissions":  true,
-		"preferences":  true,
-		"work":         !disableBackgroundTasks,
-		"operations":   true,
-		"automations":  !disableBackgroundTasks,
-		"inbox":        true,
-		"library":      true,
-		"search":       true,
-		"memory":       true,
-		"mcp":          true,
+		"integrations":       true,
+		"connections":        hasConnections,
+		"interactions":       true,
+		"permissions":        true,
+		"preferences":        true,
+		"work":               !disableBackgroundTasks,
+		"operations":         true,
+		"automations":        !disableBackgroundTasks,
+		"inbox":              true,
+		"library":            true,
+		"search":             true,
+		"memory":             true,
+		"mcp":                true,
+		"push_notifications": pushWorker != nil && pushWorker.Sender != nil,
 	}
 }
 

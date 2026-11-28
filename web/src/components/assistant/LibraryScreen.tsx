@@ -165,11 +165,10 @@ export function LibraryContent({ syncURL = false }: { syncURL?: boolean }) {
         />
       </label>
 
+      {search.error && <Failure error={search.error} onRetry={search.reload} />}
       {settled && has("search") ? (
         search.loading ? (
           <Loading label="Searching…" />
-        ) : search.error ? (
-          <Failure error={search.error} onRetry={() => void search.reload()} />
         ) : search.data?.items.length ? (
           <Rows label="Search results">
             {search.data.items.map((hit) => (
@@ -204,7 +203,7 @@ export function LibraryContent({ syncURL = false }: { syncURL?: boolean }) {
               />
             ))}
           </Rows>
-        ) : (
+        ) : !search.error && (
           <Empty title="No matches">Nothing matches “{settled}”. Try fewer words.</Empty>
         )
       ) : (
@@ -248,7 +247,7 @@ export function LibraryContent({ syncURL = false }: { syncURL?: boolean }) {
                 ))}
               </Rows>
             )
-          ) : (
+          ) : !library.error && (
             <Empty title={settled ? "No matching artifacts" : "Nothing saved yet"}>
               {settled ? `Nothing saved matches “${settled}”.` : "Documents Nori creates and files you share appear here."}
             </Empty>
@@ -275,6 +274,8 @@ export function LibraryDetailScreen({ id }: { id: string }) {
   const versions = useResource<List<LibraryItem>>(live ? `/library/${encodeURIComponent(id)}/versions` : null, { poll: 0 });
   const legacy = useLibrary();
   const item = live ? remote.data : (legacy.items as LibraryItem[] | undefined)?.find((candidate) => candidate.id === id);
+  const readError = live ? remote.error : legacy.error;
+  const reload = live ? remote.reload : legacy.reload;
   const [text, setText] = useState<string>();
   const action = useAction();
   const router = useRouter();
@@ -304,8 +305,8 @@ export function LibraryDetailScreen({ id }: { id: string }) {
   if (!item) {
     return (
       <Screen title="Artifact" back="/work?tab=artifacts" backLabel="Work">
-        {remote.error ? (
-          <Failure error={remote.error} />
+        {readError ? (
+          <Failure error={readError} onRetry={reload} />
         ) : (
           <Empty
             action={
@@ -390,6 +391,7 @@ export function LibraryDetailScreen({ id }: { id: string }) {
         </>
       }
     >
+      {readError && <Failure error={readError} onRetry={reload} />}
       {action.error && (
         <div className="mb-4">
           <Notice tone="danger">{action.error}</Notice>

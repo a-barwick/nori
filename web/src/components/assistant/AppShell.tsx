@@ -98,8 +98,8 @@ function AccountStateGate({ scope, localMode, children }: { scope: string; local
         setState({ status: "ready" });
       } else if (!preferences.onboarding_completed_at && resetCompletionPending(scope, preferences.data_reset_at)) {
         setState({ status: "complete" });
-      } else if (options.resetFailed) {
-        setState({ status: "reset-error" });
+      } else if (options.resetError) {
+        setState({ status: "reset-error", error: options.resetError });
       } else {
         setState({ status: "ready" });
       }
@@ -141,12 +141,12 @@ function AccountStateGate({ scope, localMode, children }: { scope: string; local
     };
   }, [beginCheck, checkReset, scope]);
 
-  const finishReset = async () => {
+  const finishReset = async (resumePending: boolean) => {
     if (finishing) return;
     setFinishing(true);
     setResumeError("");
     try {
-      await resetUserData(true);
+      await resetUserData(resumePending);
       markBrowserReset(scope);
       window.location.replace("/");
     } catch (error) {
@@ -226,7 +226,7 @@ function AccountStateGate({ scope, localMode, children }: { scope: string; local
       <h1 className="text-section font-semibold text-ink">Finish your data reset</h1>
       <p className="text-body text-ink-2">Your data reset is waiting to finish.</p>
       {resumeError && <Notice tone="danger">{resumeError}</Notice>}
-      <Button variant="primary" disabled={finishing} onClick={() => void finishReset()}>{finishing ? "Finishing…" : "Finish reset"}</Button>
+      <Button variant="primary" disabled={finishing} onClick={() => void finishReset(true)}>{finishing ? "Finishing…" : "Finish reset"}</Button>
       {!localMode && <SignOutForm />}
     </div>
   </main>;
@@ -241,8 +241,12 @@ function AccountStateGate({ scope, localMode, children }: { scope: string; local
   if (state.status === "reset-error") return <main className="h-full overflow-y-auto bg-canvas p-6">
     <div className="mx-auto max-w-xl space-y-4">
       <h1 className="text-section font-semibold text-ink">Data reset could not start</h1>
-      <p className="text-body text-ink-2">Return to Reset data to try again.</p>
-      <Button variant="primary" onClick={() => window.location.replace("/settings/reset")}>Return to Reset data</Button>
+      <p role="alert" className="text-body text-ink-2">{errorText(state.error)}</p>
+      {state.error instanceof APIError && state.error.status === 409 ? (
+        <Button variant="danger" disabled={finishing} onClick={() => void finishReset(false)}>Retry reset</Button>
+      ) : (
+        <Button variant="primary" onClick={() => window.location.replace("/settings/reset")}>Return to Reset data</Button>
+      )}
       {!localMode && <SignOutForm />}
     </div>
   </main>;

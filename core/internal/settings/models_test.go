@@ -13,6 +13,7 @@ func clearModelEnv(t *testing.T) {
 		"NORI_MODEL_PROVIDER", "NORI_OUTER_PROVIDER", "NORI_INNER_PROVIDER",
 		"NORI_MODEL_GATEWAY_URL", "NORI_MODEL_GATEWAY_API_KEY", "NORI_BYOK_REQUIRED",
 		"NORI_MODEL_TEST_URL", "NORI_LOCAL_MODEL_URL", "NORI_LOCAL_MODEL_TAG",
+		"NORI_PLATFORM_AI_GATEWAY_KEY", "NORI_JEV_ENABLED",
 		"NORI_AGENT_MODEL", "MODEL_NAME", "NORI_LLM_MAX_USD",
 		"OPENAI_API_KEY", "OPENAI_PROD_API_KEY", "OPENAI_DEV_API_KEY", "OPENAI_TEST_API_KEY",
 		"ANTHROPIC_API_KEY", "ANTHROPIC_PROD_API_KEY", "ANTHROPIC_DEV_API_KEY", "ANTHROPIC_TEST_API_KEY",
@@ -88,7 +89,7 @@ func TestLoadSimulationAllowsLoopbackTestAndLocalInklingWithoutCloudKeys(t *test
 		if s.Models.BYOKRequired {
 			t.Fatalf("expected BYOKRequired=false when loopback NORI_MODEL_TEST_URL is set")
 		}
-		if s.Models.TestURL != "http://127.0.0.1:18123" || s.Models.Provider != "openai" {
+		if s.Models.TestURL != "http://127.0.0.1:18123" || s.Models.Provider != "openai" || s.Models.LocalModel {
 			t.Fatalf("unexpected loopback test config: %+v", s.Models)
 		}
 		if s.Models.OpenAIKey != "" || os.Getenv("OPENAI_TEST_API_KEY") != "" {
@@ -111,7 +112,7 @@ func TestLoadSimulationAllowsLoopbackTestAndLocalInklingWithoutCloudKeys(t *test
 		if s.Models.BYOKRequired {
 			t.Fatalf("expected BYOKRequired=false for local Inkling simulation")
 		}
-		if s.Models.TestURL != "http://127.0.0.1:11434" || s.Models.Outer != "inkling-2-mini" || s.Models.Inner != "inkling-2-mini" {
+		if s.Models.TestURL != "http://127.0.0.1:11434" || s.Models.Outer != "inkling-2-mini" || s.Models.Inner != "inkling-2-mini" || !s.Models.LocalModel {
 			t.Fatalf("unexpected local Inkling config: %+v", s.Models)
 		}
 	})
@@ -135,6 +136,30 @@ func TestLoadSimulationAllowsLoopbackTestAndLocalInklingWithoutCloudKeys(t *test
 			t.Fatalf("expected NORI_CLOUD=aws to be rejected in LoadSimulation")
 		}
 	})
+}
+
+func TestRuntimeUsesExplicitLoopbackModel(t *testing.T) {
+	clearModelEnv(t)
+	t.Setenv("NORI_LOCAL_MODEL_URL", "http://127.0.0.1:11434")
+	t.Setenv("NORI_LOCAL_MODEL_TAG", "inkling-2-mini:latest")
+	t.Setenv("NORI_PLATFORM_AI_GATEWAY_KEY", "unused-hosted-key")
+	t.Setenv("NORI_JEV_ENABLED", "true")
+
+	s, err := LoadDefaultCloud("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.Models.LocalModel || s.Models.BYOKRequired || s.Models.Outer != "inkling-2-mini:latest" || s.Models.Inner != "inkling-2-mini:latest" {
+		t.Fatalf("unexpected local model config: %+v", s.Models)
+	}
+	if s.PlatformAIGatewayKey != "" || !s.Features.DisableJev {
+		t.Fatal("local runtime used hosted model configuration")
+	}
+
+	t.Setenv("NORI_POSTGRES_URL", "postgres://nori@cloud-db/byok?sslmode=require")
+	if _, err := LoadDefaultCloud("aws"); err == nil {
+		t.Fatal("production accepted the local model URL")
+	}
 }
 
 func TestRuntimeIgnoresDeploymentLLMKeys(t *testing.T) {

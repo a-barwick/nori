@@ -1,4 +1,6 @@
-import type { ReactNode } from "react";
+"use client";
+
+import { useEffect, useRef, type ReactNode } from "react";
 import Link from "next/link";
 import { NoriMark } from "@/components/mark/NoriMark";
 import type { MarkState } from "@/lib/types";
@@ -14,8 +16,35 @@ export function AppFrame({
   footer?: ReactNode;
   state?: MarkState;
 }) {
+  const shell = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const frame = shell.current;
+    if (!viewport || !frame || !window.matchMedia("(pointer: coarse)").matches) return;
+
+    // Safari can pan the visible page as well as shrink it for the keyboard.
+    const fitKeyboard = () => {
+      const editing = document.activeElement?.matches("input, textarea, [contenteditable=true]");
+      const fit = editing && Math.abs(viewport.scale - 1) < 0.01;
+      frame.style.top = fit ? `${viewport.offsetTop}px` : "";
+      frame.style.height = fit ? `${viewport.height}px` : "";
+    };
+
+    viewport.addEventListener("resize", fitKeyboard);
+    viewport.addEventListener("scroll", fitKeyboard);
+    document.addEventListener("focusin", fitKeyboard);
+    document.addEventListener("focusout", fitKeyboard);
+    fitKeyboard();
+    return () => {
+      viewport.removeEventListener("resize", fitKeyboard);
+      viewport.removeEventListener("scroll", fitKeyboard);
+      document.removeEventListener("focusin", fitKeyboard);
+      document.removeEventListener("focusout", fitKeyboard);
+    };
+  }, []);
+
   return (
-    <div className="nori-shell">
+    <div ref={shell} className="nori-shell">
       <header className="nori-topbar">
         <div className="flex items-center">
           <Link

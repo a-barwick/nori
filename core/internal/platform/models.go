@@ -274,6 +274,7 @@ func ReplyModelForUser(models settings.Models, userID string) conversation.Reply
 	default:
 		model := conversation.NewOpenAIModel(models.OpenAIKey, models.Outer)
 		model.TestURL = models.TestURL
+		model.LocalOnly = models.LocalModel
 		model.ReasoningEffort = models.OuterReasoning
 		model.Guard = guard
 		model.UserID = userID
@@ -305,6 +306,7 @@ func TaskModelForUser(models settings.Models, meter usage.Meter, userID string) 
 		model := responses.New(key, models.Inner, meter)
 		model.ProviderName = models.EffectiveInnerProvider()
 		model.TestURL = models.TestURL
+		model.LocalOnly = models.LocalModel
 		model.DefaultReasoning = models.InnerReasoning
 		model.Guard = guard
 		model.UserID = userID

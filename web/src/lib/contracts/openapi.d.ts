@@ -1741,6 +1741,8 @@ export interface components {
             search?: boolean;
             permissions?: boolean;
             preferences?: boolean;
+            /** @description The server has a sender configured for Apple push notifications. */
+            push_notifications?: boolean;
             memory?: boolean;
             inbox?: boolean;
             operations?: boolean;

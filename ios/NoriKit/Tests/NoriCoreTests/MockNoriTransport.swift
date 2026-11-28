@@ -34,6 +34,15 @@ actor MockNoriTransport: NoriTransport {
         let resumePending: Bool
     }
 
+    enum ListRead: String {
+        case mcpServers, mcpTools, connections, integrations, library, automations, permissions
+    }
+
+    private var failingLists: Set<ListRead> = []
+    private var mockMCPServers: [MCPServer] = []
+    private var mockConnections: [Connection] = []
+    private var mockIntegrations: [IntegrationSummary] = []
+
     // Call counters
     var fetchFullSnapshotCallCount = 0
     var fetchSummaryCallCount = 0
@@ -151,6 +160,12 @@ actor MockNoriTransport: NoriTransport {
     func setNextInteractionRespondError(_ error: Error?) { nextInteractionRespondError = error }
     func setFetchedInteraction(_ interaction: Interaction) { fetchedInteractionByID[interaction.id] = interaction }
     func setPermissions(_ rules: [PermissionRule]) { mockPermissions = rules }
+    func setFailingLists(_ lists: Set<ListRead>) { failingLists = lists }
+    func setApps(servers: [MCPServer], connections: [Connection], integrations: [IntegrationSummary]) {
+        mockMCPServers = servers
+        mockConnections = connections
+        mockIntegrations = integrations
+    }
     func setCustomSnapshot(_ snapshot: NoriFullSnapshot?) { customSnapshot = snapshot }
     func setResetFails(_ fail: Bool) { resetFails = fail }
     func setFailAfterStartingReset(_ fail: Bool) { failAfterStartingReset = fail }
@@ -394,11 +409,11 @@ actor MockNoriTransport: NoriTransport {
 
     func fetchMCPServers() async throws -> [MCPServer] {
         fetchMCPServersCallCount += 1
-        return []
+        return try checkedList(.mcpServers, mockMCPServers)
     }
 
     func fetchMCPTools(serverID: String) async throws -> [MCPServerTool] {
-        [MCPServerTool(name: "issues_list", title: "List Issues")]
+        try checkedList(.mcpTools, [MCPServerTool(name: "issues_list", title: "List Issues")])
     }
 
     func createMCPServer(input: MCPServerInput, requestID: String) async throws -> MutationReceipt<MCPServer> {
@@ -424,7 +439,11 @@ actor MockNoriTransport: NoriTransport {
 
     func fetchConnections() async throws -> [Connection] {
         fetchConnectionsCallCount += 1
-        return []
+        return try checkedList(.connections, mockConnections)
+    }
+
+    func fetchIntegrations() async throws -> [IntegrationSummary] {
+        try checkedList(.integrations, mockIntegrations)
     }
 
     func performConnectionAction(connectionID: String, expectedRevision: Int, action: String, returnTo: String?, requestID: String) async throws -> MutationReceipt<Connection> {
@@ -434,7 +453,7 @@ actor MockNoriTransport: NoriTransport {
         return MutationReceipt(requestID: requestID, status: .queued, resource: conn, auth: auth)
     }
 
-    func fetchLibrary() async throws -> [LibraryItem] { [] }
+    func fetchLibrary() async throws -> [LibraryItem] { try checkedList(.library, []) }
 
     func fetchLibraryItem(id: String) async throws -> LibraryItem {
         LibraryItem(id: id, version: 1, kind: .document, title: "Deep Document", revision: 1)
@@ -516,7 +535,7 @@ actor MockNoriTransport: NoriTransport {
         return MutationReceipt(requestID: requestID, resource: .workingMemory(WorkingMemory(revision: expectedRevision + 1, items: [])))
     }
 
-    func fetchAutomations() async throws -> [Automation] { [] }
+    func fetchAutomations() async throws -> [Automation] { try checkedList(.automations, []) }
 
     func fetchAutomation(id: String) async throws -> Automation {
         Automation(
@@ -565,7 +584,14 @@ actor MockNoriTransport: NoriTransport {
 
     func fetchPermissions() async throws -> [PermissionRule] {
         fetchPermissionsCallCount += 1
-        return mockPermissions
+        return try checkedList(.permissions, mockPermissions)
+    }
+
+    private func checkedList<T>(_ read: ListRead, _ items: [T]) throws -> [T] {
+        guard !failingLists.contains(read) else {
+            throw NoriAPIError(message: "\(read.rawValue) unavailable", statusCode: 503)
+        }
+        return items
     }
 
     func createPermissionRule(_ rule: PermissionRuleEditable, requestID: String) async throws -> MutationReceipt<PermissionRule> {

@@ -296,7 +296,8 @@ export function Notice({
 }
 
 export function NotYet({ what }: { what: string }) {
-  const { ready } = useAssistantConfig();
+  const { capabilitiesError, refreshCapabilities, ready } = useAssistantConfig();
+  if (capabilitiesError) return <Failure error={capabilitiesError} onRetry={refreshCapabilities} />;
   if (!ready) return <Loading />;
   return <Empty>{what} isn’t available on this Nori yet.</Empty>;
 }

@@ -47,7 +47,6 @@ public struct AppsView: View {
     @Bindable private var store: NoriStore
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
     @State private var showingAddMCP = false
-    @State private var isLoadingApps = false
     @State private var connectingConnectionID: String?
     @State private var pendingGoogleService: GoogleService?
     @State private var isGoogleBusy = false
@@ -58,22 +57,28 @@ public struct AppsView: View {
         self.store = store
     }
 
+    private var appReadError: String? {
+        store.integrationsRead.error ?? store.connectionsRead.error ?? store.mcpServersRead.error
+    }
+
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                if isLoadingApps && store.integrations.isEmpty && store.mcpServers.isEmpty && store.connections.isEmpty {
-                    NoriCard {
-                        HStack(spacing: 10) {
-                            ProgressView().tint(NoriColors.accent)
-                            Text("Loading apps…")
-                                .font(NoriTypography.meta)
-                                .foregroundStyle(NoriColors.ink2)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                if let appReadError {
+                    NoriRetryNotice("Couldn’t load all apps", detail: appReadError) {
+                        await store.refreshApps()
+                        await refreshGoogleDriveFiles()
                     }
                     .padding(.top, 10)
+                }
+
+                if store.integrationsRead == .pending && store.mcpServersRead == .pending
+                    && store.connectionsRead == .pending && store.mcpServers.isEmpty && store.connections.isEmpty {
+                    NoriLoadingState("Loading apps…")
+                        .padding(.top, 10)
                 } else {
-                    if let google = store.integrations.first(where: { $0.id == "google" }) {
+                    let google = store.integrations.first(where: { $0.id == "google" })
+                    if google != nil || googleConnection != nil {
                         googleSection(google)
                     }
 
@@ -86,12 +91,14 @@ public struct AppsView: View {
                         .buttonStyle(.plain)
                     }
 
-                    if store.mcpServers.isEmpty {
+                    if store.mcpServers.isEmpty && store.mcpServersRead == .loaded {
                         NoriEmptyState(
                             title: "No custom apps yet",
                             message: "Add a custom app to give Nori access to more tools."
                         )
-                    } else {
+                    } else if store.mcpServers.isEmpty && store.mcpServersRead == .pending {
+                        NoriLoadingState("Loading custom apps…")
+                    } else if !store.mcpServers.isEmpty {
                         NoriRows {
                             ForEach(Array(store.mcpServers.enumerated()), id: \.element.id) { index, server in
                                 let isLast = index == store.mcpServers.count - 1
@@ -153,8 +160,6 @@ public struct AppsView: View {
         }
         .background(NoriColors.canvas)
         .task {
-            isLoadingApps = true
-            defer { isLoadingApps = false }
             await store.refreshApps(force: false)
             await refreshGoogleDriveFiles()
         }
@@ -202,7 +207,7 @@ public struct AppsView: View {
     }
 
     @ViewBuilder
-    private func googleSection(_ integration: IntegrationSummary) -> some View {
+    private func googleSection(_ integration: IntegrationSummary?) -> some View {
         let connection = googleConnection
         let needsReconnect = connection != nil && (connection?.status == .needsAttention || connection?.status == .disabled)
         NoriSectionHeader("Google") {
@@ -233,13 +238,13 @@ public struct AppsView: View {
                 .padding(.bottom, 8)
             }
         }
-        if integration.availability != "available" {
+        if let integration, integration.availability != "available" {
             NoriNotice(
                 title: integration.availabilityReason ?? "Google connections are unavailable.",
                 tone: .warning,
                 systemImage: "exclamationmark.triangle.fill"
             )
-        } else {
+        } else if connection != nil || store.connectionsRead == .loaded {
             NoriRows {
                 ForEach(GoogleService.allCases) { service in
                     let granted = googleServiceIsGranted(service)
@@ -262,7 +267,7 @@ public struct AppsView: View {
                         )
                         .labelsHidden()
                         .tint(NoriColors.brandPrimary)
-                        .disabled(granted || isGoogleBusy)
+                        .disabled(granted || isGoogleBusy || integration == nil)
                     }
 
                     if showDriveRow {
@@ -309,6 +314,8 @@ public struct AppsView: View {
                 }
                 .padding(.top, 10)
             }
+        } else if store.connectionsRead == .pending {
+            NoriLoadingState("Loading Google account…")
         }
     }
 

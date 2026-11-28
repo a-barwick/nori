@@ -599,6 +599,53 @@ public extension NoriNotice where Trailing == EmptyView {
     }
 }
 
+public struct NoriRetryNotice: View {
+    private let title: String
+    private let detail: String
+    private let action: () async -> Void
+    @State private var isRetrying = false
+
+    public init(_ title: String, detail: String, action: @escaping () async -> Void) {
+        self.title = title
+        self.detail = detail
+        self.action = action
+    }
+
+    public var body: some View {
+        NoriNotice(title: title, detail: detail, tone: .danger) {
+            Button(isRetrying ? "Retrying…" : "Retry") {
+                isRetrying = true
+                Task {
+                    await action()
+                    isRetrying = false
+                }
+            }
+            .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+            .disabled(isRetrying)
+        }
+    }
+}
+
+public struct NoriLoadingState: View {
+    private let title: String
+
+    public init(_ title: String) {
+        self.title = title
+    }
+
+    public var body: some View {
+        NoriCard {
+            HStack(spacing: 10) {
+                ProgressView().tint(NoriColors.accent)
+                Text(title)
+                    .font(NoriTypography.meta)
+                    .foregroundStyle(NoriColors.ink2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
 
 public struct NoriUnderlineTabs<Value: Hashable & Sendable>: View {
     public let options: [NoriSegmentOption<Value>]

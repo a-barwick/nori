@@ -159,6 +159,11 @@ function CustomApps() {
         ) : undefined
       }
     >
+      {servers.error && (
+        <div className="mb-4">
+          <Failure error={servers.error} onRetry={servers.reload} />
+        </div>
+      )}
       {adding && (
         <div className="mb-4">
           <NewMCPServer onDone={() => setAdding(false)} />
@@ -177,7 +182,7 @@ function CustomApps() {
           ))}
         </Rows>
       ) : (
-        !adding && <Empty>No custom apps yet.</Empty>
+        !adding && !servers.error && <Empty>No custom apps yet.</Empty>
       )}
     </Section>
   );

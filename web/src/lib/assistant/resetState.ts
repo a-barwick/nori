@@ -7,7 +7,7 @@ export const RESET_CHECK_KEY = "nori.check-data-reset";
 export const RESET_STARTED_EVENT = "nori:data-reset-started";
 let resetsInProgress = 0;
 
-export type ResetCheckOptions = { resetFailed?: boolean; suppressCompletion?: boolean };
+export type ResetCheckOptions = { resetError?: Error; suppressCompletion?: boolean };
 
 export function requestResetCheck(options: ResetCheckOptions = {}) {
   if (typeof window === "undefined") return;

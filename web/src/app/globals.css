@@ -593,6 +593,11 @@
   .mark[data-blink="true"] .mark-eye { transform: none; }
 }
 
+/* iOS Safari zooms focused inputs below 16px and can leave the page enlarged. */
+@media (pointer: coarse) {
+  :is(input, textarea, select).text-input { font-size: 16px; }
+}
+
 .nori-shell {
   position: fixed;
   inset: 0;

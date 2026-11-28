@@ -19,13 +19,33 @@ extension NoriStore {
         }()
 
         let (serversRes, connsRes, integrationsRes) = await (serversResult, connectionsResult, integrationsResult)
-        guard generation == sessionGeneration else { return }
+        guard generation == sessionGeneration, !Task.isCancelled else { return }
         if case .failure(let err) = serversRes, await handleAuthFailureIfNeeded(err) { return }
         if case .failure(let err) = connsRes, await handleAuthFailureIfNeeded(err) { return }
         if case .failure(let err) = integrationsRes, await handleAuthFailureIfNeeded(err) { return }
+        guard generation == sessionGeneration, !Task.isCancelled else { return }
+
+        mcpServersRead = NoriReadStatus(serversRes)
+        connectionsRead = NoriReadStatus(connsRes)
+        integrationsRead = NoriReadStatus(integrationsRes)
+        if case .success(let conns) = connsRes {
+            self.connections = conns
+        }
+        if case .success(let items) = integrationsRes {
+            self.integrations = items
+        }
+        if case .success(let servers) = serversRes {
+            applyMCPServers(servers)
+        }
+        if assistantSummary != nil {
+            assistantSummary?.appsAttention = computedAppsAttentionCount
+        }
+        updateRefreshFreshness(
+            .apps,
+            didLoad: mcpServersRead == .loaded && connectionsRead == .loaded && integrationsRead == .loaded
+        )
 
         if case .success(let servers) = serversRes {
-            self.mcpServers = servers
             let toolsByServer = await withTaskGroup(
                 of: (String, [MCPServerTool]?).self,
                 returning: [String: [MCPServerTool]].self
@@ -45,21 +65,18 @@ extension NoriStore {
                 }
                 return collected
             }
-            guard generation == sessionGeneration else { return }
-            self.mcpTools = toolsByServer
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
+            let currentServers = Set(mcpServers)
+            let currentIDs = Set(servers.filter { currentServers.contains($0) }.map(\.id))
+            mcpTools.merge(toolsByServer.filter { currentIDs.contains($0.key) }) { _, latest in latest }
         }
-        if case .success(let conns) = connsRes {
-            self.connections = conns
-        }
-        if case .success(let items) = integrationsRes {
-            self.integrations = items
-        }
-        if assistantSummary != nil {
-            assistantSummary?.appsAttention = computedAppsAttentionCount
-        }
-        if case .success = serversRes, case .success = connsRes {
-            markRefreshed(.apps)
-        }
+    }
+
+    func applyMCPServers(_ servers: [MCPServer], tools: [String: [MCPServerTool]] = [:]) {
+        mcpServers = servers
+        let currentIDs = Set(servers.map(\.id))
+        mcpTools = mcpTools.filter { currentIDs.contains($0.key) }
+        mcpTools.merge(tools) { _, latest in latest }
     }
 
     public func addMCPServer(
@@ -419,12 +436,16 @@ extension NoriStore {
         let generation = sessionGeneration
         do {
             let latest = try await transport.fetchLibrary()
-            guard generation == sessionGeneration else { return }
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
             libraryItems = latest
+            libraryRead = .loaded
             markRefreshed(.library)
         } catch {
-            guard generation == sessionGeneration else { return }
-            _ = await handleOperationError(error, showToast: false)
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
+            if await handleOperationError(error, showToast: false) { return }
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
+            libraryRead = .failed(error.localizedDescription)
+            updateRefreshFreshness(.library, didLoad: false)
         }
     }
 

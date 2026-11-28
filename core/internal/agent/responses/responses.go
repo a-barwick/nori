@@ -111,9 +111,16 @@ func (c *Client) direct() bool {
 	return c.ModelName == directModel || c.ModelName == "gpt-6.1-terra"
 }
 
-func (c *Client) SupportsNativeWebSearch() bool { return c.direct() }
+func (c *Client) localOllama() bool {
+	return c.LocalOnly && c.TestURL != "" && c.gatewayURL == ""
+}
+
+func (c *Client) SupportsNativeWebSearch() bool { return !c.localOllama() && c.direct() }
 
 func (c *Client) Provider() string {
+	if c.localOllama() {
+		return "local"
+	}
 	if c.ProviderName != "" {
 		return c.ProviderName
 	}
@@ -142,6 +149,9 @@ func (c *Client) endpoint() string {
 }
 
 func (c *Client) format() string {
+	if c.localOllama() {
+		return "nori.local.responses"
+	}
 	if c.ProviderName == llmguard.ProviderHome {
 		return "nori.home.responses"
 	}
@@ -155,7 +165,7 @@ func (c *Client) format() string {
 }
 
 func (c *Client) requestOptions(fields map[string]any) {
-	if c.gatewayURL != "" {
+	if c.localOllama() || c.gatewayURL != "" {
 		return
 	}
 	if c.direct() {
@@ -216,14 +226,14 @@ func (c *Client) buildRequestBody(req agent.Request) ([]byte, error) {
 		"model": c.ModelName, "input": input, "instructions": req.Instructions,
 		"tools": tools, "max_output_tokens": req.MaxOutputTokens, "store": false,
 	}
-	if !req.SingleTurn && c.ProviderName != llmguard.ProviderHome {
+	if !req.SingleTurn && !c.localOllama() && c.ProviderName != llmguard.ProviderHome {
 		fields["include"] = []string{"reasoning.encrypted_content"}
 	}
 	effort := req.Reasoning
 	if effort == "" {
 		effort = c.DefaultReasoning
 	}
-	if (c.gatewayURL == "" || c.AllowGatewayReasoning) && effort != "" {
+	if !c.localOllama() && (c.gatewayURL == "" || c.AllowGatewayReasoning) && effort != "" {
 		fields["reasoning"] = map[string]string{"effort": effort}
 	}
 	c.requestOptions(fields)
@@ -325,13 +335,9 @@ func (c *Client) applyResponseUsage(res *http.Response, record *state.Usage, res
 			out.Cost, out.CostKnown = cost, true
 		}
 	}
-	if c.ProviderName == llmguard.ProviderHome {
+	if c.ProviderName == llmguard.ProviderHome || c.LocalOnly {
 		out.CostLocal = true
 		llmguard.RecordResponseCost(res, 0)
-	}
-	if c.LocalOnly && !out.CostKnown {
-		record.CostStatus = "local"
-		out.CostLocal = true
 	}
 	if u := response.Usage; u != nil && u.Input != nil && u.Output != nil && u.Total != nil {
 		nonReasoning := max(*u.Output-u.OutputDetails.Reasoning, 0)
@@ -467,7 +473,7 @@ func (c *Client) decodeOutputItems(output []json.RawMessage, reqTools []transcri
 
 func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Response, err error) {
 	out.NotSent = true
-	if c.ProviderName == llmguard.ProviderHome {
+	if c.ProviderName == llmguard.ProviderHome || c.LocalOnly {
 		out.CostKnown, out.CostLocal = true, true
 	}
 	if !c.validModel() {
@@ -493,7 +499,7 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	}
 	billingMode := c.billingMode()
 	record := usage.AttemptWithMeta(ctx, c.Provider(), c.ModelName, billingMode, state.UsageCategoryLLM)
-	if c.ProviderName == llmguard.ProviderHome {
+	if c.ProviderName == llmguard.ProviderHome || c.LocalOnly {
 		c.recordCost(&record, "", "", nil)
 	}
 	if billingMode != state.UsageBillingLocal {

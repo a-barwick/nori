@@ -19,7 +19,9 @@ extension NoriStore {
         guard generation == sessionGeneration, !Task.isCancelled else { return }
         if case .failure(let err) = permsRes, await handleAuthFailureIfNeeded(err) { return }
         if case .failure(let err) = prefsRes, await handleAuthFailureIfNeeded(err) { return }
+        guard generation == sessionGeneration, !Task.isCancelled else { return }
 
+        permissionsRead = NoriReadStatus(permsRes)
         if case .success(let perms) = permsRes {
             self.permissions = perms
         }
@@ -28,6 +30,8 @@ extension NoriStore {
         }
         if case .success = permsRes, case .success = prefsRes {
             markRefreshed(.permissionsAndPreferences)
+        } else {
+            updateRefreshFreshness(.permissionsAndPreferences, didLoad: false)
         }
     }
 
@@ -74,9 +78,13 @@ extension NoriStore {
             let latest = try await transport.fetchPermissions()
             guard generation == sessionGeneration, !Task.isCancelled else { throw CancellationError() }
             permissions = latest
+            permissionsRead = .loaded
         } catch {
-            guard generation == sessionGeneration else { throw CancellationError() }
-            _ = await handleAuthFailureIfNeeded(error)
+            guard generation == sessionGeneration, !Task.isCancelled else { throw CancellationError() }
+            if await handleAuthFailureIfNeeded(error) { throw error }
+            guard generation == sessionGeneration, !Task.isCancelled else { throw CancellationError() }
+            permissionsRead = .failed(error.localizedDescription)
+            updateRefreshFreshness(.permissionsAndPreferences, didLoad: false)
             throw error
         }
     }

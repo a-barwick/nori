@@ -5,9 +5,6 @@ import NoriDesign
 public struct StandingPermissionsView: View {
     @Bindable private var store: NoriStore
     @State private var confirmRuleID: String?
-    @State private var isLoading = false
-    @State private var hasLoaded = false
-    @State private var loadError: String?
 
     public init(store: NoriStore) {
         self.store = store
@@ -28,26 +25,15 @@ public struct StandingPermissionsView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                if let loadError {
-                    NoriNotice(title: "Could not load permissions", detail: loadError, tone: .danger) {
-                        Button("Retry") {
-                            Task { await loadPermissions() }
-                        }
-                        .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                if let error = store.permissionsRead.error {
+                    NoriRetryNotice("Couldn’t load permissions", detail: error) {
+                        try? await store.refreshPermissionsThrowing()
                     }
                 }
 
-                if isLoading && !hasLoaded && store.permissions.isEmpty {
-                    NoriCard {
-                        HStack(spacing: 10) {
-                            ProgressView().tint(NoriColors.accent)
-                            Text("Loading permissions…")
-                                .font(NoriTypography.meta)
-                                .foregroundStyle(NoriColors.ink2)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                } else if store.permissions.isEmpty {
+                if store.permissions.isEmpty && store.permissionsRead == .pending {
+                    NoriLoadingState("Loading permissions…")
+                } else if store.permissions.isEmpty && store.permissionsRead == .loaded {
                     NoriEmptyState(
                         title: "No standing permissions",
                         message: "Nori asks before making changes or sending messages."
@@ -69,10 +55,10 @@ public struct StandingPermissionsView: View {
             .padding(.bottom, 96)
         }
         .task {
-            await loadPermissions()
+            try? await store.refreshPermissionsThrowing()
         }
         .refreshable {
-            await loadPermissions()
+            try? await store.refreshPermissionsThrowing()
         }
         .background(NoriColors.canvas)
         .navigationTitle("Permissions")
@@ -152,17 +138,4 @@ public struct StandingPermissionsView: View {
         }
     }
 
-    private func loadPermissions() async {
-        isLoading = true
-        loadError = nil
-        defer { isLoading = false }
-        do {
-            try await store.refreshPermissionsThrowing()
-            hasLoaded = true
-        } catch is CancellationError {
-            return
-        } catch {
-            loadError = error.localizedDescription
-        }
-    }
 }

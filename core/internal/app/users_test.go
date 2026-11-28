@@ -19,6 +19,7 @@ import (
 	"nori/internal/observability"
 	"nori/internal/permissions"
 	"nori/internal/platform"
+	"nori/internal/push"
 	"nori/internal/secret"
 	"nori/internal/settings"
 	"nori/internal/sim/memstore"
@@ -637,6 +638,25 @@ func (f *fakeReplyModel) Respond(_ context.Context, req conversation.ReplyReques
 		return conversation.Reply{}, f.err
 	}
 	return conversation.Reply{Text: f.reply}, nil
+}
+
+func TestPushCapabilityRequiresSender(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		worker *push.OutboxWorker
+		want   bool
+	}{
+		{"standalone", nil, false},
+		{"missing credentials", &push.OutboxWorker{}, false},
+		{"configured sender", &push.OutboxWorker{Sender: &push.APNSClient{}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := app.AssistantFeatures(nil, false, tc.worker)["push_notifications"]
+			if !ok || got != tc.want {
+				t.Fatalf("push_notifications = %v (present %v), want %v", got, ok, tc.want)
+			}
+		})
+	}
 }
 
 func TestAppDefaultUserSendsAndAutoReviewerWiring(t *testing.T) {

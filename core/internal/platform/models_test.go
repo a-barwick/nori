@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -30,6 +31,65 @@ func okJSON(body string) *http.Response {
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+func TestLocalModelUsesGuardedOllamaChatAndResponses(t *testing.T) {
+	const model = "inkling-2-mini"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || string(req["model"]) != `"inkling-2-mini"` {
+			t.Errorf("local model request was not decoded: %s, %v", req["model"], err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if req["service_tier"] != nil || req["reasoning_effort"] != nil || req["reasoning"] != nil {
+			t.Errorf("local request sent provider-specific options")
+		}
+		switch r.URL.Path {
+		case "/v1/chat/completions":
+			if req["response_format"] != nil || req["max_completion_tokens"] != nil || req["max_tokens"] == nil ||
+				!strings.Contains(string(req["messages"]), "Return only a JSON object matching this schema") {
+				t.Error("local chat did not prompt for structured output")
+			}
+			fmt.Fprint(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"\u0060\u0060\u0060json\n{\"actions\":[],\"text\":\"Hello\"}\n\u0060\u0060\u0060"}}]}`)
+		case "/v1/responses":
+			if req["include"] != nil || string(req["tools"]) != "[]" {
+				t.Error("local work requested OpenAI-only features")
+			}
+			fmt.Fprint(w, `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done"}]}]}`)
+		default:
+			t.Errorf("unexpected local request path %q", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	guard := llmguard.New(llmguard.DefaultConfig())
+	models := settings.Models{Provider: "openai", Outer: model, Inner: model, InnerReasoning: "low", TestURL: server.URL, LocalModel: true, Guard: guard}
+	chat, err := platform.ReplyModelForUser(models, "local-user").Respond(context.Background(), conversation.ReplyRequest{
+		Messages: []json.RawMessage{json.RawMessage(`{"role":"user","content":"Hi"}`)},
+	})
+	if err != nil || chat.Text != "Hello" || chat.Usage.Billing != state.UsageBillingLocal || chat.Usage.CostStatus != "local" {
+		t.Fatalf("local chat reply = %+v, err = %v", chat, err)
+	}
+	if strings.Contains(string(chat.Message), "\\u0060") || strings.Contains(string(chat.Message), "`") {
+		t.Fatal("local chat saved the JSON fence in the replay transcript")
+	}
+	meter := usage.Func(func(_ context.Context, u state.Usage) error {
+		if u.Billing != state.UsageBillingLocal {
+			t.Errorf("local task used %q billing", u.Billing)
+		}
+		return nil
+	})
+	work, err := platform.TaskModelForUser(models, meter, "local-user").Respond(context.Background(), agent.Request{
+		Messages: []transcript.Message{transcript.UserText("Hi")}, MaxOutputTokens: 100, WebSearch: true,
+	})
+	if err != nil || work.Answer != "Done" || !work.CostKnown || !work.CostLocal || work.Cost != 0 {
+		t.Fatalf("local work response = %+v, err = %v", work, err)
+	}
+	if got := guard.Stats().TotalAdmitted; got != 2 {
+		t.Errorf("model guard admitted %d calls, expected chat and work", got)
 	}
 }
 

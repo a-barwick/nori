@@ -1,8 +1,9 @@
 import { expect, test } from "@playwright/test";
 
-const app = "http://127.0.0.1:4317";
+const app = process.env.NORI_E2E_APP_URL ?? `http://127.0.0.1:${process.env.NORI_E2E_APP_PORT ?? "4317"}`;
+const auth = process.env.NORI_E2E_AUTH_URL ?? `http://127.0.0.1:${process.env.NORI_E2E_AUTH_PORT ?? "9445"}`;
 function signInURL(account: string, path = "/") {
-  return `http://127.0.0.1:9445/sign-in?account=${account}&to=${encodeURIComponent(app + path)}`;
+  return `${auth}/sign-in?account=${account}&to=${encodeURIComponent(app + path)}`;
 }
 
 function assertBaselineHeaders(headers: Record<string, string>) {

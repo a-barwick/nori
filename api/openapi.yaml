@@ -2844,6 +2844,9 @@ components:
           type: boolean
         preferences:
           type: boolean
+        push_notifications:
+          type: boolean
+          description: The server has a sender configured for Apple push notifications.
         memory:
           type: boolean
         inbox:

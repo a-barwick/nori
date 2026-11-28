@@ -128,7 +128,14 @@ func NewOpenRouterModel(key, name string) *OpenAIModel {
 
 func (m *OpenAIModel) Name() string { return m.name }
 
+func (m *OpenAIModel) localOllama() bool {
+	return m.LocalOnly && m.TestURL != "" && m.gatewayURL == ""
+}
+
 func (m *OpenAIModel) provider() string {
+	if m.localOllama() {
+		return "local"
+	}
 	if m.ProviderName != "" {
 		return m.ProviderName
 	}
@@ -182,7 +189,7 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 		reply.Usage.CreatedAt = m.now().UTC()
 	}
 	reply.Usage.RequestStatus = "not_sent"
-	if m.ProviderName == llmguard.ProviderHome {
+	if m.ProviderName == llmguard.ProviderHome || m.LocalOnly {
 		zero := float64(0)
 		reply.Usage.CostUSD, reply.Usage.CostStatus = &zero, "local"
 	}
@@ -349,11 +356,13 @@ func isSupportedDirectOpenAIModel(name string) bool {
 }
 
 func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span trace.Span) ([]byte, error) {
-	if m.gatewayURL == "" && !m.openRouter && !isSupportedDirectOpenAIModel(m.name) {
+	localOllama := m.localOllama()
+	direct := !localOllama && m.gatewayURL == "" && !m.openRouter
+	if direct && !isSupportedDirectOpenAIModel(m.name) {
 		return nil, errors.New("unsupported direct OpenAI conversation model")
 	}
 	var breakpoints []int
-	if m.gatewayURL == "" && !m.openRouter {
+	if direct {
 		breakpoints = request.CacheBreakpoints
 	}
 	input, err := openAIConversation(request.Messages, breakpoints)
@@ -366,12 +375,12 @@ func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span tr
 	body := map[string]any{
 		"model": m.name, "messages": input, "max_completion_tokens": outputLimit, "store": false,
 	}
-	if m.GoogleCompatibility {
+	if m.GoogleCompatibility || localOllama {
 		delete(body, "store")
 		delete(body, "max_completion_tokens")
 		body["max_tokens"] = outputLimit
 	}
-	if m.gatewayURL == "" && !m.openRouter {
+	if direct {
 		effort := m.ReasoningEffort
 		if effort == "" {
 			effort = "low"
@@ -387,17 +396,33 @@ func (m *OpenAIModel) requestBody(request ReplyRequest, outputLimit int, span tr
 		body["stream"] = true
 		body["stream_options"] = map[string]any{"include_usage": true}
 	}
+	var format any
 	if len(request.Tools) > 0 {
-		body["response_format"] = foregroundFormat(request.Tools)
+		format = foregroundFormat(request.Tools)
 	}
 	if !request.NoDispatch {
-		stable := m.gatewayURL == "" && !request.CommandPlan
-		body["response_format"] = responseFormat(request.TaskIDs, request.WorkRequests, request.MemoryIDs, request.CommandPlan, m.gatewayURL != "", stable)
+		stable := m.gatewayURL == "" && !request.CommandPlan && !localOllama
+		format = responseFormat(request.TaskIDs, request.WorkRequests, request.MemoryIDs, request.CommandPlan, m.gatewayURL != "", stable)
 		if m.ProviderName == llmguard.ProviderHome && !request.Foreground && !request.CommandPlan && len(request.WorkRequests) == 0 {
 			body["messages"] = append(input, map[string]any{
 				"role":    "system",
 				"content": prompts.Runtime("home-chat-routing", nil),
 			})
+		}
+	}
+	if format != nil {
+		if localOllama {
+			schema, err := json.Marshal(format.(map[string]any)["json_schema"].(map[string]any)["schema"])
+			if err != nil {
+				return nil, err
+			}
+			// Ollama models without structured output can still follow the routing schema in the prompt.
+			body["messages"] = append([]map[string]any{{
+				"role":    "system",
+				"content": "Return only a JSON object matching this schema. Include actions first and text second. Use an empty actions array when no action is needed. Do not wrap the JSON in Markdown. " + string(schema),
+			}}, input...)
+		} else {
+			body["response_format"] = format
 		}
 	}
 	return json.Marshal(body)
@@ -439,7 +464,7 @@ func (m *OpenAIModel) decodeOpenAIReply(res *http.Response, reply Reply, noDispa
 		reply.Usage.TotalTokens = response.Usage.Total
 		cached, written := response.Usage.InputDetails.Cached, response.Usage.InputDetails.Write
 		reply.Usage.CachedTokens, reply.Usage.CacheWriteTokens = &cached, &written
-		if m.ProviderName == llmguard.ProviderHome {
+		if m.ProviderName == llmguard.ProviderHome || m.LocalOnly {
 			reply.Usage.CostStatus = "local"
 		} else if m.gatewayURL != "" || m.openRouter {
 			var cost *float64
@@ -509,6 +534,12 @@ func (m *OpenAIModel) decodeOpenAIReply(res *http.Response, reply Reply, noDispa
 			return reply, errors.New("model returned native calls instead of the structured routing response")
 		}
 		reply.Structured = true
+		if m.localOllama() {
+			if unfenced := unwrapLocalJSON(reply.Text); unfenced != reply.Text {
+				reply.Text = unfenced
+				reply.Message, _ = json.Marshal(map[string]any{"role": message.Role, "content": unfenced})
+			}
+		}
 		reply.Text, reply.Calls, err = decodeResponse(reply.Text)
 		return reply, err
 	}
@@ -516,6 +547,14 @@ func (m *OpenAIModel) decodeOpenAIReply(res *http.Response, reply Reply, noDispa
 		return reply, fmt.Errorf("model returned neither a reply nor a task command")
 	}
 	return reply, nil
+}
+
+func unwrapLocalJSON(text string) string {
+	open, body, ok := strings.Cut(text, "\n")
+	if !ok || (strings.TrimSpace(open) != "```json" && strings.TrimSpace(open) != "```") || !strings.HasSuffix(body, "\n```") {
+		return text
+	}
+	return strings.TrimSpace(strings.TrimSuffix(body, "\n```"))
 }
 
 func (m *OpenAIModel) applyTariffFallback(record *state.Usage, servedModel, tier string, input, output, total *int64, reasoning, cached, written int64) {
@@ -881,6 +920,9 @@ func (m *OpenAIModel) decodeOpenAIStream(res *http.Response, reply Reply, reques
 	copyResponse.Body = io.NopCloser(bytes.NewReader(body))
 	decoded, err := m.decodeOpenAIReply(&copyResponse, reply, request.NoDispatch || request.Foreground, span)
 	if err == nil && request.Foreground {
+		if m.localOllama() {
+			decoded.Text = unwrapLocalJSON(decoded.Text)
+		}
 		decoded.Text, decoded.Calls, err = decodeForeground(decoded.Text)
 	}
 	return decoded, err

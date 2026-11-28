@@ -78,12 +78,12 @@ extension NoriStore {
         connectionState = .connecting
         do {
             let snapshot = try await transport.fetchFullSnapshot()
-            guard generation == sessionGeneration else { return }
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
             applySnapshot(snapshot, preferencesReadID: preferencesReadID)
             connectionState = .connected
             lastError = snapshot.partialErrors.values.first
         } catch {
-            guard generation == sessionGeneration else { return }
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
             if await handleAuthFailureIfNeeded(error) { return }
             guard generation == sessionGeneration else { return }
             lastError = error.localizedDescription
@@ -113,22 +113,26 @@ extension NoriStore {
             interactions = snapshot.interactions
         }
         if snapshot.didLoadMCPServers {
-            self.mcpServers = snapshot.mcpServers
-            self.mcpTools = snapshot.mcpTools
+            applyMCPServers(snapshot.mcpServers, tools: snapshot.mcpTools)
         }
+        mcpServersRead = NoriReadStatus(didLoad: snapshot.didLoadMCPServers, error: snapshot.partialErrors["mcp"])
         if snapshot.didLoadConnections {
             self.connections = snapshot.connections
         }
-        if snapshot.didLoadMCPServers && snapshot.didLoadConnections {
-            markRefreshed(.apps)
+        connectionsRead = NoriReadStatus(didLoad: snapshot.didLoadConnections, error: snapshot.partialErrors["connections"])
+        // Only refreshApps loads the integration catalog.
+        if !snapshot.didLoadMCPServers || !snapshot.didLoadConnections {
+            updateRefreshFreshness(.apps, didLoad: false)
         }
         if snapshot.didLoadLibraryItems {
             self.libraryItems = snapshot.libraryItems
-            markRefreshed(.library)
         }
+        libraryRead = NoriReadStatus(didLoad: snapshot.didLoadLibraryItems, error: snapshot.partialErrors["library"])
+        updateRefreshFreshness(.library, didLoad: snapshot.didLoadLibraryItems)
         if snapshot.didLoadCoreMemories {
             self.coreMemories = snapshot.coreMemories
         }
+        coreMemoriesRead = NoriReadStatus(didLoad: snapshot.didLoadCoreMemories, error: snapshot.partialErrors["core_memories"])
         if snapshot.didLoadMemoryLogs {
             self.memoryLogs = snapshot.memoryLogs
         }
@@ -136,19 +140,26 @@ extension NoriStore {
         if snapshot.didLoadWorkingMemory {
             workingMemory = snapshot.workingMemory
         }
-        if snapshot.didLoadCoreMemories && snapshot.didLoadMemoryLogs && snapshot.didLoadWorkingMemory {
-            markRefreshed(.memory)
-        }
+        memoryRefreshError = snapshot.partialErrors["core_memories"]
+            ?? snapshot.partialErrors["memory_logs"]
+            ?? snapshot.partialErrors["working_memory"]
+        updateRefreshFreshness(
+            .memory,
+            didLoad: snapshot.didLoadCoreMemories && snapshot.didLoadMemoryLogs && snapshot.didLoadWorkingMemory
+        )
         if snapshot.didLoadAutomations {
             self.automations = snapshot.automations
-            markRefreshed(.automations)
         }
+        automationsRead = NoriReadStatus(didLoad: snapshot.didLoadAutomations, error: snapshot.partialErrors["automations"])
+        updateRefreshFreshness(.automations, didLoad: snapshot.didLoadAutomations)
         if snapshot.didLoadPermissions {
             self.permissions = snapshot.permissions
         }
-        if snapshot.didLoadPermissions && snapshot.didLoadPreferences {
-            markRefreshed(.permissionsAndPreferences)
-        }
+        permissionsRead = NoriReadStatus(didLoad: snapshot.didLoadPermissions, error: snapshot.partialErrors["permissions"])
+        updateRefreshFreshness(
+            .permissionsAndPreferences,
+            didLoad: snapshot.didLoadPermissions && snapshot.didLoadPreferences
+        )
         if snapshot.didLoadModelKeys {
             self.modelKeys = snapshot.modelKeys
             markRefreshed(.modelKeys)
@@ -254,8 +265,12 @@ extension NoriStore {
     }
 
     func applyCapabilities(_ latest: Capabilities?) {
+        let hadPush = capabilities.map { $0.assistantFeatures?["push_notifications"] != false } ?? false
         capabilities = latest
         guard let latest else { return }
+        if !hadPush, latest.assistantFeatures?["push_notifications"] != false {
+            requestPushAuthorizationIfNeeded()
+        }
         guard let entitlement = latest.entitlement else {
             if billingAccessBlock?.code == .creditExhausted || billingAccessBlock?.code == .subscriptionInactive {
                 billingAccessBlock = nil

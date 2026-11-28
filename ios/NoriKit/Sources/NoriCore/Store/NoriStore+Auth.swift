@@ -129,7 +129,6 @@ extension NoriStore {
             startChatSession()
             Task { @MainActor [weak self] in
                 guard let self, generation == self.sessionGeneration, self.authState.isSignedIn else { return }
-                await self.pushManager.requestAuthorizationIfNeeded()
                 await self.pushManager.registerPendingTokenIfSignedIn(transport: self.transport)
             }
         } catch {

@@ -16,15 +16,15 @@ extension NoriStore {
                 return
             }
         }
+        guard generation == sessionGeneration, !Task.isCancelled else { return }
+        coreMemoriesRead = NoriReadStatus(factsResult)
         if case .success(let latest) = factsResult { coreMemories = latest }
         if case .success(let latest) = logsResult { memoryLogs = latest }
         if case .success(let latest) = workingResult {
             workingMemory = latest
             hasLoadedWorkingMemory = true
         }
-        if errors.isEmpty {
-            markRefreshed(.memory)
-        }
+        updateRefreshFreshness(.memory, didLoad: errors.isEmpty)
         memoryRefreshError = errors.first?.localizedDescription
     }
 

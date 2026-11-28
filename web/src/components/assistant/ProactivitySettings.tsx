@@ -105,8 +105,10 @@ export async function saveProactivityPreferences(
 export function NotificationsSettings({
   current,
   onSaved,
+  pushAvailable,
 }: {
   current?: Preferences;
+  pushAvailable?: boolean;
   onSaved?: (next: Preferences) => void;
 }) {
   const remote = useResource<Preferences>(current ? null : "/preferences", { poll: 0 });
@@ -202,44 +204,50 @@ export function NotificationsSettings({
       {action.error && <Notice tone="danger">{action.error}</Notice>}
 
       <Section title="Push notifications">
-        <Rows label="Push notifications">
-          <li className="flex items-center justify-between gap-3 px-4 py-3">
-            <span className="min-w-0 flex-1 text-row font-semibold text-ink">Chats</span>
-            <Switch
-              checked={pushChats}
-              disabled={!!action.pending}
-              label="Chats"
-              onCheckedChange={(next) => togglePush("push_chats", next, "Chats")}
-            />
-          </li>
-          <li className="flex items-center justify-between gap-3 px-4 py-3">
-            <span className="min-w-0 flex-1 text-row font-semibold text-ink">Urgent &amp; approvals</span>
-            <Switch
-              checked={pushUrgent}
-              disabled={!!action.pending}
-              label="Urgent & approvals"
-              onCheckedChange={(next) => togglePush("push_urgent_and_approvals", next, "Urgent & approvals")}
-            />
-          </li>
-          <li
-            className={cn(
-              "flex items-center justify-between gap-3 px-4 py-3",
-              !briefScheduleEnabled && "opacity-50",
+        {pushAvailable === false ? (
+          <p className="px-1 text-body text-ink-2">Push delivery is unavailable. Updates still appear in Nori.</p>
+        ) : (
+          <>
+            <Rows label="Push notifications">
+              <li className="flex items-center justify-between gap-3 px-4 py-3">
+                <span className="min-w-0 flex-1 text-row font-semibold text-ink">Chats</span>
+                <Switch
+                  checked={pushChats}
+                  disabled={!!action.pending}
+                  label="Chats"
+                  onCheckedChange={(next) => togglePush("push_chats", next, "Chats")}
+                />
+              </li>
+              <li className="flex items-center justify-between gap-3 px-4 py-3">
+                <span className="min-w-0 flex-1 text-row font-semibold text-ink">Urgent &amp; approvals</span>
+                <Switch
+                  checked={pushUrgent}
+                  disabled={!!action.pending}
+                  label="Urgent & approvals"
+                  onCheckedChange={(next) => togglePush("push_urgent_and_approvals", next, "Urgent & approvals")}
+                />
+              </li>
+              <li
+                className={cn(
+                  "flex items-center justify-between gap-3 px-4 py-3",
+                  !briefScheduleEnabled && "opacity-50",
+                )}
+              >
+                <span className="min-w-0 flex-1 text-row font-semibold text-ink">Morning brief</span>
+                <Switch
+                  checked={pushBrief}
+                  disabled={!!action.pending || !briefScheduleEnabled}
+                  label="Morning brief"
+                  onCheckedChange={(next) => togglePush("push_morning_brief", next, "Morning brief")}
+                />
+              </li>
+            </Rows>
+            {allPushOff && (
+              <p className="mt-2 px-1 text-caption text-ink-3">
+                Push notifications are off. Updates still appear in Chat.
+              </p>
             )}
-          >
-            <span className="min-w-0 flex-1 text-row font-semibold text-ink">Morning brief</span>
-            <Switch
-              checked={pushBrief}
-              disabled={!!action.pending || !briefScheduleEnabled}
-              label="Morning brief"
-              onCheckedChange={(next) => togglePush("push_morning_brief", next, "Morning brief")}
-            />
-          </li>
-        </Rows>
-        {allPushOff && (
-          <p className="mt-2 px-1 text-caption text-ink-3">
-            Push notifications are off. Updates still appear in Chat.
-          </p>
+          </>
         )}
       </Section>
 

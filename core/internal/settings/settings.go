@@ -119,6 +119,7 @@ type Models struct {
 	BYOKRequired                                   bool
 	MaxUSD                                         float64
 	TestURL                                        string
+	LocalModel                                     bool
 }
 
 type Store struct {
@@ -189,7 +190,7 @@ func load(defaultCloud string, simulation bool) (Settings, error) {
 			return Settings{}, fmt.Errorf("%s must be true or false", name)
 		}
 	}
-	s := fromEnvironment(defaultCloud, simulation)
+	s := fromEnvironment(defaultCloud)
 	switch s.Cloud {
 	case "aws", "gcp", "local":
 	default:
@@ -270,7 +271,13 @@ func load(defaultCloud string, simulation bool) (Settings, error) {
 	if s.Models.TestURL != "" {
 		u, err := url.Parse(s.Models.TestURL)
 		if err != nil || s.Cloud != "local" || u.Scheme != "http" || !netguard.IsLoopbackHost(u.Hostname()) {
+			if s.Models.LocalModel {
+				return Settings{}, fmt.Errorf("NORI_LOCAL_MODEL_URL requires an http loopback URL with NORI_CLOUD=local")
+			}
 			return Settings{}, fmt.Errorf("NORI_MODEL_TEST_URL is for local development only: an http loopback URL with NORI_CLOUD=local")
+		}
+		if s.Models.LocalModel && (u.User != nil || strings.ContainsAny(s.Models.TestURL, "?#")) {
+			return Settings{}, fmt.Errorf("NORI_LOCAL_MODEL_URL cannot contain credentials, a query, or a fragment")
 		}
 	}
 	if s.Models.MaxUSD > 0 {
@@ -299,7 +306,7 @@ func connectionsFromEnvironment() Connections {
 	}
 }
 
-func fromEnvironment(defaultCloud string, simulation bool) Settings {
+func fromEnvironment(defaultCloud string) Settings {
 	taskBudget, err := strconv.ParseFloat(get("NORI_TASK_BUDGET_USD", "1"), 64)
 	if err != nil {
 		taskBudget = math.NaN()
@@ -344,9 +351,14 @@ func fromEnvironment(defaultCloud string, simulation bool) Settings {
 			credentials = append(credentials, value)
 		}
 	}
+	models := modelsFromEnvironment(envProfile, cloud)
+	platformGatewayKey := strings.TrimSpace(os.Getenv("NORI_PLATFORM_AI_GATEWAY_KEY"))
+	if models.LocalModel {
+		platformGatewayKey = ""
+	}
 	return Settings{
 		Connections: connectionsFromEnvironment(),
-		Features:    Features{DisableBackgroundTasks: os.Getenv("NORI_BACKGROUND_TASKS_ENABLED") == "false", DisableJev: os.Getenv("NORI_JEV_ENABLED") != "true"},
+		Features:    Features{DisableBackgroundTasks: os.Getenv("NORI_BACKGROUND_TASKS_ENABLED") == "false", DisableJev: models.LocalModel || os.Getenv("NORI_JEV_ENABLED") != "true"},
 		Cloud:       cloud,
 		EnvProfile:  envProfile,
 		Role:        role,
@@ -362,11 +374,11 @@ func fromEnvironment(defaultCloud string, simulation bool) Settings {
 		Port:                     os.Getenv("PORT"),
 		HomeAI:                   homeAIFromEnvironment(),
 		Computer:                 computerFromEnvironment(),
-		Models:                   modelsFromEnvironment(envProfile, cloud, simulation),
+		Models:                   models,
 		Store:                    store,
 		Metering:                 usage.Config{Mode: get("NORI_USAGE_METER", "store"), Endpoint: os.Getenv("NORI_USAGE_ENDPOINT"), Token: os.Getenv("NORI_USAGE_TOKEN"), MaxCallsPerHour: int(parseEnvInt32Default("NORI_USER_MAX_CALLS_PER_HOUR", 300)), MaxUSDPerDay: parseOptionalNonNegativeFloatDefault("NORI_USER_MAX_USD_PER_DAY", 15.0)},
 		ExaSearchKey:             strings.TrimSpace(os.Getenv("EXA_API_KEY")),
-		PlatformAIGatewayKey:     strings.TrimSpace(os.Getenv("NORI_PLATFORM_AI_GATEWAY_KEY")),
+		PlatformAIGatewayKey:     platformGatewayKey,
 		HostedGlobalMaxUSDPerDay: parseOptionalNonNegativeFloatDefault("NORI_HOSTED_GLOBAL_MAX_USD_PER_DAY", 50.0),
 		ExaGlobalMaxUSDPerDay:    parseOptionalNonNegativeFloatDefault("NORI_EXA_GLOBAL_MAX_USD_PER_DAY", 15.0),
 		TrialMaxSignupsPerDay:    int(parseEnvInt32Default("NORI_TRIAL_MAX_SIGNUPS_PER_DAY", 25)),

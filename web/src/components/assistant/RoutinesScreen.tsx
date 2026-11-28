@@ -232,7 +232,7 @@ export function RoutinesContent() {
           onCancelConfirm={() => setConfirmingId(null)}
           onRemove={removeAutomation}
         />
-      ) : (
+      ) : !list.error && (
         <Empty title="No automations yet">
           Ask Nori in Chat to set up recurring briefs, monitors, or scheduled checks.
         </Empty>
@@ -268,7 +268,7 @@ export function RoutineDetailScreen({ id }: { id: string }) {
   if (!item) {
     return (
       <Screen title="Routine" back="/work?tab=routines" backLabel="Work">
-        <Failure error={routine.error ?? "This routine doesn’t exist."} />
+        <Failure error={routine.error ?? "This routine doesn’t exist."} onRetry={routine.reload} />
       </Screen>
     );
   }
@@ -326,6 +326,7 @@ export function RoutineDetailScreen({ id }: { id: string }) {
         state.label !== "On" ? <Pill tone={state.tone}>{state.label}</Pill> : undefined
       }
     >
+      {routine.error && <Failure error={routine.error} onRetry={routine.reload} />}
       {action.error && (
         <div className="mb-4">
           <Notice tone="danger">{action.error}</Notice>
@@ -403,6 +404,7 @@ export function RoutineDetailScreen({ id }: { id: string }) {
         <Authority ids={item.authority_rule_ids} />
       </Section>
       <Section title="History">
+        {occurrences.error && <Failure error={occurrences.error} onRetry={occurrences.reload} />}
         {occurrences.loading ? (
           <Loading />
         ) : occurrences.data?.items.length ? (
@@ -429,7 +431,7 @@ export function RoutineDetailScreen({ id }: { id: string }) {
               );
             })}
           </Rows>
-        ) : (
+        ) : !occurrences.error && (
           <Empty>No runs yet.</Empty>
         )}
       </Section>
@@ -462,21 +464,23 @@ function Authority({ ids }: { ids: string[] }) {
   const rules = useResource<List<PermissionRule>>(ids.length ? "/permissions" : null, { poll: 0 });
   if (!ids.length) return <p className="text-body text-ink-2">Asks before every action.</p>;
   const mine = (rules.data?.items ?? []).filter((rule) => ids.includes(rule.id));
-  return rules.loading ? (
-    <Loading />
-  ) : (
-    <Rows>
-      {mine.map((rule) => {
-        const effectMeta = RULE_EFFECT_META[rule.effect];
-        return (
-          <Row
-            key={rule.id}
-            href={`/settings/permissions#${rule.id}`}
-            title={rule.summary ?? rule.title ?? "Permission"}
-            trailing={<Pill tone={effectMeta.tone}>{effectMeta.label}</Pill>}
-          />
-        );
-      })}
-    </Rows>
+  if (rules.loading) return <Loading />;
+  return (
+    <>
+      {rules.error && <Failure error={rules.error} onRetry={rules.reload} />}
+      {mine.length > 0 && <Rows>
+        {mine.map((rule) => {
+          const effectMeta = RULE_EFFECT_META[rule.effect];
+          return (
+            <Row
+              key={rule.id}
+              href={`/settings/permissions#${rule.id}`}
+              title={rule.summary ?? rule.title ?? "Permission"}
+              trailing={<Pill tone={effectMeta.tone}>{effectMeta.label}</Pill>}
+            />
+          );
+        })}
+      </Rows>}
+    </>
   );
 }

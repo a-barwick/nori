@@ -61,6 +61,7 @@ public struct MemoryView: View {
     @State private var isSearching = false
     @State private var searchError: String?
     @State private var searchHits: [MemorySearchHit] = []
+    @State private var searchResultQuery: String?
     @State private var confirmRowID: String?
 
     public init(store: NoriStore) {
@@ -89,7 +90,7 @@ public struct MemoryView: View {
     }
 
     private var logHits: [MemorySearchHit] {
-        guard isSearchActive else { return [] }
+        guard isSearchActive, searchResultQuery == trimmedQuery else { return [] }
         return searchHits.filter { $0.layer == "log" }
     }
 
@@ -99,27 +100,21 @@ public struct MemoryView: View {
                 searchField
 
                 if let error = store.memoryRefreshError {
-                    NoriNotice(
-                        title: "Couldn’t refresh memory",
-                        detail: error,
-                        tone: .warning,
-                        systemImage: "exclamationmark.triangle.fill"
-                    ) {
-                        Button("Retry") {
-                            Task { await store.refreshMemory() }
-                        }
-                        .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                    NoriRetryNotice("Couldn’t load all memory", detail: error) {
+                        await store.refreshMemory()
                     }
                 }
 
                 if isSearchActive {
                     searchResultsSection
-                } else if topicGroups.isEmpty {
+                } else if topicGroups.isEmpty && store.coreMemoriesRead == .pending {
+                    NoriLoadingState("Loading memory…")
+                } else if topicGroups.isEmpty && store.coreMemoriesRead == .loaded {
                     NoriEmptyState(
                         title: "Nothing remembered yet",
                         message: "Nori will remember helpful details as you chat."
                     )
-                } else {
+                } else if !topicGroups.isEmpty {
                     NoriRows {
                         ForEach(Array(topicGroups.enumerated()), id: \.element.topic) { index, group in
                             let isLast = index == topicGroups.count - 1
@@ -207,11 +202,8 @@ public struct MemoryView: View {
     private var searchResultsSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             if let searchError {
-                NoriNotice(title: "Could not search memory", detail: searchError, tone: .danger) {
-                    Button("Retry") {
-                        Task { await runMemorySearch(query: trimmedQuery, debounce: false) }
-                    }
-                    .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                NoriRetryNotice("Couldn’t search memory", detail: searchError) {
+                    await runMemorySearch(query: trimmedQuery, debounce: false)
                 }
             }
 
@@ -267,18 +259,10 @@ public struct MemoryView: View {
                 }
             }
 
-            if matchingFacts.isEmpty && logHits.isEmpty {
-                if isSearching {
-                    NoriCard {
-                        HStack(spacing: 10) {
-                            ProgressView().tint(NoriColors.accent)
-                            Text("Searching memory…")
-                                .font(NoriTypography.meta)
-                                .foregroundStyle(NoriColors.ink2)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                } else {
+            if matchingFacts.isEmpty && logHits.isEmpty && searchError == nil {
+                if isSearching || searchResultQuery != trimmedQuery {
+                    NoriLoadingState("Searching memory…")
+                } else if store.coreMemoriesRead == .loaded {
                     NoriEmptyState(
                         title: "Nothing matches “\(trimmedQuery)”",
                         message: "Try a different keyword."
@@ -293,25 +277,31 @@ public struct MemoryView: View {
             isSearching = false
             searchError = nil
             searchHits = []
+            searchResultQuery = nil
             return
         }
+        isSearching = true
+        searchError = nil
         if debounce {
             try? await Task.sleep(for: .milliseconds(200))
             if Task.isCancelled { return }
         }
-        isSearching = true
-        searchError = nil
+        defer {
+            if !Task.isCancelled && query == trimmedQuery {
+                isSearching = false
+            }
+        }
         do {
             let results = try await store.searchMemory(query: query, layer: nil, limit: 20)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, query == trimmedQuery else { return }
             searchHits = results.items
+            searchResultQuery = query
         } catch is CancellationError {
             return
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, query == trimmedQuery else { return }
             searchError = error.localizedDescription
         }
-        isSearching = false
     }
 }
 

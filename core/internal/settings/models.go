@@ -111,20 +111,21 @@ func parseOptionalNonNegativeFloatDefault(name string, fallback float64) float64
 	return parseOptionalNonNegativeFloat(name)
 }
 
-func modelsFromEnvironment(profile, cloud string, simulation bool) Models {
+func modelsFromEnvironment(profile, cloud string) Models {
 	testURL := strings.TrimSpace(os.Getenv("NORI_MODEL_TEST_URL"))
+	localURL := strings.TrimSpace(os.Getenv("NORI_LOCAL_MODEL_URL"))
 	localTag := ""
-	if simulation && testURL == "" {
-		if localURL := strings.TrimSpace(os.Getenv("NORI_LOCAL_MODEL_URL")); localURL != "" {
-			testURL = localURL
-			localTag = cmp.Or(strings.TrimSpace(os.Getenv("NORI_LOCAL_MODEL_TAG")), "inkling-2-mini")
-		}
+	localModel := testURL == "" && localURL != ""
+	if localModel {
+		testURL = localURL
+		localTag = cmp.Or(strings.TrimSpace(os.Getenv("NORI_LOCAL_MODEL_TAG")), "inkling-2-mini")
 	}
 	if !(cloud == "local" && testURL != "") {
 		return Models{
 			EnvProfile:   profile,
 			BYOKRequired: true,
 			TestURL:      testURL,
+			LocalModel:   localModel,
 			JevKey:       strings.TrimSpace(os.Getenv("JEV_API_KEY")),
 			MaxUSD:       parseOptionalNonNegativeFloat("NORI_LLM_MAX_USD"),
 		}
@@ -136,6 +137,7 @@ func modelsFromEnvironment(profile, cloud string, simulation bool) Models {
 		Outer:          cmp.Or(strings.TrimSpace(os.Getenv("NORI_AGENT_MODEL")), localTag, DefaultOuterModel),
 		Inner:          cmp.Or(strings.TrimSpace(os.Getenv("MODEL_NAME")), localTag, DefaultInnerModel),
 		TestURL:        testURL,
+		LocalModel:     localModel,
 		OuterReasoning: strings.ToLower(strings.TrimSpace(os.Getenv("NORI_OUTER_REASONING_EFFORT"))),
 		InnerReasoning: strings.ToLower(strings.TrimSpace(os.Getenv("NORI_INNER_REASONING_EFFORT"))),
 		MaxUSD:         parseOptionalNonNegativeFloat("NORI_LLM_MAX_USD"),

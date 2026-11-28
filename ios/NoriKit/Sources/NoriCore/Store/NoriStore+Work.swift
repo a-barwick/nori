@@ -336,12 +336,16 @@ extension NoriStore {
         let generation = sessionGeneration
         do {
             let autos = try await transport.fetchAutomations()
-            guard generation == sessionGeneration else { return }
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
             self.automations = autos
+            automationsRead = .loaded
             markRefreshed(.automations)
         } catch {
-            guard generation == sessionGeneration else { return }
-            _ = await handleAuthFailureIfNeeded(error)
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
+            if await handleAuthFailureIfNeeded(error) { return }
+            guard generation == sessionGeneration, !Task.isCancelled else { return }
+            automationsRead = .failed(error.localizedDescription)
+            updateRefreshFreshness(.automations, didLoad: false)
         }
     }
 

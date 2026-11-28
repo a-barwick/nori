@@ -21,6 +21,7 @@ import (
 
 	"nori/internal/agent"
 	"nori/internal/app"
+	"nori/internal/billing"
 	"nori/internal/homeai"
 	"nori/internal/homeaiwire"
 	"nori/internal/modelprofiles"
@@ -54,6 +55,11 @@ func TestHomeConnectorRoutesChatAcrossReplicas(t *testing.T) {
 	defer svc.Close()
 	alice := createUser(t, svc, uuid.NewString(), "connector-"+uuid.NewString()+"@example.test")
 	bob := createUser(t, svc, uuid.NewString(), "connector-"+uuid.NewString()+"@example.test")
+	for _, userID := range []string{alice.ID, bob.ID} {
+		if _, err := svc.Billing().SetTier(ctx, userID, billing.TierBYOK, billing.SetTierOptions{}); err != nil {
+			t.Fatalf("enable Home AI for %s: %v", userID, err)
+		}
+	}
 	relay, err := homeai.Open(ctx, homeai.Options{PostgresURL: dsn, Key: key, VerificationURI: verification})
 	if err != nil {
 		t.Fatal(err)
@@ -115,13 +121,12 @@ func TestHomeConnectorRoutesChatAcrossReplicas(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var view modelprofiles.AccountView
 	for {
-		data := request(alice.ID, "GET", "/v1/settings/models", nil, 200)
-		if err := json.Unmarshal(data, &view); err != nil {
+		devices, err := relay.List(ctx, alice.ID)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if len(view.ModelProfiles.Profiles) > 0 {
+		if len(devices) == 1 && devices[0].Status == "online" && len(devices[0].Models) == 1 {
 			break
 		}
 		select {
@@ -129,6 +134,13 @@ func TestHomeConnectorRoutesChatAcrossReplicas(t *testing.T) {
 			t.Fatal("connector never published its model")
 		case <-time.After(25 * time.Millisecond):
 		}
+	}
+	var view modelprofiles.AccountView
+	if err := json.Unmarshal(request(alice.ID, "GET", "/v1/settings/models", nil, 200), &view); err != nil {
+		t.Fatal(err)
+	}
+	if len(view.ModelProfiles.Profiles) != 1 {
+		t.Fatalf("expected one Home AI model profile, got %+v", view.ModelProfiles.Profiles)
 	}
 	profile := view.ModelProfiles.Profiles[0]
 	if profile.Backend != modelprofiles.BackendHome || profile.HomeDeviceID == "" {

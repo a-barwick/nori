@@ -93,12 +93,20 @@ public struct LibraryView: View {
                 searchBar
                 filterChipsBar
 
-                if store.libraryItems.isEmpty {
+                if let error = store.libraryRead.error {
+                    NoriRetryNotice("Couldn’t load artifacts", detail: error) {
+                        await store.refreshLibrary()
+                    }
+                }
+
+                if store.libraryItems.isEmpty && store.libraryRead == .pending {
+                    NoriLoadingState("Loading artifacts…")
+                } else if store.libraryItems.isEmpty && store.libraryRead == .loaded {
                     NoriEmptyState(
                         title: "Nothing saved yet",
                         message: "Documents Nori creates and files you share appear here."
                     )
-                } else if groupedCollections.isEmpty {
+                } else if groupedCollections.isEmpty && store.libraryRead == .loaded {
                     NoriEmptyState(
                         title: trimmedQuery.isEmpty ? "No matching \(selectedKind.label.lowercased())" : "No matching artifacts",
                         message: trimmedQuery.isEmpty

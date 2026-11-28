@@ -28,7 +28,15 @@ public struct RoutinesView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                if activeAutomations.isEmpty {
+                if let error = store.automationsRead.error {
+                    NoriRetryNotice("Couldn’t load automations", detail: error) {
+                        await store.refreshAutomations()
+                    }
+                }
+
+                if activeAutomations.isEmpty && store.automationsRead == .pending {
+                    NoriLoadingState("Loading automations…")
+                } else if activeAutomations.isEmpty && store.automationsRead == .loaded {
                     NoriEmptyState(
                         title: "No automations yet",
                         message: "Ask Nori in Chat to set up recurring briefs, monitors, or scheduled checks."
@@ -40,7 +48,7 @@ public struct RoutinesView: View {
                         }
                         .buttonStyle(NoriButtonStyle(.primary, compact: true))
                     }
-                } else {
+                } else if !activeAutomations.isEmpty {
                     NoriRows {
                         ForEach(Array(activeAutomations.enumerated()), id: \.element.id) { idx, automation in
                             automationRow(

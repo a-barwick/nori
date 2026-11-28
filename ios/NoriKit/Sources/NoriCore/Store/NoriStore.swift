@@ -100,6 +100,34 @@ public enum InteractionSubmitOutcome: Sendable, Equatable {
     case failed(String)
 }
 
+public enum NoriReadStatus: Equatable, Sendable {
+    case pending
+    case loaded
+    case failed(String)
+
+    init(didLoad: Bool, error: String?) {
+        if didLoad {
+            self = .loaded
+        } else if let error {
+            self = .failed(error)
+        } else {
+            self = .pending
+        }
+    }
+
+    init<Value>(_ result: Result<Value, Error>) {
+        switch result {
+        case .success: self = .loaded
+        case .failure(let error): self = .failed(error.localizedDescription)
+        }
+    }
+
+    public var error: String? {
+        if case .failed(let message) = self { return message }
+        return nil
+    }
+}
+
 @Observable
 @MainActor
 public final class NoriStore {
@@ -127,19 +155,26 @@ public final class NoriStore {
     public var operations: [OperationProjection]
     public var interactions: [Interaction]
     public var mcpServers: [MCPServer]
+    public internal(set) var mcpServersRead: NoriReadStatus = .pending
     public var mcpTools: [String: [MCPServerTool]]
     public var connections: [Connection]
+    public internal(set) var connectionsRead: NoriReadStatus = .pending
     public internal(set) var integrations: [IntegrationSummary] = []
+    public internal(set) var integrationsRead: NoriReadStatus = .pending
     public var libraryItems: [LibraryItem]
+    public internal(set) var libraryRead: NoriReadStatus = .pending
     public internal(set) var libraryBodyCache: [String: String] = [:]
     public var searchHits: [SearchHit]
     public var coreMemories: [MemoryFact]
+    public internal(set) var coreMemoriesRead: NoriReadStatus = .pending
     public var memoryLogs: [MemoryLog]
     public var workingMemory: WorkingMemory
     public internal(set) var hasLoadedWorkingMemory = false
     public var memorySearchHits: [MemorySearchHit] = []
     public var automations: [Automation]
+    public internal(set) var automationsRead: NoriReadStatus = .pending
     public var permissions: [PermissionRule]
+    public internal(set) var permissionsRead: NoriReadStatus = .pending
     public var preferences: Preferences
     public internal(set) var hasLoadedPreferences = false
     public var modelKeys: ModelKeysResponse
@@ -429,6 +464,14 @@ public final class NoriStore {
         lastRefreshedAt[domain] = .now
     }
 
+    func updateRefreshFreshness(_ domain: RefreshDomain, didLoad: Bool) {
+        if didLoad {
+            markRefreshed(domain)
+        } else {
+            lastRefreshedAt.removeValue(forKey: domain)
+        }
+    }
+
     public func refreshForTab(_ tab: NoriTab, force: Bool = false) async {
         guard authState.isSignedIn else { return }
         switch tab {
@@ -512,19 +555,26 @@ public final class NoriStore {
         hasLoadedWorkItems = false
         hasLoadedInteractions = false
         mcpServers = []
+        mcpServersRead = .pending
         mcpTools = [:]
         connections = []
+        connectionsRead = .pending
         integrations = []
+        integrationsRead = .pending
         libraryItems = []
+        libraryRead = .pending
         libraryBodyCache = [:]
         searchHits = []
         coreMemories = []
+        coreMemoriesRead = .pending
         memoryLogs = []
         workingMemory = WorkingMemory()
         hasLoadedWorkingMemory = false
         memorySearchHits = []
         automations = []
+        automationsRead = .pending
         permissions = []
+        permissionsRead = .pending
         preferences = Preferences()
         hasLoadedPreferences = false
         modelKeys = ModelKeysResponse()
@@ -640,8 +690,11 @@ public final class NoriStore {
     }
 
     public func requestPushAuthorizationIfNeeded() {
+        let generation = sessionGeneration
         Task { @MainActor [weak self] in
-            guard let self else { return }
+            guard let self, generation == self.sessionGeneration, self.authState.isSignedIn,
+                  let capabilities = self.capabilities, capabilities.assistantFeatures?["push_notifications"] != false
+            else { return }
             await self.pushManager.requestAuthorizationIfNeeded()
         }
     }

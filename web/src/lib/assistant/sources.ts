@@ -97,12 +97,20 @@ export function usePendingInteractions() {
 }
 
 export function useLibrary(query = "") {
-  const { has, runtime } = useAssistant();
+  const { capabilities, capabilitiesError, refreshCapabilities, has, runtime } = useAssistant();
   const live = has("library");
   const remote = useResource<List<LibraryItem>>(live ? `/library${query}` : null, { poll: 30_000 });
   const results = runtime.session?.results;
   const legacy = useMemo(() => (results ?? []).filter((result) => !result.superseded_by).map((result) => legacyLibraryItem(result)).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)), [results]);
-  return live ? { items: remote.data?.items, error: remote.error, loading: remote.loading, reload: remote.reload, live } : { items: runtime.session ? legacy : undefined, error: undefined, loading: runtime.loading && !runtime.session, reload: runtime.refreshHistory, live };
+  if (live) return { items: remote.data?.items, error: remote.error, loading: remote.loading, reload: remote.reload, live };
+  if (!capabilities) return { items: undefined, error: capabilitiesError, loading: !capabilitiesError, reload: refreshCapabilities, live };
+  return {
+    items: runtime.session ? legacy : undefined,
+    error: !runtime.session && runtime.error ? new Error(runtime.error) : undefined,
+    loading: runtime.loading && !runtime.session,
+    reload: runtime.refreshHistory,
+    live,
+  };
 }
 
 export function useSummary(): Partial<AssistantSummary> {
