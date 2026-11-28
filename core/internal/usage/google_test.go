@@ -68,7 +68,7 @@ func TestReadCostReportBreakdowns(t *testing.T) {
 		{CreatedAt: now.Add(-10 * time.Minute), Model: "google/gemini-4-neon", Billing: "hosted", Category: "llm", CostUSD: &c1, CostStatus: "provider", RequestStatus: "received"},
 		{CreatedAt: now.Add(-5 * time.Minute), Model: "exa-search", Billing: "hosted", Category: "search", CostUSD: &c2, CostStatus: "calculated", RequestStatus: "received"},
 		{CreatedAt: now.Add(-2 * time.Minute), Model: "claude-opus-5-5", Billing: "byok", Category: "llm", CostUSD: &c3, CostStatus: "calculated", RequestStatus: "received"},
-		{CreatedAt: now.Add(-1 * time.Minute), Model: "inkling-mini-2", Billing: "local", Category: "llm", CostStatus: "local", RequestStatus: "received"},
+		{CreatedAt: now.Add(-1 * time.Minute), Model: "inkling-2-mini", Billing: "local", Category: "llm", CostStatus: "local", RequestStatus: "received"},
 		{CreatedAt: now.Add(-1 * time.Minute), Model: "stale", Billing: "hosted", Category: "llm", RequestStatus: "stale_aborted"},
 	}
 	report, err := ReadCostReport(context.Background(), func(_ context.Context, _, _ time.Time, visit func(docstore.UsageCostRecord)) error {

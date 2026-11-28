@@ -117,7 +117,7 @@ func modelsFromEnvironment(profile, cloud string, simulation bool) Models {
 	if simulation && testURL == "" {
 		if localURL := strings.TrimSpace(os.Getenv("NORI_LOCAL_MODEL_URL")); localURL != "" {
 			testURL = localURL
-			localTag = cmp.Or(strings.TrimSpace(os.Getenv("NORI_LOCAL_MODEL_TAG")), "inkling-mini-2")
+			localTag = cmp.Or(strings.TrimSpace(os.Getenv("NORI_LOCAL_MODEL_TAG")), "inkling-2-mini")
 		}
 	}
 	if !(cloud == "local" && testURL != "") {

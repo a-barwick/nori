@@ -749,7 +749,7 @@ class SuiteTests(unittest.TestCase):
         self.assertEqual(len(probed), 1)
         self.assertEqual(probed[0][0], "http://127.0.0.1:11434/v1/chat/completions")
         assert probed[0][1] is not None
-        self.assertEqual(probed[0][1]["model"], "inkling-mini-2")
+        self.assertEqual(probed[0][1]["model"], "inkling-2-mini")
 
     def test_model_usage_aggregation_and_max_usd_collect_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -972,7 +972,7 @@ class SuiteTests(unittest.TestCase):
                 },
             )
             self.assertEqual(local_env["NORI_LOCAL_MODEL_URL"], "http://127.0.0.1:11434")
-            self.assertEqual(local_env["NORI_LOCAL_MODEL_TAG"], "inkling-mini-2")
+            self.assertEqual(local_env["NORI_LOCAL_MODEL_TAG"], "inkling-2-mini")
             self.assertNotIn("OPENAI_API_KEY", local_env)
             self.assertNotIn("OPENAI_TEST_API_KEY", local_env)
             self.assertNotIn("NORI_MODEL_GATEWAY_API_KEY", local_env)
@@ -1036,10 +1036,10 @@ class SuiteTests(unittest.TestCase):
         self.assertIsNotNone(judge_client)
         assert resp_client is not None and judge_client is not None
         self.assertEqual(resp_client.base_url, "http://127.0.0.1:11434/v1")
-        self.assertEqual(resp_client.model, "inkling-mini-2")
+        self.assertEqual(resp_client.model, "inkling-2-mini")
         self.assertEqual(resp_client.api_key, "local-inkling")
         self.assertEqual(judge_client.base_url, "http://127.0.0.1:11434/v1")
-        self.assertEqual(judge_client.model, "inkling-mini-2")
+        self.assertEqual(judge_client.model, "inkling-2-mini")
 
         with mock.patch.dict(os.environ, {"SIM_JUDGE_BASE_URL": "https://api.openai.com/v1"}, clear=True):
             with self.assertRaises(ValueError):
@@ -1133,6 +1133,46 @@ class SuiteTests(unittest.TestCase):
         assert isinstance(body, dict)
         self.assertNotIn("temperature", body)
         self.assertEqual(body["reasoning_effort"], "low")
+
+    def test_chat_json_retries_without_json_mode_when_local_model_lacks_it(self) -> None:
+        import io
+        import urllib.error
+
+        from llm_client import LLMClient
+
+        bodies: list[dict] = []
+
+        class FakeResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self) -> bytes:
+                return json.dumps({"choices": [{"message": {"content": "```json\n{\"ok\": true}\n```"}}]}).encode("utf-8")
+
+        def fake_urlopen(req, timeout=90):
+            body = json.loads(req.data.decode("utf-8"))
+            bodies.append(body)
+            if "response_format" in body:
+                err = b'{"error":{"message":"structured output is unavailable","type":"api_error"}}'
+                raise urllib.error.HTTPError(req.full_url, 501, "Not Implemented", {}, io.BytesIO(err))
+            return FakeResp()
+
+        client = LLMClient("local-inkling", "http://127.0.0.1:11434/v1", "inkling-2-mini")
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            self.assertEqual(client.chat_json("sys", "usr"), {"ok": True})
+        self.assertEqual(len(bodies), 2)
+        self.assertNotIn("response_format", bodies[1])
+        self.assertEqual(bodies[1]["messages"][-1], {"role": "system", "content": "Return only a JSON object."})
+
+        def other_501(req, timeout=90):
+            raise urllib.error.HTTPError(req.full_url, 501, "Not Implemented", {}, io.BytesIO(b"nope"))
+
+        with mock.patch("urllib.request.urlopen", side_effect=other_501):
+            with self.assertRaisesRegex(RuntimeError, "LLM API 501"):
+                client.chat_json("sys", "usr")
 
     def test_responder_fails_closed_on_approval_errors_and_invalid_decisions(self) -> None:
         from llm_client import AdaptivePersonaResponder

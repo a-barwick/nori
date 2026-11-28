@@ -31,7 +31,7 @@ python3 scripts/persona-sim/runner.py --preset smoke --stub-models --max-events 
 
 ### 3. Run model-backed simulations
 
-Per project policy (`AGENTS.md` Rule 2), use local **Inkling Mini 2** (`NORI_LOCAL_MODEL_URL=http://127.0.0.1:11434`, `NORI_LOCAL_MODEL_TAG=inkling-mini-2`) for routine model-backed local development and tests. Use cloud LLMs (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, and optionally `SIM_RESPONDER_API_KEY` / `SIM_JUDGE_API_KEY`) only when explicitly running a cloud-model evaluation or baseline comparison:
+Per project policy (`AGENTS.md` Rule 2), use local **Inkling Mini 2** (`NORI_LOCAL_MODEL_URL=http://127.0.0.1:11434`, `NORI_LOCAL_MODEL_TAG=inkling-2-mini`) for routine model-backed local development and tests. Use cloud LLMs (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, and optionally `SIM_RESPONDER_API_KEY` / `SIM_JUDGE_API_KEY`) only when explicitly running a cloud-model evaluation or baseline comparison:
 
 ```bash
 # Fast 1-persona sanity check (~2-4 min)

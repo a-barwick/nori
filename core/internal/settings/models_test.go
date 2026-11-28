@@ -99,7 +99,7 @@ func TestLoadSimulationAllowsLoopbackTestAndLocalInklingWithoutCloudKeys(t *test
 		}
 	})
 
-	t.Run("NORI_LOCAL_MODEL_URL defaults to inkling-mini-2", func(t *testing.T) {
+	t.Run("NORI_LOCAL_MODEL_URL defaults to inkling-2-mini", func(t *testing.T) {
 		clearModelEnv(t)
 		t.Setenv("NORI_CLOUD", "local")
 		t.Setenv("NORI_LOCAL_MODEL_URL", "http://127.0.0.1:11434")
@@ -111,7 +111,7 @@ func TestLoadSimulationAllowsLoopbackTestAndLocalInklingWithoutCloudKeys(t *test
 		if s.Models.BYOKRequired {
 			t.Fatalf("expected BYOKRequired=false for local Inkling simulation")
 		}
-		if s.Models.TestURL != "http://127.0.0.1:11434" || s.Models.Outer != "inkling-mini-2" || s.Models.Inner != "inkling-mini-2" {
+		if s.Models.TestURL != "http://127.0.0.1:11434" || s.Models.Outer != "inkling-2-mini" || s.Models.Inner != "inkling-2-mini" {
 			t.Fatalf("unexpected local Inkling config: %+v", s.Models)
 		}
 	})

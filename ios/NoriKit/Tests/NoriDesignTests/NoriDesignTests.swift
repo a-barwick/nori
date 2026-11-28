@@ -143,7 +143,7 @@ struct NoriDesignTests {
         #expect(NoriBrandKind.forProvider(provider: "openai") == .openAI)
         #expect(NoriBrandKind.forProvider(model: "gpt-5") == .openAI)
         #expect(NoriBrandKind.forProvider(provider: "google") == .googleGemini)
-        #expect(NoriBrandKind.forProvider(model: "inkling-mini-2", backend: "home") == .homeComputer)
+        #expect(NoriBrandKind.forProvider(model: "inkling-2-mini", backend: "home") == .homeComputer)
         #expect(NoriBrandKind.forProvider(provider: "custom") == .genericKey)
 
         #expect(NoriBrandKind.forApp(name: "Linear") == .linear)
