@@ -19,6 +19,7 @@ type Service struct {
 	Capabilities Capabilities
 	HTTP         *http.Client
 	Extensions   extensions.Source
+	ToolOrigin   string
 	Hidden       func(ctx context.Context, resultID string) bool
 	Now          func() time.Time
 }

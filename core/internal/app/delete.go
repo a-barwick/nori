@@ -154,6 +154,11 @@ func (s *Service) deleteUserAccount(ctx context.Context, row users.User, confirm
 	if err := s.storage.PurgeUserArtifacts(ctx, s.cfg, row); err != nil {
 		return fmt.Errorf("%w: purge user artifacts: %w", api.ErrAccountDeletePending, err)
 	}
+	if s.pushStore != nil {
+		if err := s.pushStore.DeleteUserDevices(ctx, row.ID); err != nil {
+			return fmt.Errorf("%w: delete user push devices: %w", api.ErrAccountDeletePending, err)
+		}
+	}
 	if err := store.FinishAccountDelete(users.WithID(ctx, row.DataOwner()), row.ID, row.DataOwner()); err != nil {
 		return fmt.Errorf("%w: clear account records: %w", api.ErrAccountDeletePending, err)
 	}

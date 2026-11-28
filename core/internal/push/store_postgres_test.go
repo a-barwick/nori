@@ -57,6 +57,14 @@ func TestPostgresStorePushDevicesAndOutbox(t *testing.T) {
 	if err := store.DeleteDevice(ctx, userA, devB.ID); !errors.Is(err, push.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound when userA deletes userB's device, got %v", err)
 	}
+	// Stale DeleteDeviceByToken scoped to userA must NOT delete userB's reassigned token.
+	if err := store.DeleteDeviceByToken(ctx, userA, token); err != nil {
+		t.Fatalf("DeleteDeviceByToken(userA): %v", err)
+	}
+	listB, err := store.ListDevices(ctx, userB)
+	if err != nil || len(listB) != 1 || listB[0].ID != devB.ID {
+		t.Fatalf("userB devices after stale userA token delete = %+v, err=%v; want 1", listB, err)
+	}
 
 	// Enqueue outbox idempotently and process via FakeSender.
 	fake := push.NewFakeSender()

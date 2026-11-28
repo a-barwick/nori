@@ -57,11 +57,12 @@ func runProactivityModes(t *testing.T, fn func(t *testing.T, mode proactivityBac
 	t.Run("memstore", func(t *testing.T) {
 		fn(t, backendMemstore)
 	})
-	if rawURL := strings.TrimSpace(os.Getenv("NORI_TEST_POSTGRES_URL")); rawURL != "" {
-		t.Run("postgres", func(t *testing.T) {
-			fn(t, backendPostgres)
-		})
-	}
+	t.Run("postgres", func(t *testing.T) {
+		if strings.TrimSpace(os.Getenv("NORI_TEST_POSTGRES_URL")) == "" {
+			t.Skip("NORI_TEST_POSTGRES_URL is unset; skipping Postgres proactivity DST")
+		}
+		fn(t, backendPostgres)
+	})
 }
 
 func isolatedProactivityPostgresURL(t *testing.T, rawURL string) string {
@@ -527,13 +528,18 @@ func (a *proactComputerAdapter) Execute(_ context.Context, call invoke.Call, _ i
 }
 
 type proactStubAdapter struct {
+	effect    extensions.Effect
 	execCalls atomic.Int32
 }
 
 func (a *proactStubAdapter) Prepare(_ context.Context, call invoke.Call) (invoke.Prepared, error) {
+	eff := a.effect
+	if eff == "" {
+		eff = extensions.EffectReversibleWrite
+	}
 	return invoke.Prepared{
 		Summary: "Stub " + call.Exec.Tool.ID,
-		Effect:  extensions.EffectReversibleWrite,
+		Effect:  eff,
 		Spec:    map[string]string{"tool": call.Exec.Tool.ID},
 	}, nil
 }
@@ -1624,16 +1630,26 @@ func TestProactivityCostGovernorAndUnattendedOriginSafety(t *testing.T) {
 			t.Fatalf("AcceptCommandBatch: %v", err)
 		}
 
-		var sawCreateDenied atomic.Bool
+		var sawCreateInModelTools atomic.Bool
+		var sawCreateBlocked atomic.Bool
 		out, _ := h.claimAndRunTask(ctx, receipts[0].Run.ID, "worker-safety", func(_ context.Context, callNum int, req agent.Request) (agent.Response, error) {
-			switch callNum {
-			case 1:
+			if callNum == 1 {
+				for _, tool := range req.Tools {
+					if tool.Name == "automation_create" {
+						sawCreateInModelTools.Store(true)
+					}
+				}
 				return proactToolCallResp("c-forb-create", "automation_create", map[string]any{"title": "Rogue"}, 0.02), nil
+			}
+			switch callNum {
 			case 2:
 				for _, m := range req.Messages {
 					raw, _ := json.Marshal(m)
-					if strings.Contains(string(raw), `"outcome":"denied"`) || strings.Contains(string(raw), `\"outcome\":\"denied\"`) {
-						sawCreateDenied.Store(true)
+					s := string(raw)
+					if strings.Contains(s, `"outcome":"denied"`) || strings.Contains(s, `\"outcome\":\"denied\"`) ||
+						strings.Contains(s, `"outcome":"failed"`) || strings.Contains(s, `\"outcome\":\"failed\"`) ||
+						strings.Contains(s, "not available") || strings.Contains(s, "unknown") {
+						sawCreateBlocked.Store(true)
 					}
 				}
 				return proactToolCallResp("c-comp-write", "computer_shell", map[string]any{"command": "touch /tmp/bad"}, 0.02), nil
@@ -1647,8 +1663,11 @@ func TestProactivityCostGovernorAndUnattendedOriginSafety(t *testing.T) {
 		if out != task.OutcomeDone {
 			t.Fatalf("unattended safety run outcome = %s, want done", out)
 		}
-		if autoStub.execCalls.Load() != 0 || !sawCreateDenied.Load() {
-			t.Fatalf("automation_create was not denied (execs=%d, sawDenied=%v)", autoStub.execCalls.Load(), sawCreateDenied.Load())
+		if sawCreateInModelTools.Load() {
+			t.Fatalf("automation_create was offered in model tools for automation-origin run; expected upfront filtering")
+		}
+		if autoStub.execCalls.Load() != 0 || !sawCreateBlocked.Load() {
+			t.Fatalf("automation_create was not blocked (execs=%d, sawBlocked=%v)", autoStub.execCalls.Load(), sawCreateBlocked.Load())
 		}
 		if !compAdapter.sawReadOnly.Load() || compAdapter.execCalls.Load() != 0 {
 			t.Fatalf("Computer write was not forced ReadOnly/blocked (sawReadOnly=%v, execs=%d)", compAdapter.sawReadOnly.Load(), compAdapter.execCalls.Load())
@@ -1976,6 +1995,207 @@ func TestProactivityDay1BriefTravelAndAbandonedDecay(t *testing.T) {
 		}
 		if got := len(h.commandsFor(scheduler.MorningBriefAutomationID)); got != 2 {
 			t.Fatalf("abandoned account fired extra commands: got %d, want 2", got)
+		}
+
+		h.checkQuiescence(ctx)
+	})
+}
+
+// ============================================================================
+// Scenario 9: Multi-Instance Contention & Crash-Restart Recovery
+// ============================================================================
+
+func TestProactivityMultiInstanceContentionAndCrashRestart(t *testing.T) {
+	runProactivityModes(t, func(t *testing.T, mode proactivityBackendMode) {
+		ctx := context.Background()
+		start := time.Date(2026, 5, 4, 17, 0, 0, 0, time.UTC)
+		h := newProactivitySimHarness(t, mode, 1011, "America/Los_Angeles", start)
+		h.prefs.Proactivity.DailyProactiveBudgetUSD = 100.0
+
+		receipt, err := h.sched.Save(ctx, "", "req-contention-watch", 0, scheduler.Editable{
+			Title:       "Contention Watch",
+			Instruction: "Check inbox and report any new urgent items.",
+			Trigger: scheduler.Trigger{
+				Kind:               "watch",
+				Source:             &scheduler.ResourceRef{ConnectionID: "conn-gmail", Kind: "gmail", ProviderID: "inbox"},
+				PredicateRef:       "urgent_items",
+				MinIntervalSeconds: 300,
+			},
+			BudgetUSD:      0.10,
+			MaxActiveRuns:  1,
+			MissedRun:      "skip",
+			DestinationIDs: []string{scheduler.ChatDestination},
+		})
+		if err != nil {
+			t.Fatalf("Save contention watch: %v", err)
+		}
+		auto := mustDecodeAutomation(t, receipt)
+
+		// Part A: Two scheduler replicas tick concurrently for the same due slot.
+		schedReplica := *h.sched
+		h.clock.Advance(5*time.Minute + time.Second)
+
+		barrier := make(chan struct{})
+		var wg sync.WaitGroup
+		errs := make([]error, 2)
+		for i, svc := range []*scheduler.Service{h.sched, &schedReplica} {
+			wg.Add(1)
+			go func(idx int, s *scheduler.Service) {
+				defer wg.Done()
+				<-barrier
+				_, errs[idx] = s.Tick(ctx)
+			}(i, svc)
+		}
+		close(barrier)
+		wg.Wait()
+		for i, err := range errs {
+			if err != nil {
+				t.Fatalf("replica %d Tick error: %v", i, err)
+			}
+		}
+
+		occs, err := h.sched.Occurrences(ctx, auto.ID)
+		if err != nil {
+			t.Fatalf("Occurrences after concurrent tick: %v", err)
+		}
+		if len(occs) != 1 {
+			t.Fatalf("occurrences after concurrent tick = %d, want 1", len(occs))
+		}
+		cmds := h.commandsFor(auto.ID)
+		if len(cmds) != 1 {
+			t.Fatalf("accepted commands after concurrent tick = %d, want 1", len(cmds))
+		}
+		runID := cmds[0].RunID
+
+		// Part B: Worker-1 runs through tool execution and exits mid-run (crash/drain handoff);
+		// worker-2 takes over the fenced lease and completes the run with zero duplicate side effects.
+		readDef := sealSimDef(t, "google/mail/mail-list", "google/mail", "mail_list", "gmail", "google.mail/list", extensions.EffectRead)
+		mailStub := &proactStubAdapter{effect: extensions.EffectRead}
+		adapters := invoke.NewRegistry()
+		adapters.Register(extensions.AdapterNative, "google.mail", mailStub)
+
+		leases, ok := any(h.backend).(docstore.LeaseStore)
+		if !ok {
+			t.Fatalf("backend %T does not implement docstore.LeaseStore", h.backend)
+		}
+
+		var totalModelCalls atomic.Int32
+		sharedModelFn := func(_ context.Context, _ int, _ agent.Request) (agent.Response, error) {
+			n := totalModelCalls.Add(1)
+			switch n {
+			case 1:
+				return proactToolCallResp("c-list-1", "mail_list", map[string]any{}, 0.01), nil
+			default:
+				return proactToolCallResp("c-done-1", "complete", map[string]any{
+					"answer":   `{"outcome":"alert","summary":"Recovered alert after worker handoff","finding_keys":["crash:1"]}`,
+					"evidence": []any{},
+					"unmet":    []any{},
+				}, 0.01), nil
+			}
+		}
+
+		// Worker-1 executes the first 3 steps (SyncHistory -> Model -> mail_list) and then stops mid-run.
+		claim1, claimed1, err := leases.ClaimTaskByID(ctx, h.user.ID, runID, "worker-crash-1", state.TaskLease)
+		if err != nil || !claimed1 {
+			t.Fatalf("ClaimTaskByID worker-1 = (%v, %v), want claimed", claimed1, err)
+		}
+		crashAgent := agent.New(h.store, &proactScriptedModel{fn: sharedModelFn})
+		crashAgent.Now = h.clock.Now
+		crashAgent.Extensions = &proactExtSource{defs: []extensions.Definition{readDef}}
+		crashAgent.Capabilities = agent.Capabilities{Location: time.UTC}
+		noopTicker := func(time.Duration) (<-chan time.Time, func()) { return make(chan time.Time), func() {} }
+		sleepFn := func(ctx context.Context, d time.Duration) error {
+			if d > 0 {
+				h.clock.Advance(d)
+			}
+			return ctx.Err()
+		}
+		worker1 := &task.Runner{
+			Activities: &task.Activities{
+				Agent:     crashAgent,
+				Store:     h.store,
+				Executor:  &task.Executor{Adapters: adapters, Permissions: h.perms, Now: h.clock.Now, Sleep: sleepFn},
+				Now:       h.clock.Now,
+				Sleep:     sleepFn,
+				NewTicker: noopTicker,
+			},
+			Leases:     leases,
+			UserID:     h.user.ID,
+			Owner:      "worker-crash-1",
+			Now:        h.clock.Now,
+			NewTicker:  noopTicker,
+			StepBudget: 3,
+		}
+		out1, err := worker1.Run(ctx, claim1)
+		if err != nil || out1 != task.OutcomeReleased {
+			t.Fatalf("worker-1 mid-run handoff = (%s, %v), want (released, nil)", out1, err)
+		}
+		ctrlAfterW1, err := h.store.GetTaskControl(ctx, runID)
+		if err != nil {
+			t.Fatalf("GetTaskControl after worker-1: %v", err)
+		}
+
+		// Worker-2 takes over and completes the remaining steps.
+		outcome, _ := h.claimAndRunTask(ctx, runID, "worker-recovery-2", sharedModelFn, []extensions.Definition{readDef}, adapters)
+		if outcome != task.OutcomeDone {
+			t.Fatalf("recovery worker outcome = %s, want done", outcome)
+		}
+		ctrlAfterW2, err := h.store.GetTaskControl(ctx, runID)
+		if err != nil {
+			t.Fatalf("GetTaskControl after worker-2: %v", err)
+		}
+		if ctrlAfterW2.Fence <= ctrlAfterW1.Fence {
+			t.Fatalf("expected Fence incremented on worker-2 takeover: %d -> %d", ctrlAfterW1.Fence, ctrlAfterW2.Fence)
+		}
+		if got := mailStub.execCalls.Load(); got != 1 {
+			t.Fatalf("mail_list exec calls = %d, want 1 (zero duplicate side effects)", got)
+		}
+		if _, err := h.sched.Tick(ctx); err != nil {
+			t.Fatalf("Tick settle after crash recovery: %v", err)
+		}
+		occs, err = h.sched.Occurrences(ctx, auto.ID)
+		if err != nil || len(occs) != 1 || occs[0].Status != scheduler.OccurrenceCompleted {
+			t.Fatalf("settled occurrence after recovery = %+v (err=%v), want 1 completed", occs, err)
+		}
+
+		// Part C: Concurrent OutboxWorker contention settles the delivery cleanly.
+		if _, err := h.pushStore.RegisterDevice(ctx, h.user.ID, "apns-contend-"+uuid.NewString(), "iphone-contend", push.EnvProduction); err != nil {
+			t.Fatalf("RegisterDevice contention: %v", err)
+		}
+		delivID := "dlv-contend-" + uuid.NewString()
+		if _, created, err := h.pushWorker.Enqueue(ctx, push.EnqueueRequest{
+			DeliveryID: delivID,
+			UserID:     h.user.ID,
+			Kind:       push.KindUrgent,
+		}); err != nil || !created {
+			t.Fatalf("Enqueue contention = (created=%v, err=%v), want (true, nil)", created, err)
+		}
+		worker2 := &push.OutboxWorker{
+			Store:  h.pushStore,
+			Sender: h.pushSender,
+			Now:    h.clock.Now,
+		}
+		pushBarrier := make(chan struct{})
+		var pushWG sync.WaitGroup
+		pushErrs := make([]error, 2)
+		for i, w := range []*push.OutboxWorker{h.pushWorker, worker2} {
+			pushWG.Add(1)
+			go func(idx int, worker *push.OutboxWorker) {
+				defer pushWG.Done()
+				<-pushBarrier
+				_, pushErrs[idx] = worker.ProcessPending(ctx, 10)
+			}(i, w)
+		}
+		close(pushBarrier)
+		pushWG.Wait()
+		for i, err := range pushErrs {
+			if err != nil {
+				t.Fatalf("push worker %d ProcessPending error: %v", i, err)
+			}
+		}
+		item, err := h.pushStore.GetOutbox(ctx, delivID)
+		if err != nil || item.Status != push.StatusSent {
+			t.Fatalf("outbox item after concurrent workers = (%+v, %v), want StatusSent", item, err)
 		}
 
 		h.checkQuiescence(ctx)

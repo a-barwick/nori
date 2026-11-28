@@ -11,6 +11,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -99,20 +100,26 @@ func TestAPNSClientJWTSigningCachingAndRefresh(t *testing.T) {
 	}
 
 	mu.Lock()
-	defer mu.Unlock()
-
 	if len(authHeaders) != 3 {
+		mu.Unlock()
 		t.Fatalf("got %d requests, want 3", len(authHeaders))
 	}
 	if authHeaders[0] != authHeaders[1] {
+		mu.Unlock()
 		t.Fatalf("expected JWT to be cached within 30m window")
 	}
 	if authHeaders[1] == authHeaders[2] {
+		mu.Unlock()
 		t.Fatalf("expected JWT to refresh after 46m")
 	}
 
 	// Verify ES256 signature, kid, iss, and iat on the refreshed JWT.
 	rawJWT := strings.TrimPrefix(authHeaders[2], "bearer ")
+	hdrSnapshot := lastHeaders.Clone()
+	pathSnapshot := lastPath
+	payloadSnapshot := lastPayload
+	mu.Unlock()
+
 	parsed, err := jwt.Parse(rawJWT, func(tok *jwt.Token) (any, error) {
 		if tok.Method.Alg() != jwt.SigningMethodES256.Alg() {
 			t.Fatalf("alg = %q, want ES256", tok.Method.Alg())
@@ -131,21 +138,25 @@ func TestAPNSClientJWTSigningCachingAndRefresh(t *testing.T) {
 	}
 
 	// Verify APNs headers and path.
-	if lastPath != "/3/device/tok-sandbox-1" {
-		t.Fatalf("path = %q, want /3/device/tok-sandbox-1", lastPath)
+	if pathSnapshot != "/3/device/tok-sandbox-1" {
+		t.Fatalf("path = %q, want /3/device/tok-sandbox-1", pathSnapshot)
 	}
-	if got := lastHeaders.Get("apns-topic"); got != "com.nori.ios" {
+	if got := hdrSnapshot.Get("apns-topic"); got != "com.nori.ios" {
 		t.Fatalf("apns-topic = %q, want com.nori.ios", got)
 	}
-	if got := lastHeaders.Get("apns-collapse-id"); got != "deliv-1" {
+	if got := hdrSnapshot.Get("apns-collapse-id"); got != "deliv-1" {
 		t.Fatalf("apns-collapse-id = %q, want deliv-1", got)
 	}
-	if got := lastHeaders.Get("apns-push-type"); got != "alert" {
+	if got := hdrSnapshot.Get("apns-push-type"); got != "alert" {
 		t.Fatalf("apns-push-type = %q, want alert", got)
+	}
+	wantExp := strconv.FormatInt(now.UTC().Add(DefaultExpirationTTL).Unix(), 10)
+	if got := hdrSnapshot.Get("apns-expiration"); got != wantExp {
+		t.Fatalf("apns-expiration = %q, want %q (24h TTL)", got, wantExp)
 	}
 
 	// Verify lock-screen privacy: sensitive title/body sanitized, interaction_id preserved, no category/action.
-	aps := lastPayload["aps"].(map[string]any)
+	aps := payloadSnapshot["aps"].(map[string]any)
 	alert := aps["alert"].(map[string]any)
 	if alert["title"] != DefaultTitle || alert["body"] != DefaultBody {
 		t.Fatalf("alert not sanitized: %+v", alert)
@@ -153,8 +164,25 @@ func TestAPNSClientJWTSigningCachingAndRefresh(t *testing.T) {
 	if _, hasCategory := aps["category"]; hasCategory {
 		t.Fatalf("lock-screen payload must not include category/Approve action: %+v", aps)
 	}
-	if lastPayload["interaction_id"] != "int-42" {
-		t.Fatalf("interaction_id = %v, want int-42", lastPayload["interaction_id"])
+	if payloadSnapshot["interaction_id"] != "int-42" {
+		t.Fatalf("interaction_id = %v, want int-42", payloadSnapshot["interaction_id"])
+	}
+
+	// Verify urgent notifications get a 1h bounded apns-expiration header.
+	_, urgentBody := CopyForKind(KindUrgent)
+	if err := client.Send(context.Background(), dev, Notification{
+		DeliveryID: "deliv-urgent",
+		Title:      DefaultTitle,
+		Body:       urgentBody,
+	}); err != nil {
+		t.Fatalf("urgent Send: %v", err)
+	}
+	mu.Lock()
+	urgentExp := lastHeaders.Get("apns-expiration")
+	mu.Unlock()
+	wantUrgentExp := strconv.FormatInt(now.UTC().Add(UrgentExpirationTTL).Unix(), 10)
+	if urgentExp != wantUrgentExp {
+		t.Fatalf("urgent apns-expiration = %q, want %q (1h TTL)", urgentExp, wantUrgentExp)
 	}
 }
 
@@ -226,5 +254,19 @@ func TestAPNSClientEnvironmentRoutingAndInvalidTokenDeletion(t *testing.T) {
 	remaining, err := store.ListDevices(ctx, "user-1")
 	if err != nil || len(remaining) != 0 {
 		t.Fatalf("remaining devices = %+v, err=%v; want 0 after 410 & 400 auto-delete", remaining, err)
+	}
+
+	// Stale 410 for user-1 must NOT delete a token recently reassigned to user-2.
+	if _, err := store.RegisterDevice(ctx, "user-2", "tok-reassigned", "dev-3", EnvSandbox); err != nil {
+		t.Fatalf("register reassigned token for user-2: %v", err)
+	}
+	staleUser1Dev := Device{ID: "old-id", UserID: "user-1", Token: "tok-reassigned", Environment: EnvSandbox}
+	err = client.Send(ctx, staleUser1Dev, Notification{DeliveryID: "d-410-stale"})
+	if !IsInvalidTokenError(err) {
+		t.Fatalf("expected 410 invalid token error, got %v", err)
+	}
+	user2Devs, err := store.ListDevices(ctx, "user-2")
+	if err != nil || len(user2Devs) != 1 || user2Devs[0].Token != "tok-reassigned" {
+		t.Fatalf("stale 410 for user-1 deleted user-2 device: devs=%+v err=%v", user2Devs, err)
 	}
 }

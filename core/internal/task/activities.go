@@ -16,6 +16,7 @@ import (
 	"nori/internal/contextview"
 	"nori/internal/extensions"
 	"nori/internal/homeai"
+	"nori/internal/invoke"
 	"nori/internal/llmguard"
 	"nori/internal/observability"
 	"nori/internal/permissions"
@@ -352,14 +353,18 @@ func (a *Activities) agentForRun(ctx context.Context, run state.Run) *agent.Serv
 	if a.AccountModel != nil {
 		cp := *svc
 		cp.Model = a.AccountModel(ctx, run.ModelSelection)
-		return &cp
-	}
-	if a.ModelForRun != nil && !run.ModelSelection.IsEmpty() {
+		svc = &cp
+	} else if a.ModelForRun != nil && !run.ModelSelection.IsEmpty() {
 		if resolved := a.ModelForRun(run.ModelSelection); resolved != nil {
 			cp := *a.Agent
 			cp.Model = resolved
 			svc = &cp
 		}
+	}
+	if isUnattendedOrigin(run) {
+		cp := *svc
+		cp.ToolOrigin = invoke.OriginAutomation
+		svc = &cp
 	}
 	return svc
 }

@@ -51,6 +51,13 @@ func CopyForKind(kind NotificationKind) (string, string) {
 	}
 }
 
+func expirationTTLForBody(body string) time.Duration {
+	if strings.TrimSpace(body) == "Urgent update ready" {
+		return UrgentExpirationTTL
+	}
+	return DefaultExpirationTTL
+}
+
 // SanitizeLockScreenCopy guarantees lock-screen notifications only ever carry
 // generic Nori copy and never leak sensitive email, calendar, or watch body text.
 func SanitizeLockScreenCopy(title, body string) (string, string) {
@@ -213,6 +220,7 @@ func (w *OutboxWorker) processItem(ctx context.Context, item OutboxItem) (Outbox
 		InteractionID: item.InteractionID,
 		Title:         title,
 		Body:          body,
+		TTL:           expirationTTLForBody(body),
 	}
 
 	var sentCount int
@@ -229,7 +237,7 @@ func (w *OutboxWorker) processItem(ctx context.Context, item OutboxItem) (Outbox
 		lastErr = err
 		if IsInvalidTokenError(err) {
 			invalidCount++
-			_ = w.Store.DeleteDeviceByToken(ctx, dev.Token)
+			_ = w.Store.DeleteDeviceByToken(ctx, dev.UserID, dev.Token)
 			continue
 		}
 		if !IsPermanentError(err) {

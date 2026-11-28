@@ -94,12 +94,13 @@ func (s *PostgresStore) DeleteDevice(ctx context.Context, userID, id string) err
 	return nil
 }
 
-func (s *PostgresStore) DeleteDeviceByToken(ctx context.Context, token string) error {
+func (s *PostgresStore) DeleteDeviceByToken(ctx context.Context, userID, token string) error {
+	userID = strings.TrimSpace(userID)
 	token = strings.TrimSpace(token)
-	if token == "" {
+	if userID == "" || token == "" {
 		return nil
 	}
-	_, err := s.pool.Exec(ctx, `DELETE FROM nori_push_devices WHERE token = $1`, token)
+	_, err := s.pool.Exec(ctx, `DELETE FROM nori_push_devices WHERE user_id = $1 AND token = $2`, userID, token)
 	return err
 }
 

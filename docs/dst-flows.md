@@ -23,6 +23,7 @@ Every flow below is driven through real production code under seeded fault injec
 | F11 | Operator Pause, Recovery, Wake Delivery & Graceful Shutdown | Covered (Stage D + Wave 2: `cmd/nori` HTTP & `worker.Pool` graceful drain, `nori_task_leases` / `nori_user_wakes` `LISTEN/NOTIFY` wakes, delayed `NextConversationWake` fast idle flush `+2m` / session-idle extract `+5m` / AutoDream `+15m` wakes, `localfs`, `StopPaused`, Postgres conformance) | #34, #35, #36, #37, #38, #39, #40, #64 (resolved) |
 | F12 | Edge Surfaces: Embed Adapter & Web Workbench | Covered (Stage D + Wave 2: real Node embed adapter E2E DST, web proxy/UI fixes, unified 3-tab `/memory` screen, contract scenarios) | #13, #20, #21, #41, #43, #44, #66 (resolved) |
 | F13 | Coupled 3-Tier Memory, Pre-Compaction Flush, AutoDream & FTS | Covered (Wave 2: `INV-MEM-01..08`, `memstore` ↔ Postgres 18 `MemoryIndex` conformance, Scenarios 1–8, `FullWorld` memory/burst/idle-wake fuzzing) | #64, #65, #66 (resolved) |
+| F14 | Proactivity, Quiet Hours, Budgets, Drafts & APNs | Covered (Proactivity v1: `proactivity_sim_test.go` Scenarios 1–9 across `memstore` and Postgres) | — |
 
 ---
 
@@ -357,4 +358,36 @@ Checked continuously in `core/internal/sim/invariants/` (`CheckSafetyAt` after e
   7. `TestDST_InnerContext128KiBAndMemoryRecallTools` (`sim/inner/tools_completion_sim_test.go`): `> 128 KiB` inner task transcript exercising `fitContext` -> `projectContext`, all 7 recall tools (`memory_read`, `memory_search`, `memory_get`, `conversation_find`, `conversation_read`, `operation_read`, `task_history_read`) across a `ContextFrom` boundary, and bounded (`<= 600` B) `task_outcome` Daily Log append on `Publish` with zero Core mutation.
   8. `TestDST_MemoryAPIIdempotencyReceiptsAndSearch` (`sim/api_memory_sim_test.go`): full `/v1/memory*` HTTP surface over `httptest` + `memstore`, durable `GET /v1/mutations/{request_id}` receipts, `409 idempotency_conflict` / `409 revision_conflict` (with `current`), `task_outcome` promotion guard, `consolidate` idempotency, SSE `event: memory`, `/v1/memory/search` & `/v1/search` `ContextFrom` + cross-owner isolation, and `> 24 KiB` Core overflow auto-demotion preserving `Pinned` items.
 - **`FullWorld` Full-Stack Chaos Actions (`core/internal/sim/e2e_world.go`, `workload.go`, `regression_seeds_test.go`):** Weighted chaos actions for API memory mutations (Core create/edit/pin/unpin/demote/forget, Daily Log promote/forget, Working promote/dismiss, `SearchMemory`, manual `ConsolidateNow`), rapid chat bursts (4–8 quick turns staging `Excerpts` & soft compaction), virtual-clock idle jumps (`+2m5s` flush wake, `+15m5s` AutoDream wake, `+12h5m` dream interval), delayed `NextConversationWake` re-arming/execution in `LaneConversation` worker handling and lease repair, and post-drain `FlushedThrough == Through` verification across 200+ seeds (`make sim-deep`) with 2-run SHA-256 determinism.
+
+---
+
+## F14 — Proactivity, Quiet Hours, Budgets, Drafts & APNs
+
+### Flow
+1. `scheduler.Service` provisions the Day 1 morning brief (`auto_morning_brief`), runs recurring, watch, and event-relative automations under `AutomationConversationID`, evaluates daily proactive budgets, and settles occurrences.
+2. When an unattended automation proposes a write or send, `task.Activities` opens a non-blocking approval interaction and saves a `ProactiveDraft` record so the automation run completes without holding `MaxActiveRuns`.
+3. `agent.Service` strips forbidden automation tools (`automation_create`, `automation_change`, and permission-rule writes) upfront via `invoke.FilterDefinitionsForOrigin`, and `task.Activities` enforces `ReadOnly` on Personal Computer tools for unattended runs.
+4. `push.OutboxWorker` and `push.APNSClient` enqueue idempotent deliveries in `nori_push_outbox`, sanitize lock-screen copy, enforce a per-user 24-hour cap, set bounded `apns-expiration` headers (24h for approvals and briefs, 1h for urgent alerts), and delete invalid tokens scoped by `(user_id, token)`.
+
+### Safety Invariants
+- **Silent no-op and finding deduplication:** Runs returning `no_op` or repeating previously checkpointed `finding_keys` write zero chat messages, zero outer-loop events, and zero pushes, and settle with `reason = "no_change"`.
+- **Failure throttling and auto-pause:** Repeated automation failures pause the automation at `FailurePauseThreshold` without spamming chat or push notifications.
+- **Quiet hours and DST accuracy:** Overnight quiet hours hold non-urgent deliveries until quiet hours end across spring-forward and fall-back transitions, and morning briefs skip when past `ExecutionWindowSeconds`.
+- **Non-blocking draft approval and edit replacement:** Editing an approval draft creates a replacement interaction bound to the new digest, applies only allowlisted edited fields (`subject`, `body`), and rejects stale revisions, expired drafts, and concurrent duplicate approvals.
+- **Budget and origin tool boundaries:** High-frequency automations require approval before saving, daily proactive spend caps skip due occurrences with `reason = "budget_exhausted"`, automation-origin runs omit forbidden tools from model context and block them at execution, and Personal Computer tools run read-only.
+- **Push privacy and token ownership:** APNs payloads contain only generic lock-screen copy, token reassignment creates a fresh device ID, APNs `410` and `400` responses delete only matching `(user_id, token)` rows, and account deletion removes the user's push devices.
+- **Multi-instance safety and crash recovery:** Concurrent scheduler ticks create one occurrence and one task command per due slot, crashed automation runs recover cleanly after lease expiry with zero duplicate side effects, and concurrent outbox workers settle pending deliveries cleanly.
+
+### DST Scenarios (`core/internal/sim/proactivity_sim_test.go`)
+Each scenario runs against both `memstore` and real Postgres (`NORI_TEST_POSTGRES_URL`, reporting a skip when unset):
+1. `TestProactivitySilentNoOpAndOriginIsolation`: silent `no_op`, `finding_keys` deduplication, and `AutomationConversationID` isolation.
+2. `TestProactivityFailureThrottlingAndAutoPause`: consecutive failure counting and automatic pause at threshold.
+3. `TestProactivityQuietHoursAndDST`: overnight quiet hours, morning release, and spring-forward/fall-back DST transitions.
+4. `TestProactivityMorningBriefCatchupAndSuppression`: morning brief catch-up window and active-chat suppression.
+5. `TestProactivityNonBlockingDraftApprovalAndEditSend`: non-blocking `draft_saved` completion, edit-and-send replacement, and stale/expired/concurrent rejection.
+6. `TestProactivityBudgetCapsAndUnattendedToolSafety`: high-frequency save approval, `budget_exhausted` skips, upfront automation tool filtering, and read-only Personal Computer enforcement.
+7. `TestProactivityAPNsOutboxAndTokenPrivacy`: token reassignment, `apns-collapse-id` retry coalescing, 24-hour daily push cap, sign-out deletion, `410`/`400` invalid token deletion, and sanitized HTTP/2 lock-screen payloads.
+8. `TestProactivityDay1BriefTravelAndAbandonedDecay`: idempotent Day 1 brief creation, `FollowUserTimezone` travel adaptation, `missed_window` skip, and `inactive_account` auto-pause.
+9. `TestProactivityMultiInstanceContentionAndCrashRestart`: concurrent scheduler ticks, worker crash and lease takeover recovery, and concurrent push outbox draining.
+
 

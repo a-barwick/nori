@@ -16,6 +16,7 @@ import (
 	"nori/internal/api"
 	"nori/internal/app"
 	"nori/internal/platform"
+	"nori/internal/push"
 	"nori/internal/serviceauth"
 	"nori/internal/settings"
 	"nori/internal/state"
@@ -114,6 +115,15 @@ func TestAccountDeletePostgres(t *testing.T) {
 	if seed := callAPI(svc, http.MethodPut, alice, "/v1/preferences", savePrefsBody); seed.Code != http.StatusOK {
 		t.Fatalf("seed alice prefs: status=%d body=%s", seed.Code, seed.Body.String())
 	}
+	// Seed push devices for both Alice and Bob.
+	aliceToken := "del-alice-tok-" + uuid.NewString()
+	bobToken := "del-bob-tok-" + uuid.NewString()
+	if reg := callAPI(svc, http.MethodPost, alice, "/v1/devices/push", `{"token":"`+aliceToken+`","device_id":"alice-iphone","environment":"production"}`); reg.Code != http.StatusOK && reg.Code != http.StatusCreated {
+		t.Fatalf("seed alice push device: status=%d body=%s", reg.Code, reg.Body.String())
+	}
+	if reg := callAPI(svc, http.MethodPost, bob, "/v1/devices/push", `{"token":"`+bobToken+`","device_id":"bob-iphone","environment":"production"}`); reg.Code != http.StatusOK && reg.Code != http.StatusCreated {
+		t.Fatalf("seed bob push device: status=%d body=%s", reg.Code, reg.Body.String())
+	}
 
 	// 1. Legacy owner account cannot be deleted.
 	rec := callAPI(svc, http.MethodPost, ownerUser, "/v1/settings/account/delete", `{"confirmation":"`+ownerUser.Email+`"}`)
@@ -171,10 +181,21 @@ func TestAccountDeletePostgres(t *testing.T) {
 	if afterDelete.Code != http.StatusForbidden {
 		t.Fatalf("post-delete API status = %d, want 403", afterDelete.Code)
 	}
-	// Bob is still completely intact.
+	// Bob is still completely intact, including his push device; Alice's push device is deleted.
 	bobAfter := callAPI(svc, http.MethodGet, bob, "/v1/preferences", "")
 	if bobAfter.Code != http.StatusOK {
 		t.Fatalf("bob preferences after alice delete: status=%d body=%s", bobAfter.Code, bobAfter.Body.String())
+	}
+	ps, err := push.OpenPostgresStore(ctx, dsn, 2)
+	if err != nil {
+		t.Fatalf("OpenPostgresStore: %v", err)
+	}
+	defer ps.Close()
+	if aliceDevs, err := ps.ListDevices(ctx, alice.ID); err != nil || len(aliceDevs) != 0 {
+		t.Fatalf("alice push devices after account delete = %+v, err=%v; want 0", aliceDevs, err)
+	}
+	if bobDevs, err := ps.ListDevices(ctx, bob.ID); err != nil || len(bobDevs) != 1 {
+		t.Fatalf("bob push devices after alice delete = %+v, err=%v; want 1", bobDevs, err)
 	}
 }
 

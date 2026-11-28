@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,11 @@ import (
 const (
 	DefaultSandboxURL    = "https://api.sandbox.push.apple.com"
 	DefaultProductionURL = "https://api.push.apple.com"
+
+	// DefaultExpirationTTL bounds APNs delivery retries for approvals, morning briefs, and updates.
+	DefaultExpirationTTL = 24 * time.Hour
+	// UrgentExpirationTTL bounds APNs delivery retries for time-sensitive urgent alerts.
+	UrgentExpirationTTL = 1 * time.Hour
 
 	// Apple rejects provider JWTs older than 60 minutes; refresh at 45 minutes
 	// to stay well under the 50-minute ceiling with clock-skew margin.
@@ -38,6 +44,7 @@ type Notification struct {
 	Body          string
 	Sound         string
 	Badge         *int
+	TTL           time.Duration
 }
 
 // Sender delivers a push notification to a single registered APNs device.
@@ -308,6 +315,11 @@ func (c *APNSClient) Send(ctx context.Context, device Device, n Notification) er
 	req.Header.Set("apns-topic", c.bundleID)
 	req.Header.Set("apns-push-type", "alert")
 	req.Header.Set("apns-priority", "10")
+	ttl := n.TTL
+	if ttl <= 0 {
+		ttl = expirationTTLForBody(body)
+	}
+	req.Header.Set("apns-expiration", strconv.FormatInt(c.now().UTC().Add(ttl).Unix(), 10))
 	req.Header.Set("content-type", "application/json")
 
 	collapseID := strings.TrimSpace(n.CollapseID)
@@ -342,7 +354,7 @@ func (c *APNSClient) Send(ctx context.Context, device Device, n Notification) er
 		Timestamp:  errBody.Timestamp,
 	}
 	if c.devices != nil && IsInvalidTokenError(apnsErr) {
-		_ = c.devices.DeleteDeviceByToken(ctx, device.Token)
+		_ = c.devices.DeleteDeviceByToken(ctx, device.UserID, device.Token)
 	}
 	return apnsErr
 }

@@ -362,7 +362,6 @@ func (a *Activities) composeTool(ctx context.Context, in ToolInput, persist pers
 	if err != nil {
 		return persist("failed", map[string]any{"runtime": ComposeRuntime}, err)
 	}
-	snapshot, _ := a.Agent.Tools(ctx)
 	budget := &composeBudget{}
 	run, err := a.Store.GetRun(ctx, in.RunID)
 	if err != nil {
@@ -371,6 +370,8 @@ func (a *Activities) composeTool(ctx context.Context, in ToolInput, persist pers
 		}
 		return nil, err
 	}
+	origin, _ := taskOrigin(run)
+	snapshot, _ := a.Agent.ToolsForOrigin(ctx, origin)
 	if run.ReadOnly {
 		in.ReadOnly = true
 	}

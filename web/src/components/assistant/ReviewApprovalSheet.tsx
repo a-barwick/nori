@@ -80,14 +80,24 @@ export function ReviewApprovalPanel({
   const invalidate = useResourceInvalidation();
   const action = useAction();
   const draft = parseReviewDraft(interaction);
+  const [subject, setSubject] = useState(draft.subject);
   const [body, setBody] = useState(draft.body);
 
   const busy = !!action.pending;
   const canSubmit = !!interaction && interaction.kind === "approval" && !!interaction.action_digest && interaction.status === "pending";
+  const canSend = canSubmit && body.trim().length > 0;
 
   const handleSubmit = (choice: "send" | "skip") => {
     if (!interaction || !interaction.action_digest) return;
-    const value = buildReviewApprovalResponse(choice, interaction.action_digest, draft.body, body);
+    if (choice === "send" && !canSend) return;
+    const value = buildReviewApprovalResponse(
+      choice,
+      interaction.action_digest,
+      draft.body,
+      body,
+      draft.subject || undefined,
+      draft.subject ? subject : undefined,
+    );
     void action.run(
       choice,
       async () => {
@@ -128,8 +138,16 @@ export function ReviewApprovalPanel({
                 </div>
               )}
               {draft.subject && (
-                <div className="truncate">
-                  <strong className="font-semibold text-ink">Subject:</strong> {draft.subject}
+                <div className="flex items-center gap-1.5">
+                  <strong className="shrink-0 font-semibold text-ink">Subject:</strong>
+                  <input
+                    type="text"
+                    aria-label="Subject"
+                    value={subject}
+                    onChange={(event) => setSubject(event.target.value)}
+                    disabled={busy || !canSubmit}
+                    className="min-w-0 flex-1 bg-transparent text-[13.5px] text-ink outline-none placeholder:text-ink-3"
+                  />
                 </div>
               )}
             </div>
@@ -158,7 +176,7 @@ export function ReviewApprovalPanel({
             <Button
               variant="primary"
               size="sm"
-              disabled={busy || !canSubmit}
+              disabled={busy || !canSend}
               onClick={() => handleSubmit("send")}
             >
               {action.pending === "send" ? "Sending…" : "Send reply"}

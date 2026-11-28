@@ -95,9 +95,10 @@ func (s *MemoryStore) DeleteDevice(_ context.Context, userID, id string) error {
 	return nil
 }
 
-func (s *MemoryStore) DeleteDeviceByToken(_ context.Context, token string) error {
+func (s *MemoryStore) DeleteDeviceByToken(_ context.Context, userID, token string) error {
+	userID = strings.TrimSpace(userID)
 	token = strings.TrimSpace(token)
-	if token == "" {
+	if userID == "" || token == "" {
 		return nil
 	}
 
@@ -106,6 +107,10 @@ func (s *MemoryStore) DeleteDeviceByToken(_ context.Context, token string) error
 
 	id, ok := s.deviceIDByToken[token]
 	if !ok {
+		return nil
+	}
+	dev, ok := s.devicesByID[id]
+	if !ok || dev.UserID != userID {
 		return nil
 	}
 	delete(s.deviceIDByToken, token)

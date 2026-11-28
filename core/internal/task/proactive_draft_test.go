@@ -434,15 +434,24 @@ func TestUnattendedOriginLimitsComputerReadOnlyAndForbiddenTools(t *testing.T) {
 			t.Fatalf("Seal: %v", err)
 		}
 
-		var sawDenied atomic.Bool
+		var sawOffered atomic.Bool
+		var sawBlocked atomic.Bool
 		f := newRunnerFixture(t, func(_ context.Context, callNum int, req agent.Request) (agent.Response, error) {
 			if callNum == 1 {
+				for _, tool := range req.Tools {
+					if tool.Name == "automation_create" {
+						sawOffered.Store(true)
+					}
+				}
 				return toolCallResponse("c-create", "automation_create", map[string]any{}, 0.05), nil
 			}
 			for _, m := range req.Messages {
 				raw, _ := json.Marshal(m)
-				if strings.Contains(string(raw), `"outcome":"denied"`) || strings.Contains(string(raw), `\"outcome\":\"denied\"`) {
-					sawDenied.Store(true)
+				s := string(raw)
+				if strings.Contains(s, `"outcome":"denied"`) || strings.Contains(s, `\"outcome\":\"denied\"`) ||
+					strings.Contains(s, `"outcome":"failed"`) || strings.Contains(s, `\"outcome\":\"failed\"`) ||
+					strings.Contains(s, "not available") || strings.Contains(s, "unknown") {
+					sawBlocked.Store(true)
 				}
 			}
 			return toolCallResponse("c-done", "complete", map[string]any{
@@ -463,8 +472,11 @@ func TestUnattendedOriginLimitsComputerReadOnlyAndForbiddenTools(t *testing.T) {
 		if out, err := f.claimAndRun(ctx, receipts[0].Run.ID, "w-forb"); err != nil || out != task.OutcomeDone {
 			t.Fatalf("forbidden tool run = (%s, %v)", out, err)
 		}
-		if stub.execCalls.Load() != 0 || !sawDenied.Load() {
-			t.Fatalf("expected automation_create to be denied (execs=%d, sawDenied=%v)", stub.execCalls.Load(), sawDenied.Load())
+		if sawOffered.Load() {
+			t.Fatalf("automation_create was offered in model tools for automation-origin run; expected upfront filtering")
+		}
+		if stub.execCalls.Load() != 0 || !sawBlocked.Load() {
+			t.Fatalf("expected automation_create to be blocked (execs=%d, sawBlocked=%v)", stub.execCalls.Load(), sawBlocked.Load())
 		}
 	})
 

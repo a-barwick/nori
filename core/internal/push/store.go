@@ -60,9 +60,9 @@ type OutboxItem struct {
 	UpdatedAt     time.Time    `json:"updated_at"`
 }
 
-// DeviceDeleter removes an invalid APNs token from storage.
+// DeviceDeleter removes an invalid APNs token from storage for the owning user.
 type DeviceDeleter interface {
-	DeleteDeviceByToken(ctx context.Context, token string) error
+	DeleteDeviceByToken(ctx context.Context, userID, token string) error
 }
 
 // Store persists push device registrations and the idempotent push outbox.

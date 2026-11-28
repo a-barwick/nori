@@ -225,26 +225,40 @@ describe("Editable Review modal sheet and payload encoding", () => {
     assert.equal(inlineDraft.body, "Here is the latest status.");
   });
 
-  test("buildReviewApprovalResponse encodes unmodified approve, edited_fields approve without remember_rule, and decline on Skip", () => {
-    const unmodified = buildReviewApprovalResponse("send", "sha256:d1", "Original body", "Original body");
+  test("buildReviewApprovalResponse encodes unmodified approve, edited_fields subject/body approve without remember_rule, and decline on Skip", () => {
+    const unmodified = buildReviewApprovalResponse("send", "sha256:d1", "Original body", "Original body", "Re: Q4", "Re: Q4");
     assert.deepEqual(unmodified, { kind: "approve", action_digest: "sha256:d1" });
     assert.equal("edited_fields" in unmodified, false);
     assert.equal("remember_rule" in unmodified, false);
 
-    const edited = buildReviewApprovalResponse("send", "sha256:d1", "Original body", "Updated body");
-    assert.deepEqual(edited, {
+    const editedBody = buildReviewApprovalResponse("send", "sha256:d1", "Original body", "Updated body", "Re: Q4", "Re: Q4");
+    assert.deepEqual(editedBody, {
       kind: "approve",
       action_digest: "sha256:d1",
       edited_fields: { body: "Updated body" },
     });
-    assert.equal("remember_rule" in edited, false);
+    assert.equal("remember_rule" in editedBody, false);
 
-    const skipped = buildReviewApprovalResponse("skip", "sha256:d1", "Original body", "Updated body");
+    const editedSubject = buildReviewApprovalResponse("send", "sha256:d1", "Original body", "Original body", "Re: Q4", "  Re: Q4 Final  ");
+    assert.deepEqual(editedSubject, {
+      kind: "approve",
+      action_digest: "sha256:d1",
+      edited_fields: { subject: "Re: Q4 Final" },
+    });
+
+    const editedBoth = buildReviewApprovalResponse("send", "sha256:d1", "Original body", "Updated body", "Re: Q4", "Re: Q4 Final");
+    assert.deepEqual(editedBoth, {
+      kind: "approve",
+      action_digest: "sha256:d1",
+      edited_fields: { subject: "Re: Q4 Final", body: "Updated body" },
+    });
+
+    const skipped = buildReviewApprovalResponse("skip", "sha256:d1", "Original body", "Updated body", "Re: Q4", "Re: Q4 Final");
     assert.deepEqual(skipped, { kind: "decline", action_digest: "sha256:d1" });
     assert.equal("edited_fields" in skipped, false);
   });
 
-  test("ReviewApprovalPanel renders metadata, editable textarea, Skip and Send reply buttons, and submits edited_fields wire payload", async () => {
+  test("ReviewApprovalPanel renders editable Subject and Body, disables Send on empty body, and submits edited_fields wire payload", async () => {
     const interaction = makeEmailApproval({ id: `int_review_${crypto.randomUUID()}` });
     const html = renderToStaticMarkup(
       <ReviewApprovalPanel
@@ -258,10 +272,31 @@ describe("Editable Review modal sheet and payload encoding", () => {
     assert.match(html, /To:/);
     assert.match(html, /Maya Lin \(maya@acme\.co\)/);
     assert.match(html, /Subject:/);
-    assert.match(html, /Re: Q4 Pricing Tier/);
+    assert.match(html, /<input[^>]*aria-label="Subject"[^>]*value="Re: Q4 Pricing Tier"/);
     assert.match(html, /<textarea[^>]*aria-label="Draft reply"/);
     assert.match(html, />Skip<\/button>/);
     assert.match(html, />Send reply<\/button>/);
+
+    const emptyBodyInteraction = makeEmailApproval({
+      id: `int_review_empty_${crypto.randomUUID()}`,
+      payload: {
+        summary: "To: Maya Lin (maya@acme.co)\nSubject: Re: Q4 Pricing Tier\n\n   ",
+        tool_id: "google/mail/mail-send",
+        effect: "sensitive_send",
+        account: { connection_id: "conn_gmail", label: "austin@example.com" },
+        resources: [],
+        recipients: ["maya@acme.co"],
+      },
+    });
+    const emptyHtml = renderToStaticMarkup(
+      <ReviewApprovalPanel
+        interaction={emptyBodyInteraction}
+        onClose={() => {}}
+        onResolved={() => {}}
+      />,
+    );
+    assert.match(emptyHtml, /<button[^>]*disabled=""[^>]*>Send reply<\/button>/);
+    assert.equal(/<button[^>]*disabled=""[^>]*>Skip<\/button>/.test(emptyHtml), false);
 
     const calls: { url: string; method: string; body?: Record<string, unknown> }[] = [];
     globalThis.fetch = asFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -294,6 +329,8 @@ describe("Editable Review modal sheet and payload encoding", () => {
       interaction.action_digest!,
       "Hi Maya — looks good overall. Let's lock the annual tier at $24k.",
       "Hi Maya — looks good. Let's sign at $24k.",
+      "Re: Q4 Pricing Tier",
+      "Re: Q4 Pricing Tier (Approved)",
     );
     const result = await submitInteractionResponse(interaction, payload);
     assert.equal(result.ok, true);
@@ -304,7 +341,10 @@ describe("Editable Review modal sheet and payload encoding", () => {
     assert.deepEqual(post.body?.value, {
       kind: "approve",
       action_digest: interaction.action_digest,
-      edited_fields: { body: "Hi Maya — looks good. Let's sign at $24k." },
+      edited_fields: {
+        subject: "Re: Q4 Pricing Tier (Approved)",
+        body: "Hi Maya — looks good. Let's sign at $24k.",
+      },
     });
   });
 });

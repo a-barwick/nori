@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"nori/internal/extensions"
+	"nori/internal/invoke"
 	"nori/internal/transcript"
 )
 
@@ -101,6 +102,10 @@ func PolicyFor(name string, exec *extensions.Exec) ToolPolicy {
 }
 
 func (s *Service) Tools(ctx context.Context) (*extensions.Snapshot, []extensions.CapabilityState) {
+	return s.ToolsForOrigin(ctx, s.ToolOrigin)
+}
+
+func (s *Service) ToolsForOrigin(ctx context.Context, origin string) (*extensions.Snapshot, []extensions.CapabilityState) {
 	if s.Extensions == nil {
 		return extensions.NewSnapshot(BuiltinDefinitions), nil
 	}
@@ -109,7 +114,8 @@ func (s *Service) Tools(ctx context.Context) (*extensions.Snapshot, []extensions
 		slog.WarnContext(ctx, "tool inventory unavailable; offering engine tools only", "err", err)
 		return extensions.NewSnapshot(BuiltinDefinitions), nil
 	}
-	snapshot := extensions.NewSnapshot(BuiltinDefinitions, inventory.Definitions)
+	defs := invoke.FilterDefinitionsForOrigin(origin, inventory.Definitions)
+	snapshot := extensions.NewSnapshot(BuiltinDefinitions, defs)
 	for _, rejected := range snapshot.Rejected {
 		slog.WarnContext(ctx, "tool definition not offered", "reason", rejected)
 	}

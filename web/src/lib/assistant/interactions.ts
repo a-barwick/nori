@@ -29,16 +29,32 @@ export function buildReviewApprovalResponse(
   actionDigest: string,
   originalBody: string,
   currentBody: string,
+  originalSubject?: string,
+  currentSubject?: string,
 ): ApprovalResponseValue {
   if (action === "skip") {
     return { kind: "decline", action_digest: actionDigest };
   }
-  const modified = currentBody !== originalBody;
-  if (modified) {
+  const trimmedOriginalSubject = originalSubject?.trim();
+  const trimmedCurrentSubject = currentSubject?.trim();
+  const subjectModified =
+    trimmedOriginalSubject !== undefined &&
+    trimmedOriginalSubject !== "" &&
+    trimmedCurrentSubject !== undefined &&
+    trimmedCurrentSubject !== trimmedOriginalSubject;
+  const bodyModified = currentBody !== originalBody;
+  if (subjectModified || bodyModified) {
+    const edited_fields: { subject?: string; body?: string } = {};
+    if (subjectModified) {
+      edited_fields.subject = trimmedCurrentSubject;
+    }
+    if (bodyModified) {
+      edited_fields.body = currentBody;
+    }
     return {
       kind: "approve",
       action_digest: actionDigest,
-      edited_fields: { body: currentBody },
+      edited_fields,
     };
   }
   return { kind: "approve", action_digest: actionDigest };
