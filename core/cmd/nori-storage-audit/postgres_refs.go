@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"time"
 
 	"nori/internal/state"
 	"nori/internal/state/docstore"
@@ -104,8 +106,32 @@ func (p *postgresReferenceStore) InspectUser(ctx context.Context, user users.Use
 		return snap, nil, err
 	}
 
-	// Collect all result file references (and screenshot result references).
+	// Collect deleted library result IDs so purged/deleted library items are not treated as active references.
+	deletedResults := map[string]struct{}{}
+	if err := forEachDoc(root.Collection("resources").Where("collection", "==", "library_overlay").Documents(ctx), func(doc *docstore.DocumentSnapshot) error {
+		var res state.Resource
+		if err := doc.DataTo(&res); err != nil {
+			return nil
+		}
+		var overlay struct {
+			DeletedAt *time.Time `json:"deleted_at"`
+		}
+		if json.Unmarshal(res.Body, &overlay) == nil && overlay.DeletedAt != nil && res.ID != "" {
+			deletedResults[res.ID] = struct{}{}
+		}
+		return nil
+	}); err != nil {
+		if release != nil {
+			release()
+		}
+		return snap, nil, err
+	}
+
+	// Collect all non-deleted result file references (and screenshot result references).
 	if err := forEachDoc(root.Collection("results").Documents(ctx), func(doc *docstore.DocumentSnapshot) error {
+		if _, deleted := deletedResults[doc.Ref.ID]; deleted {
+			return nil
+		}
 		var res state.Result
 		if err := doc.DataTo(&res); err != nil {
 			return err
@@ -146,6 +172,62 @@ func (p *postgresReferenceStore) InspectUser(ctx context.Context, user users.Use
 	}
 
 	return snap, release, nil
+}
+
+// ExpireUnattachedUploads finds pending/ready uploads older than cutoff (never touching retained
+// uploads attached to messages/tasks). When dryRun is false, marks them expired and decrements
+// nori_user_storage via FinishExpiredUpload.
+func (p *postgresReferenceStore) ExpireUnattachedUploads(ctx context.Context, user users.User, cutoff time.Time, dryRun bool) ([]string, int64, error) {
+	client := docstore.New(p.backend)
+	root := client.Collection("owners").Doc(user.DataOwner())
+	var expiredIDs []string
+	var expiredKeys []string
+	var freedBytes int64
+
+	if err := forEachDoc(root.Collection("uploads").Documents(ctx), func(doc *docstore.DocumentSnapshot) error {
+		var upload state.Upload
+		if err := doc.DataTo(&upload); err != nil {
+			return err
+		}
+		switch upload.Lifecycle {
+		case state.UploadRetained, state.UploadExpired:
+			return nil
+		}
+		if upload.CreatedAt.IsZero() || !upload.CreatedAt.Before(cutoff) {
+			return nil
+		}
+		expiredIDs = append(expiredIDs, doc.Ref.ID)
+		expiredKeys = append(expiredKeys, state.UploadKey(doc.Ref.ID))
+		if upload.Size > 0 {
+			freedBytes += upload.Size
+		}
+		return nil
+	}); err != nil {
+		return nil, 0, err
+	}
+
+	if !dryRun && len(expiredIDs) > 0 {
+		db := records.NewShared(p.backend, user, 1)
+		for _, id := range expiredIDs {
+			if err := db.FinishExpiredUpload(ctx, id); err != nil {
+				return expiredKeys, freedBytes, err
+			}
+		}
+	}
+	return expiredKeys, freedBytes, nil
+}
+
+// ReconcileUserStorageBytes updates nori_user_storage.active_bytes to actualActiveBytes
+// and returns the previously recorded active_bytes value.
+func (p *postgresReferenceStore) ReconcileUserStorageBytes(ctx context.Context, user users.User, actualActiveBytes int64) (int64, error) {
+	prev, err := records.GetUserStorageBytes(ctx, p.backend, user)
+	if err != nil {
+		return 0, err
+	}
+	if err := records.SetUserStorageBytes(ctx, p.backend, user, actualActiveBytes); err != nil {
+		return prev, err
+	}
+	return prev, nil
 }
 
 func forEachDoc(iter *docstore.DocumentIterator, fn func(*docstore.DocumentSnapshot) error) error {

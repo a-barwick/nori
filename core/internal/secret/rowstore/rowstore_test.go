@@ -455,3 +455,89 @@ func TestOpenLocalKeyAndParseMasterKey(t *testing.T) {
 		}
 	})
 }
+
+type countingWrapper struct {
+	inner   KeyWrapper
+	unwraps int
+}
+
+func (c *countingWrapper) Wrap(ctx context.Context, dataKey []byte) ([]byte, string, error) {
+	return c.inner.Wrap(ctx, dataKey)
+}
+
+func (c *countingWrapper) Unwrap(ctx context.Context, wrapped []byte, keyID string) ([]byte, error) {
+	c.unwraps++
+	return c.inner.Unwrap(ctx, wrapped, keyID)
+}
+
+func TestDEKCache10mTTLAndEviction(t *testing.T) {
+	if DefaultDEKCacheTTL != 10*time.Minute {
+		t.Fatalf("DefaultDEKCacheTTL = %v, want 10m", DefaultDEKCacheTTL)
+	}
+	ctx := context.Background()
+	res := newTestResourceStore(t, "cache-evict")
+	cw := &countingWrapper{inner: mustParseHexKey(t, 0x77)}
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	store := &Store{
+		Resources: res,
+		Keys:      cw,
+		Owner:     "user-42",
+		Now:       func() time.Time { return now },
+	}
+	if _, err := store.Replace(ctx, "conn-a", 0, []byte("secret-a")); err != nil {
+		t.Fatalf("Replace conn-a: %v", err)
+	}
+	if _, err := store.Replace(ctx, "conn-b", 0, []byte("secret-b")); err != nil {
+		t.Fatalf("Replace conn-b: %v", err)
+	}
+
+	// First Gets populate cache (2 unwraps).
+	if _, err := store.Get(ctx, "conn-a"); err != nil {
+		t.Fatalf("Get conn-a: %v", err)
+	}
+	if _, err := store.Get(ctx, "conn-b"); err != nil {
+		t.Fatalf("Get conn-b: %v", err)
+	}
+	if cw.unwraps != 2 {
+		t.Fatalf("unwraps = %d, want 2", cw.unwraps)
+	}
+
+	// Still cached at 9m (10m default TTL).
+	now = now.Add(9 * time.Minute)
+	if _, err := store.Get(ctx, "conn-a"); err != nil {
+		t.Fatalf("Get conn-a at 9m: %v", err)
+	}
+	if cw.unwraps != 2 {
+		t.Fatalf("unwraps at 9m = %d, want 2", cw.unwraps)
+	}
+
+	// Evict(owner) evicts all entries for this owner.
+	store.Evict("user-42")
+	if _, err := store.Get(ctx, "conn-a"); err != nil {
+		t.Fatalf("Get conn-a after Evict(owner): %v", err)
+	}
+	if _, err := store.Get(ctx, "conn-b"); err != nil {
+		t.Fatalf("Get conn-b after Evict(owner): %v", err)
+	}
+	if cw.unwraps != 4 {
+		t.Fatalf("unwraps after Evict(owner) = %d, want 4", cw.unwraps)
+	}
+
+	// EvictAll drops everything.
+	store.EvictAll()
+	if _, err := store.Get(ctx, "conn-a"); err != nil {
+		t.Fatalf("Get conn-a after EvictAll: %v", err)
+	}
+	if cw.unwraps != 5 {
+		t.Fatalf("unwraps after EvictAll = %d, want 5", cw.unwraps)
+	}
+
+	// Past 10m TTL triggers unwrap.
+	now = now.Add(11 * time.Minute)
+	if _, err := store.Get(ctx, "conn-a"); err != nil {
+		t.Fatalf("Get conn-a after 11m: %v", err)
+	}
+	if cw.unwraps != 6 {
+		t.Fatalf("unwraps after 11m = %d, want 6", cw.unwraps)
+	}
+}

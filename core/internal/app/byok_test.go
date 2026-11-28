@@ -14,6 +14,7 @@ import (
 
 	"nori/internal/agent"
 	"nori/internal/app"
+	"nori/internal/billing"
 	"nori/internal/conversation"
 	"nori/internal/modelkeys"
 	"nori/internal/modelprofiles"
@@ -54,6 +55,13 @@ func TestBYOKAccountSettingsRouteChatAndWorkWithoutFallback(t *testing.T) {
 	}
 	u := createUser(t, svc, "11111111-1111-4111-8111-111111111111", "byok@example.com")
 	other := createUser(t, svc, "22222222-2222-4222-8222-222222222222", "another-byok@example.com")
+	// Promote test accounts from default trial tier to BYOK tier so BYOK keys are permitted.
+	for _, uid := range []string{u.ID, other.ID} {
+		if _, err := svc.Billing().SetTier(ctx, uid, billing.TierBYOK, billing.SetTierOptions{}); err != nil {
+			t.Fatalf("SetTier byok for %s: %v", uid, err)
+		}
+		svc.EvictEntitlementCache(uid)
+	}
 	uApp, release, err := svc.Acquire(ctx, u)
 	if err != nil {
 		t.Fatal(err)

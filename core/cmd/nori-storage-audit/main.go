@@ -50,8 +50,11 @@ func main() {
 func run() error {
 	bucketFlag := flag.String("bucket", "", "GCS bucket name (defaults to ARTIFACT_BUCKET)")
 	graceFlag := flag.Duration("grace", DefaultGraceWindow, "minimum age before an unreferenced object is flagged as an orphan")
+	unattachedTTLFlag := flag.Duration("unattached-ttl", DefaultUnattachedTTL, "minimum age before an unattached upload is expired")
+	expireUnattachedFlag := flag.Bool("expire-unattached", true, "expire unattached uploads older than --unattached-ttl (dry-run unless --delete --confirm)")
+	reconcileQuotasFlag := flag.Bool("reconcile-quotas", false, "reconcile nori_user_storage.active_bytes against actual live referenced bytes")
 	userFlag := flag.String("user", "", "optional user UUID to audit exclusively")
-	deleteFlag := flag.Bool("delete", false, "delete verified orphans (dry-run when false)")
+	deleteFlag := flag.Bool("delete", false, "delete verified orphans and expired unattached uploads (dry-run when false)")
 	confirmFlag := flag.Bool("confirm", false, "required with --delete to authorize object deletion")
 	maxDeleteFlag := flag.Int("max-delete", DefaultMaxDelete, "maximum number of orphan objects to delete in one run")
 	jsonFlag := flag.Bool("json", false, "print machine-readable JSON report")
@@ -89,12 +92,15 @@ func run() error {
 	}
 
 	report, err := Reconcile(ctx, newPostgresReferenceStore(backend), gcsObjectStore{client: client}, Options{
-		Bucket:      bucket,
-		GraceWindow: *graceFlag,
-		Delete:      *deleteFlag,
-		Confirm:     *confirmFlag,
-		MaxDelete:   *maxDeleteFlag,
-		UserID:      *userFlag,
+		Bucket:           bucket,
+		GraceWindow:      *graceFlag,
+		UnattachedTTL:    *unattachedTTLFlag,
+		ExpireUnattached: *expireUnattachedFlag,
+		ReconcileQuotas:  *reconcileQuotasFlag,
+		Delete:           *deleteFlag,
+		Confirm:          *confirmFlag,
+		MaxDelete:        *maxDeleteFlag,
+		UserID:           *userFlag,
 	})
 	if err != nil {
 		return err
@@ -118,6 +124,14 @@ func run() error {
 		fmt.Printf(" oldest=%s newest=%s", report.OldestOrphan.Format(time.RFC3339), report.NewestOrphan.Format(time.RFC3339))
 	}
 	fmt.Println()
+	if report.ExpiredUploadsCount > 0 {
+		fmt.Printf("expired_unattached=%d expired_unattached_bytes=%d\n",
+			report.ExpiredUploadsCount, report.ExpiredUploadsBytes)
+	}
+	if report.QuotasReconciled > 0 {
+		fmt.Printf("quotas_reconciled=%d quota_drift_bytes=%d\n",
+			report.QuotasReconciled, report.QuotaDriftBytes)
+	}
 	if !report.DryRun {
 		fmt.Printf("deleted=%d deleted_bytes=%d cap_reached=%t\n",
 			report.DeletedCount, report.DeletedBytes, report.DeleteCapReached)

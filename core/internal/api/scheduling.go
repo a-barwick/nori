@@ -69,6 +69,14 @@ func (a *Assistant) createAutomation(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, state.ErrRevisionConflict, requestID, nil)
 		return
 	}
+	if err := a.checkRoutineCap(r.Context(), ""); err != nil {
+		writeAPIError(w, err, requestID, nil)
+		return
+	}
+	if err := a.checkRoutineInterval(r.Context(), value.Trigger); err != nil {
+		writeAPIError(w, err, requestID, nil)
+		return
+	}
 	receipt, err := a.Scheduler.Save(r.Context(), "", requestID, 0, value)
 	if err != nil {
 		writeAPIError(w, err, requestID, nil)
@@ -84,6 +92,10 @@ func (a *Assistant) updateAutomation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := a.Scheduler.Get(r.Context(), r.PathValue("id")); err != nil {
+		writeAPIError(w, err, requestID, nil)
+		return
+	}
+	if err := a.checkRoutineInterval(r.Context(), value.Trigger); err != nil {
 		writeAPIError(w, err, requestID, nil)
 		return
 	}
@@ -104,6 +116,18 @@ func (a *Assistant) automationAction(w http.ResponseWriter, r *http.Request) {
 	if !value.Valid() {
 		writeAPIError(w, state.ErrInvalidResource, requestID, nil)
 		return
+	}
+	switch value.Action {
+	case "resume":
+		if err := a.checkRoutineCap(r.Context(), r.PathValue("id")); err != nil {
+			writeAPIError(w, err, requestID, nil)
+			return
+		}
+	case "run_now":
+		if _, _, err := a.checkActiveAccess(r.Context()); err != nil {
+			writeAPIError(w, err, requestID, nil)
+			return
+		}
 	}
 	receipt, err := a.Scheduler.Act(r.Context(), r.PathValue("id"), requestID, expected, value)
 	if err != nil {

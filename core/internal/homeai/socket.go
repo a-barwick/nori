@@ -46,6 +46,13 @@ func (s *Service) socket(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if s.checkAccess != nil {
+		if accessErr := s.checkAccess(r.Context(), id.userID); accessErr != nil {
+			slog.WarnContext(r.Context(), "homeai socket blocked by access check", "device_id", id.deviceID, "user_id", id.userID, "err", accessErr)
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	}
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{homeaiwire.Subprotocol}})
 	if err != nil {
 		slog.WarnContext(r.Context(), "homeai websocket accept failed", "device_id", id.deviceID, "err", err)
@@ -61,6 +68,8 @@ func (s *Service) socket(w http.ResponseWriter, r *http.Request) {
 	id.connectionID = uuid.NewString()
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	s.registerSocket(id.userID, id.connectionID, cancel)
+	defer s.unregisterSocket(id.userID, id.connectionID)
 	if err = s.attach(ctx, id, auth[1]); err != nil {
 		slog.WarnContext(ctx, "homeai device attach failed", "device_id", id.deviceID, "user_id", id.userID, "err", err)
 		_ = conn.Close(websocket.StatusPolicyViolation, "device unavailable")

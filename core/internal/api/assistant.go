@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"nori/internal/billing"
 	"nori/internal/connections"
 	"nori/internal/connectors/mcp"
 	"nori/internal/conversation"
@@ -23,6 +24,7 @@ import (
 	"nori/internal/permissions"
 	"nori/internal/scheduler"
 	"nori/internal/secret"
+	"nori/internal/servicekeys"
 	"nori/internal/state"
 	"nori/internal/state/docstore"
 )
@@ -38,11 +40,21 @@ var (
 
 type Assistant struct {
 	// Core state & services
+	UserID      string
 	Store       state.ConversationStore
 	Connections *connections.Service
 	Permissions *permissions.Service
 	Scheduler   *scheduler.Service
 	MCP         *mcp.Service
+
+	// Billing, storage & BYOK service keys
+	Billing              *billing.Service
+	ServiceKeys          *servicekeys.Service
+	PlatformExaAvailable bool
+	GetEntitlement       func(ctx context.Context) (billing.Entitlement, error)
+	GetStorageUsed       func(ctx context.Context) (int64, error)
+	ReleaseStorageBytes  func(ctx context.Context, delta int64) error
+	OnKeyMutated         func(ctx context.Context)
 
 	// Models, keys & Home AI
 	ModelKeys   *modelkeys.Service
@@ -89,6 +101,10 @@ type apiError struct {
 }
 
 func writeAPIError(w http.ResponseWriter, err error, requestID string, current any) {
+	if bStatus, bCode, bMsg, ok := billingErrorDetails(err); ok {
+		writeJSON(w, bStatus, apiError{Error: bMsg, Code: bCode, Retryable: false, RequestID: requestID})
+		return
+	}
 	status, code, message, retryable := 502, "internal", "Nori could not finish this request.", true
 	switch {
 	case errors.Is(err, state.ErrNotFound):
@@ -102,14 +118,15 @@ func writeAPIError(w http.ResponseWriter, err error, requestID string, current a
 	case errors.Is(err, httpjson.ErrTooLarge):
 		status, code, message, retryable = http.StatusRequestEntityTooLarge, "payload_too_large", "Request body is too large.", false
 	case errors.Is(err, state.ErrInvalidResource), errors.Is(err, connections.ErrInvalidAction), errors.Is(err, connections.ErrUnknownIntegration),
-		errors.Is(err, modelkeys.ErrUnknownProvider), errors.Is(err, modelkeys.ErrEmptyAPIKey):
+		errors.Is(err, modelkeys.ErrUnknownProvider), errors.Is(err, modelkeys.ErrEmptyAPIKey),
+		errors.Is(err, servicekeys.ErrUnknownService), errors.Is(err, servicekeys.ErrEmptyAPIKey):
 		status, code, message, retryable = 400, "validation_failed", err.Error(), false
-	case errors.Is(err, modelkeys.ErrInvalidAPIKey):
+	case errors.Is(err, modelkeys.ErrInvalidAPIKey), errors.Is(err, servicekeys.ErrInvalidAPIKey):
 		status, code, message, retryable = http.StatusUnprocessableEntity, "invalid_api_key", err.Error(), false
-	case errors.Is(err, modelkeys.ErrModelAccess), errors.Is(err, modelkeys.ErrMissingAPIKey):
+	case errors.Is(err, modelkeys.ErrModelAccess), errors.Is(err, modelkeys.ErrMissingAPIKey), errors.Is(err, servicekeys.ErrMissingAPIKey):
 		status, code, message, retryable = http.StatusUnprocessableEntity, "missing_api_key", err.Error(), false
-	case errors.Is(err, modelkeys.ErrValidationFailed):
-		status, code, message, retryable = http.StatusServiceUnavailable, "provider_unavailable", "Could not reach the model provider to validate your API key. Try again shortly.", true
+	case errors.Is(err, modelkeys.ErrValidationFailed), errors.Is(err, servicekeys.ErrValidationFailed):
+		status, code, message, retryable = http.StatusServiceUnavailable, "provider_unavailable", "Could not reach the provider to validate your API key. Try again shortly.", true
 	case errors.Is(err, secret.ErrCredentialUnavailable):
 		status, code, message, retryable = http.StatusServiceUnavailable, "credential_store_unavailable", "Credential storage is temporarily unavailable. Try again shortly.", true
 	case errors.Is(err, connections.ErrBadPassword):
@@ -234,8 +251,12 @@ func (a *Assistant) register(mux *http.ServeMux) {
 	if a.ModelKeys != nil {
 		a.registerModelKeys(mux)
 	}
+	if a.ServiceKeys != nil {
+		a.registerServiceKeys(mux)
+	}
 	if a.Store != nil && a.Connections != nil {
 		mux.HandleFunc("GET /v1/settings/api-costs", a.apiCosts)
+		mux.HandleFunc("GET /v1/costs", a.apiCosts)
 	}
 	if a.Models != nil {
 		a.registerModelSettings(mux)

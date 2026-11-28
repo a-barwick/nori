@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	DefaultGraceWindow = 24 * time.Hour
-	DefaultMaxDelete   = 1000
+	DefaultGraceWindow   = 24 * time.Hour
+	DefaultUnattachedTTL = 24 * time.Hour
+	DefaultMaxDelete     = 1000
 )
 
 // Object represents a live blob returned from object storage.
@@ -42,15 +43,30 @@ type ReferenceStore interface {
 	InspectUser(ctx context.Context, user users.User) (UserSnapshot, func(), error)
 }
 
+// UploadExpirer is an optional ReferenceStore extension that expires unattached uploads
+// older than cutoff, returning their relative artifact keys and total freed bytes.
+type UploadExpirer interface {
+	ExpireUnattachedUploads(ctx context.Context, user users.User, cutoff time.Time, dryRun bool) (expiredKeys []string, freedBytes int64, err error)
+}
+
+// StorageQuotaReconciler is an optional ReferenceStore extension that updates
+// nori_user_storage.active_bytes to match actual live referenced bytes in object storage.
+type StorageQuotaReconciler interface {
+	ReconcileUserStorageBytes(ctx context.Context, user users.User, actualActiveBytes int64) (previousBytes int64, err error)
+}
+
 // Options configures an orphan audit or deletion pass.
 type Options struct {
-	Bucket      string
-	GraceWindow time.Duration
-	Delete      bool
-	Confirm     bool
-	MaxDelete   int
-	UserID      string
-	Now         func() time.Time
+	Bucket           string
+	GraceWindow      time.Duration
+	UnattachedTTL    time.Duration
+	ExpireUnattached bool
+	ReconcileQuotas  bool
+	Delete           bool
+	Confirm          bool
+	MaxDelete        int
+	UserID           string
+	Now              func() time.Time
 }
 
 // Orphan describes one verified unreferenced object older than the grace window.
@@ -64,20 +80,24 @@ type Orphan struct {
 
 // Report summarizes the outcome of an orphan audit or deletion run.
 type Report struct {
-	Bucket             string    `json:"bucket"`
-	DryRun             bool      `json:"dry_run"`
-	GraceWindow        string    `json:"grace_window"`
-	UsersScanned       int       `json:"users_scanned"`
-	UsersSkippedLocked int       `json:"users_skipped_locked"`
-	ObjectsScanned     int       `json:"objects_scanned"`
-	OrphanCount        int       `json:"orphan_count"`
-	OrphanBytes        int64     `json:"orphan_bytes"`
-	OldestOrphan       time.Time `json:"oldest_orphan,omitempty"`
-	NewestOrphan       time.Time `json:"newest_orphan,omitempty"`
-	DeletedCount       int       `json:"deleted_count"`
-	DeletedBytes       int64     `json:"deleted_bytes"`
-	DeleteCapReached   bool      `json:"delete_cap_reached,omitempty"`
-	Orphans            []Orphan  `json:"orphans,omitempty"`
+	Bucket              string    `json:"bucket"`
+	DryRun              bool      `json:"dry_run"`
+	GraceWindow         string    `json:"grace_window"`
+	UsersScanned        int       `json:"users_scanned"`
+	UsersSkippedLocked  int       `json:"users_skipped_locked"`
+	ObjectsScanned      int       `json:"objects_scanned"`
+	OrphanCount         int       `json:"orphan_count"`
+	OrphanBytes         int64     `json:"orphan_bytes"`
+	OldestOrphan        time.Time `json:"oldest_orphan,omitempty"`
+	NewestOrphan        time.Time `json:"newest_orphan,omitempty"`
+	DeletedCount        int       `json:"deleted_count"`
+	DeletedBytes        int64     `json:"deleted_bytes"`
+	DeleteCapReached    bool      `json:"delete_cap_reached,omitempty"`
+	ExpiredUploadsCount int       `json:"expired_uploads_count,omitempty"`
+	ExpiredUploadsBytes int64     `json:"expired_uploads_bytes,omitempty"`
+	QuotasReconciled    int       `json:"quotas_reconciled,omitempty"`
+	QuotaDriftBytes     int64     `json:"quota_drift_bytes,omitempty"`
+	Orphans             []Orphan  `json:"orphans,omitempty"`
 }
 
 // Reconcile scans per-user prefixes under artifacts/users/<id>/ and compares
@@ -88,6 +108,9 @@ func Reconcile(ctx context.Context, refs ReferenceStore, store ObjectStore, opts
 	}
 	if opts.GraceWindow <= 0 {
 		opts.GraceWindow = DefaultGraceWindow
+	}
+	if opts.UnattachedTTL <= 0 {
+		opts.UnattachedTTL = DefaultUnattachedTTL
 	}
 	if opts.Delete {
 		if !opts.Confirm {
@@ -103,6 +126,7 @@ func Reconcile(ctx context.Context, refs ReferenceStore, store ObjectStore, opts
 	}
 	now := nowFn().UTC()
 	cutoff := now.Add(-opts.GraceWindow)
+	unattachedCutoff := now.Add(-opts.UnattachedTTL)
 
 	report := Report{
 		Bucket:      opts.Bucket,
@@ -148,6 +172,24 @@ func Reconcile(ctx context.Context, refs ReferenceStore, store ObjectStore, opts
 			}
 			report.UsersScanned++
 
+			expiredSet := map[string]struct{}{}
+			if opts.ExpireUnattached {
+				if expirer, ok := refs.(UploadExpirer); ok {
+					keys, freed, expErr := expirer.ExpireUnattachedUploads(ctx, user, unattachedCutoff, !opts.Delete)
+					if expErr != nil {
+						return fmt.Errorf("expire unattached uploads for user %s: %w", user.ID, expErr)
+					}
+					report.ExpiredUploadsCount += len(keys)
+					report.ExpiredUploadsBytes += freed
+					for _, k := range keys {
+						expiredSet[k] = struct{}{}
+						if opts.Delete {
+							delete(snap.ReferencedKeys, k)
+						}
+					}
+				}
+			}
+
 			prefix := "artifacts/" + user.FilePrefix()
 			if !strings.HasPrefix(prefix, "artifacts/users/") || !strings.HasSuffix(prefix, "/") {
 				return fmt.Errorf("unexpected user artifact prefix %q", prefix)
@@ -156,6 +198,7 @@ func Reconcile(ctx context.Context, refs ReferenceStore, store ObjectStore, opts
 			if err != nil {
 				return fmt.Errorf("list objects for user %s: %w", user.ID, err)
 			}
+			var actualActiveBytes int64
 			for _, obj := range objects {
 				if !strings.HasPrefix(obj.Name, prefix) {
 					return fmt.Errorf("object listing for user %s returned foreign key %q", user.ID, obj.Name)
@@ -163,9 +206,11 @@ func Reconcile(ctx context.Context, refs ReferenceStore, store ObjectStore, opts
 				report.ObjectsScanned++
 				relKey := strings.TrimPrefix(obj.Name, prefix)
 				if _, referenced := snap.ReferencedKeys[relKey]; referenced {
+					actualActiveBytes += obj.Size
 					continue
 				}
-				if obj.Updated.IsZero() || !obj.Updated.Before(cutoff) {
+				_, wasJustExpired := expiredSet[relKey]
+				if !wasJustExpired && (obj.Updated.IsZero() || !obj.Updated.Before(cutoff)) {
 					continue
 				}
 
@@ -199,6 +244,21 @@ func Reconcile(ctx context.Context, refs ReferenceStore, store ObjectStore, opts
 					}
 					report.DeletedCount++
 					report.DeletedBytes += orphan.Size
+				}
+			}
+
+			if opts.ReconcileQuotas {
+				if reconciler, ok := refs.(StorageQuotaReconciler); ok {
+					prevBytes, recErr := reconciler.ReconcileUserStorageBytes(ctx, user, actualActiveBytes)
+					if recErr != nil {
+						return fmt.Errorf("reconcile storage quota for user %s: %w", user.ID, recErr)
+					}
+					report.QuotasReconciled++
+					drift := prevBytes - actualActiveBytes
+					if drift < 0 {
+						drift = -drift
+					}
+					report.QuotaDriftBytes += drift
 				}
 			}
 			return nil

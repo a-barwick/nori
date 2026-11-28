@@ -19,6 +19,7 @@ import (
 	"github.com/getkin/kin-openapi/routers/gorillamux"
 	"github.com/google/uuid"
 
+	"nori/internal/billing"
 	"nori/internal/computer"
 	"nori/internal/computer/fake"
 	"nori/internal/connections"
@@ -32,6 +33,7 @@ import (
 	"nori/internal/permissions"
 	"nori/internal/scheduler"
 	"nori/internal/secret"
+	"nori/internal/servicekeys"
 	"nori/internal/settings"
 	"nori/internal/sim/memstore"
 	"nori/internal/state"
@@ -182,16 +184,39 @@ func TestOpenAPIHandlersMatchSpec(t *testing.T) {
 		},
 	}
 
+	serviceKeysSvc := &servicekeys.Service{
+		Store: newMemModelKeyStore(),
+		Now:   func() time.Time { return fixedNow },
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(bytes.NewBufferString(`{"results":[]}`)),
+			}, nil
+		})},
+	}
+	billingSvc := billing.NewService(backend, false, billing.GlobalBudgetConfig{})
+	if _, err := billingSvc.SetTier(ctx, u.ID, billing.TierStandard, billing.SetTierOptions{}); err != nil {
+		t.Fatalf("seed billing entitlement: %v", err)
+	}
+
 	assistant := &Assistant{
-		Store:       store,
-		Connections: conn,
-		Permissions: perms,
-		Scheduler:   sched,
-		MCP:         mcpSvc,
-		ModelKeys:   modelKeysSvc,
-		Models:      modelsSvc,
-		AccountBYOK: true,
-		UsageNow:    func() time.Time { return fixedNow },
+		UserID:               u.ID,
+		Store:                store,
+		Connections:          conn,
+		Permissions:          perms,
+		Scheduler:            sched,
+		MCP:                  mcpSvc,
+		ModelKeys:            modelKeysSvc,
+		ServiceKeys:          serviceKeysSvc,
+		Billing:              billingSvc,
+		PlatformExaAvailable: true,
+		Models:               modelsSvc,
+		AccountBYOK:          true,
+		UsageNow:             func() time.Time { return fixedNow },
+		GetStorageUsed: func(ctx context.Context) (int64, error) {
+			return records.GetUserStorageBytes(ctx, backend, u)
+		},
 		Features: map[string]bool{
 			"integrations": true, "connections": true, "mcp": true,
 			"interactions": true, "work": true, "automations": true,
@@ -515,6 +540,12 @@ func TestOpenAPIHandlersMatchSpec(t *testing.T) {
 	}, http.StatusOK)
 	validateCall(http.MethodDelete, "/v1/settings/model-keys/openai", nil, http.StatusOK)
 
+	validateCall(http.MethodGet, "/v1/settings/service-keys", nil, http.StatusOK)
+	validateCall(http.MethodPut, "/v1/settings/service-keys/exa", map[string]any{"api_key": "exa-test-1234567890"}, http.StatusOK)
+	validateCall(http.MethodDelete, "/v1/settings/service-keys/exa", nil, http.StatusOK)
+
+	validateCall(http.MethodGet, "/v1/costs", nil, http.StatusOK)
+	validateCall(http.MethodGet, "/v1/costs?days=7", nil, http.StatusOK)
 	validateCall(http.MethodGet, "/v1/settings/api-costs", nil, http.StatusOK)
 	validateCall(http.MethodGet, "/v1/settings/api-costs?days=7", nil, http.StatusOK)
 	{

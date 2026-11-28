@@ -740,6 +740,10 @@ func (a *Assistant) summary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Assistant) continueWork(w http.ResponseWriter, r *http.Request, requestID string, budget float64) {
+	if err := a.checkConcurrentTaskCap(r.Context()); err != nil {
+		writeAPIError(w, err, requestID, nil)
+		return
+	}
 	previous, err := a.Store.GetRun(r.Context(), r.PathValue("task_id"))
 	if err != nil {
 		writeAPIError(w, err, requestID, nil)

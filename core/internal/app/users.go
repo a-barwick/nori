@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"nori/internal/api"
+	"nori/internal/billing"
 	"nori/internal/computer"
 	"nori/internal/connections"
 	"nori/internal/homeai"
@@ -28,12 +29,14 @@ const (
 )
 
 type Service struct {
-	Users         users.Directory
-	IdleTTL       time.Duration
-	MaxCachedApps int
-	Now           func() time.Time
-	ConfigureApp  func(users.User, *App)
+	Users               users.Directory
+	IdleTTL             time.Duration
+	MaxCachedApps       int
+	EntitlementCacheTTL time.Duration
+	Now                 func() time.Time
+	ConfigureApp        func(users.User, *App)
 
+	billing       *billing.Service
 	home          *homeai.Service
 	computer      *computer.Manager
 	closeComputer func()
@@ -49,6 +52,15 @@ type Service struct {
 	closed        bool
 	refs          int
 	closeOnce     sync.Once
+
+	entMu    sync.RWMutex
+	entCache map[string]cachedEntitlement
+
+	hooksMu              sync.RWMutex
+	disconnectDesktop    func(userID string)
+	sleepUserComputer    func(ctx context.Context, userID string) error
+	cancelUserWork       func(userID string)
+	onEntitlementChanged func(ctx context.Context, userID string)
 }
 
 type userApp struct {
@@ -69,7 +81,7 @@ func OpenService(ctx context.Context, waker wake.Waker, cfg settings.Settings) (
 	}
 	service := OpenServiceWithStorage(storage, waker, cfg)
 	if cfg.HomeAI.Enabled() {
-		service.home, err = openHomeAI(ctx, cfg)
+		service.home, err = openHomeAI(ctx, cfg, storage, service.CheckHomeAIAccess)
 		if err != nil {
 			service.Close()
 			return nil, err
@@ -91,8 +103,15 @@ func OpenServiceWithStorage(storage *platform.Storage, waker wake.Waker, cfg set
 	}
 	var dir users.Directory
 	var pushStore push.Store
+	var billingSvc *billing.Service
 	if storage != nil {
 		dir = storage.Users()
+		if setter, ok := dir.(users.TrialCapSetter); ok {
+			setter.SetTrialMaxSignupsPerDay(cfg.TrialMaxSignupsPerDay)
+		}
+		if bs := storage.BillingStore(); bs != nil {
+			billingSvc = billing.NewService(bs, cfg.EnvProfile == "prod", cfg.GlobalBudgetConfig())
+		}
 		if pp, ok := storage.Backend().(interface{ Pool() *pgxpool.Pool }); ok && pp.Pool() != nil {
 			pushStore = push.NewPostgresStore(pp.Pool())
 		}
@@ -112,17 +131,20 @@ func OpenServiceWithStorage(storage *platform.Storage, waker wake.Waker, cfg set
 		Sender: pushSender,
 	}
 	return &Service{
-		Users:         dir,
-		IdleTTL:       DefaultIdleTTL,
-		MaxCachedApps: DefaultMaxCachedApps,
-		pushStore:     pushStore,
-		pushWorker:    pushWorker,
-		storage:       storage,
-		cfg:           cfg,
-		waker:         waker,
-		apps:          map[string]*userApp{},
-		opening:       map[string]chan struct{}{},
-		collapsed:     map[string]bool{},
+		Users:               dir,
+		IdleTTL:             DefaultIdleTTL,
+		MaxCachedApps:       DefaultMaxCachedApps,
+		EntitlementCacheTTL: DefaultEntitlementCacheTTL,
+		billing:             billingSvc,
+		pushStore:           pushStore,
+		pushWorker:          pushWorker,
+		storage:             storage,
+		cfg:                 cfg,
+		waker:               waker,
+		apps:                map[string]*userApp{},
+		opening:             map[string]chan struct{}{},
+		collapsed:           map[string]bool{},
+		entCache:            map[string]cachedEntitlement{},
 	}
 }
 
@@ -382,10 +404,20 @@ func (s *Service) RepairUser(ctx context.Context, row users.User) error {
 
 	opened, _, err := openWithResources(ctx, s.waker, s.cfg, row, s.storage, openOptions{
 		skipCollapseDuplicates: true,
-		home:                   s.home,
-		computer:               s.computer,
-		pushStore:              s.pushStore,
-		pushWorker:             s.pushWorker,
+		billing:                s.billing,
+		getEntitlement:         s.GetEntitlement,
+		onKeyMutated: func(ctx context.Context, userID string) {
+			if s.storage != nil {
+				s.storage.EvictUserDEKs(userID)
+			}
+			if s.billing != nil {
+				_ = s.billing.NotifyEntitlementChanged(ctx, userID)
+			}
+		},
+		home:       s.home,
+		computer:   s.computer,
+		pushStore:  s.pushStore,
+		pushWorker: s.pushWorker,
 	})
 	if err != nil {
 		return err
@@ -459,10 +491,20 @@ func (s *Service) openUserApp(ctx context.Context, row users.User, done chan str
 	}()
 	opened, collapsed, err := openWithResources(ctx, s.waker, s.cfg, row, s.storage, openOptions{
 		skipCollapseDuplicates: alreadyCollapsed || row.ResetPending,
-		home:                   s.home,
-		computer:               s.computer,
-		pushStore:              s.pushStore,
-		pushWorker:             s.pushWorker,
+		billing:                s.billing,
+		getEntitlement:         s.GetEntitlement,
+		onKeyMutated: func(ctx context.Context, userID string) {
+			if s.storage != nil {
+				s.storage.EvictUserDEKs(userID)
+			}
+			if s.billing != nil {
+				_ = s.billing.NotifyEntitlementChanged(ctx, userID)
+			}
+		},
+		home:       s.home,
+		computer:   s.computer,
+		pushStore:  s.pushStore,
+		pushWorker: s.pushWorker,
 	})
 	if err != nil {
 		return nil, err
@@ -539,6 +581,10 @@ func (s *Service) Handler(local bool) http.Handler {
 			return connections.GoogleWorkspaceCallbackUser(raw, key, s.now())
 		}
 	}
+	var checkEntitlement func(context.Context, string) (billing.Entitlement, error)
+	if s.billing != nil {
+		checkEntitlement = s.CheckNotSuspended
+	}
 	return wrapAccountDeleteRequest(api.UserHandlerWithOptions(s.Users, func(ctx context.Context, row users.User) (api.UserRoutes, func(), error) {
 		userApp, release, err := s.acquire(ctx, row)
 		if err != nil {
@@ -552,11 +598,12 @@ func (s *Service) Handler(local bool) http.Handler {
 		}
 		return api.UserRoutes{Handler: userApp.handler, Resume: resume}, release, nil
 	}, local, s.cfg.Models.Outer, api.UserHandlerOptions{
-		ReadyCheck:      s.Ping,
-		Metrics:         observability.MetricsHandler(),
-		UserActivity:    s.userDataActivity,
-		ResetData:       s.resetUserData,
-		GoogleOAuthUser: googleOAuthUser,
+		ReadyCheck:       s.Ping,
+		Metrics:          observability.MetricsHandler(),
+		UserActivity:     s.userDataActivity,
+		ResetData:        s.resetUserData,
+		GoogleOAuthUser:  googleOAuthUser,
+		CheckEntitlement: checkEntitlement,
 	}))
 }
 

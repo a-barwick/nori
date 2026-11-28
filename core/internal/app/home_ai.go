@@ -18,6 +18,7 @@ import (
 	"nori/internal/homeai"
 	"nori/internal/llmguard"
 	"nori/internal/modelprofiles"
+	"nori/internal/platform"
 	"nori/internal/settings"
 	"nori/internal/state"
 	"nori/internal/usage"
@@ -25,7 +26,7 @@ import (
 
 const homeModelURL = "https://home-model.invalid/v1"
 
-func openHomeAI(ctx context.Context, cfg settings.Settings) (*homeai.Service, error) {
+func openHomeAI(ctx context.Context, cfg settings.Settings, storage *platform.Storage, checkAccess func(context.Context, string) error) (*homeai.Service, error) {
 	key, err := cfg.HomeAI.EncryptionKey()
 	if err != nil {
 		return nil, err
@@ -34,11 +35,23 @@ func openHomeAI(ctx context.Context, cfg settings.Settings) (*homeai.Service, er
 	if listenURL == "" && cfg.HomeAI.PostgresURL == "" {
 		listenURL = cfg.Store.PostgresListenURL
 	}
-	return homeai.Open(ctx, homeai.Options{
+	opts := homeai.Options{
 		PostgresListenURL: listenURL,
 		PostgresURL:       cmp.Or(cfg.HomeAI.PostgresURL, cfg.Store.PostgresURL),
-		VerificationURI:   cfg.HomeAI.VerificationURL, Key: key, MaxConns: int32(cmp.Or(cfg.HomeAI.MaxConns, 4)),
-	})
+		VerificationURI:   cfg.HomeAI.VerificationURL,
+		Key:               key,
+		MaxConns:          int32(cmp.Or(cfg.HomeAI.MaxConns, 4)),
+		CheckAccess:       checkAccess,
+	}
+	// When NORI_HOME_AI_POSTGRES_URL is empty, share the main Postgres pool
+	// (tolerating NORI_HOME_AI_MAX_CONNS set or unset) to reduce steady-state DB connections.
+	if cfg.HomeAI.PostgresURL == "" && storage != nil {
+		if sharedPool := storage.Pool(); sharedPool != nil {
+			opts.Pool = sharedPool
+			opts.MaxConns = 0
+		}
+	}
+	return homeai.Open(ctx, opts)
 }
 
 func homeProfiles(devices []homeai.Device, work bool) []modelprofiles.Profile {

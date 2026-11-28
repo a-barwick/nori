@@ -50,23 +50,29 @@ const (
 )
 
 type Options struct {
+	Pool              *pgxpool.Pool
 	PostgresURL       string
 	Key               []byte
 	VerificationURI   string
 	MaxConns          int32
 	PostgresListenURL string
+	CheckAccess       func(ctx context.Context, userID string) error
 }
 
 type Service struct {
 	pool            *pgxpool.Pool
+	ownsPool        bool
 	aead            cipher.AEAD
 	verificationURI string
 	listenURL       string
+	checkAccess     func(ctx context.Context, userID string) error
 	stop            context.CancelFunc
 	done            chan struct{}
 	cleanupDone     chan struct{}
 	mu              sync.Mutex
 	waiters         map[string]map[chan struct{}]struct{}
+	socketsMu       sync.Mutex
+	userSockets     map[string]map[string]context.CancelFunc
 }
 
 type Pairing struct {
@@ -103,24 +109,42 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	config, err := pgxpool.ParseConfig(opts.PostgresURL)
-	if err != nil {
-		return nil, err
-	}
-	if opts.MaxConns > 0 {
-		config.MaxConns = opts.MaxConns
-	}
-	pool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		return nil, err
+	pool := opts.Pool
+	ownsPool := false
+	if pool == nil {
+		config, err := pgxpool.ParseConfig(opts.PostgresURL)
+		if err != nil {
+			return nil, err
+		}
+		if opts.MaxConns > 0 {
+			config.MaxConns = opts.MaxConns
+		}
+		pool, err = pgxpool.NewWithConfig(ctx, config)
+		if err != nil {
+			return nil, err
+		}
+		ownsPool = true
 	}
 	listenURL := opts.PostgresListenURL
 	if listenURL == "" {
 		listenURL = opts.PostgresURL
 	}
-	s := &Service{pool: pool, aead: aead, verificationURI: u.String(), listenURL: listenURL, done: make(chan struct{}), cleanupDone: make(chan struct{}), waiters: map[string]map[chan struct{}]struct{}{}}
+	s := &Service{
+		pool:            pool,
+		ownsPool:        ownsPool,
+		aead:            aead,
+		verificationURI: u.String(),
+		listenURL:       listenURL,
+		checkAccess:     opts.CheckAccess,
+		done:            make(chan struct{}),
+		cleanupDone:     make(chan struct{}),
+		waiters:         map[string]map[chan struct{}]struct{}{},
+		userSockets:     map[string]map[string]context.CancelFunc{},
+	}
 	if err := s.Ready(ctx); err != nil {
-		pool.Close()
+		if ownsPool {
+			pool.Close()
+		}
 		return nil, err
 	}
 	watchCtx, stop := context.WithCancel(context.Background())
@@ -143,8 +167,59 @@ func (s *Service) Close() {
 		s.stop()
 		<-s.done
 		<-s.cleanupDone
-		s.pool.Close()
+		if s.ownsPool {
+			s.pool.Close()
+		}
 	}
+}
+
+// DisconnectUser immediately cancels all open Home AI WebSocket connections for userID
+// on this instance without revoking the user's paired device registration.
+func (s *Service) DisconnectUser(userID string) int {
+	if s == nil || userID == "" {
+		return 0
+	}
+	s.socketsMu.Lock()
+	conns := s.userSockets[userID]
+	cancels := make([]context.CancelFunc, 0, len(conns))
+	for _, cancel := range conns {
+		cancels = append(cancels, cancel)
+	}
+	delete(s.userSockets, userID)
+	s.socketsMu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
+	return len(cancels)
+}
+
+func (s *Service) registerSocket(userID, connectionID string, cancel context.CancelFunc) {
+	if s == nil || userID == "" || connectionID == "" {
+		return
+	}
+	s.socketsMu.Lock()
+	if s.userSockets == nil {
+		s.userSockets = map[string]map[string]context.CancelFunc{}
+	}
+	if s.userSockets[userID] == nil {
+		s.userSockets[userID] = map[string]context.CancelFunc{}
+	}
+	s.userSockets[userID][connectionID] = cancel
+	s.socketsMu.Unlock()
+}
+
+func (s *Service) unregisterSocket(userID, connectionID string) {
+	if s == nil || userID == "" || connectionID == "" {
+		return
+	}
+	s.socketsMu.Lock()
+	if group := s.userSockets[userID]; group != nil {
+		delete(group, connectionID)
+		if len(group) == 0 {
+			delete(s.userSockets, userID)
+		}
+	}
+	s.socketsMu.Unlock()
 }
 
 func (s *Service) Ready(ctx context.Context) error {

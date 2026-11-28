@@ -11,6 +11,7 @@ import (
 
 	"nori/internal/agent"
 	"nori/internal/api"
+	"nori/internal/billing"
 	"nori/internal/computer"
 	"nori/internal/connections"
 	computerconn "nori/internal/connectors/computer"
@@ -54,10 +55,14 @@ type App struct {
 	PushWorker      *push.OutboxWorker
 
 	guardWakeRepair func(context.Context) (func(), error)
+	closeServices   func()
 }
 
 type openOptions struct {
 	skipCollapseDuplicates bool
+	billing                *billing.Service
+	getEntitlement         func(context.Context, string) (billing.Entitlement, error)
+	onKeyMutated           func(context.Context, string)
 	home                   *homeai.Service
 	computer               *computer.Manager
 	pushStore              push.Store
@@ -153,6 +158,14 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 		store.Close()
 		return nil, false, err
 	}
+	result.closeServices = services.Close
+	if services.ServiceKeys != nil && opts.onKeyMutated != nil {
+		uid := user.ID
+		onMutate := opts.onKeyMutated
+		services.ServiceKeys.OnMutate = func(ctx context.Context, _ string) {
+			onMutate(ctx, uid)
+		}
+	}
 	if services.Permissions != nil && services.Permissions.UserSends == "" {
 		services.Permissions.UserSends = "ask"
 	}
@@ -169,10 +182,46 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 	wireSchedulerProactivityHooks(services.Scheduler, store, services.Connections, opts.pushWorker, user.ID)
 	models := buildAppModels(&cfg, user, store, services, opts.home)
 
+	var getEnt func(context.Context) (billing.Entitlement, error)
+	if opts.getEntitlement != nil {
+		uid := user.ID
+		fn := opts.getEntitlement
+		getEnt = func(ctx context.Context) (billing.Entitlement, error) {
+			return fn(ctx, uid)
+		}
+	} else if opts.billing != nil {
+		uid := user.ID
+		b := opts.billing
+		getEnt = func(ctx context.Context) (billing.Entitlement, error) {
+			return b.GetEntitlement(ctx, uid)
+		}
+	}
+	var getStorageUsed func(context.Context) (int64, error)
+	var releaseStorageBytes func(context.Context, int64) error
+	if storage != nil {
+		uCopy := user
+		getStorageUsed = func(ctx context.Context) (int64, error) {
+			return storage.GetUserStorageBytes(ctx, uCopy)
+		}
+		releaseStorageBytes = func(ctx context.Context, delta int64) error {
+			return storage.ReleaseUserStorageBytes(ctx, uCopy, delta)
+		}
+	}
+	var onKeyMutated func(context.Context)
+	if opts.onKeyMutated != nil {
+		uid := user.ID
+		fn := opts.onKeyMutated
+		onKeyMutated = func(ctx context.Context) {
+			fn(ctx, uid)
+		}
+	}
+
 	result.Assistant = &api.Assistant{
-		Store: store, Connections: services.Connections, Permissions: services.Permissions, Tools: toolSource.Tools,
+		UserID: user.ID, Store: store, Connections: services.Connections, Permissions: services.Permissions, Tools: toolSource.Tools,
 		Scheduler: services.Scheduler, UnattendedWrites: cfg.Connections.UnattendedWrites, MCP: services.MCP,
-		ModelKeys: services.ModelKeys, Models: models.account, AccountBYOK: cfg.Models.BYOKRequired,
+		ModelKeys: services.ModelKeys, ServiceKeys: services.ServiceKeys, Models: models.account, AccountBYOK: cfg.Models.BYOKRequired,
+		Billing: opts.billing, PlatformExaAvailable: cfg.ExaSearchKey != "",
+		GetEntitlement: getEnt, GetStorageUsed: getStorageUsed, ReleaseStorageBytes: releaseStorageBytes, OnKeyMutated: onKeyMutated,
 		Features:      AssistantFeatures(services.Connections, cfg.Features.DisableBackgroundTasks),
 		NextScheduled: services.Scheduler.NextScheduled, InboxUnread: services.Scheduler.UnreadCount,
 		NormalizeMemory: newMemoryNormalizer(models.summarizer, models.outer, store, cfg),
@@ -414,6 +463,9 @@ func wireAssistantCallbacks(result *App, userID string, leases docstore.LeaseSto
 }
 
 func (a *App) Close() {
+	if a.closeServices != nil {
+		a.closeServices()
+	}
 	a.Store.Close()
 }
 

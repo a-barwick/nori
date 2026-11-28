@@ -8,6 +8,11 @@ import (
 	"nori/internal/usage"
 )
 
+type costReportResponse struct {
+	usage.CostReport
+	Entitlement *entitlementCostSummary `json:"entitlement,omitempty"`
+}
+
 func (a *Assistant) apiCosts(w http.ResponseWriter, r *http.Request) {
 	days := 30
 	if values, ok := r.URL.Query()["days"]; ok {
@@ -49,7 +54,15 @@ func (a *Assistant) apiCosts(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, err, "", nil)
 		return
 	}
-	writeJSON(w, http.StatusOK, report)
+	entSummary, err := a.buildEntitlementCostSummary(ctx)
+	if err != nil {
+		writeAPIError(w, err, "", nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, costReportResponse{
+		CostReport:  report,
+		Entitlement: entSummary,
+	})
 }
 
 func writeInvalidCostRange(w http.ResponseWriter) {

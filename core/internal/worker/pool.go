@@ -63,6 +63,7 @@ type Options struct {
 	RunConversation      func(ctx context.Context, userApp *app.App) error
 	NextConversationWake func(ctx context.Context, userApp *app.App) (time.Time, error)
 	RunScheduler         func(ctx context.Context, userApp *app.App) (*time.Time, error)
+	OnEntitlementChanged func(userID string)
 }
 
 type LaneStats struct {
@@ -97,6 +98,10 @@ type Pool struct {
 	subMu     sync.Mutex
 	subs      map[docstore.TaskKey]map[uint64]chan struct{}
 	nextSubID uint64
+
+	workMu      sync.Mutex
+	workCancels map[string]map[uint64]context.CancelFunc
+	nextWorkID  uint64
 
 	drainOnce sync.Once
 	drainCh   chan struct{}
@@ -157,7 +162,7 @@ func New(svc *app.Service, opts Options) (*Pool, error) {
 	if opts.Backoff <= 0 {
 		opts.Backoff = DefaultBackoff
 	}
-	return &Pool{
+	p := &Pool{
 		service:      svc,
 		leases:       leases,
 		scopedLeases: scopedLeases,
@@ -170,8 +175,61 @@ func New(svc *app.Service, opts Options) (*Pool, error) {
 		schedWakeCh:  make(chan struct{}, 1),
 		activeByUser: map[string]int{},
 		subs:         map[docstore.TaskKey]map[uint64]chan struct{}{},
+		workCancels:  map[string]map[uint64]context.CancelFunc{},
 		drainCh:      make(chan struct{}),
-	}, nil
+	}
+	svc.SetCancelUserWork(p.CancelUser)
+	return p, nil
+}
+
+func (p *Pool) trackUserWork(parent context.Context, userID string) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(parent)
+	if userID == "" {
+		return ctx, cancel
+	}
+	p.workMu.Lock()
+	p.nextWorkID++
+	id := p.nextWorkID
+	if p.workCancels[userID] == nil {
+		p.workCancels[userID] = map[uint64]context.CancelFunc{}
+	}
+	p.workCancels[userID][id] = cancel
+	p.workMu.Unlock()
+
+	var once sync.Once
+	return ctx, func() {
+		once.Do(func() {
+			p.workMu.Lock()
+			if group := p.workCancels[userID]; group != nil {
+				delete(group, id)
+				if len(group) == 0 {
+					delete(p.workCancels, userID)
+				}
+			}
+			p.workMu.Unlock()
+			cancel()
+		})
+	}
+}
+
+// CancelUser immediately cancels all in-flight task, conversation, and scheduler work
+// currently running for userID on this pool.
+func (p *Pool) CancelUser(userID string) {
+	if p == nil || userID == "" {
+		return
+	}
+	p.workMu.Lock()
+	group := p.workCancels[userID]
+	cancels := make([]context.CancelFunc, 0, len(group))
+	for _, fn := range group {
+		cancels = append(cancels, fn)
+	}
+	delete(p.workCancels, userID)
+	p.workMu.Unlock()
+	for _, fn := range cancels {
+		fn()
+	}
+	p.notifyTaskSubscribers(userID, "*")
 }
 
 func (p *Pool) tryAcquireUser(userID string) bool {
@@ -338,6 +396,23 @@ func (p *Pool) HandleWake(ev docstore.WakeEvent) {
 			return
 		}
 		signalChan(p.schedWakeCh)
+	case docstore.WakeKindEntitlement:
+		if p.userID != "" && parsed.UserID != "" && parsed.UserID != p.userID {
+			return
+		}
+		if parsed.UserID != "" {
+			p.notifyTaskSubscribers(parsed.UserID, "*")
+		}
+		go func(uid string) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if p.service != nil {
+				p.service.HandleEntitlementChanged(ctx, uid)
+			}
+			if p.opts.OnEntitlementChanged != nil {
+				p.opts.OnEntitlementChanged(uid)
+			}
+		}(parsed.UserID)
 	case docstore.WakeKindResync:
 		signalChan(p.taskWakeCh)
 		signalChan(p.convWakeCh)
@@ -485,6 +560,9 @@ func (p *Pool) RepairOnce(ctx context.Context) error {
 			return ctx.Err()
 		}
 		knownUsers[row.ID] = true
+		if p.service.IsUserSuspended(ctx, row.ID) {
+			continue
+		}
 		if repairErr := p.service.RepairUser(ctx, row); repairErr != nil {
 			failures = append(failures, fmt.Errorf("user %s: %w", row.ID, repairErr))
 		}
@@ -648,7 +726,16 @@ func (p *Pool) handleTask(workCtx context.Context, claim docstore.TaskLease) {
 	finCtx := func() (context.Context, context.CancelFunc) {
 		return context.WithTimeout(context.WithoutCancel(workCtx), p.opts.CancelGrace)
 	}
-	userApp, release, err := p.service.AcquireByID(workCtx, claim.UserID)
+	if p.service.IsUserSuspended(workCtx, claim.UserID) {
+		cctx, cancel := finCtx()
+		defer cancel()
+		_, _ = p.leases.ParkTask(cctx, claim.UserID, claim.RunID, p.owner, claim.WakeSeq, "account_suspended")
+		return
+	}
+	taskCtx, untrack := p.trackUserWork(workCtx, claim.UserID)
+	defer untrack()
+
+	userApp, release, err := p.service.AcquireByID(taskCtx, claim.UserID)
 	if err != nil {
 		cctx, cancel := finCtx()
 		defer cancel()
@@ -657,8 +744,8 @@ func (p *Pool) handleTask(workCtx context.Context, claim docstore.TaskLease) {
 			return
 		}
 		_ = p.leases.ReleaseTask(cctx, claim.UserID, claim.RunID, p.owner, claim.WakeSeq, p.now().Add(p.opts.Backoff))
-		if workCtx.Err() == nil {
-			slog.WarnContext(workCtx, "worker acquire user failed", "owner", p.owner, "lane", "task", "user_id", claim.UserID, "run_id", claim.RunID, "err", err)
+		if taskCtx.Err() == nil {
+			slog.WarnContext(taskCtx, "worker acquire user failed", "owner", p.owner, "lane", "task", "user_id", claim.UserID, "run_id", claim.RunID, "err", err)
 		}
 		return
 	}
@@ -666,7 +753,7 @@ func (p *Pool) handleTask(workCtx context.Context, claim docstore.TaskLease) {
 
 	var outcome task.RunOutcome
 	if p.opts.RunTask != nil {
-		outcome, err = p.opts.RunTask(workCtx, userApp, claim, p.drainCh)
+		outcome, err = p.opts.RunTask(taskCtx, userApp, claim, p.drainCh)
 	} else {
 		if userApp.TaskActivities == nil {
 			cctx, cancel := finCtx()
@@ -686,9 +773,17 @@ func (p *Pool) handleTask(workCtx context.Context, claim docstore.TaskLease) {
 			Now:        p.opts.Now,
 			Drain:      p.drainCh,
 		}
-		outcome, err = runner.Run(workCtx, claim)
+		outcome, err = runner.Run(taskCtx, claim)
 	}
-	if err != nil && workCtx.Err() == nil && !errors.Is(err, context.Canceled) {
+	if taskCtx.Err() != nil && workCtx.Err() == nil {
+		cctx, cancel := finCtx()
+		defer cancel()
+		if p.service.IsUserSuspended(cctx, claim.UserID) {
+			_, _ = p.leases.ParkTask(cctx, claim.UserID, claim.RunID, p.owner, claim.WakeSeq, "account_suspended")
+			return
+		}
+	}
+	if err != nil && taskCtx.Err() == nil && !errors.Is(err, context.Canceled) {
 		slog.WarnContext(workCtx, "worker task execution failed", "owner", p.owner, "lane", "task", "user_id", claim.UserID, "run_id", claim.RunID, "outcome", outcome, "err", err)
 	}
 }
@@ -759,8 +854,16 @@ func (p *Pool) handleConversation(workCtx context.Context, uw docstore.UserWake)
 	finCtx := func() (context.Context, context.CancelFunc) {
 		return context.WithTimeout(context.WithoutCancel(workCtx), p.opts.CancelGrace)
 	}
+	if p.service.IsUserSuspended(workCtx, uw.UserID) {
+		fCtx, fCancel := finCtx()
+		defer fCancel()
+		_, _ = p.leases.ParkUserWake(fCtx, uw.UserID, docstore.LaneConversation, p.owner, uw.WakeSeq)
+		return
+	}
+	userWorkCtx, untrack := p.trackUserWork(workCtx, uw.UserID)
+	defer untrack()
 
-	userApp, release, err := p.service.AcquireByID(workCtx, uw.UserID)
+	userApp, release, err := p.service.AcquireByID(userWorkCtx, uw.UserID)
 	if err != nil {
 		fCtx, fCancel := finCtx()
 		defer fCancel()
@@ -769,14 +872,14 @@ func (p *Pool) handleConversation(workCtx context.Context, uw docstore.UserWake)
 			return
 		}
 		_ = p.leases.ReleaseUserWake(fCtx, uw.UserID, docstore.LaneConversation, p.owner, uw.WakeSeq, p.now().Add(p.opts.Backoff))
-		if workCtx.Err() == nil {
+		if userWorkCtx.Err() == nil {
 			slog.WarnContext(workCtx, "worker acquire user failed", "owner", p.owner, "lane", docstore.LaneConversation, "user_id", uw.UserID, "err", err)
 		}
 		return
 	}
 	defer release()
 
-	turnCtx, stopRenew := p.startUserWakeRenewer(workCtx, uw.UserID, docstore.LaneConversation, state.ConversationLease)
+	turnCtx, stopRenew := p.startUserWakeRenewer(userWorkCtx, uw.UserID, docstore.LaneConversation, state.ConversationLease)
 	defer stopRenew()
 	var runErr error
 	if p.opts.RunConversation != nil {
@@ -789,6 +892,10 @@ func (p *Pool) handleConversation(workCtx context.Context, uw docstore.UserWake)
 	fCtx, fCancel := finCtx()
 	defer fCancel()
 
+	if p.service.IsUserSuspended(fCtx, uw.UserID) {
+		_, _ = p.leases.ParkUserWake(fCtx, uw.UserID, docstore.LaneConversation, p.owner, uw.WakeSeq)
+		return
+	}
 	if runErr != nil {
 		if !errors.Is(runErr, state.ErrConversationBusy) && !errors.Is(runErr, context.Canceled) && workCtx.Err() == nil {
 			slog.WarnContext(workCtx, "worker conversation will retry", "owner", p.owner, "lane", docstore.LaneConversation, "user_id", uw.UserID, "err", runErr)
@@ -868,8 +975,16 @@ func (p *Pool) handleScheduler(workCtx context.Context, uw docstore.UserWake) {
 	finCtx := func() (context.Context, context.CancelFunc) {
 		return context.WithTimeout(context.WithoutCancel(workCtx), p.opts.CancelGrace)
 	}
+	if p.service.IsUserSuspended(workCtx, uw.UserID) {
+		fCtx, fCancel := finCtx()
+		defer fCancel()
+		_, _ = p.leases.ParkUserWake(fCtx, uw.UserID, docstore.LaneScheduler, p.owner, uw.WakeSeq)
+		return
+	}
+	userWorkCtx, untrack := p.trackUserWork(workCtx, uw.UserID)
+	defer untrack()
 
-	userApp, release, err := p.service.AcquireByID(workCtx, uw.UserID)
+	userApp, release, err := p.service.AcquireByID(userWorkCtx, uw.UserID)
 	if err != nil {
 		fCtx, fCancel := finCtx()
 		defer fCancel()
@@ -878,14 +993,14 @@ func (p *Pool) handleScheduler(workCtx context.Context, uw docstore.UserWake) {
 			return
 		}
 		_ = p.leases.ReleaseUserWake(fCtx, uw.UserID, docstore.LaneScheduler, p.owner, uw.WakeSeq, p.now().Add(p.opts.Backoff))
-		if workCtx.Err() == nil {
+		if userWorkCtx.Err() == nil {
 			slog.WarnContext(workCtx, "worker acquire user failed", "owner", p.owner, "lane", docstore.LaneScheduler, "user_id", uw.UserID, "err", err)
 		}
 		return
 	}
 	defer release()
 
-	turnCtx, stopRenew := p.startUserWakeRenewer(workCtx, uw.UserID, docstore.LaneScheduler, state.SchedulerLease)
+	turnCtx, stopRenew := p.startUserWakeRenewer(userWorkCtx, uw.UserID, docstore.LaneScheduler, state.SchedulerLease)
 	defer stopRenew()
 	var nextDue *time.Time
 	var runErr error
@@ -899,6 +1014,10 @@ func (p *Pool) handleScheduler(workCtx context.Context, uw docstore.UserWake) {
 	fCtx, fCancel := finCtx()
 	defer fCancel()
 
+	if p.service.IsUserSuspended(fCtx, uw.UserID) {
+		_, _ = p.leases.ParkUserWake(fCtx, uw.UserID, docstore.LaneScheduler, p.owner, uw.WakeSeq)
+		return
+	}
 	if runErr != nil {
 		if !errors.Is(runErr, context.Canceled) && workCtx.Err() == nil {
 			slog.WarnContext(workCtx, "worker scheduler will retry", "owner", p.owner, "lane", docstore.LaneScheduler, "user_id", uw.UserID, "err", runErr)

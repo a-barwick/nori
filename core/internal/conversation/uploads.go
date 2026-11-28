@@ -29,9 +29,14 @@ func (t *Tasks) SaveUpload(ctx context.Context, id, name, declared string, data 
 	return completed, err
 }
 
+// UnattachedUploadTTL is the retention window before unattached uploads expire
+// and have their underlying storage bytes reclaimed.
+const UnattachedUploadTTL = 24 * time.Hour
+
 func (t *Tasks) CleanupUploads(ctx context.Context) error {
 	now := t.now()
-	ids, err := t.Store.ClaimExpiredUploads(ctx, now.Add(-24*time.Hour), now.Add(-7*24*time.Hour), 50)
+	cutoff := now.Add(-UnattachedUploadTTL)
+	ids, err := t.Store.ClaimExpiredUploads(ctx, cutoff, cutoff, 50)
 	if err != nil {
 		return err
 	}

@@ -2012,6 +2012,75 @@ paths:
         "400":
           $ref: "#/components/responses/ErrorResponse"
 
+  /v1/settings/service-keys:
+    get:
+      operationId: listServiceKeys
+      tags: [Settings]
+      summary: List BYOK external service API key configuration statuses
+      responses:
+        "200":
+          description: Service keys status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceKeysResponse"
+
+  /v1/settings/service-keys/{service}:
+    put:
+      operationId: saveServiceKey
+      tags: [Settings]
+      summary: Validate and store a BYOK external service API key
+      parameters:
+        - name: service
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [exa]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetServiceKeyRequest"
+      responses:
+        "200":
+          description: Updated service key status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceKeyStatus"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "402":
+          $ref: "#/components/responses/ErrorResponse"
+        "403":
+          $ref: "#/components/responses/ErrorResponse"
+        "422":
+          $ref: "#/components/responses/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/ErrorResponse"
+    delete:
+      operationId: deleteServiceKey
+      tags: [Settings]
+      summary: Remove a BYOK external service API key
+      parameters:
+        - name: service
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [exa]
+      responses:
+        "200":
+          description: Updated service key status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceKeyStatus"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+
   /v1/settings/models:
     get:
       operationId: getModelSettings
@@ -2134,6 +2203,30 @@ paths:
       responses:
         "204":
           $ref: "#/components/responses/NoContentResponse"
+
+  /v1/costs:
+    get:
+      operationId: getCosts
+      tags: [Settings]
+      summary: Read aggregated usage costs, billing/category breakdowns, and entitlement summary
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+            enum: [1, 7, 30]
+            default: 30
+      responses:
+        "200":
+          description: Cost report with billing/category breakdowns and entitlement summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CostReport"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "409":
+          $ref: "#/components/responses/ErrorResponse"
 
   /v1/settings/api-costs:
     get:
@@ -2800,6 +2893,70 @@ components:
           $ref: "#/components/schemas/UploadAccept"
         model_profiles:
           $ref: "#/components/schemas/ModelProfileCatalog"
+        entitlement:
+          $ref: "#/components/schemas/CapabilitiesEntitlement"
+        service_keys:
+          $ref: "#/components/schemas/CapabilitiesServiceKeys"
+
+    CapabilitiesEntitlement:
+      type: object
+      required:
+        - tier
+        - status
+        - allow_byok
+        - suspended
+        - credit_remaining_usd
+        - credit_grant_usd
+        - storage_used_bytes
+        - storage_limit_bytes
+        - max_routines
+        - max_concurrent_tasks
+        - max_desktop_ws
+        - max_checkpoints
+      properties:
+        tier:
+          type: string
+          enum: [trial, byok, standard, power]
+        status:
+          type: string
+          enum: [active, billing_retry, past_due, canceled, expired]
+        allow_byok:
+          type: boolean
+        suspended:
+          type: boolean
+        credit_remaining_usd:
+          type: number
+          minimum: 0
+        credit_grant_usd:
+          type: number
+          minimum: 0
+        storage_used_bytes:
+          type: integer
+          minimum: 0
+        storage_limit_bytes:
+          type: integer
+          minimum: 0
+        max_routines:
+          type: integer
+          minimum: 0
+        max_concurrent_tasks:
+          type: integer
+          minimum: 0
+        max_desktop_ws:
+          type: integer
+          minimum: 0
+        max_checkpoints:
+          type: integer
+          minimum: 0
+
+    CapabilitiesServiceKeys:
+      type: object
+      required: [exa_configured, platform_exa_available]
+      properties:
+        exa_configured:
+          type: boolean
+        platform_exa_available:
+          type: boolean
 
     WorkingHoursSlot:
       type: object
@@ -3154,6 +3311,47 @@ components:
           type: string
           minLength: 1
 
+    ServiceKeyStatus:
+      type: object
+      required: [service, label, configured]
+      properties:
+        service:
+          type: string
+          minLength: 1
+        label:
+          type: string
+          minLength: 1
+        configured:
+          type: boolean
+        last4:
+          type: string
+        masked_key:
+          type: string
+        source:
+          type: string
+          enum: [byok, platform, none]
+        updated_at:
+          $ref: "#/components/schemas/Instant"
+        validated_at:
+          $ref: "#/components/schemas/Instant"
+
+    ServiceKeysResponse:
+      type: object
+      required: [services]
+      properties:
+        services:
+          type: array
+          items:
+            $ref: "#/components/schemas/ServiceKeyStatus"
+
+    SetServiceKeyRequest:
+      type: object
+      required: [api_key]
+      properties:
+        api_key:
+          type: string
+          minLength: 1
+
     ModelSettings:
       type: object
       required: [model_profiles, selection, revision, recommendations]
@@ -3303,9 +3501,94 @@ components:
           items:
             $ref: "#/components/schemas/ModelCost"
 
+    BillingCosts:
+      type: object
+      required: [hosted, byok, local]
+      properties:
+        hosted:
+          $ref: "#/components/schemas/CostAmount"
+        byok:
+          $ref: "#/components/schemas/CostAmount"
+        local:
+          $ref: "#/components/schemas/CostAmount"
+
+    CategoryCosts:
+      type: object
+      required: [llm, search, computer]
+      properties:
+        llm:
+          $ref: "#/components/schemas/CostAmount"
+        search:
+          $ref: "#/components/schemas/CostAmount"
+        computer:
+          $ref: "#/components/schemas/CostAmount"
+
+    EntitlementCostSummary:
+      type: object
+      required:
+        - tier
+        - status
+        - billing_provider
+        - period_start
+        - suspended
+        - allow_byok
+        - credit_grant_usd
+        - credit_used_usd
+        - credit_pending_usd
+        - credit_remaining_usd
+        - byok_max_usd_per_day
+        - storage_used_bytes
+        - storage_limit_bytes
+      properties:
+        tier:
+          type: string
+          enum: [trial, byok, standard, power]
+        pending_tier:
+          type: string
+          enum: [byok, standard, power]
+        status:
+          type: string
+          enum: [active, billing_retry, past_due, canceled, expired]
+        billing_provider:
+          type: string
+          enum: [manual, stripe, apple_iap]
+        period_start:
+          $ref: "#/components/schemas/Instant"
+        period_end:
+          $ref: "#/components/schemas/Instant"
+        grace_until:
+          $ref: "#/components/schemas/Instant"
+        suspended:
+          type: boolean
+        suspended_reason:
+          type: string
+        allow_byok:
+          type: boolean
+        credit_grant_usd:
+          type: number
+          minimum: 0
+        credit_used_usd:
+          type: number
+          minimum: 0
+        credit_pending_usd:
+          type: number
+          minimum: 0
+        credit_remaining_usd:
+          type: number
+          minimum: 0
+        byok_max_usd_per_day:
+          type: number
+          minimum: 0
+        storage_used_bytes:
+          type: integer
+          minimum: 0
+        storage_limit_bytes:
+          type: integer
+          minimum: 0
+
     CostReport:
       type: object
-      required: [days, timezone, start_at, end_at, bucket_size, totals, models, buckets]
+      required: [days, timezone, start_at, end_at, bucket_size, totals, by_billing, by_category, models, buckets]
       properties:
         days:
           type: integer
@@ -3321,6 +3604,12 @@ components:
           enum: [hour, day]
         totals:
           $ref: "#/components/schemas/CostAmount"
+        by_billing:
+          $ref: "#/components/schemas/BillingCosts"
+        by_category:
+          $ref: "#/components/schemas/CategoryCosts"
+        entitlement:
+          $ref: "#/components/schemas/EntitlementCostSummary"
         models:
           type: array
           items:
