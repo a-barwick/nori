@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, test } from "node:test";
-import React from "react";
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   APIError,
@@ -13,8 +14,11 @@ import {
   type ModelKeysResponse,
   type ServiceKeyStatus,
 } from "@/lib/assistant/api";
+import { installTestDOM, settleTestDOM } from "@/lib/assistant/test-dom";
 import { asFetch } from "@/lib/test-fetch";
-import { ApiKeysContent, needsByokSetup, ServiceKeysContent } from "./ApiKeysSettings";
+import { ApiKeysContent, ApiKeysSettings, needsByokSetup, resolveServiceKeys, ServiceKeysContent } from "./ApiKeysSettings";
+import { createResourceCache, ResourceCacheContext } from "@/lib/assistant/useResource";
+import type { Capabilities } from "@/lib/contracts/assistant";
 
 describe("BYOK API Keys client and Settings UI", () => {
   const origFetch = globalThis.fetch;
@@ -288,5 +292,107 @@ describe("BYOK API Keys client and Settings UI", () => {
     assert.match(trialHtml, /Bring-your-own API keys are available on paid plans/i);
     assert.match(trialHtml, /Paid plans/);
     assert.equal(/type="password"/.test(trialHtml), false);
+  });
+
+  test("resolveServiceKeys maps CapabilitiesServiceKeys object to Exa fallback and accepts byok source", () => {
+    const fallback = resolveServiceKeys(undefined, { exa_configured: true, platform_exa_available: true });
+    assert.deepEqual(fallback, [
+      { service: "exa", label: "Exa Web Search", configured: true, source: "byok" },
+    ]);
+
+    const platformFallback = resolveServiceKeys(undefined, { exa_configured: false, platform_exa_available: true });
+    assert.deepEqual(platformFallback, [
+      { service: "exa", label: "Exa Web Search", configured: false, source: "platform" },
+    ]);
+
+    const explicit = resolveServiceKeys(
+      { services: [{ service: "exa", label: "Exa Web Search", configured: true, masked_key: "••••9876", source: "byok" }] },
+      { exa_configured: false, platform_exa_available: false },
+    );
+    assert.equal(explicit.length, 1);
+    assert.equal(explicit[0]?.source, "byok");
+    assert.equal(explicit[0]?.masked_key, "••••9876");
+  });
+
+  test("ApiKeysSettings renders Exa fallback from CapabilitiesServiceKeys and deduplicates trial notices", async () => {
+    const restoreDOM = installTestDOM();
+    try {
+      const activeTrialCaps: Capabilities = {
+        contract: "nori-chat-2",
+        service: "nori",
+        conversationModes: ["assistant"],
+        features: {},
+        entitlement: {
+          tier: "trial",
+          status: "active",
+          allow_byok: false,
+          suspended: false,
+          credit_remaining_usd: 3,
+          credit_grant_usd: 5,
+          storage_used_bytes: 0,
+          storage_limit_bytes: 1000,
+          max_routines: 3,
+          max_concurrent_tasks: 2,
+          max_desktop_ws: 1,
+          max_checkpoints: 1,
+        },
+        service_keys: { exa_configured: false, platform_exa_available: true },
+      };
+
+      const renderWithCaps = async (caps: Capabilities) => {
+        globalThis.fetch = asFetch(async (input: RequestInfo | URL) => {
+          const url = String(input);
+          if (url.endsWith("/settings/model-keys")) {
+            return Response.json({
+              byok_required: false,
+              providers: [{ provider: "openai", label: "OpenAI", configured: false }],
+            });
+          }
+          if (url.endsWith("/capabilities")) {
+            return Response.json(caps);
+          }
+          // Simulate /settings/service-keys failing so Exa row must come from capabilities.service_keys fallback.
+          return Response.json({ error: "Service keys unavailable" }, { status: 503 });
+        });
+        const target = document.createElement("div");
+        document.body.append(target);
+        const root = createRoot(target);
+        try {
+          await act(async () => {
+            root.render(
+              <ResourceCacheContext.Provider value={createResourceCache()}>
+                <ApiKeysSettings />
+              </ResourceCacheContext.Provider>,
+            );
+          });
+          await settleTestDOM();
+          return target.innerHTML;
+        } finally {
+          await act(async () => root.unmount());
+          target.remove();
+        }
+      };
+
+      const activeTrialHtml = await renderWithCaps(activeTrialCaps);
+      assert.match(activeTrialHtml, /Exa Web Search/);
+      assert.equal(
+        (activeTrialHtml.match(/Bring-your-own API keys are available on paid plans/g) ?? []).length,
+        1,
+        "active trial should render the BYOK notice once across Providers and Web search",
+      );
+
+      const exhaustedTrialHtml = await renderWithCaps({
+        ...activeTrialCaps,
+        entitlement: { ...activeTrialCaps.entitlement!, credit_remaining_usd: 0 },
+      });
+      assert.match(exhaustedTrialHtml, /Exa Web Search/);
+      assert.equal(
+        (exhaustedTrialHtml.match(/Bring-your-own API keys are available on paid plans/g) ?? []).length,
+        0,
+        "exhausted trial should not stack redundant BYOK notices below EntitlementNotice",
+      );
+    } finally {
+      restoreDOM();
+    }
   });
 });

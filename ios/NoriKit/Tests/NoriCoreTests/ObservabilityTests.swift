@@ -339,4 +339,28 @@ final class ObservabilityTests: XCTestCase {
         XCTAssertTrue(limiter.allowTransaction())
         XCTAssertTrue(limiter.allowLog())
     }
+
+    @MainActor
+    func testSuspendedSignInSkipsAuthSignInTelemetry() async {
+        let spy = SpyTelemetry()
+        NoriTelemetryRuntime.configure(spy)
+        let transport = MockNoriTransport()
+        let store = NoriStore(transport: transport, authProvider: AuthTokenProvider(tokenStore: InMemoryTokenStore()))
+
+        await transport.setNextFetchSessionError(
+            NoriAPIError(message: "Account suspended by admin.", statusCode: 403, code: "account_suspended")
+        )
+        await store.completeSignedInSession(
+            AuthSession(
+                idToken: "suspended-id-token",
+                refreshToken: nil,
+                expiresAt: Date().addingTimeInterval(3600),
+                email: "suspended@example.test"
+            )
+        )
+
+        XCTAssertEqual(store.authState, .signedOut)
+        XCTAssertEqual(store.authError, "Account suspended by admin.")
+        XCTAssertFalse(spy.errors.contains { $0.category == "auth.sign_in" })
+    }
 }

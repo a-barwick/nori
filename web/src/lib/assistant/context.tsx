@@ -84,7 +84,7 @@ function AssistantSession({ localMode, scope, children }: { localMode: boolean; 
     } catch {}
   }, []);
 
-  const runtime = useRuntime(localMode, scope, refreshCapabilities);
+  const runtime = useRuntime(localMode, scope, refreshCapabilities, capabilities);
 
   const configValue = useMemo<AssistantConfig>(
     () => ({

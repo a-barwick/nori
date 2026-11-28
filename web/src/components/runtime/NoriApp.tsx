@@ -38,11 +38,13 @@ function partsOf(message: Pick<Message, "text" | "parts">) {
 function ConnectedRuntimeComposer({
   accept,
   disabled,
+  readOnly,
   unread,
   onJump,
 }: {
   accept?: string;
   disabled: boolean;
+  readOnly: boolean;
   unread: number;
   onJump: () => void;
 }) {
@@ -54,6 +56,7 @@ function ConnectedRuntimeComposer({
       draft={draft}
       setDraft={runtime.setDraft}
       disabled={disabled}
+      readOnly={readOnly}
       onSend={() => void runtime.send()}
       files={draftFiles}
       onAttach={runtime.attachFiles}
@@ -70,7 +73,8 @@ export function ChatScreen() {
   const { runtime, debug, capabilities } = useAssistant();
   const accepted = capabilities?.upload_accept;
   const uploadAccept = accepted ? [...accepted.media_types, ...(accepted.extensions ?? [])].join(",") : undefined;
-  const { session, pending, activeTasks, loading, error, reconnecting, retryTurn, loadOlder } = runtime;
+  const { session, pending, activeTasks, loading, error, accessBlock, readOnly, reconnecting, retryTurn, loadOlder } = runtime;
+  const allowByok = capabilities?.entitlement?.allow_byok ?? true;
   const pendingInteractions = usePendingInteractions();
   const modelKeys = useResource<ModelKeysResponse>("/settings/model-keys", { poll: 60_000, versioned: false });
   const models = useResource<ModelSettings>("/settings/models", { poll: 60_000 });
@@ -170,12 +174,14 @@ export function ChatScreen() {
   ]);
 
   const hasVisibleFailedCard = conversation.items.some((item) => item.sender === "nori" && item.status === "failed");
-  const notice = reconnecting
-    ? "Can't reach Nori right now. Reconnecting on its own…"
-    : error ||
-      (session?.conversation?.routing_blocked && !runtime.conversationBusy && !hasVisibleFailedCard
-        ? "Some work is waiting for this message to be resolved. Send a follow-up to retry or clarify."
-        : "");
+  const notice = accessBlock
+    ? ""
+    : reconnecting
+      ? "Can't reach Nori right now. Reconnecting on its own…"
+      : error ||
+        (session?.conversation?.routing_blocked && !runtime.conversationBusy && !hasVisibleFailedCard
+          ? "Some work is waiting for this message to be resolved. Send a follow-up to retry or clarify."
+          : "");
   const workingTasks = activeTasks.filter((run) => !(run.question ? !run.question.resolved_by : run.waiting));
   const singleWorkingLabel =
     workingTasks.length === 1
@@ -233,8 +239,8 @@ export function ChatScreen() {
                 )}
                 <button
                   type="button"
-                  className="font-semibold text-accent-text hover:underline"
-                  disabled={loading}
+                  className="font-semibold text-accent-text hover:underline disabled:text-disabled disabled:no-underline"
+                  disabled={loading || readOnly}
                   onClick={() => void runtime.retry(item)}
                 >
                   Retry message
@@ -251,7 +257,30 @@ export function ChatScreen() {
           );
         })}
 
-      {requiresByok && (
+      {accessBlock && (
+        <div className="nori-page-col shrink-0 pb-2">
+          <div className="max-w-[680px]">
+            <Notice
+              tone={accessBlock.code === "account_suspended" ? "danger" : "warning"}
+              action={
+                accessBlock.code === "credit_exhausted" && allowByok ? (
+                  <Link href="/settings/models" className="font-semibold underline underline-offset-2">
+                    Open Models
+                  </Link>
+                ) : accessBlock.code !== "account_suspended" ? (
+                  <Link href="/settings/api-costs" className="font-semibold underline underline-offset-2">
+                    View plan
+                  </Link>
+                ) : undefined
+              }
+            >
+              {accessBlock.message}
+            </Notice>
+          </div>
+        </div>
+      )}
+
+      {!accessBlock && requiresByok && (
         <div className="nori-page-col shrink-0 pb-2">
           <div className="max-w-[680px]">
             <Notice
@@ -292,6 +321,7 @@ export function ChatScreen() {
       <ConnectedRuntimeComposer
         accept={uploadAccept}
         disabled={!session || loading || !!session.conversation?.introducing}
+        readOnly={readOnly}
         unread={unread.count}
         onJump={unread.jump}
       />

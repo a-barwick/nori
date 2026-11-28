@@ -54,7 +54,7 @@ export type EntitlementSummary = {
   storage_used_bytes?: number;
   storage_limit_bytes?: number;
 };
-export type ServiceKeySource = "user" | "platform" | "none" | string;
+export type ServiceKeySource = "byok" | "user" | "platform" | "none" | string;
 export type ServiceKeyStatus = {
   service: string;
   label?: string;
@@ -69,9 +69,13 @@ export type ServiceKeysResponse = {
   allow_byok?: boolean;
   services: ServiceKeyStatus[];
 };
-export type Capabilities = Schemas["Capabilities"] & {
-  entitlement?: EntitlementSummary;
-  service_keys?: ServiceKeyStatus[];
+export type CapabilitiesEntitlement = Schemas["CapabilitiesEntitlement"] & {
+  suspended_reason?: string;
+};
+export type CapabilitiesServiceKeys = Schemas["CapabilitiesServiceKeys"];
+export type Capabilities = Omit<Schemas["Capabilities"], "entitlement" | "service_keys"> & {
+  entitlement?: CapabilitiesEntitlement;
+  service_keys?: CapabilitiesServiceKeys;
 };
 export type WorkingHoursSlot = Schemas["WorkingHoursSlot"];
 export type WorkingHours = Schemas["WorkingHours"];

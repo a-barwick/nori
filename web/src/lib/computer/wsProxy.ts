@@ -8,6 +8,7 @@ import { runtimeMode, runtimeTarget } from "@/lib/runtime/target";
 
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{4,128}$/;
 const REJECT_LOG_WINDOW_MS = 60_000;
+const PEER_CLOSE_DESTROY_TIMEOUT_MS = 1_000;
 
 const STATUS_REASONS: Record<number, string> = {
   400: "Bad Request",
@@ -189,18 +190,47 @@ export async function handleDesktopWSUpgrade(
     if (!upstreamSocket.destroyed) upstreamSocket.destroy();
   });
   // Propagate graceful session closes (including WebSocket close frames with
-  // close codes/reasons) before tearing down the peer socket.
-  upstreamSocket.once("close", (hadError) => {
-    if (!socket.destroyed) {
-      if (hadError) socket.destroy();
-      else socket.end();
+  // close codes/reasons) before tearing down the peer socket, and enforce a
+  // bounded destroy so a half-open socket cannot linger.
+  const peerTimers = new WeakMap<Duplex, ReturnType<typeof setTimeout>>();
+  const armPeerDestroy = (peer: Duplex) => {
+    if (peer.destroyed || peerTimers.has(peer)) return;
+    const timer = setTimeout(() => {
+      peerTimers.delete(peer);
+      if (!peer.destroyed) peer.destroy();
+    }, PEER_CLOSE_DESTROY_TIMEOUT_MS);
+    timer.unref?.();
+    peerTimers.set(peer, timer);
+    peer.once("close", () => {
+      clearTimeout(timer);
+      peerTimers.delete(peer);
+    });
+  };
+  const closePeerGracefully = (peer: Duplex, hadError: boolean) => {
+    if (peer.destroyed) return;
+    if (hadError) {
+      const existing = peerTimers.get(peer);
+      if (existing) {
+        clearTimeout(existing);
+        peerTimers.delete(peer);
+      }
+      peer.destroy();
+      return;
     }
+    armPeerDestroy(peer);
+    peer.end();
+  };
+  upstreamSocket.once("end", () => {
+    armPeerDestroy(socket);
+  });
+  upstreamSocket.once("close", (hadError) => {
+    closePeerGracefully(socket, hadError);
+  });
+  socket.once("end", () => {
+    closePeerGracefully(upstreamSocket, false);
   });
   socket.once("close", (hadError: boolean) => {
-    if (!upstreamSocket.destroyed) {
-      if (hadError) upstreamSocket.destroy();
-      else upstreamSocket.end();
-    }
+    closePeerGracefully(upstreamSocket, hadError);
   });
 
   const onConnect = () => {

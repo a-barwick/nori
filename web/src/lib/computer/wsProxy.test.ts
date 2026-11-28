@@ -285,4 +285,100 @@ describe("Desktop WebSocket upgrade proxy", () => {
     assert.equal(wsBytes.readUInt16BE(2), 4403);
     assert.equal(wsBytes.subarray(4).toString("utf8"), "account_suspended");
   });
+
+  test("destroys half-open upstream socket when client closes and upstream ignores FIN", async (t) => {
+    const issuer = "https://oidc-ws-halfopen.example.test";
+    const audience = "nori-ws-halfopen-test";
+    const userID = "88888888-8888-4888-8888-888888888888";
+    const base = "https://runtime-ws-halfopen.example.test/";
+    const serviceKey = new TextEncoder().encode("service-key-for-ws-halfopen-tests-at-least-32-b");
+    const settings = {
+      NORI_CLOUD: "gcp", NORI_AUTH_PROVIDER: "oidc", NORI_OIDC_ISSUER: issuer, NORI_OIDC_AUDIENCE: audience,
+      NORI_OIDC_COOKIE: "nori_id_token", NORI_APP_ORIGIN: "https://nori.example.test", NORI_RUNTIME_URL: base,
+      NORI_SERVICE_TOKEN_KEY: new TextDecoder().decode(serviceKey), NORI_SERVICE_AUDIENCE: audience,
+      NORI_OIDC_IAP_POLICY_RESOURCE: undefined, NORI_OIDC_IAP_ALLOWED_IDENTITIES: undefined,
+    };
+    const previousEnv = Object.fromEntries(Object.keys(settings).map((k) => [k, process.env[k]]));
+    const previousFetch = globalThis.fetch;
+    const previousConnect = tls.connect;
+    t.after(() => {
+      globalThis.fetch = previousFetch;
+      tls.connect = previousConnect;
+      for (const [key, value] of Object.entries(previousEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    });
+    for (const [key, value] of Object.entries(settings)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+
+    const { privateKey, jwks } = await testIdentityKeys();
+    const token = await new SignJWT({ email: "halfopen@gmail.com", email_verified: true })
+      .setProtectedHeader({ alg: "ES256", kid: "auth-k1" }).setIssuer(issuer).setAudience(audience).setSubject("ws-halfopen-user")
+      .setIssuedAt().setExpirationTime("5m").sign(privateKey);
+
+    globalThis.fetch = asFetch(async (input) => {
+      const url = String(input);
+      if (url === `${issuer}/.well-known/openid-configuration`) return Response.json({ issuer, jwks_uri: `${issuer}/keys` });
+      if (url === `${issuer}/keys`) return Response.json(jwks);
+      return Response.json({ id: userID });
+    });
+
+    let upstreamRef: Duplex | undefined;
+    let upstreamDestroyed!: () => void;
+    const destroyedPromise = new Promise<void>((resolve) => { upstreamDestroyed = resolve; });
+    tls.connect = (() => {
+      const transport = new Duplex({
+        allowHalfOpen: true,
+        read() {},
+        write(_data, _encoding, done) {
+          transport.push(Buffer.from("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"));
+          // Deliberately never push(null) to simulate an upstream ignoring FIN.
+          done();
+        },
+        destroy(_err, cb) {
+          upstreamDestroyed();
+          cb(null);
+        },
+      });
+      Object.assign(transport, { setTimeout() {} });
+      upstreamRef = transport;
+      queueMicrotask(() => transport.emit("secureConnect"));
+      return transport;
+    }) as unknown as typeof tls.connect;
+
+    const server = http.createServer((_req, res) => { res.writeHead(404); res.end(); });
+    server.on("upgrade", (req, socket, head) => { void handleDesktopWSUpgrade(req, socket, head); });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    t.after(() => { server.close(); });
+    const { port } = server.address() as net.AddressInfo;
+
+    await new Promise<void>((resolve, reject) => {
+      const client = net.connect(port, "127.0.0.1", () => {
+        client.write([
+          "GET /api/v1/computer/sessions/csess_12345/ws?token=desktop_tok HTTP/1.1",
+          "Host: nori.example.test",
+          "Origin: https://nori.example.test",
+          "Connection: Upgrade",
+          "Upgrade: websocket",
+          `Authorization: Bearer ${token}`,
+          "", "",
+        ].join("\r\n"));
+      });
+      client.once("data", () => {
+        // Client closes cleanly while upstream stays half-open.
+        client.destroy();
+        resolve();
+      });
+      client.once("error", reject);
+    });
+
+    await Promise.race([
+      destroyedPromise,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("upstream socket was not destroyed")), 3_000)),
+    ]);
+    assert.equal(upstreamRef?.destroyed, true);
+  });
 });

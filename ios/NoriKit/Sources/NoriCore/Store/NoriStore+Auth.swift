@@ -146,7 +146,10 @@ extension NoriStore {
         guard generation == sessionGeneration else { return }
         authState = .signedOut
         connectionState = .offline
-        if let apiErr = error as? NoriAPIError, apiErr.isAuthError {
+        if let apiErr = error as? NoriAPIError, apiErr.isAccountSuspended {
+            authError = apiErr.message
+            NoriLogger.auth.warning("auth.account_suspended", attributes: ["http.status_code": String(apiErr.statusCode)])
+        } else if let apiErr = error as? NoriAPIError, apiErr.isAuthError {
             authError = "This Google account is not authorized to access Nori."
             NoriLogger.auth.warning("auth.unauthorized", attributes: ["http.status_code": String(apiErr.statusCode)])
         } else {

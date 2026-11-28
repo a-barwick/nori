@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import * as Sentry from "@sentry/nextjs";
-import { APIError, postRuntimeOperation } from "@/lib/assistant/api";
+import { APIError, billingAccessBlockFromError, postRuntimeOperation, type BillingAccessBlock } from "@/lib/assistant/api";
 import type { PendingTaskCommand, Session, TaskCommandResponse } from "@/lib/types";
 import {
   COMMAND_ACCEPTANCE_UNKNOWN,
@@ -30,6 +30,7 @@ type UsePendingTurnsParams = {
   applySnapshot: (data: Session, serial: number) => void;
   refresh: (signal?: AbortSignal) => Promise<Session | undefined>;
   refreshCapabilities?: () => void;
+  onBillingAccessBlock?: (block: BillingAccessBlock | null) => void;
   invalidate: (...prefixes: string[]) => void;
 };
 
@@ -45,6 +46,7 @@ export function usePendingTurns({
   applySnapshot,
   refresh,
   refreshCapabilities,
+  onBillingAccessBlock,
   invalidate,
 }: UsePendingTurnsParams) {
   const [pending, setPending] = useState<Pending[]>([]);
@@ -203,10 +205,16 @@ export function usePendingTurns({
         }
         if (!controller.signal.aborted) {
           applySnapshot(data, serial);
+          onBillingAccessBlock?.(null);
           setErrorState(NO_RUNTIME_ERROR);
         }
       } catch (err) {
         if (!controller.signal.aborted) {
+          const block = billingAccessBlockFromError(err);
+          if (block) {
+            onBillingAccessBlock?.(block);
+            refreshCapabilities?.();
+          }
           const rejected = err instanceof APIError && err.status >= 400 && err.status < 500 && err.status !== 429;
           updatePending((current) =>
             current.map((entry) =>
@@ -227,7 +235,7 @@ export function usePendingTurns({
         submissions.current.delete(item.id);
       }
     },
-    [applySnapshot, controllers, refresh, refreshCapabilities, replacingSnapshot, requestSerial, setErrorState, updatePending],
+    [applySnapshot, controllers, onBillingAccessBlock, refresh, refreshCapabilities, replacingSnapshot, requestSerial, setErrorState, updatePending],
   );
 
   const submitTaskCommand = useCallback(
@@ -247,10 +255,16 @@ export function usePendingTurns({
         if (!controller.signal.aborted) {
           setSession((current) => (current ? { ...current, runs: mergeRuns(current.runs, [data.run]) } : current));
           updateTaskCommands((current) => current.filter((entry) => entry.command.id !== item.command.id));
+          onBillingAccessBlock?.(null);
           invalidate("/assistant/summary", "/work", "/interactions");
         }
       } catch (err) {
         if (!controller.signal.aborted) {
+          const block = billingAccessBlockFromError(err);
+          if (block) {
+            onBillingAccessBlock?.(block);
+            refreshCapabilities?.();
+          }
           const receipt = err instanceof APIError ? (err.body as Partial<TaskCommandResponse> | undefined) : undefined;
           if (receipt?.accepted && receipt.run) {
             setSession((current) => (current ? { ...current, runs: mergeRuns(current.runs, [receipt.run!]) } : current));
@@ -280,7 +294,7 @@ export function usePendingTurns({
         controllers.current.delete(controller);
       }
     },
-    [controllers, invalidate, refresh, replacingSnapshot, setSession, updateTaskCommands],
+    [controllers, invalidate, onBillingAccessBlock, refresh, refreshCapabilities, replacingSnapshot, setSession, updateTaskCommands],
   );
 
   const dismissPending = useCallback(

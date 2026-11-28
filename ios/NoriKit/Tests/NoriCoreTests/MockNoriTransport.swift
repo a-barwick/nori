@@ -72,6 +72,7 @@ actor MockNoriTransport: NoriTransport {
     private var nextSaveModelKeyError: Error?
     private var nextSaveServiceKeyError: Error?
     private var nextSendTurnError: Error?
+    private var nextFetchSessionError: Error?
     private var models = ModelSettingsResponse(
         modelProfiles: ModelProfileCatalog(),
         selection: ModelSelection(),
@@ -145,6 +146,7 @@ actor MockNoriTransport: NoriTransport {
     func setNextSaveError(_ error: Error?) { nextSaveModelKeyError = error }
     func setNextSaveServiceKeyError(_ error: Error?) { nextSaveServiceKeyError = error }
     func setNextSendTurnError(_ error: Error?) { nextSendTurnError = error }
+    func setNextFetchSessionError(_ error: Error?) { nextFetchSessionError = error }
     func setCapabilities(_ caps: Capabilities) { mockCapabilities = caps }
     func setNextInteractionRespondError(_ error: Error?) { nextInteractionRespondError = error }
     func setFetchedInteraction(_ interaction: Interaction) { fetchedInteractionByID[interaction.id] = interaction }
@@ -243,6 +245,10 @@ actor MockNoriTransport: NoriTransport {
 
     func fetchSession(before cursor: String?) async throws -> Session {
         fetchSessionCallCount += 1
+        if let nextFetchSessionError {
+            self.nextFetchSessionError = nil
+            throw nextFetchSessionError
+        }
         if delaySession {
             delaySession = false
             return await withCheckedContinuation {

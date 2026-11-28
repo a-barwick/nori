@@ -255,7 +255,13 @@ extension NoriStore {
 
     func applyCapabilities(_ latest: Capabilities?) {
         capabilities = latest
-        guard let entitlement = latest?.entitlement else { return }
+        guard let latest else { return }
+        guard let entitlement = latest.entitlement else {
+            if billingAccessBlock?.code == .creditExhausted || billingAccessBlock?.code == .subscriptionInactive {
+                billingAccessBlock = nil
+            }
+            return
+        }
         if !entitlement.suspended, billingAccessBlock?.code == .accountSuspended {
             billingAccessBlock = nil
         }

@@ -7,13 +7,12 @@ import {
   billingAccessMessage,
   fetchSnapshot,
   getJSON,
-  isBillingAccessBlockCode,
   postRuntimeOperation,
   type BillingAccessBlock,
 } from "@/lib/assistant/api";
 import { browserResetChanged, syncBrowserReset } from "@/lib/assistant/resetState";
 import { ResourceCacheContext, useResourceInvalidation } from "@/lib/assistant/useResource";
-import type { Preferences } from "@/lib/contracts/assistant";
+import type { Capabilities, Preferences } from "@/lib/contracts/assistant";
 import { hasSubmission, messageTooLong } from "@/lib/submission";
 import type { DraftFile, PendingTaskCommand, Session, TaskCommand } from "@/lib/types";
 import { useDraftFiles, type UploadContext } from "@/lib/useDraftFiles";
@@ -41,20 +40,6 @@ import { useReadDeliveryReceipts } from "./useReadDeliveryReceipts";
 
 const subscribeHydration = () => () => {};
 
-function findPendingAccessBlock(pending: Pending[]): BillingAccessBlock | null {
-  for (let i = pending.length - 1; i >= 0; i--) {
-    const item = pending[i];
-    if (isBillingAccessBlockCode(item.errorCode)) {
-      return {
-        code: item.errorCode,
-        message: billingAccessMessage(item.errorCode, item.error),
-        readOnly: true,
-      };
-    }
-  }
-  return null;
-}
-
 function readSavedDraft(scope: string): string {
   try {
     return localStorage.getItem(`${DRAFT_KEY}:${scope}`) ?? "";
@@ -63,7 +48,12 @@ function readSavedDraft(scope: string): string {
   }
 }
 
-export function useRuntime(localMode = false, scope = "local", refreshCapabilities?: () => void) {
+export function useRuntime(
+  localMode = false,
+  scope = "local",
+  refreshCapabilities?: () => void,
+  capabilities?: Capabilities,
+) {
   const cache = useContext(ResourceCacheContext);
   const invalidate = useResourceInvalidation();
   const [session, setSession] = useState<Session>();
@@ -93,7 +83,20 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
   );
 
   const [errorState, setErrorState] = useState<RuntimeErrorState>(NO_RUNTIME_ERROR);
-  const [runtimeAccessBlock, setRuntimeAccessBlock] = useState<BillingAccessBlock | null>(null);
+  const [runtimeAccessBlock, setRuntimeAccessBlockState] = useState<{
+    block: BillingAccessBlock;
+    atCapabilities: Capabilities | undefined;
+  } | null>(null);
+  const capabilitiesRef = useRef(capabilities);
+  useEffect(() => {
+    capabilitiesRef.current = capabilities;
+  }, [capabilities]);
+  const setRuntimeAccessBlock = useCallback((block: BillingAccessBlock | null) => {
+    setRuntimeAccessBlockState(block ? { block, atCapabilities: capabilitiesRef.current } : null);
+  }, []);
+  const clearSuspendedAccessBlock = useCallback(() => {
+    setRuntimeAccessBlockState((current) => (current?.block.code === "account_suspended" ? null : current));
+  }, []);
   const outageRef = useRef(false);
   useEffect(() => {
     outageRef.current = errorState.kind === "unavailable";
@@ -103,11 +106,11 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
     const block = billingAccessBlockFromError(err);
     if (block) {
       setRuntimeAccessBlock(block);
-      setErrorState({ message: block.message, kind: "error" });
+      setErrorState(NO_RUNTIME_ERROR);
       return;
     }
     setErrorState(toRuntimeError(err, fallback));
-  }, []);
+  }, [setRuntimeAccessBlock]);
 
   const [streamAwake, setStreamAwake] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -170,11 +173,11 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
       });
       if (!data || signal?.aborted || serial < minimumSerial.current) return;
       applySnapshot(data, serial);
-      setRuntimeAccessBlock(null);
+      clearSuspendedAccessBlock();
       clearStreamErrorRef.current();
       return data;
     },
-    [applySnapshot],
+    [applySnapshot, clearSuspendedAccessBlock],
   );
 
   const {
@@ -204,6 +207,7 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
     applySnapshot,
     refresh,
     refreshCapabilities,
+    onBillingAccessBlock: setRuntimeAccessBlock,
     invalidate,
   });
 
@@ -321,10 +325,11 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
       if (document.hidden) return;
       setStreamAwake(true);
       retryReceipts();
+      refreshCapabilities?.();
       void refreshAndRetry(controller.signal)
         .then(() => {
           if (!controller.signal.aborted) {
-            setRuntimeAccessBlock(null);
+            clearSuspendedAccessBlock();
             setErrorState(NO_RUNTIME_ERROR);
           }
         })
@@ -350,15 +355,67 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
       window.removeEventListener("online", reconnect);
       window.removeEventListener("focus", wake);
     };
-  }, [refreshAndRetry, beginTiming, recordRuntimeError, scope, retryReceipts, pendingRef, taskCommandsRef, replyTimings, setPending, setTaskCommands]);
+  }, [refreshAndRetry, beginTiming, clearSuspendedAccessBlock, recordRuntimeError, refreshCapabilities, scope, retryReceipts, pendingRef, taskCommandsRef, replyTimings, setPending, setTaskCommands]);
 
-  const accessBlock = runtimeAccessBlock ?? findPendingAccessBlock(pending);
+  useEffect(() => {
+    return cache.onInvalidate((prefixes) => {
+      if (prefixes.some((p) => p === "/settings/model-keys" || p === "/settings/models")) {
+        setRuntimeAccessBlockState((current) => (current?.block.code === "credit_exhausted" ? null : current));
+      }
+    });
+  }, [cache]);
+
+  const activeRuntimeBlock = useMemo<BillingAccessBlock | null>(() => {
+    if (!runtimeAccessBlock) return null;
+    const { block, atCapabilities } = runtimeAccessBlock;
+    if (!capabilities || capabilities === atCapabilities) return block;
+    const ent = capabilities.entitlement;
+    if (!ent) return null;
+    if (block.code === "account_suspended" && !ent.suspended) return null;
+    if (block.code === "subscription_inactive" && ent.status !== "past_due" && ent.status !== "expired") {
+      return null;
+    }
+    if (block.code === "credit_exhausted" && ent.credit_remaining_usd > 0) return null;
+    return block;
+  }, [capabilities, runtimeAccessBlock]);
+
+  const accessBlock = useMemo<BillingAccessBlock | null>(() => {
+    const ent = capabilities?.entitlement;
+    if (ent?.suspended) {
+      return activeRuntimeBlock?.code === "account_suspended"
+        ? activeRuntimeBlock
+        : {
+            code: "account_suspended",
+            message: billingAccessMessage("account_suspended", ent.suspended_reason),
+            readOnly: true,
+          };
+    }
+    if (ent && (ent.status === "past_due" || ent.status === "expired")) {
+      return activeRuntimeBlock?.code === "subscription_inactive"
+        ? activeRuntimeBlock
+        : {
+            code: "subscription_inactive",
+            message: billingAccessMessage("subscription_inactive"),
+            readOnly: true,
+          };
+    }
+    if (activeRuntimeBlock) return activeRuntimeBlock;
+    if (ent && ent.credit_grant_usd > 0 && ent.credit_remaining_usd <= 0 && !ent.allow_byok) {
+      return {
+        code: "credit_exhausted",
+        message: "Your trial credits are used up. Upgrade your plan to continue.",
+        readOnly: true,
+      };
+    }
+    return null;
+  }, [capabilities?.entitlement, activeRuntimeBlock]);
   const readOnly = Boolean(accessBlock);
 
   const refreshHistory = useCallback(async () => {
     setErrorState(NO_RUNTIME_ERROR);
     setRuntimeAccessBlock(null);
     clearStreamErrorRef.current();
+    refreshCapabilities?.();
     setLoading(true);
     const controller = new AbortController();
     controllers.current.add(controller);
@@ -370,7 +427,7 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
       controllers.current.delete(controller);
       if (!controller.signal.aborted) setLoading(false);
     }
-  }, [recordRuntimeError, refreshAndRetry]);
+  }, [recordRuntimeError, refreshAndRetry, refreshCapabilities, setRuntimeAccessBlock]);
 
   const loadOlder = useCallback(async () => {
     const cursor = session?.next_cursor;
@@ -491,7 +548,7 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
         setRetryingMessageId((current) => (current === key ? undefined : current));
       }
     },
-    [applySnapshot, readOnly, recordRuntimeError],
+    [applySnapshot, readOnly, recordRuntimeError, setRuntimeAccessBlock],
   );
 
   const setTaskDraft = useCallback((id: string, text: string) => setTaskDrafts((current) => ({ ...current, [id]: text })), []);

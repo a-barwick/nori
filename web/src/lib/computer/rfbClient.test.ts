@@ -12,7 +12,7 @@ class FakeWebSocket {
   sent: Uint8Array[] = [];
   onmessage: ((ev: { data: unknown }) => void) | null = null;
   onerror: (() => void) | null = null;
-  onclose: (() => void) | null = null;
+  onclose: ((ev?: { code?: number; reason?: string }) => void) | null = null;
 
   constructor(url: string, protocols?: string[]) {
     this.url = url;
@@ -160,4 +160,40 @@ test("NoriRFBClient retries when refreshURL rejects, resets attempts on connect,
     await Promise.resolve();
     assert.equal(FakeWebSocket.instances.length, 2, "must not open a socket after disconnect()");
   });
+});
+
+test("NoriRFBClient does not auto-reconnect or call refreshURL on server-initiated 4001-4004 close codes", async () => {
+  for (const code of [4001, 4002, 4003, 4004]) {
+    await withFakeEnv(async (scheduled) => {
+      const states: Array<{ state: RFBConnectionState; detail?: string }> = [];
+      let refreshCount = 0;
+      const client = new NoriRFBClient({
+        canvas: makeFakeCanvas(),
+        url: "wss://app.noribot.chat/api/v1/computer/sessions/s0/ws?token=t0",
+        viewOnly: false,
+        refreshURL: async () => {
+          refreshCount += 1;
+          return `wss://app.noribot.chat/api/v1/computer/sessions/s${refreshCount}/ws?token=t${refreshCount}`;
+        },
+        onStateChange: (state, detail) => states.push({ state, detail }),
+      });
+
+      client.connect();
+      assert.equal(FakeWebSocket.instances.length, 1);
+      completeRFBHandshake(FakeWebSocket.instances[0]);
+      assert.equal(states[states.length - 1]?.state, "connected");
+
+      FakeWebSocket.instances[0].onclose?.({ code });
+      await Promise.resolve();
+
+      assert.equal(scheduled.length, 0, `close code ${code} must not schedule reconnect`);
+      assert.equal(refreshCount, 0, `close code ${code} must not call refreshURL`);
+      assert.equal(FakeWebSocket.instances.length, 1, `close code ${code} must not open another WebSocket`);
+      assert.equal(states.some((s) => s.state === "reconnecting"), false, `close code ${code} must not enter reconnecting`);
+      const last = states[states.length - 1];
+      assert.equal(last?.state, "disconnected", `close code ${code} should transition to disconnected`);
+      assert.ok(last?.detail && last.detail.length > 0, `close code ${code} should include calm user-facing copy`);
+      client.disconnect();
+    });
+  }
 });

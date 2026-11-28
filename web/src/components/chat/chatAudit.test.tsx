@@ -202,6 +202,26 @@ describe("Area A: Chat UI audit fixes (Web)", () => {
     assert.match(html, /disabled:bg-disabled-bg/);
     assert.match(html, /border-card-border/);
     assert.match(html, /aria-label="Retry report\.pdf"[^>]*class="[^"]*size-6/);
+
+    const readOnlyHtml = renderToStaticMarkup(
+      <RuntimeComposer
+        draft=""
+        setDraft={() => {}}
+        disabled={false}
+        readOnly
+        onSend={() => {}}
+        unread={0}
+        onJump={() => {}}
+        files={[]}
+        onAttach={() => {}}
+        onRetryFile={() => {}}
+        onRemoveFile={() => {}}
+      />,
+    );
+    assert.match(readOnlyHtml, /placeholder="Read-only"/);
+    assert.match(readOnlyHtml, /<textarea[^>]*disabled=""/);
+    assert.match(readOnlyHtml, /aria-label="Attach a file"[^>]*disabled=""/);
+    assert.match(readOnlyHtml, /aria-label="Send"[^>]*disabled=""/);
   });
 
   test("ReminderCard uses danger-quiet Cancel button and has no redundant status pill", () => {

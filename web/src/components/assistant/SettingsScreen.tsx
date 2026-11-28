@@ -37,6 +37,7 @@ import { when } from "@/lib/assistant/format";
 import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant/useResource";
 import type {
   BillingTier,
+  CapabilitiesEntitlement,
   Connection,
   EntitlementSummary,
   OperationProjection as Operation,
@@ -130,7 +131,7 @@ const PLAN_LABELS: Record<BillingTier, string> = {
   power: "Power",
 };
 
-function EntitlementNotice({ entitlement }: { entitlement?: EntitlementSummary }) {
+function EntitlementNotice({ entitlement }: { entitlement?: CapabilitiesEntitlement | EntitlementSummary }) {
   if (!entitlement) return null;
   if (entitlement.suspended) {
     return (

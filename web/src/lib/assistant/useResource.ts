@@ -36,6 +36,7 @@ export function createResourceCache({
   now = () => Date.now(),
 }: ResourceCacheOptions = {}) {
   const resources = new Map<string, Resource>();
+  const invalidationListeners = new Set<(prefixes: string[]) => void>();
   let serial = 0;
   let activeSubscriptions = 0;
 
@@ -121,6 +122,16 @@ export function createResourceCache({
         else resource.fetchedAt = 0;
       }
     }
+    for (const listener of invalidationListeners) {
+      listener(prefixes);
+    }
+  }
+
+  function onInvalidate(listener: (prefixes: string[]) => void) {
+    invalidationListeners.add(listener);
+    return () => {
+      invalidationListeners.delete(listener);
+    };
   }
 
   function refreshVisible() {
@@ -254,7 +265,7 @@ export function createResourceCache({
     return resource.snapshot;
   }
 
-  return { subscribe, load, store, seed, isFresh, invalidate, clear, snapshot };
+  return { subscribe, load, store, seed, isFresh, invalidate, onInvalidate, clear, snapshot };
 }
 
 export const ResourceCacheContext = createContext(createResourceCache());

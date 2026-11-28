@@ -42,6 +42,22 @@ class ByteQueue {
   }
 }
 
+function terminalCloseMessage(code: number): string | null {
+  if (code < 4000 || code > 4099) return null;
+  switch (code) {
+    case 4001:
+      return "Desktop session reached its time limit. Reconnect to start a new session.";
+    case 4002:
+      return "Your computer went to sleep while idle. Reconnect to wake it.";
+    case 4003:
+      return "Desktop access is unavailable for this account.";
+    case 4004:
+      return "Desktop session closed. Reconnect to start a new session.";
+    default:
+      return "Desktop session ended. Reconnect to start a new session.";
+  }
+}
+
 export class NoriRFBClient {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D | null;
@@ -124,9 +140,19 @@ export class NoriRFBClient {
       // without flashing an error state before retries run.
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       if (this.closed || this.ws !== ws) return;
       this.ws = null;
+      const terminalMessage = typeof event?.code === "number" ? terminalCloseMessage(event.code) : null;
+      if (terminalMessage) {
+        if (this.reconnectTimer) {
+          clearTimeout(this.reconnectTimer);
+          this.reconnectTimer = null;
+        }
+        this.reconnectAttempts = 0;
+        this.onStateChange?.("disconnected", terminalMessage);
+        return;
+      }
       this.scheduleReconnect();
     };
   }

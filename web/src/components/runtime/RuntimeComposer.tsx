@@ -36,6 +36,7 @@ export function RuntimeComposer({
   draft,
   setDraft,
   disabled,
+  readOnly = false,
   onSend,
   unread,
   onJump,
@@ -48,6 +49,7 @@ export function RuntimeComposer({
   draft: string;
   setDraft: (draft: string) => void;
   disabled: boolean;
+  readOnly?: boolean;
   onSend: () => void;
   unread: number;
   onJump: () => void;
@@ -59,6 +61,7 @@ export function RuntimeComposer({
   const [notice, setNotice] = useState("");
   const [dragging, setDragging] = useState(false);
   const [replyLabel, setReplyLabel] = useState("");
+  const isDisabled = disabled || readOnly;
   const take = (picked: File[]) => {
     const ok = picked.filter((file) => accepted(file, accept));
     const refused = picked.filter((file) => !accepted(file, accept));
@@ -71,7 +74,7 @@ export function RuntimeComposer({
   };
   const area = useRef<HTMLTextAreaElement>(null);
   const picker = useRef<HTMLInputElement>(null);
-  const canSend = !disabled && hasSubmission(draft, files);
+  const canSend = !isDisabled && hasSubmission(draft, files);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -141,13 +144,13 @@ export function RuntimeComposer({
             }
           }}
           onDragOver={(e) => {
-            if (disabled || !e.dataTransfer.types.includes("Files")) return;
+            if (isDisabled || !e.dataTransfer.types.includes("Files")) return;
             e.preventDefault();
             setDragging(true);
           }}
           onDragLeave={() => setDragging(false)}
           onDrop={(e) => {
-            if (disabled) return;
+            if (isDisabled) return;
             e.preventDefault();
             setDragging(false);
             take([...e.dataTransfer.files]);
@@ -218,7 +221,7 @@ export function RuntimeComposer({
             <button
               type="button"
               aria-label="Attach a file"
-              disabled={disabled}
+              disabled={isDisabled}
               onClick={() => picker.current?.click()}
               className="grid size-[34px] shrink-0 place-items-center rounded-full text-ink-2 transition-colors hover:bg-fill-1 hover:text-ink disabled:bg-disabled-bg disabled:text-disabled disabled:hover:bg-disabled-bg disabled:hover:text-disabled"
             >
@@ -229,7 +232,7 @@ export function RuntimeComposer({
               rows={1}
               value={draft}
               maxLength={MAX_MESSAGE_BYTES}
-              disabled={disabled}
+              disabled={isDisabled}
               onChange={(e) => setDraft(e.target.value)}
               onPaste={(e) => {
                 const pasted = [...e.clipboardData.files];
@@ -246,7 +249,7 @@ export function RuntimeComposer({
                   }
                 }
               }}
-              placeholder="Ask Nori anything…"
+              placeholder={readOnly ? "Read-only" : "Ask Nori anything…"}
               aria-label="Message Nori"
               className="scrollbar-quiet max-h-[168px] min-h-[34px] min-w-0 flex-1 resize-none bg-transparent py-1.5 text-input text-ink transition-[height] duration-150 ease-out placeholder:text-ink-3 focus-visible:outline-none disabled:text-disabled disabled:placeholder:text-disabled"
             />

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, test } from "node:test";
 import { act, createElement } from "react";
 import { createResourceCache, ResourceCacheContext } from "@/lib/assistant/useResource";
 import { installTestDOM, mountTestHook, settleTestDOM } from "@/lib/assistant/test-dom";
+import type { Capabilities } from "@/lib/contracts/assistant";
 import { asFetch } from "@/lib/test-fetch";
 import type { Run, Session } from "@/lib/types";
 import { STREAM_RECONNECTING } from "./messages";
@@ -533,6 +534,157 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
       } finally {
         hook.unmount();
       }
+    }
+  });
+
+  test("stale failed pending turn with credit_exhausted does not block sending after keys or entitlement recover", async () => {
+    const turnBodies: string[] = [];
+    let failTurn = true;
+    const currentCaps: Capabilities = {
+      contract: "nori-chat-2",
+      service: "nori",
+      conversationModes: ["assistant"],
+      features: {},
+      entitlement: {
+        tier: "standard",
+        status: "active",
+        allow_byok: true,
+        suspended: false,
+        credit_remaining_usd: 0,
+        credit_grant_usd: 10,
+        storage_used_bytes: 0,
+        storage_limit_bytes: 1000,
+        max_routines: 10,
+        max_concurrent_tasks: 2,
+        max_desktop_ws: 1,
+        max_checkpoints: 1,
+      },
+    };
+
+    g.fetch = asFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/preferences") {
+        return Response.json({ timezone: "UTC", working_hours: [], default_destination_ids: [], account_defaults: {}, budgets: { task_usd: 5 }, revision: 1 });
+      }
+      if (url.startsWith("/api/v1/snapshot")) return Response.json(baseSession());
+      if (url === "/api/turn") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { id: string; message: string };
+        turnBodies.push(body.message);
+        if (failTurn) {
+          return Response.json({ code: "credit_exhausted", error: "" }, { status: 402 });
+        }
+        return Response.json(
+          baseSession({
+            position: 11,
+            messages: [
+              {
+                id: `${body.id}-user`,
+                run_id: "",
+                turn_id: body.id,
+                role: "user",
+                text: body.message,
+                created_at: "2026-11-28T00:00:00Z",
+              },
+            ],
+          }),
+        );
+      }
+      return Response.json({ ok: true });
+    });
+
+    const localCache = createResourceCache();
+    const hook = mountTestHook(
+      () => useRuntime(false, "scope-stale-pending", undefined, currentCaps),
+      (node) => createElement(ResourceCacheContext.Provider, { value: localCache }, node),
+    );
+    try {
+      await settleTestDOM();
+      assert.equal(hook.current.readOnly, false);
+
+      // First turn hits 402 credit_exhausted -> leaves a failed pending turn with errorCode="credit_exhausted"
+      await act(async () => { hook.current.setDraft("First attempt"); });
+      await act(async () => { await hook.current.send(); });
+      assert.equal(hook.current.readOnly, true);
+      assert.equal(hook.current.accessBlock?.code, "credit_exhausted");
+      assert.equal(hook.current.pending.length, 1);
+      assert.equal(hook.current.pending[0].errorCode, "credit_exhausted");
+
+      // User adds a BYOK key in Settings -> invalidates /settings/model-keys.
+      // Even though the old failed pending turn is still in pending, readOnly clears and sending works!
+      failTurn = false;
+      await act(async () => {
+        localCache.invalidate("/settings/model-keys", "/settings/models", "/capabilities");
+      });
+      assert.equal(hook.current.readOnly, false);
+      assert.equal(hook.current.accessBlock, null);
+      assert.equal(hook.current.pending.length, 1, "stale failed pending turn is still present");
+
+      await act(async () => { hook.current.setDraft("Recovered send"); });
+      await act(async () => { await hook.current.send(); });
+      assert.deepEqual(turnBodies, ["First attempt", "Recovered send"]);
+    } finally {
+      hook.unmount();
+    }
+  });
+
+  test("exhausted trial entitlement puts runtime in read-only mode and clears when capabilities recover", async () => {
+    g.fetch = asFetch(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/preferences") {
+        return Response.json({ timezone: "UTC", working_hours: [], default_destination_ids: [], account_defaults: {}, budgets: { task_usd: 5 }, revision: 1 });
+      }
+      if (url.startsWith("/api/v1/snapshot")) return Response.json(baseSession());
+      return Response.json({ ok: true });
+    });
+
+    const localCache = createResourceCache();
+    let currentCaps: Capabilities = {
+      contract: "nori-chat-2",
+      service: "nori",
+      conversationModes: ["assistant"],
+      features: {},
+      entitlement: {
+        tier: "trial",
+        status: "active",
+        allow_byok: false,
+        suspended: false,
+        credit_remaining_usd: 0,
+        credit_grant_usd: 5,
+        storage_used_bytes: 0,
+        storage_limit_bytes: 1000,
+        max_routines: 3,
+        max_concurrent_tasks: 2,
+        max_desktop_ws: 1,
+        max_checkpoints: 1,
+      },
+    };
+    const hook = mountTestHook(
+      () => useRuntime(false, "scope-entitlement-recovery", undefined, currentCaps),
+      (node) => createElement(ResourceCacheContext.Provider, { value: localCache }, node),
+    );
+    try {
+      await settleTestDOM();
+      assert.equal(hook.current.readOnly, true);
+      assert.equal(hook.current.accessBlock?.code, "credit_exhausted");
+      assert.match(hook.current.error, /trial credits are used up/i);
+
+      // Upgrading plan refreshes capabilities with active credits and allow_byok -> readOnly clears.
+      currentCaps = {
+        ...currentCaps,
+        entitlement: {
+          ...currentCaps.entitlement!,
+          tier: "standard",
+          allow_byok: true,
+          credit_grant_usd: 10,
+          credit_remaining_usd: 10,
+        },
+      };
+      await act(async () => { hook.render(); });
+      assert.equal(hook.current.readOnly, false);
+      assert.equal(hook.current.accessBlock, null);
+      assert.equal(hook.current.error, "");
+    } finally {
+      hook.unmount();
     }
   });
 });

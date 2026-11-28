@@ -453,4 +453,35 @@ struct ModelKeysTests {
         #expect(store.activeBillingAccessBlock?.code == .accountSuspended)
         #expect(store.activeBillingAccessBlock?.message == "Account suspended by admin.")
     }
+
+    @Test("Capabilities with nil entitlement clear stale credit_exhausted and subscription_inactive blocks")
+    @MainActor
+    func applyCapabilitiesClearsBillingBlocksWhenEntitlementIsNil() async {
+        let mock = MockNoriTransport()
+        let store = NoriStore(transport: mock, authProvider: AuthTokenProvider(tokenStore: InMemoryTokenStore()))
+        store.authState = .signedIn(email: "local@example.com")
+
+        // Stale credit_exhausted block clears when capabilities return nil entitlement (local/billing-disabled).
+        await mock.setNextSendTurnError(NoriAPIError(message: "", statusCode: 402, code: "credit_exhausted"))
+        _ = await store.sendMessage("Hello")
+        #expect(store.activeBillingAccessBlock?.code == .creditExhausted)
+        #expect(store.isChatReadOnly)
+
+        await mock.setCapabilities(Capabilities(entitlement: nil))
+        await store.refreshCapabilities()
+        #expect(store.billingAccessBlock == nil)
+        #expect(store.activeBillingAccessBlock == nil)
+        #expect(!store.isChatReadOnly)
+
+        // Stale subscription_inactive block also clears when capabilities return nil entitlement.
+        await mock.setNextSendTurnError(NoriAPIError(message: "", statusCode: 402, code: "subscription_inactive"))
+        _ = await store.sendMessage("Hello again")
+        #expect(store.activeBillingAccessBlock?.code == .subscriptionInactive)
+        #expect(store.isChatReadOnly)
+
+        await store.refreshCapabilities()
+        #expect(store.billingAccessBlock == nil)
+        #expect(store.activeBillingAccessBlock == nil)
+        #expect(!store.isChatReadOnly)
+    }
 }

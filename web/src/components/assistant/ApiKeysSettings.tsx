@@ -17,7 +17,7 @@ import {
 import { announce } from "@/lib/assistant/announce";
 import { byokPromptLabel, needsByokSetup } from "@/lib/assistant/modelSetup";
 import { useResource, useResourceInvalidation } from "@/lib/assistant/useResource";
-import type { Capabilities } from "@/lib/contracts/assistant";
+import type { Capabilities, CapabilitiesServiceKeys } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
 import { BrandIconWell, ProviderBrandIcon } from "./BrandIcons";
 import { Confirm, Empty, Failure, Field, inputClass, Loading, Notice, Row, Rows, Section } from "./ui";
@@ -25,6 +25,25 @@ import { Confirm, Empty, Failure, Field, inputClass, Loading, Notice, Row, Rows,
 export { byokPromptLabel, needsByokSetup };
 
 const TRIAL_BYOK_NOTICE = "Bring-your-own API keys are available on paid plans. Your trial includes hosted credits.";
+
+export function resolveServiceKeys(
+  serviceKeys?: ServiceKeysResponse,
+  capabilitiesServiceKeys?: CapabilitiesServiceKeys,
+): ServiceKeyStatus[] {
+  if (serviceKeys?.services && serviceKeys.services.length > 0) {
+    return serviceKeys.services;
+  }
+  const exaConfigured = capabilitiesServiceKeys?.exa_configured ?? false;
+  const platformAvailable = capabilitiesServiceKeys?.platform_exa_available ?? false;
+  return [
+    {
+      service: "exa",
+      label: "Exa Web Search",
+      configured: exaConfigured,
+      source: exaConfigured ? "byok" : platformAvailable ? "platform" : "none",
+    },
+  ];
+}
 
 function serviceLabel(service: ServiceKeyStatus): string {
   if (service.label) return service.label;
@@ -56,10 +75,15 @@ export function ApiKeysSettings({
     return <Failure error={keys.error ?? "Providers are unavailable."} onRetry={() => void keys.reload()} />;
   }
 
-  const allowByok = serviceKeys.data?.allow_byok ?? capabilities.data?.entitlement?.allow_byok ?? true;
-  const resolvedServices = serviceKeys.data?.services ?? capabilities.data?.service_keys ?? [
-    { service: "exa", label: "Exa Web Search", configured: false },
-  ];
+  const entitlement = capabilities.data?.entitlement;
+  const allowByok = serviceKeys.data?.allow_byok ?? entitlement?.allow_byok ?? true;
+  const trialCreditsExhausted = Boolean(
+    entitlement &&
+      entitlement.credit_grant_usd > 0 &&
+      entitlement.credit_remaining_usd <= 0 &&
+      !entitlement.allow_byok,
+  );
+  const resolvedServices = resolveServiceKeys(serviceKeys.data, capabilities.data?.service_keys);
 
   const updateProvider = (updated: ModelKeyProvider) => {
     if (!keys.data) return;
@@ -92,11 +116,13 @@ export function ApiKeysSettings({
         onKeySaved={onKeySaved}
         hasHomeChat={hasHomeChat}
         allowByok={allowByok}
+        showTrialNotice={!trialCreditsExhausted}
       />
 
       <ServiceKeysContent
         services={resolvedServices}
         allowByok={allowByok}
+        showTrialNotice={false}
         error={serviceKeys.data ? undefined : serviceKeys.error}
         onRetry={() => void serviceKeys.reload()}
         onServiceUpdated={updateService}
@@ -114,6 +140,7 @@ export function ApiKeysContent({
   initialEditingProvider,
   hasHomeChat = false,
   allowByok = true,
+  showTrialNotice = true,
 }: {
   data: ModelKeysResponse;
   error?: unknown;
@@ -123,6 +150,7 @@ export function ApiKeysContent({
   initialEditingProvider?: string | null;
   hasHomeChat?: boolean;
   allowByok?: boolean;
+  showTrialNotice?: boolean;
 }) {
   const [editingProvider, setEditingProvider] = useState<string | null>(initialEditingProvider ?? null);
   const [draftKey, setDraftKey] = useState("");
@@ -209,7 +237,7 @@ export function ApiKeysContent({
   return (
     <Section title="Providers">
       <div className="space-y-3">
-        {!allowByok && <Notice>{TRIAL_BYOK_NOTICE}</Notice>}
+        {!allowByok && showTrialNotice && <Notice>{TRIAL_BYOK_NOTICE}</Notice>}
 
         {requiresKey && (
           <Notice tone="warning">
@@ -338,6 +366,7 @@ export function ApiKeysContent({
 export function ServiceKeysContent({
   services,
   allowByok = true,
+  showTrialNotice = true,
   error,
   onRetry,
   onServiceUpdated,
@@ -345,6 +374,7 @@ export function ServiceKeysContent({
 }: {
   services: ServiceKeyStatus[];
   allowByok?: boolean;
+  showTrialNotice?: boolean;
   error?: unknown;
   onRetry?: () => void;
   onServiceUpdated: (updated: ServiceKeyStatus) => void;
@@ -433,7 +463,7 @@ export function ServiceKeysContent({
   return (
     <Section title="Web search">
       <div className="space-y-3">
-        {!allowByok && <Notice>{TRIAL_BYOK_NOTICE}</Notice>}
+        {!allowByok && showTrialNotice && <Notice>{TRIAL_BYOK_NOTICE}</Notice>}
 
         {!!error && <Failure error={error} onRetry={onRetry} />}
 
