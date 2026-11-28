@@ -190,9 +190,16 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 	if services.Permissions != nil && services.Permissions.UserSends == "" {
 		services.Permissions.UserSends = "ask"
 	}
+	var checkComputerAccess func(context.Context) error
 	if opts.computer != nil && opts.computer.Enabled() {
+		compMgr := opts.computer
+		uid := user.ID
+		checkComputerAccess = func(ctx context.Context) error {
+			_, err := compMgr.CheckAccess(ctx, uid)
+			return err
+		}
 		computerconn.Register(services.Adapters, computerconn.NewAdapter(opts.computer, user.ID, store, cfg.Cloud == "local"))
-		services.Tools = extensions.Sources{services.Tools, computerconn.Source{Enabled: true}}
+		services.Tools = extensions.Sources{services.Tools, computerconn.Source{Enabled: true, CheckAccess: checkComputerAccess}}
 	}
 	collapsed := collapseDuplicateConnections(ctx, user.ID, services.Connections, opts.skipCollapseDuplicates)
 
@@ -302,7 +309,7 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 		return result, collapsed, nil
 	}
 
-	wireBackgroundRuntime(result, cfg, user, location, services, models, opts.home, allowBYOK)
+	wireBackgroundRuntime(result, cfg, user, location, services, models, opts.home, allowBYOK, checkComputerAccess)
 	return result, collapsed, nil
 }
 
@@ -321,7 +328,7 @@ func collapseDuplicateConnections(ctx context.Context, userID string, conns *con
 	return true
 }
 
-func wireBackgroundRuntime(result *App, cfg settings.Settings, user users.User, location *time.Location, services *platform.AssistantServices, models appModels, home *homeai.Service, allowBYOK func(context.Context) (bool, error)) {
+func wireBackgroundRuntime(result *App, cfg settings.Settings, user users.User, location *time.Location, services *platform.AssistantServices, models appModels, home *homeai.Service, allowBYOK func(context.Context) (bool, error), checkComputerAccess func(context.Context) error) {
 	store, leases, waker := result.Store, result.Leases, result.Waker
 	userFacts := user.Facts()
 	tasks := &conversation.Tasks{Store: store}
@@ -336,7 +343,7 @@ func wireBackgroundRuntime(result *App, cfg settings.Settings, user users.User, 
 	runner := conversation.New(models.outer, classifier, models.summarizer, tasks)
 	runner.UserFacts = userFacts
 	runner.Profile = platform.Profile(user, services.Connections)
-	runner.Capabilities = buildCapabilitySummary(services, cfg, models)
+	runner.Capabilities = buildCapabilitySummary(services, cfg, models, checkComputerAccess)
 	runner.ModelInfo = buildModelSummary(cfg, models)
 	runner.Clock = conversation.Clock{Location: location}
 	runner.OnDelta = result.Deltas.Publish

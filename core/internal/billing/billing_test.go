@@ -468,3 +468,35 @@ func TestHardeningBillingRetrySandboxHijackAndGrantValidation(t *testing.T) {
 		t.Fatalf("expected provider event before manual SetTier to succeed, got %v", err)
 	}
 }
+
+func TestBYOKTierRespectsExplicitCreditOverrideAndRollover(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	store := billing.NewMemoryStore(func() time.Time { return now })
+
+	// Plain BYOK without override receives $0 hosted credit.
+	if _, err := store.SetTier(ctx, "u-plain-byok", billing.TierBYOK, billing.SetTierOptions{}); err != nil {
+		t.Fatalf("SetTier plain byok: %v", err)
+	}
+	if bal, err := store.CreditBalance(ctx, "u-plain-byok"); err != nil || bal.AvailableMicros != 0 {
+		t.Fatalf("plain byok balance = (%+v, %v), want 0", bal, err)
+	}
+
+	// BYOK with explicit credit override ($5.00) receives the period grant and renews on rollover.
+	override := int64(5 * billing.MicrosPerUSD)
+	if _, err := store.SetTier(ctx, "u-override-byok", billing.TierBYOK, billing.SetTierOptions{
+		CreditOverrideMicros: &override,
+	}); err != nil {
+		t.Fatalf("SetTier override byok: %v", err)
+	}
+	bal, err := store.CreditBalance(ctx, "u-override-byok")
+	if err != nil || bal.GrantedMicros != override || bal.AvailableMicros != override {
+		t.Fatalf("override byok balance = (%+v, %v), want %d", bal, err, override)
+	}
+
+	now = now.AddDate(0, 1, 1) // advance past Dec 28 period_end
+	balNext, err := store.CreditBalance(ctx, "u-override-byok")
+	if err != nil || balNext.GrantedMicros != override || balNext.AvailableMicros != override {
+		t.Fatalf("override byok rollover balance = (%+v, %v), want %d", balNext, err, override)
+	}
+}

@@ -337,7 +337,7 @@ func (b *Backend) SetTier(ctx context.Context, userID string, tier billing.Tier,
 					}
 				}
 			}
-		} else if tier == billing.TierStandard || tier == billing.TierPower {
+		} else if billing.ValidPaidTier(tier) {
 			if amt := ent.EffectiveHostedCreditGrantMicros(); amt > 0 {
 				grantID := billing.ManualPeriodGrantID(userID, pStart)
 				if _, exists := b.billing.grants[grantID]; exists {

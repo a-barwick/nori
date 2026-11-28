@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 
 	"nori/internal/agent"
+	"nori/internal/billing"
 	"nori/internal/connections"
 	"nori/internal/conversation"
 	"nori/internal/modelkeys"
@@ -15,7 +17,11 @@ import (
 	"nori/internal/state"
 )
 
-func buildCapabilitySummary(services *platform.AssistantServices, cfg settings.Settings, models appModels) func(context.Context) *conversation.CapabilitySummary {
+func buildCapabilitySummary(services *platform.AssistantServices, cfg settings.Settings, models appModels, checkComputerAccess ...func(context.Context) error) func(context.Context) *conversation.CapabilitySummary {
+	var computerAccess func(context.Context) error
+	if len(checkComputerAccess) > 0 {
+		computerAccess = checkComputerAccess[0]
+	}
 	return func(ctx context.Context) *conversation.CapabilitySummary {
 		webSearch := "unavailable"
 		if strings.TrimSpace(cfg.ExaSearchKey) != "" || supportsTaskNativeSearch(ctx, models) {
@@ -34,12 +40,23 @@ func buildCapabilitySummary(services *platform.AssistantServices, cfg settings.S
 		}
 		personalComputer := ""
 		if computerEnabled {
-			personalComputer = "available (persistent Linux computer at /home/nori with shell, files, document/PDF/spreadsheet tools, and a persistent headed browser; manage or open desktop in More → Computer)"
-			uploadedFiles = []string{
-				"images (PNG, JPEG, WebP)",
-				"text, Markdown, CSV, ICS, and PDF files (PDFs and binary files can be staged and processed on your personal computer)",
+			var accessErr error
+			if computerAccess != nil {
+				accessErr = computerAccess(ctx)
 			}
-			builtIn = append(builtIn, "personal computer (shell, files, document/data tools, persistent headed browser)")
+			switch {
+			case accessErr != nil && errors.Is(accessErr, billing.ErrCreditExhausted):
+				personalComputer = "unavailable right now (requires hosted credits; hosted credit balance is $0.00; check Settings → API costs)"
+			case accessErr != nil && billing.ErrorCode(accessErr) != "":
+				personalComputer = "unavailable right now (" + accessErr.Error() + "; check Settings → API costs)"
+			default:
+				personalComputer = "available (persistent Linux computer at /home/nori with shell, files, document/PDF/spreadsheet tools, and a persistent headed browser; manage or open desktop in Settings → Computer)"
+				uploadedFiles = []string{
+					"images (PNG, JPEG, WebP)",
+					"text, Markdown, CSV, ICS, and PDF files (PDFs and binary files can be staged and processed on your personal computer)",
+				}
+				builtIn = append(builtIn, "personal computer (shell, files, document/data tools, persistent headed browser)")
+			}
 		}
 		summary := &conversation.CapabilitySummary{
 			WebSearch:        webSearch,

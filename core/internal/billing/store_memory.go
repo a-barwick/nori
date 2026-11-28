@@ -251,7 +251,7 @@ func (m *MemoryStore) SetTier(_ context.Context, userID string, tier Tier, opts 
 					}
 				}
 			}
-		} else if tier == TierStandard || tier == TierPower {
+		} else if ValidPaidTier(tier) {
 			if amt := ent.EffectiveHostedCreditGrantMicros(); amt > 0 {
 				grantID := ManualPeriodGrantID(userID, pStart)
 				if _, exists := m.grants[grantID]; exists {

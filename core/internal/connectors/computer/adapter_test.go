@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"nori/internal/billing"
 	"nori/internal/computer"
 	"nori/internal/computer/fake"
 	compconn "nori/internal/connectors/computer"
@@ -316,5 +317,79 @@ func TestComputerAdapterP0SecurityHardening(t *testing.T) {
 	}
 	if opaquePrep.Effect != extensions.EffectSensitiveSend || !opaquePrep.RequireExplicitApproval {
 		t.Fatalf("expected tainted opaque python3 script to require explicit approval, got %+v", opaquePrep)
+	}
+}
+
+func TestComputerAdapterBillingFailFastAndPreExecCleared(t *testing.T) {
+	ctx := context.Background()
+	fp := fake.New()
+	bs := billing.NewMemoryStore(nil)
+	bsvc := billing.NewService(bs, false, billing.GlobalBudgetConfig{})
+	// BYOK tier has $0 hosted credit by default.
+	if _, err := bs.SetTier(ctx, "u-byok", billing.TierBYOK, billing.SetTierOptions{}); err != nil {
+		t.Fatalf("SetTier byok: %v", err)
+	}
+
+	mgr := computer.NewManager(fp, computer.NewMemoryStore(), computer.Config{RatePerHourUSD: 0.15})
+	mgr.SetBilling(bsvc)
+	adapter := compconn.NewAdapter(mgr, "u-byok", newMemResourceStore(), false)
+
+	// 1. Prepare must fail fast with ErrCreditExhausted BEFORE creating any approval card.
+	if _, err := adapter.Prepare(ctx, invoke.Call{
+		RunID: "run-billing", Exec: execFor("computer_shell"),
+		Args: map[string]any{"command": "curl https://api.weather.gov/gridpoints/SEW/125,68/forecast/hourly"},
+	}); !errors.Is(err, billing.ErrCreditExhausted) {
+		t.Fatalf("Prepare with $0 hosted credit = %v, want billing.ErrCreditExhausted", err)
+	}
+
+	// 2. Execute failing pre-execution with ErrCreditExhausted must mark ClearedDidNotRun
+	// so task completion never treats it as an unresolved/uncertain write.
+	execRes := adapter.Execute(ctx, invoke.Call{
+		RunID: "run-billing", Exec: execFor("computer_shell"),
+		Args: map[string]any{"command": "curl https://api.weather.gov/gridpoints/SEW/125,68/forecast/hourly"},
+	}, invoke.Prepared{})
+	if execRes.Outcome != "failed" || !errors.Is(execRes.Err, billing.ErrCreditExhausted) {
+		t.Fatalf("Execute with $0 hosted credit = (%q, %v), want (failed, ErrCreditExhausted)", execRes.Outcome, execRes.Err)
+	}
+	if execRes.Cleared != state.ClearedDidNotRun {
+		t.Fatalf("Execute pre-exec billing failure Cleared = %q, want %q", execRes.Cleared, state.ClearedDidNotRun)
+	}
+
+	// 3. Source.Inventory omits callable definitions and marks Ready=false when CheckAccess returns ErrCreditExhausted.
+	src := compconn.Source{
+		Enabled: true,
+		CheckAccess: func(ctx context.Context) error {
+			_, err := mgr.CheckAccess(ctx, "u-byok")
+			return err
+		},
+	}
+	inv, err := src.Inventory(ctx)
+	if err != nil {
+		t.Fatalf("Inventory: %v", err)
+	}
+	if len(inv.Definitions) != 0 {
+		t.Fatalf("expected 0 computer definitions when hosted credit is $0, got %d", len(inv.Definitions))
+	}
+	if len(inv.Capabilities) != 1 || inv.Capabilities[0].Ready || !strings.Contains(inv.Capabilities[0].Availability, "hosted credits") {
+		t.Fatalf("unexpected unavailable capability state: %+v", inv.Capabilities)
+	}
+
+	// 4. Granting credits via explicit override on BYOK restores both Inventory and Prepare.
+	fiveUSD := int64(5 * billing.MicrosPerUSD)
+	if _, err := bs.SetTier(ctx, "u-byok", billing.TierBYOK, billing.SetTierOptions{CreditOverrideMicros: &fiveUSD}); err != nil {
+		t.Fatalf("SetTier byok override: %v", err)
+	}
+	invReady, err := src.Inventory(ctx)
+	if err != nil {
+		t.Fatalf("Inventory after credit grant: %v", err)
+	}
+	if len(invReady.Definitions) == 0 || len(invReady.Capabilities) != 1 || !invReady.Capabilities[0].Ready {
+		t.Fatalf("expected ready computer definitions after credit grant, got defs=%d caps=%+v", len(invReady.Definitions), invReady.Capabilities)
+	}
+	if _, err := adapter.Prepare(ctx, invoke.Call{
+		RunID: "run-billing", Exec: execFor("computer_shell"),
+		Args: map[string]any{"command": "echo ok"},
+	}); err != nil {
+		t.Fatalf("Prepare after credit grant = %v, want nil", err)
 	}
 }

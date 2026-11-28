@@ -3,8 +3,10 @@ package app
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 
+	"nori/internal/billing"
 	"nori/internal/modelkeys"
 	"nori/internal/modelprofiles"
 	"nori/internal/settings"
@@ -68,5 +70,18 @@ func TestBuildCapabilitySummary_PersonalComputer(t *testing.T) {
 		return s != "" && slices.Contains([]string{s}, "text, Markdown, CSV, ICS, and PDF files (PDFs and binary files can be staged and processed on your personal computer)")
 	}) {
 		t.Fatalf("expected enabled UploadedFiles to include PDF support, got %v", enabled.UploadedFiles)
+	}
+
+	blocked := buildCapabilitySummary(
+		nil,
+		settings.Settings{Computer: settings.Computer{Provider: "sprites"}},
+		appModels{},
+		func(context.Context) error { return billing.ErrCreditExhausted },
+	)(context.Background())
+	if !strings.Contains(blocked.PersonalComputer, "unavailable") || !strings.Contains(blocked.PersonalComputer, "hosted credits") {
+		t.Fatalf("expected PersonalComputer to report unavailable on ErrCreditExhausted, got %q", blocked.PersonalComputer)
+	}
+	if slices.ContainsFunc(blocked.BuiltIn, func(s string) bool { return strings.Contains(s, "personal computer") }) {
+		t.Fatalf("expected BuiltIn to omit personal computer when credit exhausted, got %v", blocked.BuiltIn)
 	}
 }

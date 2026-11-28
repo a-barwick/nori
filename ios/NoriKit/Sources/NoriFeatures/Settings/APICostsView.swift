@@ -433,6 +433,10 @@ public struct APICostsView: View {
                             .monospacedDigit()
                             .foregroundStyle(NoriColors.ink3)
                     }
+                } else if entitlement.tier == "byok", !entitlement.suspended, !entitlement.isInactive {
+                    Text("Uses your own API keys. Hosted features like Personal Computer require hosted credits.")
+                        .font(NoriTypography.caption)
+                        .foregroundStyle(NoriColors.ink3)
                 }
 
                 if entitlement.suspended {

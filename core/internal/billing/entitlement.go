@@ -392,7 +392,7 @@ func RolloverManualEntitlement(ent Entitlement, now time.Time) (updated Entitlem
 	updated.PeriodEnd = &pEnd
 	updated.UpdatedAt = now
 
-	if updated.Tier == TierStandard || updated.Tier == TierPower {
+	if ValidPaidTier(updated.Tier) {
 		if amount := updated.EffectiveHostedCreditGrantMicros(); amount > 0 {
 			endCopy := pEnd
 			grant = &CreditGrant{

@@ -183,4 +183,59 @@ describe("API costs", () => {
       target.remove();
     }
   });
+
+  test("explains hosted credit requirement on BYOK plan with $0 hosted credits", async () => {
+    const byokReport = {
+      ...reports[30],
+      entitlement: {
+        tier: "byok",
+        status: "active",
+        billing_provider: "manual",
+        period_start: "2026-10-01T00:00:00Z",
+        suspended: false,
+        allow_byok: true,
+        credit_grant_usd: 0,
+        credit_used_usd: 0,
+        credit_pending_usd: 0,
+        credit_remaining_usd: 0,
+      },
+    };
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/settings/models")) return Response.json(settings);
+      if (url.endsWith("/preferences")) {
+        return Response.json({
+          revision: 1,
+          timezone: "America/Los_Angeles",
+          working_hours: [],
+          default_destination_ids: [],
+          account_defaults: {},
+          budgets: {},
+        });
+      }
+      if (url.endsWith("days=30")) return Response.json(byokReport);
+      throw new Error(`Unexpected request: ${url}`);
+    }) as typeof fetch;
+
+    const target = document.createElement("div");
+    document.body.append(target);
+    const root = createRoot(target);
+    try {
+      await act(async () =>
+        root.render(
+          <ResourceCacheContext.Provider value={createResourceCache()}>
+            <ApiCosts />
+          </ResourceCacheContext.Provider>,
+        ),
+      );
+      await settleTestDOM();
+      const text = target.textContent ?? "";
+      assert.match(text, /BYOK/);
+      assert.match(text, /Hosted features like Personal Computer require hosted credits/);
+    } finally {
+      await act(async () => root.unmount());
+      target.remove();
+    }
+  });
 });

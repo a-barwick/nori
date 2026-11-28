@@ -572,7 +572,7 @@ func (s *PostgresStore) SetTier(ctx context.Context, userID string, tier Tier, o
 					return Entitlement{}, err
 				}
 			}
-		} else if tier == TierStandard || tier == TierPower {
+		} else if ValidPaidTier(tier) {
 			if amt := ent.EffectiveHostedCreditGrantMicros(); amt > 0 {
 				grantID := ManualPeriodGrantID(userID, ent.PeriodStart)
 				var baseExists bool

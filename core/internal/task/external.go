@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"nori/internal/billing"
 	"nori/internal/connections"
 	"nori/internal/extensions"
 	"nori/internal/invoke"
@@ -137,6 +138,27 @@ func taskOrigin(run state.Run) (origin, automationID string) {
 		return invoke.OriginAutomation, run.Origin.AutomationID
 	}
 	return invoke.OriginUser, ""
+}
+
+func billingPrepareDenial(err error) (message, code string, ok bool) {
+	code = billing.ErrorCode(err)
+	if code == "" {
+		return "", "", false
+	}
+	switch {
+	case errors.Is(err, billing.ErrCreditExhausted):
+		return "This hosted tool could not run because your hosted credit balance is $0.00. Hosted compute (such as the personal computer) requires hosted credits (Standard/Power plan or a credit grant). Do not retry this tool until credits are available; use other available tools (such as web_search) if possible, or check Settings → API costs.", code, true
+	case errors.Is(err, billing.ErrSubscriptionInactive):
+		return "This tool could not run because your subscription is inactive. Resubscribe or update billing to continue.", code, true
+	case errors.Is(err, billing.ErrAccountSuspended):
+		return "This tool could not run because your account is suspended.", code, true
+	case errors.Is(err, billing.ErrGlobalBudgetExceeded):
+		return "This hosted tool is temporarily unavailable because platform daily hosted capacity has been reached. Try again later or use other available tools.", code, true
+	case errors.Is(err, billing.ErrEntitlementMissing):
+		return "This tool could not run because account billing entitlement is not configured.", code, true
+	default:
+		return err.Error(), code, true
+	}
 }
 
 func isPersonalComputerTool(exec *extensions.Exec) bool {
@@ -343,6 +365,9 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 		if errors.Is(err, invoke.ErrInvalidArguments) {
 			return nil, denial(in, effect, "failed", err.Error(), nil), nil
 		}
+		if msg, code, ok := billingPrepareDenial(err); ok {
+			return nil, denial(in, effect, "failed", msg, map[string]any{"billing_code": code}), nil
+		}
 		if call.Grant != nil {
 			a.Executor.Connections.ReportFailure(ctx, connectionID, err)
 		}
@@ -367,6 +392,9 @@ func (a *Activities) planExternal(ctx context.Context, in ToolInput, saved *stat
 			editedPrepared, prepErr := adapter.Prepare(ctx, editedCall)
 			inPrepare.Store(false)
 			if prepErr != nil {
+				if msg, code, ok := billingPrepareDenial(prepErr); ok {
+					return nil, denial(in, effect, "failed", msg, map[string]any{"billing_code": code}), nil
+				}
 				return nil, denial(in, effect, "failed", "The approved edited action could not be prepared: "+prepErr.Error(), nil), nil
 			}
 			if editedPrepared.Effect == "" {
@@ -826,8 +854,11 @@ func (a *Activities) runExternal(ctx context.Context, in ToolInput, op *state.Op
 		if outcome == "" {
 			outcome = "confirmed"
 		}
-		if outcome == "failed" && errors.Is(result.Err, invoke.ErrInvalidArguments) && result.Cleared == "" {
+		if outcome == "failed" && result.Cleared == "" && (errors.Is(result.Err, invoke.ErrInvalidArguments) || billing.ErrorCode(result.Err) != "") {
 			result.Cleared = state.ClearedDidNotRun
+		}
+		if code := billing.ErrorCode(result.Err); code != "" {
+			output["billing_code"] = code
 		}
 		if (outcome == "failed" || outcome == "uncertain") && result.Cleared != "" && op.Cleared == "" {
 			op.Cleared = result.Cleared

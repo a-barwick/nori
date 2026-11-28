@@ -3,8 +3,10 @@ package computer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
+	"nori/internal/billing"
 	"nori/internal/extensions"
 )
 
@@ -152,13 +154,57 @@ var Definitions = func() []extensions.Definition {
 }()
 
 // Source exposes Personal Computer tools to the extension catalog when enabled.
+// When CheckAccess returns a billing/entitlement error (for example, $0 hosted
+// credit on a BYOK plan), computer tools are omitted from the model's callable
+// tool list and the capability is reported as unavailable so tasks use other
+// available tools (such as web_search) instead of hitting billing errors.
 type Source struct {
-	Enabled bool
+	Enabled     bool
+	CheckAccess func(context.Context) error
 }
 
-func (s Source) Inventory(_ context.Context) (extensions.Inventory, error) {
+func unavailableComputerReason(err error) (string, bool) {
+	if billing.ErrorCode(err) == "" {
+		return "", false
+	}
+	switch {
+	case errors.Is(err, billing.ErrCreditExhausted):
+		return "unavailable (requires hosted credits; hosted credit balance is $0.00)", true
+	case errors.Is(err, billing.ErrSubscriptionInactive):
+		return "unavailable (subscription is inactive)", true
+	case errors.Is(err, billing.ErrAccountSuspended):
+		return "unavailable (account is suspended)", true
+	case errors.Is(err, billing.ErrGlobalBudgetExceeded):
+		return "unavailable right now (platform daily hosted compute capacity reached)", true
+	case errors.Is(err, billing.ErrEntitlementMissing):
+		return "unavailable (account billing entitlement is not configured)", true
+	default:
+		return "unavailable (" + err.Error() + ")", true
+	}
+}
+
+func (s Source) Inventory(ctx context.Context) (extensions.Inventory, error) {
 	if !s.Enabled {
 		return extensions.Inventory{}, nil
+	}
+	if s.CheckAccess != nil {
+		if err := s.CheckAccess(ctx); err != nil {
+			if reason, blocked := unavailableComputerReason(err); blocked {
+				return extensions.Inventory{
+					Capabilities: []extensions.CapabilityState{
+						{
+							Capability:   CapabilityID,
+							Title:        CapabilityTitle,
+							Account:      "user's persistent Linux computer (/home/nori)",
+							Availability: reason,
+							OnFailure:    "Do not call personal computer tools until hosted credits or access are available. Use web_search or other available tools instead, or tell the user to check Settings → API costs.",
+							Verify:       "Confirm whether the task can be answered with other available tools before reporting a partial result.",
+							Ready:        false,
+						},
+					},
+				}, nil
+			}
+		}
 	}
 	return extensions.Inventory{
 		Definitions: Definitions,

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"nori/internal/agent"
+	"nori/internal/billing"
 	"nori/internal/extensions"
 	"nori/internal/invoke"
 	"nori/internal/permissions"
@@ -310,6 +311,100 @@ func TestExternalAutoReviewBlocksExfiltrationAndEscalatesAmbiguousReversibleWrit
 		out3, err := f3.claimAndRun(ctx, runAsk.ID, "worker-ask")
 		if err != nil || out3 != task.OutcomeParked || calAdapter3.execCalls.Load() != 0 {
 			t.Fatalf("ask rule on reversible_write = (%s, %v, execs=%d), want (parked, nil, 0)", out3, err, calAdapter3.execCalls.Load())
+		}
+	})
+}
+
+type billingErrorAdapter struct {
+	prepareErr error
+	executeErr error
+	execCalls  atomic.Int32
+}
+
+func (a *billingErrorAdapter) Prepare(_ context.Context, call invoke.Call) (invoke.Prepared, error) {
+	if a.prepareErr != nil {
+		return invoke.Prepared{}, a.prepareErr
+	}
+	return invoke.Prepared{
+		Summary: "Run command on personal computer",
+		Effect:  extensions.EffectReversibleWrite,
+		Spec:    map[string]string{"tool": call.Exec.Tool.ID},
+	}, nil
+}
+
+func (a *billingErrorAdapter) Execute(_ context.Context, _ invoke.Call, _ invoke.Prepared) invoke.Result {
+	a.execCalls.Add(1)
+	if a.executeErr != nil {
+		return invoke.Result{Outcome: "failed", Err: a.executeErr}
+	}
+	return invoke.Result{Outcome: "confirmed", Content: map[string]any{"ok": true}}
+}
+
+func TestExternalBillingErrorSkipsApprovalAndClearsPreExecWrite(t *testing.T) {
+	ctx := context.Background()
+	shellDef := sealExternalDef(t, "nori/computer/computer-shell", "computer_shell", extensions.EffectReversibleWrite)
+
+	t.Run("prepare_billing_error_never_opens_approval_and_task_completes_cleanly", func(t *testing.T) {
+		f := newRunnerFixture(t, func(_ context.Context, callNum int, _ agent.Request) (agent.Response, error) {
+			if callNum == 1 {
+				return toolCallResponse("c-shell", "computer_shell", map[string]any{"to": "api.weather.gov"}, 0.02), nil
+			}
+			return toolCallResponse("c-done", "complete", map[string]any{
+				"answer": "Used web search instead because personal computer has $0 hosted credit.", "evidence": []any{}, "unmet": []any{},
+			}, 0.02), nil
+		})
+		adapter := &billingErrorAdapter{prepareErr: billing.ErrCreditExhausted}
+		f.extSource.defs = []extensions.Definition{shellDef}
+		f.adapters.Register(extensions.AdapterNative, "mock", adapter)
+		f.act.Executor.AutoReviewer = &recordingAutoReviewer{verdict: permissions.AutoReviewDecision{Verdict: "ask", Reason: "external network"}}
+
+		run := f.startTask(ctx, "run-billing-prep", "Check weather and parks today")
+		out, err := f.claimAndRun(ctx, run.ID, "worker-billing-prep")
+		if err != nil || out != task.OutcomeDone {
+			t.Fatalf("claimAndRun = (%s, %v), want (done, nil)", out, err)
+		}
+		if adapter.execCalls.Load() != 0 {
+			t.Fatalf("adapter Execute called %d times, want 0", adapter.execCalls.Load())
+		}
+		interactions, _, err := f.perms.Interactions(ctx, "", run.ID, "", 10)
+		if err != nil || len(interactions) != 0 {
+			t.Fatalf("expected 0 approval cards when Prepare fails on billing, got %+v (err=%v)", interactions, err)
+		}
+		finished, err := f.store.GetRun(ctx, run.ID)
+		if err != nil || finished.Status != state.RunCompleted {
+			t.Fatalf("finished run = (%+v, %v), want completed", finished, err)
+		}
+	})
+
+	t.Run("execute_billing_error_sets_ClearedDidNotRun_so_completion_is_not_unresolved", func(t *testing.T) {
+		f := newRunnerFixture(t, func(_ context.Context, callNum int, _ agent.Request) (agent.Response, error) {
+			if callNum == 1 {
+				return toolCallResponse("c-shell", "computer_shell", map[string]any{"to": "api.weather.gov"}, 0.02), nil
+			}
+			return toolCallResponse("c-done", "complete", map[string]any{
+				"answer": "Fell back to web search after hosted compute billing rejection.", "evidence": []any{}, "unmet": []any{},
+			}, 0.02), nil
+		})
+		adapter := &billingErrorAdapter{executeErr: billing.ErrCreditExhausted}
+		f.extSource.defs = []extensions.Definition{shellDef}
+		f.adapters.Register(extensions.AdapterNative, "mock", adapter)
+		f.act.Executor.AutoReviewer = &recordingAutoReviewer{verdict: permissions.AutoReviewDecision{Verdict: "allow"}}
+
+		run := f.startTask(ctx, "run-billing-exec", "Check weather and parks today")
+		out, err := f.claimAndRun(ctx, run.ID, "worker-billing-exec")
+		if err != nil || out != task.OutcomeDone {
+			t.Fatalf("claimAndRun = (%s, %v), want (done, nil)", out, err)
+		}
+		ops, err := f.store.Operations(ctx, run.ID)
+		if err != nil || len(ops) != 1 {
+			t.Fatalf("ops = (%+v, %v), want 1 operation", ops, err)
+		}
+		if ops[0].Cleared != state.ClearedDidNotRun {
+			t.Fatalf("op.Cleared = %q, want %q", ops[0].Cleared, state.ClearedDidNotRun)
+		}
+		finished, err := f.store.GetRun(ctx, run.ID)
+		if err != nil || finished.Status != state.RunCompleted {
+			t.Fatalf("finished run = (%+v, %v), want completed (not partial/unresolved)", finished, err)
 		}
 	})
 }

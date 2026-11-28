@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"nori/internal/billing"
 	"nori/internal/computer"
 	"nori/internal/extensions"
 	"nori/internal/invoke"
@@ -117,6 +118,10 @@ func (a *Adapter) TakeoverNeeded(ctx context.Context, call invoke.Call) (*invoke
 func (a *Adapter) Prepare(ctx context.Context, call invoke.Call) (invoke.Prepared, error) {
 	if a.Manager == nil || !a.Manager.Enabled() {
 		return invoke.Prepared{}, computer.ErrDisabled
+	}
+	// Fail fast on billing/credit/entitlement blocks before prompting the user for approval.
+	if _, err := a.Manager.CheckAccess(ctx, a.UserID); err != nil {
+		return invoke.Prepared{}, err
 	}
 	rawArgs, _ := json.Marshal(call.Args)
 	sum := sha256.Sum256(rawArgs)
@@ -400,9 +405,36 @@ func (a *Adapter) prepareBrowser(ctx context.Context, call invoke.Call, spec map
 	}
 }
 
+func isPreExecutionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return billing.ErrorCode(err) != "" ||
+		errors.Is(err, computer.ErrDisabled) ||
+		errors.Is(err, computer.ErrDeleting) ||
+		errors.Is(err, computer.ErrUserInControl) ||
+		errors.Is(err, computer.ErrFleetCapReached) ||
+		errors.Is(err, computer.ErrPathTraversal) ||
+		errors.Is(err, computer.ErrFileTooLarge) ||
+		errors.Is(err, invoke.ErrInvalidArguments)
+}
+
+func failedComputerResult(err error, costUSD float64, content map[string]any) invoke.Result {
+	res := invoke.Result{
+		Outcome: "failed",
+		Err:     err,
+		CostUSD: costUSD,
+		Content: content,
+	}
+	if isPreExecutionError(err) {
+		res.Cleared = state.ClearedDidNotRun
+	}
+	return res
+}
+
 func (a *Adapter) Execute(ctx context.Context, call invoke.Call, prepared invoke.Prepared) invoke.Result {
 	failed := func(err error) invoke.Result {
-		return invoke.Result{Outcome: "failed", Err: err}
+		return failedComputerResult(err, 0, nil)
 	}
 	if a.Manager == nil || !a.Manager.Enabled() {
 		return failed(computer.ErrDisabled)
@@ -446,7 +478,7 @@ if [ -f %s ]; then tail -n 200 %s; else echo 'job log not found'; exit 1; fi`,
 			Timeout: 15 * time.Second,
 		})
 		if err != nil {
-			return invoke.Result{Outcome: "failed", Err: err, CostUSD: res.CostUSD}
+			return failedComputerResult(err, res.CostUSD, nil)
 		}
 		running := false
 		jobExit := any(nil)
@@ -488,7 +520,7 @@ if [ -f %s ]; then tail -n 200 %s; else echo 'job log not found'; exit 1; fi`,
 			Timeout: 15 * time.Second,
 		})
 		if err != nil {
-			return invoke.Result{Outcome: "failed", Err: err, CostUSD: res.CostUSD}
+			return failedComputerResult(err, res.CostUSD, nil)
 		}
 		return invoke.Result{
 			Outcome: "confirmed",
@@ -512,12 +544,11 @@ if [ -f %s ]; then tail -n 200 %s; else echo 'job log not found'; exit 1; fi`,
 		Background: bg,
 	})
 	if err != nil {
-		return invoke.Result{
-			Outcome: "failed",
-			Err:     err,
-			CostUSD: res.CostUSD,
-			Content: map[string]any{"exit_code": res.ExitCode, "stdout": res.Stdout, "stderr": res.Stderr, "duration_ms": res.DurationMS},
+		var content map[string]any
+		if !isPreExecutionError(err) {
+			content = map[string]any{"exit_code": res.ExitCode, "stdout": res.Stdout, "stderr": res.Stderr, "duration_ms": res.DurationMS}
 		}
+		return failedComputerResult(err, res.CostUSD, content)
 	}
 	content := map[string]any{
 		"exit_code":   res.ExitCode,
@@ -542,7 +573,7 @@ if [ -f %s ]; then tail -n 200 %s; else echo 'job log not found'; exit 1; fi`,
 
 func (a *Adapter) execFiles(ctx context.Context, call invoke.Call) invoke.Result {
 	failed := func(err error) invoke.Result {
-		return invoke.Result{Outcome: "failed", Err: err}
+		return failedComputerResult(err, 0, nil)
 	}
 	action := invoke.String(call.Args, "action")
 	rawPath := invoke.String(call.Args, "path")
@@ -762,6 +793,7 @@ func (a *Adapter) execBrowser(ctx context.Context, call invoke.Call, prepared in
 		return invoke.Result{
 			Outcome: "failed",
 			Err:     errors.New("repeated identical browser action halted by 2-step loop guard; choose a different element/action or call computer_request_takeover"),
+			Cleared: state.ClearedDidNotRun,
 		}
 	}
 
@@ -776,7 +808,7 @@ func (a *Adapter) execBrowser(ctx context.Context, call invoke.Call, prepared in
 		if startErr == nil {
 			startErr = fmt.Errorf("desktop start exited with code %d: %s", startRes.ExitCode, strings.TrimSpace(startRes.Stderr))
 		}
-		return invoke.Result{Outcome: "failed", Err: fmt.Errorf("start browser desktop: %w", startErr), CostUSD: totalCost}
+		return failedComputerResult(fmt.Errorf("start browser desktop: %w", startErr), totalCost, nil)
 	}
 
 	// Merge approval preconditions (expected_url, expected_label) into the payload passed to nori-browser
@@ -800,7 +832,7 @@ func (a *Adapter) execBrowser(ctx context.Context, call invoke.Call, prepared in
 	})
 	totalCost += res.CostUSD
 	if err != nil {
-		return invoke.Result{Outcome: "failed", Err: err, CostUSD: totalCost}
+		return failedComputerResult(err, totalCost, nil)
 	}
 
 	rawOut := strings.TrimSpace(res.Stdout)

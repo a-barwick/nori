@@ -407,7 +407,7 @@ function PlanCreditsCard({ entitlement, timeZone }: { entitlement: EntitlementSu
         </div>
       </div>
 
-      {grant > 0 && (
+      {grant > 0 ? (
         <div className="mt-3">
           <div
             role="progressbar"
@@ -424,7 +424,11 @@ function PlanCreditsCard({ entitlement, timeZone }: { entitlement: EntitlementSu
             {entitlement.credit_pending_usd > 0 ? ` · ${money(entitlement.credit_pending_usd)} pending` : ""}
           </p>
         </div>
-      )}
+      ) : entitlement.tier === "byok" && !entitlement.suspended && !inactive ? (
+        <p className="mt-2 text-caption text-ink-3">
+          Uses your own API keys. Hosted features like Personal Computer require hosted credits.
+        </p>
+      ) : null}
 
       {entitlement.suspended ? (
         <div className="mt-3">

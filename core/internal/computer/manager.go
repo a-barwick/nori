@@ -650,6 +650,15 @@ func (m *Manager) checkHostedAccess(ctx context.Context, userID string, now time
 	return ent, nil
 }
 
+// CheckAccess verifies whether userID is permitted to use the personal computer
+// (enabled check plus fail-closed billing/credit/budget admission without waking the VM).
+func (m *Manager) CheckAccess(ctx context.Context, userID string) (billing.Entitlement, error) {
+	if !m.Enabled() {
+		return billing.Entitlement{}, ErrDisabled
+	}
+	return m.checkHostedAccess(ctx, userID, m.now())
+}
+
 // CheckDesktopAccess verifies whether userID is permitted to open/maintain a Desktop VNC session.
 func (m *Manager) CheckDesktopAccess(ctx context.Context, userID string) (billing.Entitlement, error) {
 	return m.checkHostedAccess(ctx, userID, m.now())
