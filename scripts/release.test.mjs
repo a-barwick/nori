@@ -444,6 +444,36 @@ fi`,
   assert.equal(excluded.stdout.trim(), "success");
 });
 
+test("ci-status.sh --only-job gates solely on the requested job(s) and stays pending until present", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "nori-ci-status-only-test-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  const ciStatus = fileURLToPath(new URL("./ci-status.sh", import.meta.url));
+  writeFileSync(
+    join(bin, "gh"),
+    `#!/bin/bash
+if [[ "$1 $2" == "run list" ]]; then
+  echo 43
+elif [[ "$1 $2" == "run view" ]]; then
+  printf '{"jobs":[{"name":"Go Race Tests","conclusion":"failure"},{"name":"Swift package and iOS app","conclusion":"success"}]}\\n'
+fi`,
+    { mode: 0o755 },
+  );
+  const env = { PATH: `${bin}:${process.env.PATH}` };
+  const iosOnly = spawnSync("bash", [ciStatus, "b".repeat(40), "--only-job", "Swift package and iOS app"], { encoding: "utf8", env });
+  assert.equal(iosOnly.status, 0, iosOnly.stderr + iosOnly.stdout);
+  assert.equal(iosOnly.stdout.trim(), "success");
+
+  const goOnly = spawnSync("bash", [ciStatus, "b".repeat(40), "--only-job", "Go Race Tests"], { encoding: "utf8", env });
+  assert.equal(goOnly.status, 1);
+  assert.equal(goOnly.stdout.trim(), "failure");
+
+  const missing = spawnSync("bash", [ciStatus, "b".repeat(40), "--only-job", "Swift package and iOS app", "--only-job", "Not Started Yet"], { encoding: "utf8", env });
+  assert.equal(missing.status, 1);
+  assert.equal(missing.stdout.trim(), "pending");
+});
+
 test("--quick excludes Deep Deterministic Simulation from CI status and defaults bake to 60s", (t) => {
   const normal = fixture(t, { change: ["web/page.tsx"], green: [0], args: ["--latest-green"] });
   assert.equal(normal.result.status, 0, normal.result.stderr + normal.result.stdout);

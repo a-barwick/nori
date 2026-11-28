@@ -56,11 +56,11 @@ jobs:
             echo 'A newer iOS revision superseded this build.'
           fi
 
-      - name: Wait for CI to pass on this commit
+      - name: Wait for iOS CI to pass on this commit
         if: steps.freshness.outputs.current == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: scripts/ci-status.sh "$GITHUB_SHA" --wait
+        run: scripts/ci-status.sh "$GITHUB_SHA" --wait --only-job "Swift package and iOS app"
 
       - name: Archive release build
         if: steps.freshness.outputs.current == 'true'
