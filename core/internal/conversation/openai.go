@@ -493,29 +493,59 @@ func (e providerHTTPError) Error() string       { return e.detail }
 func (e providerHTTPError) HTTPStatusCode() int { return e.status }
 
 func (m *OpenAIModel) observeCall(ctx context.Context, span trace.Span, requestStarted time.Time, reply Reply, err error) {
-	provider := attribute.String("gen_ai.provider.name", m.provider())
-	model := attribute.String("gen_ai.request.model", m.name)
+	observeOuterCall(ctx, span, m.provider(), m.name, m.now(), requestStarted, reply, err)
+}
+
+func observeOuterCall(ctx context.Context, span trace.Span, providerName, modelName string, now, requestStarted time.Time, reply Reply, err error) {
+	provider := attribute.String("gen_ai.provider.name", providerName)
+	model := attribute.String("gen_ai.request.model", modelName)
+	eventAttrs := []attribute.KeyValue{provider, model}
 	span.SetAttributes(
 		attribute.Bool("nori.output.present", reply.Text != ""), attribute.Int("nori.tool.call_count", len(reply.Calls)),
 		attribute.String("nori.cost.status", reply.Usage.CostStatus),
 	)
 	if reply.Usage.InputTokens != nil {
+		input := *reply.Usage.InputTokens
 		span.SetAttributes(
-			attribute.Int64("gen_ai.usage.input_tokens", *reply.Usage.InputTokens), attribute.Int64("llm.token_count.prompt", *reply.Usage.InputTokens),
+			attribute.Int64("gen_ai.usage.input_tokens", input), attribute.Int64("llm.token_count.prompt", input),
 		)
-		observability.Metric(ctx, "nori.model.input_tokens", float64(*reply.Usage.InputTokens))
+		eventAttrs = append(eventAttrs, attribute.Int64("gen_ai.usage.input_tokens", input))
+		observability.Metric(ctx, "nori.model.input_tokens", float64(input))
+	}
+	if reply.Usage.CachedTokens != nil {
+		cached := *reply.Usage.CachedTokens
+		span.SetAttributes(attribute.Int64("gen_ai.usage.cache_read.input_tokens", cached))
+		eventAttrs = append(eventAttrs, attribute.Int64("gen_ai.usage.cache_read.input_tokens", cached))
+		observability.Metric(ctx, "nori.model.cache_read_tokens", float64(cached))
+		if reply.Usage.InputTokens != nil && *reply.Usage.InputTokens > 0 {
+			ratio := float64(cached) / float64(*reply.Usage.InputTokens)
+			span.SetAttributes(attribute.Float64("nori.model.cache_hit_ratio", ratio))
+			eventAttrs = append(eventAttrs, attribute.Float64("nori.model.cache_hit_ratio", ratio))
+			observability.Metric(ctx, "nori.model.cache_hit_ratio", ratio)
+		}
+	}
+	if reply.Usage.CacheWriteTokens != nil {
+		written := *reply.Usage.CacheWriteTokens
+		span.SetAttributes(attribute.Int64("gen_ai.usage.cache_write.input_tokens", written))
+		eventAttrs = append(eventAttrs, attribute.Int64("gen_ai.usage.cache_write.input_tokens", written))
+		observability.Metric(ctx, "nori.model.cache_write_tokens", float64(written))
 	}
 	if reply.Usage.OutputTokens != nil {
+		output := *reply.Usage.OutputTokens
 		span.SetAttributes(
-			attribute.Int64("gen_ai.usage.output_tokens", *reply.Usage.OutputTokens), attribute.Int64("llm.token_count.completion", *reply.Usage.OutputTokens),
+			attribute.Int64("gen_ai.usage.output_tokens", output), attribute.Int64("llm.token_count.completion", output),
 		)
-		observability.Metric(ctx, "nori.model.output_tokens", float64(*reply.Usage.OutputTokens))
+		eventAttrs = append(eventAttrs, attribute.Int64("gen_ai.usage.output_tokens", output))
+		observability.Metric(ctx, "nori.model.output_tokens", float64(output))
 	}
 	if reply.Usage.TotalTokens != nil {
 		span.SetAttributes(attribute.Int64("llm.token_count.total", *reply.Usage.TotalTokens))
 	}
 	if reply.Usage.CostUSD != nil {
-		span.SetAttributes(attribute.Float64("nori.cost.usd", *reply.Usage.CostUSD), attribute.Float64("llm.cost.total", *reply.Usage.CostUSD))
+		cost := *reply.Usage.CostUSD
+		span.SetAttributes(attribute.Float64("nori.cost.usd", cost), attribute.Float64("llm.cost.total", cost))
+		eventAttrs = append(eventAttrs, attribute.Float64("nori.cost.usd", cost))
+		observability.Metric(ctx, "nori.model.cost_usd", cost)
 	}
 	if a, ok := observability.ContentAttribute("output.value", reply.Text); ok {
 		span.SetAttributes(a)
@@ -526,10 +556,10 @@ func (m *OpenAIModel) observeCall(ctx context.Context, span trace.Span, requestS
 			observability.Event(ctx, "model.call.failed", provider, model)
 		}
 	} else if err == nil && !requestStarted.IsZero() {
-		observability.Event(ctx, "model.call.completed", provider, model)
+		observability.Event(ctx, "model.call.completed", eventAttrs...)
 	}
 	if !requestStarted.IsZero() && !errors.Is(ctx.Err(), context.Canceled) {
-		observability.Metric(ctx, "nori.model.duration_ms", float64(m.now().Sub(requestStarted).Milliseconds()))
+		observability.Metric(ctx, "nori.model.duration_ms", float64(now.Sub(requestStarted).Milliseconds()))
 	}
 	span.End()
 }

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
@@ -233,5 +234,54 @@ func TestHTTPHandlerEmitsOTelSpanForV1RouteWithNormalizedID(t *testing.T) {
 	}
 	if gotStatus != http.StatusOK {
 		t.Fatalf("http.response.status_code = %d, want 200", gotStatus)
+	}
+}
+
+func TestModelCallCompletedLogsCacheAndCostFields(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(newJSONLogHandler(&buf)))
+	defer slog.SetDefault(prev)
+
+	Event(context.Background(), "model.call.completed",
+		attribute.String("gen_ai.provider.name", "gateway"),
+		attribute.String("gen_ai.request.model", "anthropic/claude-opus-5.5"),
+		attribute.Int64("gen_ai.usage.input_tokens", 10000),
+		attribute.Int64("gen_ai.usage.cache_read.input_tokens", 8500),
+		attribute.Int64("gen_ai.usage.cache_write.input_tokens", 500),
+		attribute.Int64("gen_ai.usage.output_tokens", 400),
+		attribute.Float64("nori.model.cache_hit_ratio", 0.85),
+		attribute.Float64("nori.cost.usd", 0.0162),
+	)
+
+	var entry map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+		t.Fatalf("unmarshal log JSON %q: %v", buf.String(), err)
+	}
+	if entry["msg"] != "model.call.completed" {
+		t.Fatalf("msg = %v, want model.call.completed", entry["msg"])
+	}
+	for k, want := range map[string]float64{
+		"gen_ai.usage.input_tokens":             10000,
+		"gen_ai.usage.cache_read.input_tokens":  8500,
+		"gen_ai.usage.cache_write.input_tokens": 500,
+		"gen_ai.usage.output_tokens":            400,
+		"nori.model.cache_hit_ratio":            0.85,
+		"nori.cost.usd":                         0.0162,
+	} {
+		got, ok := entry[k].(float64)
+		if !ok || got != want {
+			t.Fatalf("%s = %v, want %v (json=%s)", k, entry[k], want, buf.String())
+		}
+	}
+	for _, metric := range []string{
+		"nori.model.cache_read_tokens",
+		"nori.model.cache_write_tokens",
+		"nori.model.cache_hit_ratio",
+		"nori.model.cost_usd",
+	} {
+		if !metricNames[metric] {
+			t.Fatalf("expected metric %q to be registered in metricNames", metric)
+		}
 	}
 }

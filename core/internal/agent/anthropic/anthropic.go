@@ -273,10 +273,11 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 		record.CachedTokens = &cached
 		record.CacheWriteTokens = &written
 		out.Usage = &agent.Usage{
-			InputTokens:  int32(totalIn),
-			OutputTokens: int32(outTok),
-			CachedTokens: int32(cached),
-			TotalTokens:  int32(total),
+			InputTokens:      int32(totalIn),
+			OutputTokens:     int32(outTok),
+			CachedTokens:     int32(cached),
+			CacheWriteTokens: int32(written),
+			TotalTokens:      int32(total),
 		}
 		modelName := response.Model
 		if modelName == "" {

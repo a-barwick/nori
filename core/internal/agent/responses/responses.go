@@ -263,7 +263,8 @@ func (c *Client) applyResponseUsage(res *http.Response, record *state.Usage, res
 		nonReasoning := max(*u.Output-u.OutputDetails.Reasoning, 0)
 		out.Usage = &agent.Usage{
 			InputTokens: int32(*u.Input), OutputTokens: int32(nonReasoning),
-			ReasoningTokens: int32(u.OutputDetails.Reasoning), CachedTokens: int32(u.InputDetails.Cached), TotalTokens: int32(*u.Total),
+			ReasoningTokens: int32(u.OutputDetails.Reasoning), CachedTokens: int32(u.InputDetails.Cached),
+			CacheWriteTokens: int32(u.InputDetails.Write), TotalTokens: int32(*u.Total),
 		}
 	}
 }

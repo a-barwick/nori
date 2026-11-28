@@ -44,6 +44,8 @@ var eventNames = map[string]bool{
 var metricNames = map[string]bool{
 	"nori.http.requests": true, "nori.http.duration_ms": true,
 	"nori.model.input_tokens": true, "nori.model.output_tokens": true,
+	"nori.model.cache_read_tokens": true, "nori.model.cache_write_tokens": true,
+	"nori.model.cache_hit_ratio": true, "nori.model.cost_usd": true,
 	"nori.model.duration_ms": true, "nori.task.duration_ms": true, "nori.conversation.reply_latency_ms": true,
 }
 

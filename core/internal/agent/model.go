@@ -59,11 +59,12 @@ type Response struct {
 }
 
 type Usage struct {
-	InputTokens     int32
-	OutputTokens    int32
-	ReasoningTokens int32
-	CachedTokens    int32
-	TotalTokens     int32
+	InputTokens      int32
+	OutputTokens     int32
+	ReasoningTokens  int32
+	CachedTokens     int32
+	CacheWriteTokens int32
+	TotalTokens      int32
 }
 
 type InspectRequest struct {

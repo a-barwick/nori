@@ -119,7 +119,8 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 		attribute.String("gen_ai.request.model", m.name),
 		attribute.String("llm.model_name", m.name),
 	))
-	defer span.End()
+	var requestStarted time.Time
+	defer func() { observeOuterCall(ctx, span, m.provider(), m.name, m.now(), requestStarted, reply, err) }()
 
 	reply.Usage = state.Usage{
 		ID: m.newID(), Provider: "outer", Model: m.name, CostStatus: "unknown", RequestStatus: "not_sent", CreatedAt: m.now().UTC(),
@@ -193,6 +194,7 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 		return nil
 	}
 
+	requestStarted = m.now()
 	res, err := m.doWithRetry(reqCtx, body, onRetry)
 	if err != nil {
 		if errors.Is(err, usage.ErrUserQuotaExceeded) || isSupersededCallError(err) {

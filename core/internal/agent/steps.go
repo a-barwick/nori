@@ -44,24 +44,45 @@ func (s *Service) Decide(ctx context.Context, messages []transcript.Message, wai
 	}
 	defer func() {
 		span.SetAttributes(attribute.Bool("nori.output.present", resp.Answer != ""), attribute.Int("nori.tool.call_count", len(resp.Calls)))
+		identity := []attribute.KeyValue{attribute.String("gen_ai.provider.name", provider), attribute.String("gen_ai.request.model", model)}
+		eventAttrs := append([]attribute.KeyValue(nil), identity...)
 		if u := resp.Usage; u != nil {
 			input := int64(u.InputTokens)
 			output := int64(u.OutputTokens) + int64(u.ReasoningTokens)
+			cached := int64(u.CachedTokens)
+			written := int64(u.CacheWriteTokens)
 			span.SetAttributes(
 				attribute.Int64("gen_ai.usage.input_tokens", input), attribute.Int64("gen_ai.usage.output_tokens", output),
-				attribute.Int64("gen_ai.usage.cache_read.input_tokens", int64(u.CachedTokens)),
+				attribute.Int64("gen_ai.usage.cache_read.input_tokens", cached),
+				attribute.Int64("gen_ai.usage.cache_write.input_tokens", written),
 				attribute.Int64("gen_ai.usage.reasoning.output_tokens", int64(u.ReasoningTokens)),
 				attribute.Int64("llm.token_count.prompt", input), attribute.Int64("llm.token_count.completion", output),
 				attribute.Int64("llm.token_count.total", int64(u.TotalTokens)),
 			)
+			eventAttrs = append(eventAttrs,
+				attribute.Int64("gen_ai.usage.input_tokens", input),
+				attribute.Int64("gen_ai.usage.cache_read.input_tokens", cached),
+				attribute.Int64("gen_ai.usage.cache_write.input_tokens", written),
+				attribute.Int64("gen_ai.usage.output_tokens", output),
+			)
 			observability.Metric(ctx, "nori.model.input_tokens", float64(input))
 			observability.Metric(ctx, "nori.model.output_tokens", float64(output))
+			observability.Metric(ctx, "nori.model.cache_read_tokens", float64(cached))
+			observability.Metric(ctx, "nori.model.cache_write_tokens", float64(written))
+			if input > 0 {
+				ratio := float64(cached) / float64(input)
+				span.SetAttributes(attribute.Float64("nori.model.cache_hit_ratio", ratio))
+				eventAttrs = append(eventAttrs, attribute.Float64("nori.model.cache_hit_ratio", ratio))
+				observability.Metric(ctx, "nori.model.cache_hit_ratio", ratio)
+			}
 		}
 		if resp.CostKnown {
 			span.SetAttributes(
 				attribute.Float64("nori.cost.usd", resp.Cost), attribute.Float64("llm.cost.total", resp.Cost),
 				attribute.String("nori.cost.status", "reported"),
 			)
+			eventAttrs = append(eventAttrs, attribute.Float64("nori.cost.usd", resp.Cost))
+			observability.Metric(ctx, "nori.model.cost_usd", resp.Cost)
 		} else if resp.NotSent {
 			span.SetAttributes(attribute.String("nori.cost.status", "not_sent"))
 		} else {
@@ -70,12 +91,11 @@ func (s *Service) Decide(ctx context.Context, messages []transcript.Message, wai
 		if a, ok := observability.ContentAttribute("output.value", resp.Answer); ok {
 			span.SetAttributes(a)
 		}
-		identity := []attribute.KeyValue{attribute.String("gen_ai.provider.name", provider), attribute.String("gen_ai.request.model", model)}
 		if err != nil && !errors.Is(ctx.Err(), context.Canceled) {
 			observability.RecordErrorCategory(ctx, "model.task", err)
 			observability.Event(ctx, "model.call.failed", identity...)
 		} else if err == nil {
-			observability.Event(ctx, "model.call.completed", identity...)
+			observability.Event(ctx, "model.call.completed", eventAttrs...)
 		}
 		if !errors.Is(ctx.Err(), context.Canceled) {
 			observability.Metric(ctx, "nori.model.duration_ms", float64(s.currentTime().Sub(started).Milliseconds()))
