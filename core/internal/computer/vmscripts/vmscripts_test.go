@@ -198,10 +198,10 @@ func TestDesktopGateAuthAndUpgradeProxy(t *testing.T) {
 		_ = cmd.Wait()
 	}()
 
-	// Wait for gate to listen.
+	// Wait for gate to listen (Node startup can exceed 1.5s under loaded CI -race runs).
 	gateAddr := fmt.Sprintf("127.0.0.1:%d", gatePort)
 	ready := false
-	for range 30 {
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
 		c, dErr := net.DialTimeout("tcp", gateAddr, 100*time.Millisecond)
 		if dErr == nil {
 			_ = c.Close()
