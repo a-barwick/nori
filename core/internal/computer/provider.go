@@ -23,31 +23,41 @@ const (
 	MaxPublishReadBytes    = 10 << 20 // 10 MiB
 	MaxWriteFileBytes      = 10 << 20 // 10 MiB
 	PurgedLinkResultID     = "__purged__"
-	DefaultSessionTTL      = 15 * time.Minute
-	DefaultSessionIdleCap  = 10 * time.Minute
-	HomeDir                = "/home/nori"
-	DefaultWorkDir         = "/home/nori/workspace"
-	DefaultUploadsDir      = "/home/nori/workspace/uploads"
-	DefaultBootstrapVer    = vmscripts.Version
-	DefaultDesktopPort     = 8080
-	DefaultChromiumCDPPort = 9222
+	DefaultSessionTTL            = 15 * time.Minute
+	DefaultSessionIdleCap        = 10 * time.Minute
+	DefaultDesktopWSMaxLifetime  = 2 * time.Hour
+	DefaultDesktopWSPollInterval = 5 * time.Second
+	DefaultMaxFleet              = 10
+	DefaultSpritesRatePerHourUSD = 0.15
+	DefaultIdleAutoSleep         = 15 * time.Minute
+	DefaultJanitorInterval       = 1 * time.Minute
+	DefaultProviderOwner         = "platform"
+	HomeDir                      = "/home/nori"
+	DefaultWorkDir               = "/home/nori/workspace"
+	DefaultUploadsDir            = "/home/nori/workspace/uploads"
+	DefaultBootstrapVer          = vmscripts.Version
+	DefaultDesktopPort           = 8080
+	DefaultChromiumCDPPort       = 9222
 )
 
 var (
-	ErrDisabled         = errors.New("personal computer is not enabled")
-	ErrNotFound         = errors.New("computer not found")
-	ErrNotProvisioned   = errors.New("computer is not provisioned")
-	ErrDeleting         = errors.New("computer is being deleted")
-	ErrBusy             = errors.New("computer is busy")
-	ErrPathTraversal    = errors.New("path must stay inside /home/nori")
-	ErrFileTooLarge     = errors.New("file exceeds maximum allowed size")
-	ErrTimeout          = errors.New("command timed out")
-	ErrPolicyDenied     = errors.New("blocked by computer policy")
-	ErrSessionExpired   = errors.New("desktop session has expired")
-	ErrSessionRevoked   = errors.New("desktop session has ended")
-	ErrInvalidMode      = errors.New("session mode must be view or control")
-	ErrUserInControl    = errors.New("user currently has control of the desktop; wait until control is handed back")
-	ErrProviderMismatch = errors.New("computer is managed by a different provider")
+	ErrDisabled               = errors.New("personal computer is not enabled")
+	ErrNotFound               = errors.New("computer not found")
+	ErrNotProvisioned         = errors.New("computer is not provisioned")
+	ErrDeleting               = errors.New("computer is being deleted")
+	ErrBusy                   = errors.New("computer is busy")
+	ErrPathTraversal          = errors.New("path must stay inside /home/nori")
+	ErrFileTooLarge           = errors.New("file exceeds maximum allowed size")
+	ErrTimeout                = errors.New("command timed out")
+	ErrPolicyDenied           = errors.New("blocked by computer policy")
+	ErrSessionExpired         = errors.New("desktop session has expired")
+	ErrSessionRevoked         = errors.New("desktop session has ended")
+	ErrSessionTokenUsed       = errors.New("desktop session token has already been used")
+	ErrInvalidMode            = errors.New("session mode must be view or control")
+	ErrUserInControl          = errors.New("user currently has control of the desktop; wait until control is handed back")
+	ErrProviderMismatch       = errors.New("computer is managed by a different provider")
+	ErrFleetCapReached        = errors.New("global active computer fleet limit reached")
+	ErrCheckpointLimitReached = errors.New("checkpoint limit reached for your plan")
 )
 
 type Status string

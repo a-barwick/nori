@@ -460,21 +460,41 @@ func (p *Provider) exec(ctx context.Context, providerID string, req computer.Exe
 }
 
 func (p *Provider) ReadFile(ctx context.Context, providerID, filePath string, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		maxBytes = computer.DefaultMaxReadBytes
+	}
 	sp := p.spriteHandle(providerID)
 	sfs := sp.Filesystem()
-	if maxBytes > 0 {
-		if info, err := sfs.Stat(filePath); err == nil && info.Size() > maxBytes {
-			return nil, computer.ErrFileTooLarge
+	// Fail closed on Stat before reading: sprites-go ReadFile reads the entire HTTP body into memory,
+	// so ignoring a Stat error would allow oversized or unreadable files to bypass maxBytes and OOM Core.
+	info, err := sfs.Stat(filePath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) || isNotFoundErr(err) {
+			return nil, computer.ErrNotFound
 		}
+		return nil, fmt.Errorf("stat %s: %w", filePath, err)
 	}
-	data, err := sfs.ReadFile(filePath)
+	if info.IsDir() {
+		return nil, fmt.Errorf("%w: %s is a directory", computer.ErrPolicyDenied, filePath)
+	}
+	if info.Size() < 0 || info.Size() > maxBytes {
+		return nil, computer.ErrFileTooLarge
+	}
+	var data []byte
+	if ctxReader, ok := sfs.(interface {
+		ReadFileContext(context.Context, string) ([]byte, error)
+	}); ok {
+		data, err = ctxReader.ReadFileContext(ctx, filePath)
+	} else {
+		data, err = sfs.ReadFile(filePath)
+	}
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) || isNotFoundErr(err) {
 			return nil, computer.ErrNotFound
 		}
 		return nil, err
 	}
-	if maxBytes > 0 && int64(len(data)) > maxBytes {
+	if int64(len(data)) > maxBytes {
 		return nil, computer.ErrFileTooLarge
 	}
 	return data, nil

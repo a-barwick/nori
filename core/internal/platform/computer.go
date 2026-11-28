@@ -73,10 +73,26 @@ func OpenComputer(ctx context.Context, s settings.Settings, storage *Storage) (*
 		store = computer.NewMemoryStore()
 	}
 
+	disableMetering := s.Computer.Provider == "docker"
+	ratePerHour := s.SpritesRatePerHourUSD
+	if disableMetering {
+		ratePerHour = 0
+	}
 	mgr := computer.NewManager(provider, store, computer.Config{
-		MemoryLimitMB: s.Computer.MemoryWatchdogMB,
-		MaxDiskGB:     s.Computer.MaxDiskGB,
+		MemoryLimitMB:   s.Computer.MemoryWatchdogMB,
+		MaxDiskGB:       s.Computer.MaxDiskGB,
+		MaxFleet:        s.ComputerMaxFleet,
+		RatePerHourUSD:  ratePerHour,
+		DisableMetering: disableMetering,
 	})
+	if storage != nil {
+		if leases := storage.Leases(); leases != nil {
+			mgr.SetLeases(leases)
+		}
+		if backend := storage.Backend(); backend != nil {
+			mgr.SetUsageBackend(backend)
+		}
+	}
 	if c, ok := provider.(io.Closer); ok && len(closers) == 0 {
 		closers = append(closers, func() { _ = c.Close() })
 	}
