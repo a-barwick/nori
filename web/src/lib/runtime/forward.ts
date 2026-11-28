@@ -64,6 +64,19 @@ async function relay(request: Request, { base, userID, mode, identity }: ScopedR
         if (value) headers[name] = value;
       }
     }
+    if (upstream.status === 403 && json(type)) {
+      const bodyText = await upstream.text();
+      try {
+        const parsed = JSON.parse(bodyText) as { code?: unknown };
+        if (parsed?.code === "account_suspended") {
+          evictResolvedUser(userID);
+          forgetSharedReads(userID);
+        }
+      } catch {
+        // Non-JSON or malformed error body; forward verbatim.
+      }
+      return new Response(bodyText, { status: 403, headers });
+    }
     return new Response(upstream.body, { status: upstream.status, headers });
   } catch {
     if (!request.signal.aborted) reportUpstreamFailure(label, mode, userID);
@@ -337,6 +350,12 @@ async function oauthCallback(request: Request, mode: Mode, path: string) {
     if (!location && upstream.ok && json(upstream.headers.get("content-type") ?? "")) {
       const value = await upstream.json().catch(() => null) as { location?: unknown } | null;
       if (typeof value?.location === "string") location = value.location;
+    } else if (upstream.status === 403 && json(upstream.headers.get("content-type") ?? "")) {
+      const value = await upstream.json().catch(() => null) as { code?: unknown } | null;
+      if (value?.code === "account_suspended") {
+        evictResolvedUser(user.userID);
+        forgetSharedReads(user.userID);
+      }
     } else void upstream.body?.cancel().catch(() => undefined);
     const safe = location.startsWith("/") && !location.startsWith("//") && !location.startsWith("/\\") && !location.includes("\\") ? location : "/apps?result=failed";
     return new Response(null, { status: 303, headers: { Location: safe, "Cache-Control": "no-store" } });

@@ -2,11 +2,53 @@ import type { IncomingMessage } from "node:http";
 import net from "node:net";
 import tls from "node:tls";
 import type { Duplex } from "node:stream";
-import { resolveUser, sameOrigin } from "@/lib/runtime/auth";
+import { evictResolvedUser, resolveUser, sameOrigin } from "@/lib/runtime/auth";
 import { runtimeHeaders } from "@/lib/runtime/credentials";
 import { runtimeMode, runtimeTarget } from "@/lib/runtime/target";
 
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{4,128}$/;
+const REJECT_LOG_WINDOW_MS = 60_000;
+
+const STATUS_REASONS: Record<number, string> = {
+  400: "Bad Request",
+  401: "Unauthorized",
+  402: "Payment Required",
+  403: "Forbidden",
+  429: "Too Many Requests",
+  502: "Bad Gateway",
+  503: "Service Unavailable",
+};
+
+const rejectLogThrottle = new Map<string, { lastLoggedAt: number; suppressed: number }>();
+
+export function resetWSProxyLogThrottle() {
+  rejectLogThrottle.clear();
+}
+
+function logThrottledRejection(
+  stage: string,
+  fields: Record<string, unknown>,
+  severity: "WARNING" | "ERROR" = "WARNING",
+) {
+  const now = Date.now();
+  if (rejectLogThrottle.size > 100) rejectLogThrottle.clear();
+  const entry = rejectLogThrottle.get(stage);
+  if (entry && now - entry.lastLoggedAt < REJECT_LOG_WINDOW_MS) {
+    entry.suppressed++;
+    return;
+  }
+  const suppressed = entry?.suppressed ?? 0;
+  rejectLogThrottle.set(stage, { lastLoggedAt: now, suppressed: 0 });
+  const payload = JSON.stringify({
+    severity,
+    message: "nori.computer_ws.rejected",
+    stage,
+    ...(suppressed > 0 ? { suppressed } : {}),
+    ...fields,
+  });
+  if (severity === "ERROR") console.error(payload);
+  else console.warn(payload);
+}
 
 export interface ParsedDesktopWS {
   sessionId: string;
@@ -40,8 +82,20 @@ function incomingToHeaders(rawHeaders: IncomingMessage["headers"]): Headers {
   return out;
 }
 
-function rejectSocket(socket: Duplex, statusCode: number, reason: string) {
-  socket.end(`HTTP/1.1 ${statusCode} ${reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`, () => socket.destroy());
+function rejectSocket(
+  socket: Duplex,
+  statusCode: number,
+  reason?: string,
+  extraHeaders?: Record<string, string>,
+) {
+  const phrase = reason || STATUS_REASONS[statusCode] || "Error";
+  const lines = [`HTTP/1.1 ${statusCode} ${phrase}`, "Connection: close", "Content-Length: 0"];
+  if (extraHeaders) {
+    for (const [key, value] of Object.entries(extraHeaders)) {
+      if (value && !/[\r\n]/.test(value)) lines.push(`${key}: ${value}`);
+    }
+  }
+  socket.end(lines.join("\r\n") + "\r\n\r\n", () => socket.destroy());
 }
 
 /**
@@ -62,7 +116,7 @@ export async function handleDesktopWSUpgrade(
   socket.pause();
   const headers = incomingToHeaders(req.headers);
   if (!sameOrigin({ headers })) {
-    console.warn("[computer-ws] rejected cross-origin upgrade", {
+    logThrottledRejection("cross_origin", {
       sessionId: parsed.sessionId,
       origin: headers.get("origin") ?? "",
       host: headers.get("x-forwarded-host") ?? headers.get("host") ?? "",
@@ -73,14 +127,21 @@ export async function handleDesktopWSUpgrade(
   const mode = runtimeMode(headers);
   const target = runtimeTarget(mode);
   if (target instanceof Response) {
-    console.warn("[computer-ws] runtime target unavailable", { sessionId: parsed.sessionId, status: target.status });
-    rejectSocket(socket, target.status, "Service Unavailable");
+    logThrottledRejection("target_unavailable", { sessionId: parsed.sessionId, status: target.status });
+    rejectSocket(socket, target.status, STATUS_REASONS[target.status] ?? "Service Unavailable");
     return true;
   }
   const user = await resolveUser(headers, target);
   if ("status" in user) {
-    console.warn("[computer-ws] user auth failed", { sessionId: parsed.sessionId, status: user.status, code: user.code ?? "" });
-    rejectSocket(socket, user.status, "Unauthorized");
+    logThrottledRejection("auth_failed", {
+      sessionId: parsed.sessionId,
+      status: user.status,
+      code: user.code ?? "",
+    });
+    rejectSocket(socket, user.status, STATUS_REASONS[user.status] ?? "Forbidden", {
+      ...(user.code ? { "X-Nori-Error-Code": user.code } : {}),
+      ...(user.retryAfter ? { "Retry-After": user.retryAfter } : {}),
+    });
     return true;
   }
 
@@ -88,10 +149,14 @@ export async function handleDesktopWSUpgrade(
   try {
     authHeaders = await runtimeHeaders(mode);
   } catch (err) {
-    console.error("[computer-ws] service auth header generation failed", {
-      sessionId: parsed.sessionId,
-      error: err instanceof Error ? err.message : String(err),
-    });
+    logThrottledRejection(
+      "service_auth_failed",
+      {
+        sessionId: parsed.sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      "ERROR",
+    );
     rejectSocket(socket, 503, "Service Unavailable");
     return true;
   }
@@ -109,9 +174,10 @@ export async function handleDesktopWSUpgrade(
     : net.connect({ host, port });
 
   let connected = false;
+  let inspectedHandshake = false;
   upstreamSocket.setTimeout(15_000, () => upstreamSocket.destroy(new Error("Runtime connection timed out")));
   upstreamSocket.on("error", (err) => {
-    console.warn("[computer-ws] upstream socket error", {
+    logThrottledRejection("upstream_error", {
       sessionId: parsed.sessionId,
       connected,
       error: err instanceof Error ? err.message : String(err),
@@ -119,7 +185,23 @@ export async function handleDesktopWSUpgrade(
     if (connected) socket.destroy();
     else rejectSocket(socket, 502, "Bad Gateway");
   });
-  socket.once("close", () => upstreamSocket.destroy());
+  socket.on("error", () => {
+    if (!upstreamSocket.destroyed) upstreamSocket.destroy();
+  });
+  // Propagate graceful session closes (including WebSocket close frames with
+  // close codes/reasons) before tearing down the peer socket.
+  upstreamSocket.once("close", (hadError) => {
+    if (!socket.destroyed) {
+      if (hadError) socket.destroy();
+      else socket.end();
+    }
+  });
+  socket.once("close", (hadError: boolean) => {
+    if (!upstreamSocket.destroyed) {
+      if (hadError) upstreamSocket.destroy();
+      else upstreamSocket.end();
+    }
+  });
 
   const onConnect = () => {
     connected = true;
@@ -141,6 +223,14 @@ export async function handleDesktopWSUpgrade(
     for (const [k, v] of Object.entries(authHeaders)) {
       lines.push(`${k}: ${v}`);
     }
+    upstreamSocket.on("data", (chunk: Buffer | string) => {
+      if (inspectedHandshake) return;
+      inspectedHandshake = true;
+      const preview = typeof chunk === "string" ? chunk : chunk.subarray(0, 1024).toString("utf8");
+      if (/^HTTP\/1\.[01] 403\b/.test(preview) && preview.includes("account_suspended")) {
+        evictResolvedUser(user.userID);
+      }
+    });
     upstreamSocket.write(lines.join("\r\n") + "\r\n\r\n");
     if (head && head.length > 0) {
       upstreamSocket.write(head);

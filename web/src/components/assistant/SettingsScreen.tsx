@@ -36,7 +36,9 @@ import { markBrowserReset } from "@/lib/assistant/resetState";
 import { when } from "@/lib/assistant/format";
 import { useResourceInvalidation, useAction, useResource } from "@/lib/assistant/useResource";
 import type {
+  BillingTier,
   Connection,
+  EntitlementSummary,
   OperationProjection as Operation,
   PermissionRule,
   Preferences,
@@ -121,8 +123,47 @@ export function SettingsIndex() {
   );
 }
 
+const PLAN_LABELS: Record<BillingTier, string> = {
+  trial: "Trial",
+  byok: "BYOK",
+  standard: "Standard",
+  power: "Power",
+};
+
+function EntitlementNotice({ entitlement }: { entitlement?: EntitlementSummary }) {
+  if (!entitlement) return null;
+  if (entitlement.suspended) {
+    return (
+      <div className="mb-4">
+        <Notice tone="danger">
+          {entitlement.suspended_reason || "This account has been suspended. Your history remains read-only."}
+        </Notice>
+      </div>
+    );
+  }
+  if (entitlement.status === "past_due" || entitlement.status === "expired") {
+    return (
+      <div className="mb-4">
+        <Notice tone="warning">
+          Your subscription is inactive. Renew your plan to resume chatting and running tasks.
+        </Notice>
+      </div>
+    );
+  }
+  if (entitlement.credit_grant_usd > 0 && entitlement.credit_remaining_usd <= 0 && !entitlement.allow_byok) {
+    return (
+      <div className="mb-4">
+        <Notice tone="warning">
+          Your trial credits are used up. Upgrade your plan to continue.
+        </Notice>
+      </div>
+    );
+  }
+  return null;
+}
+
 export function SettingsScreen({ section, userEmail }: { section: SettingsSection; userEmail?: string }) {
-  const { has } = useAssistantConfig();
+  const { has, capabilities } = useAssistantConfig();
   const meta = SECTIONS.find((item) => item.id === section)!;
   const back = meta.back ?? "/more";
   const backLabel = meta.backLabel ?? "More";
@@ -135,6 +176,7 @@ export function SettingsScreen({ section, userEmail }: { section: SettingsSectio
   }
   return (
     <Screen title={meta.title} back={back} backLabel={backLabel}>
+      {section !== "api-costs" && <EntitlementNotice entitlement={capabilities?.entitlement} />}
       {section === "notifications" ? (
         <NotificationsSettings />
       ) : section === "permissions" ? (
@@ -664,7 +706,7 @@ function AppearanceSettings() {
 }
 
 function AccountSettings({ userEmail }: { userEmail?: string }) {
-  const { localMode, runtime, has } = useAssistant();
+  const { localMode, runtime, has, capabilities } = useAssistant();
   const [showDelete, setShowDelete] = useState(false);
   const reconnecting = runtime.reconnecting;
   const offline = !!runtime.error && !reconnecting;
@@ -673,6 +715,7 @@ function AccountSettings({ userEmail }: { userEmail?: string }) {
     : offline
       ? { tone: "danger" as const, label: "Offline" }
       : undefined;
+  const entitlement = capabilities?.entitlement;
 
   if (showDelete) {
     return (
@@ -702,6 +745,18 @@ function AccountSettings({ userEmail }: { userEmail?: string }) {
           title={userEmail || (localMode ? "Local account" : "Signed in")}
           trailing={statusPill ? <Pill tone={statusPill.tone}>{statusPill.label}</Pill> : undefined}
         />
+        {entitlement && (
+          <Row
+            href="/settings/api-costs"
+            leading={
+              <span className="grid size-9 place-items-center rounded-[10px] bg-fill-1 text-ink-2">
+                <BarChart3 size={18} strokeWidth={1.85} aria-hidden />
+              </span>
+            }
+            title="Plan"
+            trailing={<span className="text-meta font-medium text-ink-2">{PLAN_LABELS[entitlement.tier] ?? entitlement.tier}</span>}
+          />
+        )}
       </Rows>
 
       <Section title="System">

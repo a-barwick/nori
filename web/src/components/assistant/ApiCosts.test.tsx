@@ -105,4 +105,82 @@ describe("API costs", () => {
       target.remove();
     }
   });
+
+  test("renders plan tier, hosted credit bar, billing source breakdown, and category breakdown", async () => {
+    const richReport = {
+      ...reports[30],
+      totals: amount(4.15, 5, 0, 2),
+      by_billing: {
+        hosted: amount(3.6, 3),
+        byok: amount(0.55, 2),
+        local: amount(0, 0, 0, 2),
+      },
+      by_category: {
+        llm: amount(3.2, 3, 0, 2),
+        search: amount(0.65, 1),
+        computer: amount(0.3, 1),
+      },
+      entitlement: {
+        tier: "standard",
+        pending_tier: "byok",
+        status: "active",
+        billing_provider: "manual",
+        period_start: "2026-10-01T00:00:00Z",
+        period_end: "2026-11-01T00:00:00Z",
+        suspended: false,
+        allow_byok: true,
+        credit_grant_usd: 10,
+        credit_used_usd: 3.6,
+        credit_pending_usd: 0.15,
+        credit_remaining_usd: 6.25,
+      },
+    };
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/settings/models")) return Response.json(settings);
+      if (url.endsWith("/preferences")) {
+        return Response.json({
+          revision: 1,
+          timezone: "America/Los_Angeles",
+          working_hours: [],
+          default_destination_ids: [],
+          account_defaults: {},
+          budgets: { task_usd: 2, monthly_usd: 50 },
+        });
+      }
+      if (url.endsWith("days=30")) return Response.json(richReport);
+      throw new Error(`Unexpected request: ${url}`);
+    }) as typeof fetch;
+
+    const target = document.createElement("div");
+    document.body.append(target);
+    const root = createRoot(target);
+    try {
+      await act(async () =>
+        root.render(
+          <ResourceCacheContext.Provider value={createResourceCache()}>
+            <ApiCosts />
+          </ResourceCacheContext.Provider>,
+        ),
+      );
+      await settleTestDOM();
+      const text = target.textContent ?? "";
+      assert.match(text, /Standard/);
+      assert.match(text, /Switching to BYOK/);
+      assert.match(text, /\$6\.25 remaining of \$10\.00 hosted credits/);
+      assert.match(text, /\$0\.15 pending/);
+      assert.ok(target.querySelector('[role="progressbar"][aria-label="Hosted credits used"]'));
+      assert.match(text, /By billing/);
+      assert.match(text, /Hosted\$3\.60/);
+      assert.match(text, /Your API keys\$0\.55/);
+      assert.match(text, /By category/);
+      assert.match(text, /Models\$3\.20/);
+      assert.match(text, /Web search\$0\.65/);
+      assert.match(text, /Computer\$0\.30/);
+    } finally {
+      await act(async () => root.unmount());
+      target.remove();
+    }
+  });
 });

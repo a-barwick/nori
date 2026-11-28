@@ -107,6 +107,7 @@ async function requestUserAccount(
           return { status: 429, error: "Nori is busy. Try again shortly.", retryAfter: /^\d{1,6}$/.test(retryAfter) ? retryAfter : undefined };
         }
         if (response.status === 400 || response.status === 403) {
+          if (response.status === 403) resolved.delete(key);
           return await options.onClientError(response);
         }
         void response.body?.cancel().catch(() => undefined);
@@ -146,6 +147,13 @@ export async function resolveUser(headers: Headers, target = runtimeTarget(runti
               status: 403,
               error: typeof body.error === "string" && body.error ? body.error : "An invite code is required to access Nori.",
               code: "invite_required",
+            };
+          }
+          if (body.code === "account_suspended") {
+            return {
+              status: 403,
+              error: typeof body.error === "string" && body.error ? body.error : "This account has been suspended.",
+              code: "account_suspended",
             };
           }
         } catch {

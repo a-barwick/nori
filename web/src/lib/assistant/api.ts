@@ -4,6 +4,7 @@ import type {
   APIError as APIErrorBody,
   AutomationEditable,
   AutomationPreview,
+  EntitlementSummary,
   HomeConnector,
   HomeConnectors,
   HomeConnectorTestResponse,
@@ -13,6 +14,8 @@ import type {
   ModelProfile,
   ModelSettings,
   MutationReceipt,
+  ServiceKeysResponse,
+  ServiceKeyStatus,
 } from "@/lib/contracts/assistant";
 import type { ModelSelection, Session } from "@/lib/types";
 import { SERVICE_UNAVAILABLE } from "@/lib/runtime/messages";
@@ -22,12 +25,49 @@ import { beginReset, finishReset, requestResetCheck } from "./resetState";
 export const assistantURL = (path: string) => `/api/v1${path}`;
 export const ACCOUNT_DELETED_REDIRECT = "/signed-out?deleted=1";
 
+export type BillingAccessBlockCode = "credit_exhausted" | "subscription_inactive" | "account_suspended";
+export type BillingAccessBlock = {
+  code: BillingAccessBlockCode;
+  message: string;
+  readOnly: true;
+};
+
+const DEFAULT_BILLING_MESSAGES: Record<BillingAccessBlockCode, string> = {
+  credit_exhausted: "Your hosted credits are used up. Add a provider API key or upgrade your plan to continue.",
+  subscription_inactive: "Your subscription is inactive. Renew your plan to resume chatting and running tasks.",
+  account_suspended: "This account has been suspended. Your history remains read-only.",
+};
+
+export function isBillingAccessBlockCode(code: unknown): code is BillingAccessBlockCode {
+  return code === "credit_exhausted" || code === "subscription_inactive" || code === "account_suspended";
+}
+
+export function billingAccessMessage(code: BillingAccessBlockCode, serverMessage?: string): string {
+  const trimmed = serverMessage?.trim();
+  if (trimmed && !/^Request failed \(\d+\)\.?$/.test(trimmed)) return trimmed;
+  return DEFAULT_BILLING_MESSAGES[code];
+}
+
 export class APIError extends Error {
   constructor(message: string, readonly status: number, readonly body?: Partial<APIErrorBody> & Record<string, unknown>) { super(message); }
   get code() { return this.body?.code; }
   get accepted() { return !!this.body?.accepted; }
   get stale() { return this.status === 409; }
+  get creditExhausted() { return this.code === "credit_exhausted"; }
+  get subscriptionInactive() { return this.code === "subscription_inactive"; }
+  get accountSuspended() { return this.code === "account_suspended"; }
+  get readOnlyAccess() { return isBillingAccessBlockCode(this.code); }
   get unavailable() { return this.code === "service_unavailable" || this.message === SERVICE_UNAVAILABLE || (this.status === 503 && !this.body?.error); }
+}
+
+export function billingAccessBlockFromError(error: unknown): BillingAccessBlock | null {
+  if (!(error instanceof APIError)) return null;
+  if (!isBillingAccessBlockCode(error.code)) return null;
+  return {
+    code: error.code,
+    message: billingAccessMessage(error.code, error.message),
+    readOnly: true,
+  };
 }
 
 export function isUnavailableError(error: unknown): boolean {
@@ -118,7 +158,15 @@ async function readJSON<T>(response: Response, signalReset = true): Promise<T> {
   const data = await response.json().catch(() => null);
   if (!response.ok) {
     if (signalReset && data?.code === "data_reset_pending") requestResetCheck();
-    const message = data?.error || (response.status === 404 ? "This is no longer available." : response.status >= 500 ? "Nori could not be reached." : `Request failed (${response.status}).`);
+    const billingMessage = isBillingAccessBlockCode(data?.code) ? billingAccessMessage(data.code, data?.error) : undefined;
+    const message =
+      billingMessage ||
+      data?.error ||
+      (response.status === 404
+        ? "This is no longer available."
+        : response.status >= 500
+          ? "Nori could not be reached."
+          : `Request failed (${response.status}).`);
     throw new APIError(message, response.status, data ?? undefined);
   }
   if (data === null) throw new APIError("Nori returned an unreadable response.", response.status);
@@ -182,6 +230,7 @@ export function errorText(error: unknown) {
 }
 
 export type {
+  EntitlementSummary,
   HomeConnector,
   HomeConnectors,
   HomePairing,
@@ -189,6 +238,8 @@ export type {
   ModelKeysResponse,
   ModelProfile,
   ModelSettings,
+  ServiceKeysResponse,
+  ServiceKeyStatus,
 };
 
 async function homeConnectorRequest<T>(path: string, method: string, body?: unknown): Promise<T> {
@@ -247,6 +298,34 @@ export async function deleteModelKey(provider: string): Promise<ModelKeyProvider
     redirect: "error",
   });
   return readJSON<ModelKeyProvider>(response);
+}
+
+export function fetchServiceKeys(signal?: AbortSignal): Promise<ServiceKeysResponse> {
+  return getJSON<ServiceKeysResponse>("/settings/service-keys", signal);
+}
+
+/**
+ * Saves or replaces a BYOK external service API key (e.g. Exa web search).
+ * Never persists the secret in browser storage.
+ */
+export async function saveServiceKey(service: string, apiKey: string): Promise<ServiceKeyStatus> {
+  const response = await fetch(assistantURL(`/settings/service-keys/${encodeURIComponent(service)}`), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ api_key: apiKey }),
+    cache: "no-store",
+    redirect: "error",
+  });
+  return readJSON<ServiceKeyStatus>(response);
+}
+
+export async function deleteServiceKey(service: string): Promise<ServiceKeyStatus> {
+  const response = await fetch(assistantURL(`/settings/service-keys/${encodeURIComponent(service)}`), {
+    method: "DELETE",
+    cache: "no-store",
+    redirect: "error",
+  });
+  return readJSON<ServiceKeyStatus>(response);
 }
 
 export async function resetUserData(resumePending = false): Promise<void> {

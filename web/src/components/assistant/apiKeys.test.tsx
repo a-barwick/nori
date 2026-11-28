@@ -5,12 +5,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   APIError,
   deleteModelKey,
+  deleteServiceKey,
   fetchModelKeys,
+  fetchServiceKeys,
   saveModelKey,
+  saveServiceKey,
   type ModelKeysResponse,
+  type ServiceKeyStatus,
 } from "@/lib/assistant/api";
 import { asFetch } from "@/lib/test-fetch";
-import { ApiKeysContent, needsByokSetup } from "./ApiKeysSettings";
+import { ApiKeysContent, needsByokSetup, ServiceKeysContent } from "./ApiKeysSettings";
 
 describe("BYOK API Keys client and Settings UI", () => {
   const origFetch = globalThis.fetch;
@@ -180,5 +184,109 @@ describe("BYOK API Keys client and Settings UI", () => {
     assert.match(editingHtml, />Save</);
     assert.match(editingHtml, />Cancel</);
     assert.match(editingHtml, />Remove</);
+  });
+
+  test("fetchServiceKeys, saveServiceKey, and deleteServiceKey match the BYOK Exa contract", async () => {
+    const calls: { url: string; method: string; body?: string }[] = [];
+    globalThis.fetch = asFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      calls.push({
+        url,
+        method: init?.method ?? "GET",
+        body: typeof init?.body === "string" ? init.body : undefined,
+      });
+      if (url === "/api/v1/settings/service-keys") {
+        return Response.json({
+          allow_byok: true,
+          services: [
+            {
+              service: "exa",
+              configured: true,
+              masked_key: "••••e9x1",
+              source: "user",
+              updated_at: "2026-11-26T10:00:00Z",
+              validated_at: "2026-11-26T10:00:00Z",
+            },
+          ],
+        });
+      }
+      if (url === "/api/v1/settings/service-keys/exa" && init?.method === "PUT") {
+        if (init.body === JSON.stringify({ api_key: "bad-exa" })) {
+          return Response.json({ error: "Exa API key was rejected." }, { status: 422 });
+        }
+        return Response.json({
+          service: "exa",
+          configured: true,
+          masked_key: "••••77aa",
+          source: "user",
+        });
+      }
+      if (url === "/api/v1/settings/service-keys/exa" && init?.method === "DELETE") {
+        return Response.json({ service: "exa", configured: false, source: "platform" });
+      }
+      return Response.json({ error: "not found" }, { status: 404 });
+    });
+
+    const list = await fetchServiceKeys();
+    assert.equal(list.allow_byok, true);
+    assert.equal(list.services[0]?.masked_key, "••••e9x1");
+
+    const saved = await saveServiceKey("exa", "exa_live_77aa");
+    assert.equal(saved.configured, true);
+    assert.equal(saved.masked_key, "••••77aa");
+
+    await assert.rejects(
+      () => saveServiceKey("exa", "bad-exa"),
+      (error: unknown) => error instanceof APIError && error.status === 422 && error.message === "Exa API key was rejected.",
+    );
+
+    const removed = await deleteServiceKey("exa");
+    assert.equal(removed.configured, false);
+
+    assert.deepEqual(calls, [
+      { url: "/api/v1/settings/service-keys", method: "GET", body: undefined },
+      { url: "/api/v1/settings/service-keys/exa", method: "PUT", body: JSON.stringify({ api_key: "exa_live_77aa" }) },
+      { url: "/api/v1/settings/service-keys/exa", method: "PUT", body: JSON.stringify({ api_key: "bad-exa" }) },
+      { url: "/api/v1/settings/service-keys/exa", method: "DELETE", body: undefined },
+    ]);
+  });
+
+  test("ServiceKeysContent displays masked key when allowed and disables editing calmly on trial tier", () => {
+    const services: ServiceKeyStatus[] = [
+      { service: "exa", label: "Exa Web Search", configured: true, masked_key: "••••e9x1", source: "user" },
+    ];
+
+    const configuredHtml = renderToStaticMarkup(
+      <ServiceKeysContent services={services} allowByok={true} onServiceUpdated={() => {}} />,
+    );
+    assert.match(configuredHtml, /Web search/);
+    assert.match(configuredHtml, /Exa Web Search/);
+    assert.match(configuredHtml, /••••e9x1/);
+
+    const editingHtml = renderToStaticMarkup(
+      <ServiceKeysContent
+        services={services}
+        allowByok={true}
+        initialEditingService="exa"
+        onServiceUpdated={() => {}}
+      />,
+    );
+    assert.match(editingHtml, /type="password"/);
+    assert.match(editingHtml, /autoComplete="new-password"/i);
+    assert.match(editingHtml, /encrypted at rest/i);
+    assert.match(editingHtml, />Save</);
+    assert.match(editingHtml, />Remove</);
+
+    const trialHtml = renderToStaticMarkup(
+      <ServiceKeysContent
+        services={[{ service: "exa", configured: false }]}
+        allowByok={false}
+        initialEditingService="exa"
+        onServiceUpdated={() => {}}
+      />,
+    );
+    assert.match(trialHtml, /Bring-your-own API keys are available on paid plans/i);
+    assert.match(trialHtml, /Paid plans/);
+    assert.equal(/type="password"/.test(trialHtml), false);
   });
 });

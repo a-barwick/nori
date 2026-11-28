@@ -43,6 +43,7 @@ async function initialize() {
     if (!config.dsn) return;
     const client = Sentry.init({
       dsn: config.dsn,
+      tunnel: "/sentry-tunnel",
       environment: config.environment,
       release: config.release,
       transportOptions: { fetchOptions: { credentials: "same-origin" } },

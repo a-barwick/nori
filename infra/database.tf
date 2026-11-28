@@ -14,11 +14,12 @@ resource "google_sql_database_instance" "nori_pg" {
   settings {
     # Single-zone shared-core keeps the cost low. REGIONAL (high availability)
     # roughly doubles the instance price.
-    tier              = "db-g1-small"
-    edition           = "ENTERPRISE"
-    availability_type = "ZONAL"
-    disk_size         = 10
-    disk_autoresize   = true
+    tier                  = "db-g1-small"
+    edition               = "ENTERPRISE"
+    availability_type     = "ZONAL"
+    disk_size             = 10
+    disk_autoresize       = true
+    disk_autoresize_limit = 50
 
     enable_dataplex_integration = true
 
