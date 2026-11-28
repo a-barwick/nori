@@ -1,8 +1,12 @@
 name: Release
 
 on:
-  schedule:
-    - cron: "17 */3 * * *"
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       quick:
@@ -24,7 +28,15 @@ concurrency:
 jobs:
   release:
     name: Release
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.NORI_AUTO_RELEASE != 'false')
+    if: >-
+      github.ref == 'refs/heads/main' && (
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event_name == 'workflow_run' &&
+          github.event.workflow_run.conclusion == 'success' &&
+          vars.NORI_AUTO_RELEASE != 'false'
+        )
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -48,7 +60,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_QUICK: ${{ github.event_name == 'workflow_dispatch' && inputs.quick == true }}
-          RELEASE_LATEST_GREEN: ${{ github.event_name == 'schedule' || inputs.allow_fallback == true }}
+          RELEASE_LATEST_GREEN: ${{ github.event_name == 'workflow_run' || inputs.allow_fallback == true }}
         run: |
           args=()
           if [[ "$RELEASE_LATEST_GREEN" == true ]]; then

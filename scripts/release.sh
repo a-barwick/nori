@@ -14,9 +14,9 @@ BAKE_INTERVAL="${NORI_RELEASE_BAKE_INTERVAL:-30}"
 
 usage() {
   cat <<'USAGE'
-Release Nori Core, Web and the public site to Cloud Run. Scheduled Release runs use
---latest-green every three hours; manual workflow_dispatch runs release main HEAD by
-default and fail if HEAD is not green and built.
+Release Nori Core, Web and the public site to Cloud Run. Automatic Release runs
+trigger after CI succeeds on main using --latest-green; manual workflow_dispatch
+runs release main HEAD by default and fail if HEAD is not green and built.
 
 Usage:
   scripts/release.sh [--latest-green] [--quick] [--dry-run] [--plan-groups] [--only] [--core] [--web] [--site] [--force-unverified]

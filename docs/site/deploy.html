@@ -31,7 +31,7 @@
 <section><h2>Container images and rolling deploys</h2>
 <ul class="pts">
 <li>After CI passes on a <code>main</code> commit, it builds the <code>nori-core</code>, <code>nori-web</code> and <code>nori-site</code> images and tags them with that commit. <code>nori-site</code> serves the public site from <code>site/</code>.</li>
-<li>The Release workflow runs every three hours and on demand. It picks the newest <code>main</code> commit with passing CI and releases only the services whose code changed since the live revision.</li>
+<li>The Release workflow runs automatically after CI succeeds on <code>main</code> (and on demand). It picks the newest <code>main</code> commit with passing CI and releases only the services whose code changed since the live revision.</li>
 <li>A release runs migrations, deploys each new revision with no traffic, and moves traffic to it after its health probe passes. A 5xx or crash from a new revision in the next ten minutes moves its services back to their previous revisions.</li>
 <li>A commit without a <code>nori-site</code> image still releases core and web. The release skips the site.</li>
 <li><code>scripts/release.sh rollback core|web|site|all</code> moves services back to their previous revisions by hand.</li>
