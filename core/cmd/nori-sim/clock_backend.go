@@ -317,6 +317,7 @@ var (
 	_ docstore.WakeWriter         = (*simClockTx)(nil)
 	_ docstore.MemoryIndexWriter  = (*simClockTx)(nil)
 	_ docstore.Sequencer          = (*simClockTx)(nil)
+	_ docstore.TrialProvisioner   = (*simClockTx)(nil)
 )
 
 func (t *simClockTx) Get(ctx context.Context, path string) (docstore.Record, error) {
@@ -395,6 +396,14 @@ func (t *simClockTx) NextSequence(ctx context.Context, path string, count int) (
 		return 0, nil
 	}
 	return s.NextSequence(ctx, path, count)
+}
+
+func (t *simClockTx) ProvisionTrial(ctx context.Context, userID string, now time.Time, maxTrialsPerDay int) error {
+	p, ok := t.inner.(docstore.TrialProvisioner)
+	if !ok {
+		return nil
+	}
+	return p.ProvisionTrial(ctx, userID, now, maxTrialsPerDay)
 }
 
 func (b *simClockBackend) leases() (docstore.LeaseStore, error) {
