@@ -65,6 +65,7 @@ type openOptions struct {
 	onKeyMutated           func(context.Context, string)
 	home                   *homeai.Service
 	computer               *computer.Manager
+	rateLimiter            *api.RateLimiter
 	pushStore              push.Store
 	pushWorker             *push.OutboxWorker
 }
@@ -95,9 +96,19 @@ func openStoreAndLeases(ctx context.Context, waker wake.Waker, cfg settings.Sett
 	return store, leases, wake.ForUser(waker, user.ID), nil
 }
 
-func buildAppModels(cfg *settings.Settings, user users.User, store state.ConversationStore, services *platform.AssistantServices, home *homeai.Service) appModels {
-	if cfg.Models.BYOKRequired {
-		account := &modelprofiles.Account{Store: store, Keys: services.ModelKeys}
+func buildAppModels(cfg *settings.Settings, user users.User, store state.ConversationStore, services *platform.AssistantServices, home *homeai.Service, allowBYOK func(context.Context) (bool, error)) appModels {
+	hostedEnabled := cfg.PlatformAIGatewayKey != ""
+	if services != nil && services.ModelKeys != nil {
+		services.ModelKeys.HostedAvailable = hostedEnabled
+	}
+	if cfg.Models.BYOKRequired || hostedEnabled {
+		account := &modelprofiles.Account{
+			Store:         store,
+			Keys:          services.ModelKeys,
+			HostedEnabled: hostedEnabled,
+			AllowBYOK:     allowBYOK,
+			AllowHomeAI:   allowBYOK,
+		}
 		cfg.Models.CloudDispatchClient = llmguard.NewCheckedClient(account.CheckCloudDispatch)
 		if home != nil {
 			account.HomeProfiles = func(ctx context.Context) ([]modelprofiles.Profile, error) {
@@ -105,8 +116,8 @@ func buildAppModels(cfg *settings.Settings, user users.User, store state.Convers
 				return homeProfiles(devices, cfg.HomeAI.WorkEnabled), err
 			}
 		}
-		outer := &accountReplyModel{account: account, models: cfg.Models, userID: user.ID, home: home}
-		defaultTaskModel := &accountTaskModel{account: account, models: cfg.Models, meter: store, userID: user.ID, home: home, homeWork: cfg.HomeAI.WorkEnabled}
+		outer := &accountReplyModel{account: account, models: cfg.Models, userID: user.ID, home: home, platformGatewayKey: cfg.PlatformAIGatewayKey}
+		defaultTaskModel := &accountTaskModel{account: account, models: cfg.Models, meter: store, userID: user.ID, home: home, homeWork: cfg.HomeAI.WorkEnabled, platformGatewayKey: cfg.PlatformAIGatewayKey}
 		return appModels{account: account, outer: outer, defaultTaskModel: defaultTaskModel, summarizer: defaultTaskModel}
 	}
 	outer := platform.ReplyModelForUser(cfg.Models, user.ID)
@@ -166,6 +177,13 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 			onMutate(ctx, uid)
 		}
 	}
+	if services.ModelKeys != nil && opts.onKeyMutated != nil {
+		uid := user.ID
+		onMutate := opts.onKeyMutated
+		services.ModelKeys.OnMutate = func(ctx context.Context, _ string) {
+			onMutate(ctx, uid)
+		}
+	}
 	if services.Permissions != nil && services.Permissions.UserSends == "" {
 		services.Permissions.UserSends = "ask"
 	}
@@ -174,13 +192,6 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 		services.Tools = extensions.Sources{services.Tools, computerconn.Source{Enabled: true}}
 	}
 	collapsed := collapseDuplicateConnections(ctx, user.ID, services.Connections, opts.skipCollapseDuplicates)
-
-	toolSource := &agent.Service{Extensions: services.Tools}
-	result.Scheduler = services.Scheduler
-	result.Discovery = &proactivity.DiscoveryService{Store: store}
-	result.PushWorker = opts.pushWorker
-	wireSchedulerProactivityHooks(services.Scheduler, store, services.Connections, opts.pushWorker, user.ID)
-	models := buildAppModels(&cfg, user, store, services, opts.home)
 
 	var getEnt func(context.Context) (billing.Entitlement, error)
 	if opts.getEntitlement != nil {
@@ -196,6 +207,23 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 			return b.GetEntitlement(ctx, uid)
 		}
 	}
+	var allowBYOK func(context.Context) (bool, error)
+	if getEnt != nil {
+		allowBYOK = func(ctx context.Context) (bool, error) {
+			ent, err := getEnt(ctx)
+			if err != nil {
+				return false, err
+			}
+			return ent.EffectivePolicy().AllowBYOK, nil
+		}
+	}
+
+	toolSource := &agent.Service{Extensions: services.Tools}
+	result.Scheduler = services.Scheduler
+	result.Discovery = &proactivity.DiscoveryService{Store: store}
+	result.PushWorker = opts.pushWorker
+	wireSchedulerProactivityHooks(services.Scheduler, store, services.Connections, opts.pushWorker, user.ID)
+	models := buildAppModels(&cfg, user, store, services, opts.home, allowBYOK)
 	var getStorageUsed func(context.Context) (int64, error)
 	var releaseStorageBytes func(context.Context, int64) error
 	if storage != nil {
@@ -247,7 +275,12 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 	}
 	if opts.computer != nil && opts.computer.Enabled() {
 		result.Assistant.Features["computer"] = true
-		result.Assistant.Computer = &api.ComputerAPI{Manager: opts.computer, UserID: user.ID}
+		result.Assistant.Computer = &api.ComputerAPI{
+			Manager:     opts.computer,
+			UserID:      user.ID,
+			Billing:     opts.billing,
+			RateLimiter: opts.rateLimiter,
+		}
 		compMgr := opts.computer
 		uid := user.ID
 		result.Assistant.OnLibraryDelete = func(ctx context.Context, resultIDs []string) {
@@ -266,7 +299,7 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 		return result, collapsed, nil
 	}
 
-	wireBackgroundRuntime(result, cfg, user, location, services, models, opts.home)
+	wireBackgroundRuntime(result, cfg, user, location, services, models, opts.home, allowBYOK)
 	return result, collapsed, nil
 }
 
@@ -285,7 +318,7 @@ func collapseDuplicateConnections(ctx context.Context, userID string, conns *con
 	return true
 }
 
-func wireBackgroundRuntime(result *App, cfg settings.Settings, user users.User, location *time.Location, services *platform.AssistantServices, models appModels, home *homeai.Service) {
+func wireBackgroundRuntime(result *App, cfg settings.Settings, user users.User, location *time.Location, services *platform.AssistantServices, models appModels, home *homeai.Service, allowBYOK func(context.Context) (bool, error)) {
 	store, leases, waker := result.Store, result.Leases, result.Waker
 	userFacts := user.Facts()
 	tasks := &conversation.Tasks{Store: store}
@@ -337,7 +370,7 @@ func wireBackgroundRuntime(result *App, cfg settings.Settings, user users.User, 
 			})
 		}
 	}
-	if cfg.Models.BYOKRequired {
+	if models.account != nil {
 		runner.AccountModel = models.outer.(*accountReplyModel).resolve
 		runner.AccountSelection = models.account.CurrentSelection
 		runner.HomeOnly = models.account.HomeOnly
@@ -345,6 +378,13 @@ func wireBackgroundRuntime(result *App, cfg settings.Settings, user users.User, 
 
 	taskService := agent.New(store, models.defaultTaskModel)
 	taskService.Capabilities = agent.Capabilities{ExaSearchKey: cfg.ExaSearchKey, Location: location}
+	agent.ConfigureSearch(taskService, agent.SearchOptions{
+		Meter:       store,
+		Guard:       cfg.Models.Guard,
+		UserID:      user.ID,
+		ServiceKeys: services.ServiceKeys,
+		AllowBYOK:   allowBYOK,
+	})
 	taskService.UserFacts = userFacts
 	taskService.Extensions = services.Tools
 	taskService.Profile = platform.Profile(user, services.Connections)
@@ -385,7 +425,7 @@ func wireBackgroundRuntime(result *App, cfg settings.Settings, user users.User, 
 			return err
 		}
 	}
-	if cfg.Models.BYOKRequired {
+	if models.account != nil {
 		result.TaskActivities.AccountModel = models.defaultTaskModel.(*accountTaskModel).resolve
 		if home != nil && cfg.HomeAI.WorkEnabled {
 			result.TaskActivities.HomeModelAvailability = models.defaultTaskModel.(*accountTaskModel).availability
@@ -748,10 +788,11 @@ func newMemoryNormalizer(inner conversation.SummaryModel, outer conversation.Rep
 var _ api.Operations = (*App)(nil)
 
 type accountReplyModel struct {
-	account *modelprofiles.Account
-	models  settings.Models
-	userID  string
-	home    *homeai.Service
+	account            *modelprofiles.Account
+	models             settings.Models
+	userID             string
+	home               *homeai.Service
+	platformGatewayKey string
 }
 
 func (m *accountReplyModel) Name() string { return "account" }
@@ -764,6 +805,9 @@ func (m *accountReplyModel) resolve(ctx context.Context, sel *state.ModelSelecti
 	if p.Backend == modelprofiles.BackendHome {
 		return homeReplyModel(m.home, m.models, m.userID, p)
 	}
+	if p.Backend == modelprofiles.BackendHosted {
+		return platform.ReplyModelForHosted(m.models, m.userID, p, effort, m.platformGatewayKey)
+	}
 	return platform.ReplyModelForBYOK(m.models, m.userID, p, effort, key)
 }
 
@@ -772,12 +816,13 @@ func (m *accountReplyModel) Respond(ctx context.Context, req conversation.ReplyR
 }
 
 type accountTaskModel struct {
-	account  *modelprofiles.Account
-	models   settings.Models
-	meter    usage.Meter
-	userID   string
-	home     *homeai.Service
-	homeWork bool
+	account            *modelprofiles.Account
+	models             settings.Models
+	meter              usage.Meter
+	userID             string
+	home               *homeai.Service
+	homeWork           bool
+	platformGatewayKey string
 }
 
 func (m *accountTaskModel) Provider() string { return "account" }
@@ -793,6 +838,9 @@ func (m *accountTaskModel) resolve(ctx context.Context, sel *state.ModelSelectio
 			return &unavailableTaskModel{name: p.Model, err: modelprofiles.ErrHomeWorkUnavailable}
 		}
 		return homeTaskModel(m.home, m.models, m.meter, m.userID, p)
+	}
+	if p.Backend == modelprofiles.BackendHosted {
+		return platform.TaskModelForHosted(m.models, m.meter, m.userID, p, effort, m.platformGatewayKey)
 	}
 	return platform.TaskModelForBYOK(m.models, m.meter, m.userID, p, effort, key)
 }

@@ -40,6 +40,7 @@ type Service struct {
 	home          *homeai.Service
 	computer      *computer.Manager
 	closeComputer func()
+	rateLimiter   *api.RateLimiter
 	pushStore     push.Store
 	pushWorker    *push.OutboxWorker
 	storage       *platform.Storage
@@ -88,11 +89,13 @@ func OpenService(ctx context.Context, waker wake.Waker, cfg settings.Settings) (
 		}
 	}
 	if cfg.Computer.Enabled() {
-		service.computer, service.closeComputer, err = platform.OpenComputer(ctx, cfg, storage)
+		mgr, closeComp, err := platform.OpenComputer(ctx, cfg, storage)
 		if err != nil {
 			service.Close()
 			return nil, err
 		}
+		service.closeComputer = closeComp
+		service.SetComputerManager(mgr)
 	}
 	return service, nil
 }
@@ -136,6 +139,7 @@ func OpenServiceWithStorage(storage *platform.Storage, waker wake.Waker, cfg set
 		MaxCachedApps:       DefaultMaxCachedApps,
 		EntitlementCacheTTL: DefaultEntitlementCacheTTL,
 		billing:             billingSvc,
+		rateLimiter:         api.NewRateLimiterFromEnv(),
 		pushStore:           pushStore,
 		pushWorker:          pushWorker,
 		storage:             storage,
@@ -195,6 +199,15 @@ func (s *Service) SetComputerManager(mgr *computer.Manager) {
 		return
 	}
 	s.computer = mgr
+	if mgr != nil {
+		if s.billing != nil {
+			mgr.SetBilling(s.billing)
+		}
+		s.SetDisconnectDesktop(func(uid string) {
+			mgr.CloseDesktopSessions(uid)
+		})
+		s.SetSleepUserComputer(mgr.ForceSleepUser)
+	}
 }
 
 func (s *Service) AdvisoryLocker() docstore.AdvisoryLocker {
@@ -414,10 +427,11 @@ func (s *Service) RepairUser(ctx context.Context, row users.User) error {
 				_ = s.billing.NotifyEntitlementChanged(ctx, userID)
 			}
 		},
-		home:       s.home,
-		computer:   s.computer,
-		pushStore:  s.pushStore,
-		pushWorker: s.pushWorker,
+		home:        s.home,
+		computer:    s.computer,
+		rateLimiter: s.rateLimiter,
+		pushStore:   s.pushStore,
+		pushWorker:  s.pushWorker,
 	})
 	if err != nil {
 		return err
@@ -501,10 +515,11 @@ func (s *Service) openUserApp(ctx context.Context, row users.User, done chan str
 				_ = s.billing.NotifyEntitlementChanged(ctx, userID)
 			}
 		},
-		home:       s.home,
-		computer:   s.computer,
-		pushStore:  s.pushStore,
-		pushWorker: s.pushWorker,
+		home:        s.home,
+		computer:    s.computer,
+		rateLimiter: s.rateLimiter,
+		pushStore:   s.pushStore,
+		pushWorker:  s.pushWorker,
 	})
 	if err != nil {
 		return nil, err
@@ -603,6 +618,7 @@ func (s *Service) Handler(local bool) http.Handler {
 		UserActivity:     s.userDataActivity,
 		ResetData:        s.resetUserData,
 		GoogleOAuthUser:  googleOAuthUser,
+		RateLimiter:      s.rateLimiter,
 		CheckEntitlement: checkEntitlement,
 	}))
 }

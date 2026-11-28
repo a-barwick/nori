@@ -1224,6 +1224,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/settings/service-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List BYOK external service API key configuration statuses */
+        get: operations["listServiceKeys"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/settings/service-keys/{service}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Validate and store a BYOK external service API key */
+        put: operations["saveServiceKey"];
+        post?: never;
+        /** Remove a BYOK external service API key */
+        delete: operations["deleteServiceKey"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/settings/models": {
         parameters: {
             query?: never;
@@ -1322,6 +1357,23 @@ export interface paths {
         post?: never;
         /** Revoke and disconnect a paired Home AI connector */
         delete: operations["revokeHomeConnector"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/costs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read aggregated usage costs, billing/category breakdowns, and entitlement summary */
+        get: operations["getCosts"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1714,6 +1766,28 @@ export interface components {
             assistant_features?: components["schemas"]["AssistantFeatures"];
             upload_accept?: components["schemas"]["UploadAccept"];
             model_profiles?: components["schemas"]["ModelProfileCatalog"];
+            entitlement?: components["schemas"]["CapabilitiesEntitlement"];
+            service_keys?: components["schemas"]["CapabilitiesServiceKeys"];
+        };
+        CapabilitiesEntitlement: {
+            /** @enum {string} */
+            tier: "trial" | "byok" | "standard" | "power";
+            /** @enum {string} */
+            status: "active" | "billing_retry" | "past_due" | "canceled" | "expired";
+            allow_byok: boolean;
+            suspended: boolean;
+            credit_remaining_usd: number;
+            credit_grant_usd: number;
+            storage_used_bytes: number;
+            storage_limit_bytes: number;
+            max_routines: number;
+            max_concurrent_tasks: number;
+            max_desktop_ws: number;
+            max_checkpoints: number;
+        };
+        CapabilitiesServiceKeys: {
+            exa_configured: boolean;
+            platform_exa_available: boolean;
         };
         WorkingHoursSlot: {
             day: number;
@@ -1863,6 +1937,23 @@ export interface components {
         SetModelKeyRequest: {
             api_key: string;
         };
+        ServiceKeyStatus: {
+            service: string;
+            label: string;
+            configured: boolean;
+            last4?: string;
+            masked_key?: string;
+            /** @enum {string} */
+            source?: "byok" | "platform" | "none";
+            updated_at?: components["schemas"]["Instant"];
+            validated_at?: components["schemas"]["Instant"];
+        };
+        ServiceKeysResponse: {
+            services: components["schemas"]["ServiceKeyStatus"][];
+        };
+        SetServiceKeyRequest: {
+            api_key: string;
+        };
         ModelSettings: {
             model_profiles: components["schemas"]["ModelProfileCatalog"];
             selection: components["schemas"]["ModelSelection"];
@@ -1926,6 +2017,39 @@ export interface components {
             totals: components["schemas"]["CostAmount"];
             models: components["schemas"]["ModelCost"][];
         };
+        BillingCosts: {
+            hosted: components["schemas"]["CostAmount"];
+            byok: components["schemas"]["CostAmount"];
+            local: components["schemas"]["CostAmount"];
+        };
+        CategoryCosts: {
+            llm: components["schemas"]["CostAmount"];
+            search: components["schemas"]["CostAmount"];
+            computer: components["schemas"]["CostAmount"];
+        };
+        EntitlementCostSummary: {
+            /** @enum {string} */
+            tier: "trial" | "byok" | "standard" | "power";
+            /** @enum {string} */
+            pending_tier?: "byok" | "standard" | "power";
+            /** @enum {string} */
+            status: "active" | "billing_retry" | "past_due" | "canceled" | "expired";
+            /** @enum {string} */
+            billing_provider: "manual" | "stripe" | "apple_iap";
+            period_start: components["schemas"]["Instant"];
+            period_end?: components["schemas"]["Instant"];
+            grace_until?: components["schemas"]["Instant"];
+            suspended: boolean;
+            suspended_reason?: string;
+            allow_byok: boolean;
+            credit_grant_usd: number;
+            credit_used_usd: number;
+            credit_pending_usd: number;
+            credit_remaining_usd: number;
+            byok_max_usd_per_day: number;
+            storage_used_bytes: number;
+            storage_limit_bytes: number;
+        };
         CostReport: {
             /** @enum {integer} */
             days: 1 | 7 | 30;
@@ -1935,6 +2059,9 @@ export interface components {
             /** @enum {string} */
             bucket_size: "hour" | "day";
             totals: components["schemas"]["CostAmount"];
+            by_billing: components["schemas"]["BillingCosts"];
+            by_category: components["schemas"]["CategoryCosts"];
+            entitlement?: components["schemas"]["EntitlementCostSummary"];
             models: components["schemas"]["ModelCost"][];
             buckets: components["schemas"]["CostBucket"][];
         };
@@ -5608,6 +5735,80 @@ export interface operations {
             400: components["responses"]["ErrorResponse"];
         };
     };
+    listServiceKeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Service keys status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceKeysResponse"];
+                };
+            };
+        };
+    };
+    saveServiceKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                service: "exa";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetServiceKeyRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated service key status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceKeyStatus"];
+                };
+            };
+            400: components["responses"]["ErrorResponse"];
+            402: components["responses"]["ErrorResponse"];
+            403: components["responses"]["ErrorResponse"];
+            422: components["responses"]["ErrorResponse"];
+            503: components["responses"]["ErrorResponse"];
+        };
+    };
+    deleteServiceKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                service: "exa";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Updated service key status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceKeyStatus"];
+                };
+            };
+            400: components["responses"]["ErrorResponse"];
+        };
+    };
     getModelSettings: {
         parameters: {
             query?: never;
@@ -5756,6 +5957,30 @@ export interface operations {
         requestBody?: never;
         responses: {
             204: components["responses"]["NoContentResponse"];
+        };
+    };
+    getCosts: {
+        parameters: {
+            query?: {
+                days?: 1 | 7 | 30;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cost report with billing/category breakdowns and entitlement summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CostReport"];
+                };
+            };
+            400: components["responses"]["ErrorResponse"];
+            409: components["responses"]["ErrorResponse"];
         };
     };
     getApiCosts: {

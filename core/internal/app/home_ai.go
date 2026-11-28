@@ -117,6 +117,7 @@ func (t homeModelTransport) RoundTrip(req *http.Request) (*http.Response, error)
 func homeReplyModel(service *homeai.Service, models settings.Models, userID string, profile modelprofiles.Profile) conversation.ReplyModel {
 	m := conversation.NewGatewayModel(homeModelURL, "", profile.Model)
 	m.ProviderName, m.LocalOnly, m.MaxRetries = llmguard.ProviderHome, true, -1
+	m.BillingMode = state.UsageBillingLocal
 	m.Guard, m.UserID = cmp.Or(models.Guard, llmguard.ForUser(userID)), userID
 	m.Client = &http.Client{Transport: homeModelTransport{service: service, userID: userID, profile: profile, operation: "chat"}}
 	return m
@@ -125,6 +126,7 @@ func homeReplyModel(service *homeai.Service, models settings.Models, userID stri
 func homeTaskModel(service *homeai.Service, models settings.Models, meter usage.Meter, userID string, profile modelprofiles.Profile) agent.Model {
 	m := responses.NewGateway(homeModelURL, "", profile.Model, meter)
 	m.ProviderName, m.LocalOnly, m.MaxRetries = llmguard.ProviderHome, true, -1
+	m.BillingMode = state.UsageBillingLocal
 	m.Guard, m.UserID = cmp.Or(models.Guard, llmguard.ForUser(userID)), userID
 	m.HTTP = &http.Client{Transport: homeModelTransport{service: service, userID: userID, profile: profile, operation: "responses"}}
 	return m

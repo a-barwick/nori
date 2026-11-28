@@ -59,6 +59,7 @@ public enum OpenAPI {
         public static func conversationsAssistantUploadsByID(id: String) -> String {
             "/v1/conversations/assistant/uploads/\(encodeSegment(id))"
         }
+        public static let costs = "/v1/costs"
         public static let devicesPush = "/v1/devices/push"
         public static func devicesPushByID(id: String) -> String {
             "/v1/devices/push/\(encodeSegment(id))"
@@ -164,6 +165,10 @@ public enum OpenAPI {
         }
         public static let settingsModels = "/v1/settings/models"
         public static let settingsReset = "/v1/settings/reset"
+        public static let settingsServiceKeys = "/v1/settings/service-keys"
+        public static func settingsServiceKeysByService(service: String) -> String {
+            "/v1/settings/service-keys/\(encodeSegment(service))"
+        }
         public static let snapshot = "/v1/snapshot"
         public static let tools = "/v1/tools"
         public static func toolsByID(id: String) -> String {
@@ -994,6 +999,22 @@ public enum OpenAPI {
         }
     }
 
+    public struct BillingCosts: Sendable, Codable, Hashable {
+        public var hosted: OpenAPI.CostAmount
+        public var byok: OpenAPI.CostAmount
+        public var local: OpenAPI.CostAmount
+
+        public init(
+            hosted: OpenAPI.CostAmount,
+            byok: OpenAPI.CostAmount,
+            local: OpenAPI.CostAmount
+        ) {
+            self.hosted = hosted
+            self.byok = byok
+            self.local = local
+        }
+    }
+
     public struct BriefItem: Sendable, Codable, Hashable {
         public var title: String
         public var trailing: String?
@@ -1252,6 +1273,8 @@ public enum OpenAPI {
         public var assistantFeatures: OpenAPI.AssistantFeatures?
         public var uploadAccept: OpenAPI.UploadAccept?
         public var modelProfiles: OpenAPI.ModelProfileCatalog?
+        public var entitlement: OpenAPI.CapabilitiesEntitlement?
+        public var serviceKeys: OpenAPI.CapabilitiesServiceKeys?
 
         public init(
             contract: String,
@@ -1265,7 +1288,9 @@ public enum OpenAPI {
             assistantContract: String? = nil,
             assistantFeatures: OpenAPI.AssistantFeatures? = nil,
             uploadAccept: OpenAPI.UploadAccept? = nil,
-            modelProfiles: OpenAPI.ModelProfileCatalog? = nil
+            modelProfiles: OpenAPI.ModelProfileCatalog? = nil,
+            entitlement: OpenAPI.CapabilitiesEntitlement? = nil,
+            serviceKeys: OpenAPI.CapabilitiesServiceKeys? = nil
         ) {
             self.contract = contract
             self.conversationContract = conversationContract
@@ -1279,6 +1304,8 @@ public enum OpenAPI {
             self.assistantFeatures = assistantFeatures
             self.uploadAccept = uploadAccept
             self.modelProfiles = modelProfiles
+            self.entitlement = entitlement
+            self.serviceKeys = serviceKeys
         }
 
         enum CodingKeys: String, CodingKey {
@@ -1294,6 +1321,84 @@ public enum OpenAPI {
             case assistantFeatures = "assistant_features"
             case uploadAccept = "upload_accept"
             case modelProfiles = "model_profiles"
+            case entitlement
+            case serviceKeys = "service_keys"
+        }
+    }
+
+    public struct CapabilitiesEntitlement: Sendable, Codable, Hashable {
+        public var tier: String
+        public var status: String
+        public var allowBYOK: Bool
+        public var suspended: Bool
+        public var creditRemainingUSD: Double
+        public var creditGrantUSD: Double
+        public var storageUsedBytes: Int
+        public var storageLimitBytes: Int
+        public var maxRoutines: Int
+        public var maxConcurrentTasks: Int
+        public var maxDesktopWs: Int
+        public var maxCheckpoints: Int
+
+        public init(
+            tier: String,
+            status: String,
+            allowBYOK: Bool,
+            suspended: Bool,
+            creditRemainingUSD: Double,
+            creditGrantUSD: Double,
+            storageUsedBytes: Int,
+            storageLimitBytes: Int,
+            maxRoutines: Int,
+            maxConcurrentTasks: Int,
+            maxDesktopWs: Int,
+            maxCheckpoints: Int
+        ) {
+            self.tier = tier
+            self.status = status
+            self.allowBYOK = allowBYOK
+            self.suspended = suspended
+            self.creditRemainingUSD = creditRemainingUSD
+            self.creditGrantUSD = creditGrantUSD
+            self.storageUsedBytes = storageUsedBytes
+            self.storageLimitBytes = storageLimitBytes
+            self.maxRoutines = maxRoutines
+            self.maxConcurrentTasks = maxConcurrentTasks
+            self.maxDesktopWs = maxDesktopWs
+            self.maxCheckpoints = maxCheckpoints
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case tier
+            case status
+            case allowBYOK = "allow_byok"
+            case suspended
+            case creditRemainingUSD = "credit_remaining_usd"
+            case creditGrantUSD = "credit_grant_usd"
+            case storageUsedBytes = "storage_used_bytes"
+            case storageLimitBytes = "storage_limit_bytes"
+            case maxRoutines = "max_routines"
+            case maxConcurrentTasks = "max_concurrent_tasks"
+            case maxDesktopWs = "max_desktop_ws"
+            case maxCheckpoints = "max_checkpoints"
+        }
+    }
+
+    public struct CapabilitiesServiceKeys: Sendable, Codable, Hashable {
+        public var exaConfigured: Bool
+        public var platformExaAvailable: Bool
+
+        public init(
+            exaConfigured: Bool,
+            platformExaAvailable: Bool
+        ) {
+            self.exaConfigured = exaConfigured
+            self.platformExaAvailable = platformExaAvailable
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case exaConfigured = "exa_configured"
+            case platformExaAvailable = "platform_exa_available"
         }
     }
 
@@ -1352,6 +1457,22 @@ public enum OpenAPI {
             case fallback
             case display
             case id
+        }
+    }
+
+    public struct CategoryCosts: Sendable, Codable, Hashable {
+        public var llm: OpenAPI.CostAmount
+        public var search: OpenAPI.CostAmount
+        public var computer: OpenAPI.CostAmount
+
+        public init(
+            llm: OpenAPI.CostAmount,
+            search: OpenAPI.CostAmount,
+            computer: OpenAPI.CostAmount
+        ) {
+            self.llm = llm
+            self.search = search
+            self.computer = computer
         }
     }
 
@@ -2228,6 +2349,9 @@ public enum OpenAPI {
         public var endAt: OpenAPI.Instant
         public var bucketSize: String
         public var totals: OpenAPI.CostAmount
+        public var byBilling: OpenAPI.BillingCosts
+        public var byCategory: OpenAPI.CategoryCosts
+        public var entitlement: OpenAPI.EntitlementCostSummary?
         public var models: [OpenAPI.ModelCost]
         public var buckets: [OpenAPI.CostBucket]
 
@@ -2238,6 +2362,9 @@ public enum OpenAPI {
             endAt: OpenAPI.Instant,
             bucketSize: String,
             totals: OpenAPI.CostAmount,
+            byBilling: OpenAPI.BillingCosts,
+            byCategory: OpenAPI.CategoryCosts,
+            entitlement: OpenAPI.EntitlementCostSummary? = nil,
             models: [OpenAPI.ModelCost],
             buckets: [OpenAPI.CostBucket]
         ) {
@@ -2247,6 +2374,9 @@ public enum OpenAPI {
             self.endAt = endAt
             self.bucketSize = bucketSize
             self.totals = totals
+            self.byBilling = byBilling
+            self.byCategory = byCategory
+            self.entitlement = entitlement
             self.models = models
             self.buckets = buckets
         }
@@ -2258,6 +2388,9 @@ public enum OpenAPI {
             case endAt = "end_at"
             case bucketSize = "bucket_size"
             case totals
+            case byBilling = "by_billing"
+            case byCategory = "by_category"
+            case entitlement
             case models
             case buckets
         }
@@ -2496,6 +2629,84 @@ public enum OpenAPI {
         case sensitiveSend = "sensitive_send"
         case unknown = "unknown"
         case control = "control"
+    }
+
+    public struct EntitlementCostSummary: Sendable, Codable, Hashable {
+        public var tier: String
+        public var pendingTier: String?
+        public var status: String
+        public var billingProvider: String
+        public var periodStart: OpenAPI.Instant
+        public var periodEnd: OpenAPI.Instant?
+        public var graceUntil: OpenAPI.Instant?
+        public var suspended: Bool
+        public var suspendedReason: String?
+        public var allowBYOK: Bool
+        public var creditGrantUSD: Double
+        public var creditUsedUSD: Double
+        public var creditPendingUSD: Double
+        public var creditRemainingUSD: Double
+        public var byokMaxUSDPerDay: Double
+        public var storageUsedBytes: Int
+        public var storageLimitBytes: Int
+
+        public init(
+            tier: String,
+            pendingTier: String? = nil,
+            status: String,
+            billingProvider: String,
+            periodStart: OpenAPI.Instant,
+            periodEnd: OpenAPI.Instant? = nil,
+            graceUntil: OpenAPI.Instant? = nil,
+            suspended: Bool,
+            suspendedReason: String? = nil,
+            allowBYOK: Bool,
+            creditGrantUSD: Double,
+            creditUsedUSD: Double,
+            creditPendingUSD: Double,
+            creditRemainingUSD: Double,
+            byokMaxUSDPerDay: Double,
+            storageUsedBytes: Int,
+            storageLimitBytes: Int
+        ) {
+            self.tier = tier
+            self.pendingTier = pendingTier
+            self.status = status
+            self.billingProvider = billingProvider
+            self.periodStart = periodStart
+            self.periodEnd = periodEnd
+            self.graceUntil = graceUntil
+            self.suspended = suspended
+            self.suspendedReason = suspendedReason
+            self.allowBYOK = allowBYOK
+            self.creditGrantUSD = creditGrantUSD
+            self.creditUsedUSD = creditUsedUSD
+            self.creditPendingUSD = creditPendingUSD
+            self.creditRemainingUSD = creditRemainingUSD
+            self.byokMaxUSDPerDay = byokMaxUSDPerDay
+            self.storageUsedBytes = storageUsedBytes
+            self.storageLimitBytes = storageLimitBytes
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case tier
+            case pendingTier = "pending_tier"
+            case status
+            case billingProvider = "billing_provider"
+            case periodStart = "period_start"
+            case periodEnd = "period_end"
+            case graceUntil = "grace_until"
+            case suspended
+            case suspendedReason = "suspended_reason"
+            case allowBYOK = "allow_byok"
+            case creditGrantUSD = "credit_grant_usd"
+            case creditUsedUSD = "credit_used_usd"
+            case creditPendingUSD = "credit_pending_usd"
+            case creditRemainingUSD = "credit_remaining_usd"
+            case byokMaxUSDPerDay = "byok_max_usd_per_day"
+            case storageUsedBytes = "storage_used_bytes"
+            case storageLimitBytes = "storage_limit_bytes"
+        }
     }
 
     public enum ErrorCode: String, Sendable, Codable, Hashable, CaseIterable {
@@ -7536,6 +7747,58 @@ public enum OpenAPI {
         }
     }
 
+    public struct ServiceKeyStatus: Sendable, Codable, Hashable {
+        public var service: String
+        public var label: String
+        public var configured: Bool
+        public var last4: String?
+        public var maskedKey: String?
+        public var source: String?
+        public var updatedAt: OpenAPI.Instant?
+        public var validatedAt: OpenAPI.Instant?
+
+        public init(
+            service: String,
+            label: String,
+            configured: Bool,
+            last4: String? = nil,
+            maskedKey: String? = nil,
+            source: String? = nil,
+            updatedAt: OpenAPI.Instant? = nil,
+            validatedAt: OpenAPI.Instant? = nil
+        ) {
+            self.service = service
+            self.label = label
+            self.configured = configured
+            self.last4 = last4
+            self.maskedKey = maskedKey
+            self.source = source
+            self.updatedAt = updatedAt
+            self.validatedAt = validatedAt
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case service
+            case label
+            case configured
+            case last4
+            case maskedKey = "masked_key"
+            case source
+            case updatedAt = "updated_at"
+            case validatedAt = "validated_at"
+        }
+    }
+
+    public struct ServiceKeysResponse: Sendable, Codable, Hashable {
+        public var services: [OpenAPI.ServiceKeyStatus]
+
+        public init(
+            services: [OpenAPI.ServiceKeyStatus]
+        ) {
+            self.services = services
+        }
+    }
+
     public struct Session: Sendable, Codable, Hashable {
         public var messages: [OpenAPI.Message]?
         public var runs: [OpenAPI.Run]?
@@ -7595,6 +7858,20 @@ public enum OpenAPI {
     }
 
     public struct SetModelKeyRequest: Sendable, Codable, Hashable {
+        public var apiKey: String
+
+        public init(
+            apiKey: String
+        ) {
+            self.apiKey = apiKey
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case apiKey = "api_key"
+        }
+    }
+
+    public struct SetServiceKeyRequest: Sendable, Codable, Hashable {
         public var apiKey: String
 
         public init(

@@ -167,6 +167,13 @@ func Run(ctx context.Context, opts Options) {
 			}
 			slog.InfoContext(ctx, "worker pool stopped", "owner", pool.Owner())
 		}()
+		if compMgr := nori.ComputerManager(); compMgr != nil {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				compMgr.StartJanitor(runCtx)
+			}()
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
