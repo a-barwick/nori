@@ -32,7 +32,6 @@ const (
 	defaultMaxConnIdleTime         = 5 * time.Minute
 	defaultHealthCheckPeriod       = 30 * time.Second
 	defaultStatementTimeout        = 30 * time.Second
-	defaultTxAttempts              = 30
 	shardLockShards                = 512
 )
 
@@ -892,7 +891,7 @@ func (b *backend) runAttempt(ctx context.Context, options pgx.TxOptions, f func(
 
 func (b *backend) RunTransaction(ctx context.Context, readOnly bool, attempts int, f func(docstore.TransactionBackend) error) error {
 	if attempts <= 0 {
-		attempts = defaultTxAttempts
+		attempts = docstore.ContendedWriteAttempts
 	}
 	b.txTotal.Add(1)
 	options := pgx.TxOptions{IsoLevel: pgx.Serializable}

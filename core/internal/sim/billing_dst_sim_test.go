@@ -889,6 +889,12 @@ func TestDST_BillingMidTaskSuspensionCrossInstanceNotifyEviction(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for Alice's mid-flight task on Instance B to start")
 	}
+	// Claiming the first wake and subscribing to new notifications run independently.
+	listenCtx, cancelListen := context.WithTimeout(ctx, 2*time.Second)
+	defer cancelListen()
+	if err := sharedBackend.WaitForWakeSubscribers(listenCtx, 1); err != nil {
+		t.Fatalf("wait for Instance B's entitlement subscription: %v", err)
+	}
 
 	// Build Instance B's HTTP handler using instanceB.CheckNotSuspended (same as production API server).
 	handlerB := api.UserHandlerWithOptions(instanceB.Users, func(_ context.Context, _ users.User) (api.UserRoutes, func(), error) {

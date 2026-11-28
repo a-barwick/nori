@@ -158,6 +158,9 @@ type TransactionOption struct {
 	Attempts int
 }
 
+// ContendedWriteAttempts is the retry budget for concurrent writes to an owner's event stream.
+const ContendedWriteAttempts = 30
+
 var ReadOnly = TransactionOption{ReadOnly: true}
 
 func MaxAttempts(n int) TransactionOption { return TransactionOption{Attempts: n} }

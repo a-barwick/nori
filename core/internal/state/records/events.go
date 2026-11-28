@@ -10,8 +10,6 @@ import (
 	"nori/internal/state/docstore"
 )
 
-const logAttempts = 20
-
 func (d *Database) events() *docstore.CollectionRef { return d.root().Collection("events") }
 func (d *Database) eventHead() *docstore.DocumentRef {
 	return d.root().Collection("event_head").Doc("head")
@@ -45,7 +43,7 @@ func (d *Database) logged(ctx context.Context, f func(context.Context, *docstore
 			return nil
 		}
 		return active.flush()
-	}, docstore.MaxAttempts(logAttempts))
+	}, docstore.MaxAttempts(docstore.ContendedWriteAttempts))
 }
 
 type logCtxKey struct{}
