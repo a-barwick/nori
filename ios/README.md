@@ -94,7 +94,7 @@ For TestFlight or App Store archives, pass `SENTRY_DSN="$SENTRY_IOS_DSN"` as an 
 
 ### Automatic Private TestFlight Builds
 
-The **iOS Private TestFlight** workflow waits 10 minutes after an `ios/` change lands on `main`. A newer iOS push restarts the wait. The workflow verifies the archive, signs it, and uploads an internal-testing-only build. App Store Connect delivers processed builds through the **Private TestFlight** internal group.
+The **iOS Private TestFlight** workflow waits 10 minutes after an `ios/` change lands on `main`. A newer iOS push restarts the wait. The workflow verifies the archive, signs it, and uploads a TestFlight build eligible for both internal and external testing groups.
 
 The `ios-testflight` GitHub environment is restricted to `main` and holds `ASC_KEY_ID`, `ASC_ISSUER_ID`, and the `.p8` contents in `ASC_PRIVATE_KEY`. The repository variable `NORI_TESTFLIGHT_ENABLED` activates the workflow when set to `true`. Set `SENTRY_IOS_DSN` as an Actions variable if this build should send telemetry. In GitHub Actions, select **iOS Private TestFlight** → **Run workflow** on `main` to start an upload without the ten-minute wait. Build numbering starts after build 174 and uses the workflow run number so retrying the same run uses the same build number.
 
