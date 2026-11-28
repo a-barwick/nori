@@ -12,7 +12,8 @@ import UserNotifications
 final class NoriAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     weak var store: NoriStore?
     private var pendingDeviceToken: Data?
-    private var pendingPushUserInfo: [AnyHashable: Any]?
+    private var hasPendingPushTap = false
+    private var pendingPushInteractionID: String?
 
     func attach(store: NoriStore) {
         self.store = store
@@ -20,9 +21,11 @@ final class NoriAppDelegate: NSObject, UIApplicationDelegate, UNUserNotification
             pendingDeviceToken = nil
             store.handleAPNsDeviceToken(token)
         }
-        if let userInfo = pendingPushUserInfo {
-            pendingPushUserInfo = nil
-            store.handlePushNotificationTap(userInfo: userInfo)
+        if hasPendingPushTap {
+            let interactionID = pendingPushInteractionID
+            hasPendingPushTap = false
+            pendingPushInteractionID = nil
+            store.handlePushNotificationTap(interactionID: interactionID)
         }
     }
 
@@ -63,12 +66,13 @@ final class NoriAppDelegate: NSObject, UIApplicationDelegate, UNUserNotification
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
-        let userInfo = response.notification.request.content.userInfo
+        let interactionID = NoriPushManager.extractInteractionID(from: response.notification.request.content.userInfo)
         await MainActor.run {
             if let store = self.store {
-                store.handlePushNotificationTap(userInfo: userInfo)
+                store.handlePushNotificationTap(interactionID: interactionID)
             } else {
-                self.pendingPushUserInfo = userInfo
+                self.hasPendingPushTap = true
+                self.pendingPushInteractionID = interactionID
             }
         }
     }

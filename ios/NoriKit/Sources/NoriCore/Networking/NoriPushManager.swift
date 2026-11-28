@@ -83,7 +83,7 @@ public final class NoriPushManager {
         deviceToken.map { String(format: "%02x", $0) }.joined()
     }
 
-    public static func extractInteractionID(from userInfo: [AnyHashable: Any]) -> String? {
+    public nonisolated static func extractInteractionID(from userInfo: [AnyHashable: Any]) -> String? {
         if let direct = userInfo["interaction_id"] as? String {
             let trimmed = direct.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { return trimmed }

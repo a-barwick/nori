@@ -225,10 +225,40 @@ struct ProactivityTests {
         store.handlePushNotificationTap(userInfo: ["aps": ["alert": "Good morning"]])
         #expect(store.pendingDeepLink == .tab(.chat))
 
+        // Direct Sendable interactionID entry point
+        store.handlePushNotificationTap(interactionID: "int-push-3")
+        #expect(store.pendingDeepLink == .reviewInteraction("int-push-3"))
+        store.handlePushNotificationTap(interactionID: nil)
+        #expect(store.pendingDeepLink == .tab(.chat))
+
         // URL deep-link parsing
         let reviewURL = URL(string: "nori://review/int-url-9")!
         #expect(NoriDeepLink.parse(reviewURL) == .reviewInteraction("int-url-9"))
         let chatQueryURL = URL(string: "nori://chat?interaction_id=int-url-10")!
         #expect(NoriDeepLink.parse(chatQueryURL) == .reviewInteraction("int-url-10"))
+    }
+
+    @Test("PermissionRule decodes cleanly when array fields are null or omitted")
+    func permissionRuleResilientDecoding() throws {
+        let json = """
+        {
+          "id": "rule_legacy_1",
+          "revision": 2,
+          "effect": "allow",
+          "tool_ids": null,
+          "connection_ids": ["*"],
+          "resource_ids": null,
+          "title": "Always allow Calendar"
+        }
+        """
+        let rule = try JSONDecoder().decode(PermissionRule.self, from: Data(json.utf8))
+        #expect(rule.id == "rule_legacy_1")
+        #expect(rule.revision == 2)
+        #expect(rule.effect == .allow)
+        #expect(rule.toolIDs.isEmpty)
+        #expect(rule.connectionIDs == ["*"])
+        #expect(rule.resourceIDs.isEmpty)
+        #expect(rule.actionClasses.isEmpty)
+        #expect(rule.title == "Always allow Calendar")
     }
 }

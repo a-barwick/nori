@@ -47,6 +47,7 @@ public struct AppsView: View {
     @Bindable private var store: NoriStore
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
     @State private var showingAddMCP = false
+    @State private var isLoadingApps = false
     @State private var connectingConnectionID: String?
     @State private var pendingGoogleService: GoogleService?
     @State private var isGoogleBusy = false
@@ -60,73 +61,86 @@ public struct AppsView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                if let google = store.integrations.first(where: { $0.id == "google" }) {
-                    googleSection(google)
-                }
-
-                NoriSectionHeader("Custom apps") {
-                    Button("+ Add") {
-                        showingAddMCP = true
+                if isLoadingApps && store.integrations.isEmpty && store.mcpServers.isEmpty && store.connections.isEmpty {
+                    NoriCard {
+                        HStack(spacing: 10) {
+                            ProgressView().tint(NoriColors.accent)
+                            Text("Loading apps…")
+                                .font(NoriTypography.meta)
+                                .foregroundStyle(NoriColors.ink2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(NoriColors.accent)
-                    .buttonStyle(.plain)
-                }
-
-                if store.mcpServers.isEmpty {
-                    NoriEmptyState(
-                        title: "No custom apps yet",
-                        message: "Add a custom app to give Nori access to more tools."
-                    )
+                    .padding(.top, 10)
                 } else {
-                    NoriRows {
-                        ForEach(Array(store.mcpServers.enumerated()), id: \.element.id) { index, server in
-                            let isLast = index == store.mcpServers.count - 1
-                            NavigationLink(value: MoreRoute.mcpDetail(server.id)) {
-                                NoriBrandRow(
-                                    title: server.name,
-                                    brand: NoriBrandKind.forApp(name: server.name, endpoint: server.endpoint),
-                                    showChevron: true,
-                                    showDivider: !isLast
-                                ) {
-                                    if !server.enabled {
-                                        NoriPill("Off", tone: .neutral)
-                                    } else if server.observed.status != .connected {
-                                        NoriPill(
-                                            server.observed.status.displayLabel,
-                                            tone: mcpPillTone(for: server)
-                                        )
+                    if let google = store.integrations.first(where: { $0.id == "google" }) {
+                        googleSection(google)
+                    }
+
+                    NoriSectionHeader("Custom apps") {
+                        Button("+ Add") {
+                            showingAddMCP = true
+                        }
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(NoriColors.accent)
+                        .buttonStyle(.plain)
+                    }
+
+                    if store.mcpServers.isEmpty {
+                        NoriEmptyState(
+                            title: "No custom apps yet",
+                            message: "Add a custom app to give Nori access to more tools."
+                        )
+                    } else {
+                        NoriRows {
+                            ForEach(Array(store.mcpServers.enumerated()), id: \.element.id) { index, server in
+                                let isLast = index == store.mcpServers.count - 1
+                                NavigationLink(value: MoreRoute.mcpDetail(server.id)) {
+                                    NoriBrandRow(
+                                        title: server.name,
+                                        brand: NoriBrandKind.forApp(name: server.name, endpoint: server.endpoint),
+                                        showChevron: true,
+                                        showDivider: !isLast
+                                    ) {
+                                        if !server.enabled {
+                                            NoriPill("Off", tone: .neutral)
+                                        } else if server.observed.status != .connected {
+                                            NoriPill(
+                                                server.observed.status.displayLabel,
+                                                tone: mcpPillTone(for: server)
+                                            )
+                                        }
                                     }
                                 }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
                         }
                     }
-                }
 
-                let otherConnections = store.connections.filter { $0.integrationID != "google" && $0.status != .disconnected }
-                if !otherConnections.isEmpty {
-                    NoriSectionHeader("Connected accounts")
+                    let otherConnections = store.connections.filter { $0.integrationID != "google" && $0.status != .disconnected }
+                    if !otherConnections.isEmpty {
+                        NoriSectionHeader("Connected accounts")
 
-                    NoriRows {
-                        ForEach(Array(otherConnections.enumerated()), id: \.element.id) { index, connection in
-                            let isLast = index == otherConnections.count - 1
-                            let state = connectionHealthDisplay(for: connection)
-                            NoriBrandRow(
-                                title: connection.title,
-                                brand: NoriBrandKind.forApp(name: connection.title),
-                                showChevron: false,
-                                showDivider: !isLast
-                            ) {
-                                if let actionLabel = connectionActionLabel(for: connection) {
-                                    let isConnectingThis = connectingConnectionID == connection.id
-                                    Button(isConnectingThis ? "Connecting…" : actionLabel) {
-                                        startConnectionOAuth(for: connection)
+                        NoriRows {
+                            ForEach(Array(otherConnections.enumerated()), id: \.element.id) { index, connection in
+                                let isLast = index == otherConnections.count - 1
+                                let state = connectionHealthDisplay(for: connection)
+                                NoriBrandRow(
+                                    title: connection.title,
+                                    brand: NoriBrandKind.forApp(name: connection.title),
+                                    showChevron: false,
+                                    showDivider: !isLast
+                                ) {
+                                    if let actionLabel = connectionActionLabel(for: connection) {
+                                        let isConnectingThis = connectingConnectionID == connection.id
+                                        Button(isConnectingThis ? "Connecting…" : actionLabel) {
+                                            startConnectionOAuth(for: connection)
+                                        }
+                                        .buttonStyle(NoriButtonStyle(.primary, compact: true))
+                                        .disabled(connectingConnectionID != nil)
+                                    } else if state.tone != .ok {
+                                        NoriPill(state.label, tone: state.tone)
                                     }
-                                    .buttonStyle(NoriButtonStyle(.primary, compact: true))
-                                    .disabled(connectingConnectionID != nil)
-                                } else if state.tone != .ok {
-                                    NoriPill(state.label, tone: state.tone)
                                 }
                             }
                         }
@@ -138,6 +152,12 @@ public struct AppsView: View {
             .padding(.bottom, 96)
         }
         .background(NoriColors.canvas)
+        .task {
+            isLoadingApps = true
+            defer { isLoadingApps = false }
+            await store.refreshApps(force: false)
+            await refreshGoogleDriveFiles()
+        }
         .refreshable {
             await store.refreshApps()
             await refreshGoogleDriveFiles()

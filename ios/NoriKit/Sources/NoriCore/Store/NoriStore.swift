@@ -595,7 +595,11 @@ public final class NoriStore {
     }
 
     public func handlePushNotificationTap(userInfo: [AnyHashable: Any]) {
-        if let interactionID = NoriPushManager.extractInteractionID(from: userInfo) {
+        handlePushNotificationTap(interactionID: NoriPushManager.extractInteractionID(from: userInfo))
+    }
+
+    public func handlePushNotificationTap(interactionID: String?) {
+        if let interactionID, !interactionID.isEmpty {
             pendingDeepLink = .reviewInteraction(interactionID)
         } else {
             pendingDeepLink = .tab(.chat)
