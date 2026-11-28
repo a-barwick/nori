@@ -59,7 +59,10 @@ func TestPostgresStoreAndAccountDeleteIntegration(t *testing.T) {
 		t.Fatalf("ValidateSession = (%+v, %v)", validated, err)
 	}
 	if _, err := mgr.SetSessionMode(ctx, userID, created.Session.ID, computer.SessionModeControl); err != nil {
-		t.Fatalf("SetSessionMode: %v", err)
+		t.Fatalf("SetSessionMode(control): %v", err)
+	}
+	if _, err := mgr.SetSessionMode(ctx, userID, created.Session.ID, computer.SessionModeView); err != nil {
+		t.Fatalf("SetSessionMode(view): %v", err)
 	}
 
 	// Link workspace file to a Library result and entity tag, then purge by result ID.

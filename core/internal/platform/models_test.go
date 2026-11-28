@@ -70,12 +70,12 @@ func TestHostedModelAllowlistAndBillingTagging(t *testing.T) {
 
 func TestHostedGatewayTariffFallbackAndBillingTags(t *testing.T) {
 	for _, tc := range []struct {
-		name         string
-		model        string
-		chatBody     string
-		taskBody     string
-		wantCostMin  float64
-		wantStatus   string
+		name        string
+		model       string
+		chatBody    string
+		taskBody    string
+		wantCostMin float64
+		wantStatus  string
 	}{
 		{
 			name:        "gemini-4-neon tariff fallback when gateway omits cost",

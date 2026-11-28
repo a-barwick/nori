@@ -15,6 +15,7 @@ import (
 
 	"nori/internal/agent"
 	"nori/internal/conversation"
+	"nori/internal/llmguard"
 	"nori/internal/sim/env"
 	"nori/internal/sim/outer"
 	"nori/internal/state"
@@ -765,6 +766,9 @@ func TestWebSearchUntrustedFraming(t *testing.T) {
 			target: targetURL,
 		},
 	}
+	agent.ConfigureSearch(svc, agent.SearchOptions{
+		Guard: llmguard.New(llmguard.Config{AllowLiveInTests: true}),
+	})
 
 	out, err := svc.CallRuntimeTool(ctx, "", "web_search", map[string]any{"query": "nori release notes"})
 	if err != nil {

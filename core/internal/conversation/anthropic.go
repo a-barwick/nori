@@ -360,10 +360,10 @@ func (m *AnthropicModel) decodeAnthropicStream(res *http.Response, reply Reply, 
 	scanner.Buffer(make([]byte, 4096), 256<<10)
 
 	var (
-		modelName   string
-		stopReason  string
-		inTok       int64
-		outTok      int64
+		modelName    string
+		stopReason   string
+		inTok        int64
+		outTok       int64
 		cacheRead    int64
 		cacheWrite   int64
 		reportedCost *float64

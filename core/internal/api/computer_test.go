@@ -88,8 +88,11 @@ func TestComputerAPIAndDesktopWebSocketProxy(t *testing.T) {
 
 	// 1. GET /v1/computer -> not_provisioned
 	resp, err := http.Get(apiSrv.URL + "/v1/computer")
-	if err != nil || resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET /v1/computer = %d, %v", resp.StatusCode, err)
+	if err != nil {
+		t.Fatalf("GET /v1/computer: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /v1/computer = %d", resp.StatusCode)
 	}
 	var st computerStatusResponse
 	_ = json.NewDecoder(resp.Body).Decode(&st)
@@ -100,8 +103,11 @@ func TestComputerAPIAndDesktopWebSocketProxy(t *testing.T) {
 
 	// 2. POST /v1/computer/sessions -> creates view session
 	resp, err = http.Post(apiSrv.URL+"/v1/computer/sessions", "application/json", strings.NewReader(`{"mode":"view","task_id":"task-1"}`))
-	if err != nil || resp.StatusCode != http.StatusCreated {
-		t.Fatalf("POST /v1/computer/sessions = %d, %v", resp.StatusCode, err)
+	if err != nil {
+		t.Fatalf("POST /v1/computer/sessions: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST /v1/computer/sessions = %d", resp.StatusCode)
 	}
 	var created createComputerSessionResponse
 	_ = json.NewDecoder(resp.Body).Decode(&created)

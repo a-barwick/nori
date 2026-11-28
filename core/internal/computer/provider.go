@@ -12,17 +12,17 @@ import (
 )
 
 const (
-	DefaultDisplayWidth    = 1280
-	DefaultDisplayHeight   = 800
-	DefaultMemoryLimitMB   = 3072
-	DefaultMaxDiskGB       = 10
-	DefaultExecTimeout     = 60 * time.Second
-	MaxExecTimeout         = 90 * time.Second
-	MaxExecOutputBytes     = 32 << 10 // 32 KiB
-	DefaultMaxReadBytes    = 2 << 20  // 2 MiB
-	MaxPublishReadBytes    = 10 << 20 // 10 MiB
-	MaxWriteFileBytes      = 10 << 20 // 10 MiB
-	PurgedLinkResultID     = "__purged__"
+	DefaultDisplayWidth          = 1280
+	DefaultDisplayHeight         = 800
+	DefaultMemoryLimitMB         = 3072
+	DefaultMaxDiskGB             = 10
+	DefaultExecTimeout           = 60 * time.Second
+	MaxExecTimeout               = 90 * time.Second
+	MaxExecOutputBytes           = 32 << 10 // 32 KiB
+	DefaultMaxReadBytes          = 2 << 20  // 2 MiB
+	MaxPublishReadBytes          = 10 << 20 // 10 MiB
+	MaxWriteFileBytes            = 10 << 20 // 10 MiB
+	PurgedLinkResultID           = "__purged__"
 	DefaultSessionTTL            = 15 * time.Minute
 	DefaultSessionIdleCap        = 10 * time.Minute
 	DefaultDesktopWSMaxLifetime  = 2 * time.Hour

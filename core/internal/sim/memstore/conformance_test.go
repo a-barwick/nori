@@ -35,6 +35,7 @@ func TestBackendConformance_Memstore(t *testing.T) {
 	runLeaseConformanceSuite(t, b, b, "mem")
 	runMemoryIndexConformanceSuite(t, b, b, "mem")
 	runRecordsMemoryConformanceSuite(t, b, b, "mem")
+	runBillingTrackAConformanceSuite(t, b, "mem")
 }
 
 func isolatedPostgresConformanceURL(t *testing.T, rawURL string) string {
@@ -119,6 +120,7 @@ func TestBackendConformance_Postgres(t *testing.T) {
 	}
 	runMemoryIndexConformanceSuite(t, b, idx, prefix)
 	runRecordsMemoryConformanceSuite(t, b, idx, prefix)
+	runBillingTrackAConformanceSuite(t, b, prefix)
 	t.Run("Postgres005SchemaPartitionAndBackfill", func(t *testing.T) {
 		conn, err := pgx.Connect(ctx, testURL)
 		if err != nil {
