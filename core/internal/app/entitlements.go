@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"nori/internal/billing"
 	"nori/internal/scheduler"
+	"nori/internal/state"
 	"nori/internal/state/docstore"
 )
 
@@ -250,6 +251,29 @@ func (s *Service) HandleEntitlementChanged(ctx context.Context, userID string) {
 					slog.WarnContext(sleepCtx, "sleep user computer after entitlement change failed", "user_id", userID, "err", sleepErr)
 				}
 				sleepCancel()
+			}
+		} else if err == nil {
+			// Fresh entitlement is active and not suspended: re-arm any tasks/wakes parked during
+			// suspension and enforce the new tier's MaxRoutines cap on downgrades.
+			if leases := s.Leases(); leases != nil {
+				wakeCtx, wakeCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				if wErr := leases.WakeWaitingTasks(wakeCtx, userID, docstore.WaitAccountSuspended); wErr != nil {
+					slog.WarnContext(wakeCtx, "wake suspended tasks after entitlement change failed", "user_id", userID, "err", wErr)
+				}
+				if wErr := leases.WakeUser(wakeCtx, userID, docstore.LaneConversation, time.Time{}); wErr != nil {
+					slog.WarnContext(wakeCtx, "wake conversation lane after entitlement change failed", "user_id", userID, "err", wErr)
+				}
+				if wErr := leases.WakeUser(wakeCtx, userID, docstore.LaneScheduler, time.Time{}); wErr != nil {
+					slog.WarnContext(wakeCtx, "wake scheduler lane after entitlement change failed", "user_id", userID, "err", wErr)
+				}
+				wakeCancel()
+			}
+			if ent.EffectivePolicy().MaxRoutines > 0 {
+				capCtx, capCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				if _, capErr := s.EnforceRoutineCap(capCtx, userID); capErr != nil && !errors.Is(capErr, state.ErrNotFound) {
+					slog.WarnContext(capCtx, "enforce routine cap after entitlement change failed", "user_id", userID, "err", capErr)
+				}
+				capCancel()
 			}
 		}
 	}

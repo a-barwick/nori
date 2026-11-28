@@ -17,6 +17,7 @@ import (
 	"nori/internal/observability"
 	"nori/internal/prompts"
 	"nori/internal/state"
+	"nori/internal/usage"
 )
 
 const (
@@ -119,9 +120,14 @@ func (c *JevClassifier) Classify(ctx context.Context, request ClassifyRequest) (
 		}
 		span.End()
 	}()
-	classification.Usage = state.Usage{
-		ID: c.newID(), Provider: "jev", Model: jevModel, CostStatus: "unknown", RequestStatus: "not_sent", CreatedAt: c.now().UTC(),
+	classification.Usage = usage.AttemptWithMeta(ctx, "jev", jevModel, state.UsageBillingSystem, state.UsageCategorySystem)
+	if c.NewID != nil {
+		classification.Usage.ID = c.newID()
 	}
+	if c.Now != nil {
+		classification.Usage.CreatedAt = c.now().UTC()
+	}
+	classification.Usage.RequestStatus = "not_sent"
 	const maxJevHistoryMessages = 8
 	history := request.History
 	if len(history) > maxJevHistoryMessages {

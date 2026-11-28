@@ -6,6 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"nori/internal/sim/memstore"
+	"nori/internal/state"
+	"nori/internal/state/docstore"
+	"nori/internal/state/records"
 	"nori/internal/users"
 )
 
@@ -272,5 +276,159 @@ func TestReconcileExpiresUnattachedUploadsAndReconcilesQuota(t *testing.T) {
 	}
 	if report.QuotasReconciled != 1 || refs.storedQuota[alice.ID] != 1500 {
 		t.Fatalf("quota=%d (reconciled=%d), want 1500 (reconciled=1)", refs.storedQuota[alice.ID], report.QuotasReconciled)
+	}
+}
+
+func TestReconcileDryRunSkipsQuotaWritesAndCountsUploadsOnly(t *testing.T) {
+	now := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	alice := users.User{ID: "11111111-1111-4111-8111-111111111111", Email: "alice@example.com", TimeZone: "UTC"}
+	prefix := "artifacts/users/" + alice.ID + "/"
+
+	refs := &fakeFullRefs{
+		fakeRefs: &fakeRefs{
+			users: []users.User{alice},
+			snapshots: map[string]UserSnapshot{
+				alice.ID: {
+					ReferencedKeys: map[string]struct{}{
+						"uploads/11111111-1111-4111-8111-111111111111":                                  {},
+						"results/22222222-2222-4222-8222-222222222222":                                  {},
+						"33333333-3333-4333-8333-333333333333/44444444-4444-4444-8444-444444444444.png": {},
+					},
+				},
+			},
+		},
+		storedQuota: map[string]int64{alice.ID: 9999},
+	}
+	store := &fakeObjectStore{
+		byPrefix: map[string][]Object{
+			prefix: {
+				{Name: prefix + "uploads/11111111-1111-4111-8111-111111111111", Generation: "1", Size: 1500, Updated: now.Add(-48 * time.Hour)},
+				{Name: prefix + "results/22222222-2222-4222-8222-222222222222", Generation: "2", Size: 7000, Updated: now.Add(-48 * time.Hour)},
+				{Name: prefix + "33333333-3333-4333-8333-333333333333/44444444-4444-4444-8444-444444444444.png", Generation: "3", Size: 8000, Updated: now.Add(-48 * time.Hour)},
+			},
+		},
+	}
+
+	// 1. Dry-run MUST NOT write quotas even when ReconcileQuotas=true!
+	dryRep, err := Reconcile(context.Background(), refs, store, Options{
+		Bucket:          "nori-bucket",
+		ReconcileQuotas: true,
+		Delete:          false,
+		Now:             func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("dry-run Reconcile: %v", err)
+	}
+	if !dryRep.DryRun || dryRep.QuotasReconciled != 0 || refs.storedQuota[alice.ID] != 9999 {
+		t.Fatalf("dry-run modified quota! report=%+v stored=%d", dryRep, refs.storedQuota[alice.ID])
+	}
+
+	// 2. Live reconcile counts ONLY uploads/ bytes (1500), ignoring results/ (7000) and run PNGs (8000).
+	liveRep, err := Reconcile(context.Background(), refs, store, Options{
+		Bucket:          "nori-bucket",
+		ReconcileQuotas: true,
+		Delete:          true,
+		Confirm:         true,
+		MaxDelete:       10,
+		Now:             func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("live Reconcile: %v", err)
+	}
+	if liveRep.QuotasReconciled != 1 || refs.storedQuota[alice.ID] != 1500 {
+		t.Fatalf("live quota = %d (reconciled=%d), want 1500 (uploads-only)", refs.storedQuota[alice.ID], liveRep.QuotasReconciled)
+	}
+}
+
+func TestPostgresRefStoreExpireUnattachedProtectsLegacyAndRetained(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	nowFn := func() time.Time { return now }
+	backend := memstore.New(memstore.WithClock(nowFn))
+	t.Cleanup(func() { _ = backend.Close() })
+
+	alice := users.User{ID: "11111111-1111-4111-8111-111111111111", Email: "alice@example.com", TimeZone: "UTC"}
+	dir := records.NewSharedUsers(backend)
+	dir.Now = nowFn
+	if err := dir.Create(ctx, alice); err != nil {
+		t.Fatalf("Create alice: %v", err)
+	}
+
+	client := docstore.New(backend)
+	uploadsCol := client.Collection("owners").Doc(alice.DataOwner()).Collection("uploads")
+	seed := func(id string, lc state.UploadLifecycle, age time.Duration, size int64) {
+		t.Helper()
+		_, err := uploadsCol.Doc(id).Set(ctx, state.Upload{
+			Attachment: state.Attachment{ID: id, Name: id + ".bin", MediaType: "application/octet-stream", Size: size},
+			Lifecycle:  lc,
+			CreatedAt:  now.Add(-age),
+		})
+		if err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+
+	const (
+		idLegacy   = "10000000-0000-4000-8000-000000000001"
+		idRetained = "10000000-0000-4000-8000-000000000002"
+		idReadyOld = "10000000-0000-4000-8000-000000000003"
+		idPendOld  = "10000000-0000-4000-8000-000000000004"
+		idReadyNew = "10000000-0000-4000-8000-000000000005"
+	)
+	seed(idLegacy, "", 72*time.Hour, 1000)
+	seed(idRetained, state.UploadRetained, 72*time.Hour, 2000)
+	seed(idReadyOld, state.UploadReady, 48*time.Hour, 3000)
+	seed(idPendOld, state.UploadPending, 48*time.Hour, 4000)
+	seed(idReadyNew, state.UploadReady, 2*time.Hour, 5000)
+	if err := records.SetUserStorageBytes(ctx, backend, alice, 15000); err != nil {
+		t.Fatalf("SetUserStorageBytes: %v", err)
+	}
+
+	refs := newPostgresReferenceStore(backend)
+	cutoff := now.Add(-24 * time.Hour)
+
+	// 1. Dry-run matches ONLY idReadyOld and idPendOld; never legacy "" or Retained.
+	dryKeys, dryFreed, err := refs.ExpireUnattachedUploads(ctx, alice, cutoff, true)
+	if err != nil {
+		t.Fatalf("dry-run ExpireUnattachedUploads: %v", err)
+	}
+	if len(dryKeys) != 2 || dryFreed != 7000 {
+		t.Fatalf("dry-run expired = (%v, %d), want 2 keys / 7000 bytes", dryKeys, dryFreed)
+	}
+
+	// 2. Live run claims via ClaimExpiredUploads and finishes ONLY idReadyOld and idPendOld.
+	liveKeys, liveFreed, err := refs.ExpireUnattachedUploads(ctx, alice, cutoff, false)
+	if err != nil {
+		t.Fatalf("live ExpireUnattachedUploads: %v", err)
+	}
+	if len(liveKeys) != 2 || liveFreed != 7000 {
+		t.Fatalf("live expired = (%v, %d), want 2 keys / 7000 bytes", liveKeys, liveFreed)
+	}
+
+	// Verify lifecycles in store: legacy "", Retained, and recent Ready MUST be untouched!
+	for _, tc := range []struct {
+		id   string
+		want state.UploadLifecycle
+	}{
+		{idLegacy, ""},
+		{idRetained, state.UploadRetained},
+		{idReadyNew, state.UploadReady},
+		{idReadyOld, state.UploadExpired},
+		{idPendOld, state.UploadExpired},
+	} {
+		doc, err := uploadsCol.Doc(tc.id).Get(ctx)
+		if err != nil {
+			t.Fatalf("Get %s: %v", tc.id, err)
+		}
+		var up state.Upload
+		if err := doc.DataTo(&up); err != nil {
+			t.Fatalf("DataTo %s: %v", tc.id, err)
+		}
+		if up.Lifecycle != tc.want {
+			t.Fatalf("upload %s lifecycle = %q, want %q", tc.id, up.Lifecycle, tc.want)
+		}
+	}
+	if remaining, err := records.GetUserStorageBytes(ctx, backend, alice); err != nil || remaining != 8000 {
+		t.Fatalf("remaining active_bytes = %d (err=%v), want 8000", remaining, err)
 	}
 }

@@ -315,7 +315,7 @@ func TestDesktopWSHardeningCapsSingleUseLifetimePollAndForceClose(t *testing.T) 
 	}
 	resp2.Body.Close()
 
-	// CloseDesktopSessions immediately closes conn1!
+	// CloseDesktopSessions immediately closes conn1 with close code 4004 (session revoked)!
 	closed := stdAPI.CloseDesktopSessions("user-std")
 	if closed < 1 {
 		t.Fatalf("CloseDesktopSessions = %d, want >= 1", closed)
@@ -325,6 +325,9 @@ func TestDesktopWSHardeningCapsSingleUseLifetimePollAndForceClose(t *testing.T) 
 	readCancel()
 	if readErr == nil {
 		t.Fatal("expected conn1 to close after CloseDesktopSessions")
+	}
+	if code := websocket.CloseStatus(readErr); code != DesktopWSCloseSessionRevoked {
+		t.Fatalf("CloseDesktopSessions WS close code = %d, want %d (4004)", code, DesktopWSCloseSessionRevoked)
 	}
 	_ = conn1.Close(websocket.StatusNormalClosure, "")
 
@@ -359,7 +362,7 @@ func TestDesktopWSHardeningCapsSingleUseLifetimePollAndForceClose(t *testing.T) 
 	}
 	r3.Body.Close()
 
-	// 3. Max WS lifetime closes connection automatically.
+	// 3. Max WS lifetime closes connection automatically with close code 4001.
 	_, shortSrv := newServer("user-std", 80*time.Millisecond, 5*time.Second)
 	defer shortSrv.Close()
 	sShort := createSess(t, shortSrv.URL)
@@ -374,8 +377,34 @@ func TestDesktopWSHardeningCapsSingleUseLifetimePollAndForceClose(t *testing.T) 
 	if lifeErr == nil {
 		t.Fatal("expected WS connection to close when MaxWSLifetime elapsed")
 	}
+	if code := websocket.CloseStatus(lifeErr); code != DesktopWSCloseMaxLifetime {
+		t.Fatalf("MaxWSLifetime WS close code = %d, want %d (4001)", code, DesktopWSCloseMaxLifetime)
+	}
 
-	// 4. Periodic entitlement poll closes open WS cleanly when user is suspended mid-session.
+	// 4. Computer sleep closes active WS with close code 4002.
+	time.Sleep(50 * time.Millisecond)
+	_, sleepSrv := newServer("user-std", 2*time.Hour, 5*time.Second)
+	defer sleepSrv.Close()
+	sSleep := createSess(t, sleepSrv.URL)
+	cSleep, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(sleepSrv.URL, "http")+sSleep.WSPath+"?token="+sSleep.Token, &websocket.DialOptions{Subprotocols: []string{"binary"}})
+	if err != nil {
+		t.Fatalf("sleep dial: %v", err)
+	}
+	defer cSleep.Close(websocket.StatusNormalClosure, "")
+	if err := mgr.Sleep(ctx, "user-std"); err != nil {
+		t.Fatalf("mgr.Sleep: %v", err)
+	}
+	sleepCtx, sleepCancel := context.WithTimeout(ctx, 2*time.Second)
+	_, _, sleepErr := cSleep.Read(sleepCtx)
+	sleepCancel()
+	if sleepErr == nil {
+		t.Fatal("expected WS connection to close on computer sleep")
+	}
+	if code := websocket.CloseStatus(sleepErr); code != DesktopWSCloseIdleSleeping {
+		t.Fatalf("Sleep WS close code = %d, want %d (4002)", code, DesktopWSCloseIdleSleeping)
+	}
+
+	// 5. Periodic entitlement poll closes open WS cleanly with close code 4003 when user is suspended mid-session.
 	time.Sleep(50 * time.Millisecond)
 	_, pollSrv := newServer("user-std", 2*time.Hour, 40*time.Millisecond)
 	defer pollSrv.Close()
@@ -391,5 +420,24 @@ func TestDesktopWSHardeningCapsSingleUseLifetimePollAndForceClose(t *testing.T) 
 	pollCancel()
 	if pollErr == nil {
 		t.Fatal("expected open WS to close on entitlement poll after suspension")
+	}
+	if code := websocket.CloseStatus(pollErr); code != DesktopWSCloseEntitlement {
+		t.Fatalf("Entitlement poll WS close code = %d, want %d (4003)", code, DesktopWSCloseEntitlement)
+	}
+}
+
+func TestDesktopEntitlementRespectsDisableMetering(t *testing.T) {
+	ctx := context.Background()
+	bs := billing.NewMemoryStore(nil)
+	bsvc := billing.NewService(bs, false, billing.GlobalBudgetConfig{})
+	// BYOK user has $0 hosted credit, but DisableMetering=true should allow CheckDesktopAccess.
+	if _, err := bs.SetTier(ctx, "user-byok", billing.TierBYOK, billing.SetTierOptions{}); err != nil {
+		t.Fatalf("SetTier byok: %v", err)
+	}
+	mgr := computer.NewManager(fake.New(), computer.NewMemoryStore(), computer.Config{DisableMetering: true})
+	mgr.SetBilling(bsvc)
+	compAPI := &ComputerAPI{Manager: mgr, UserID: "user-byok", Billing: bsvc}
+	if _, err := compAPI.checkDesktopEntitlement(ctx); err != nil {
+		t.Fatalf("checkDesktopEntitlement with DisableMetering=true = %v, want nil", err)
 	}
 }

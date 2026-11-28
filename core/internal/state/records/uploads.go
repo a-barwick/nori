@@ -396,13 +396,22 @@ func (d *Database) FinishExpiredUpload(ctx context.Context, id string) error {
 		freedBytes = 0
 		ref := d.uploads().Doc(id)
 		doc, err := tx.Get(ref)
-		if err == nil {
-			var existing state.Upload
-			if decErr := doc.DataTo(&existing); decErr == nil && existing.Lifecycle != state.UploadExpired && existing.Size > 0 {
-				freedBytes = existing.Size
-			}
-		} else if !notFound(err) {
+		if notFound(err) {
+			return nil
+		}
+		if err != nil {
 			return err
+		}
+		var existing state.Upload
+		if err := doc.DataTo(&existing); err != nil {
+			return err
+		}
+		// Never overwrite Retained, legacy "", Ready, or already Expired uploads.
+		if existing.Lifecycle != state.UploadExpiring && existing.Lifecycle != state.UploadPending {
+			return nil
+		}
+		if existing.Size > 0 {
+			freedBytes = existing.Size
 		}
 		if err := tx.Set(ref, map[string]any{"id": id, "lifecycle": state.UploadExpired}); err != nil {
 			return err

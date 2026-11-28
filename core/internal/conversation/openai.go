@@ -262,7 +262,7 @@ func (m *OpenAIModel) Respond(ctx context.Context, request ReplyRequest) (reply 
 	}
 	res, err := m.doWithRetry(reqCtx, endpoint, body, onRetry)
 	if err != nil {
-		if errors.Is(err, usage.ErrUserQuotaExceeded) || isSupersededCallError(err) {
+		if errors.Is(err, usage.ErrUserQuotaExceeded) || isBillingError(err) || isSupersededCallError(err) {
 			reply.Usage.RequestStatus = "not_sent"
 			return reply, err
 		}

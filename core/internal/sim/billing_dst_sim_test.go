@@ -1044,6 +1044,78 @@ func TestDST_BillingMidTaskSuspensionCrossInstanceNotifyEviction(t *testing.T) {
 	}); !errors.Is(err, billing.ErrAccountSuspended) {
 		t.Fatalf("after Stripe active event, ReserveUsage = %v, want ErrAccountSuspended", err)
 	}
+
+	// 7. Unsuspend MUST re-arm parked tasks (waiting_reason="account_suspended") AND conversation/scheduler wakes!
+	// First seed a parked task lease with waiting_reason="account_suspended" and a parked scheduler wake.
+	const parkedRunID = "run-parked-suspended"
+	if _, err := sharedBackend.EnsureTaskLease(ctx, alice.ID, parkedRunID, time.Time{}); err != nil {
+		t.Fatalf("EnsureTaskLease: %v", err)
+	}
+	claimedTask, ok, err := sharedBackend.ClaimTaskByID(ctx, alice.ID, parkedRunID, "sim-parker", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("ClaimTaskByID: ok=%v err=%v", ok, err)
+	}
+	if parked, err := sharedBackend.ParkTask(ctx, alice.ID, parkedRunID, "sim-parker", claimedTask.WakeSeq, docstore.WaitAccountSuspended); err != nil || !parked {
+		t.Fatalf("ParkTask account_suspended: parked=%v err=%v", parked, err)
+	}
+
+	// Drain any stale workStarted signal before unsuspending.
+	select {
+	case <-workStarted:
+	default:
+	}
+
+	if _, err := instanceA.Billing().Unsuspend(ctx, alice.ID); err != nil {
+		t.Fatalf("instanceA Unsuspend: %v", err)
+	}
+	select {
+	case <-evictDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Instance B HandleEntitlementChanged after Unsuspend")
+	}
+
+	// Verify parked task lease was woken (WaitingReason cleared, Runnable=true).
+	taskLeases, err := sharedBackend.ListTaskLeases(ctx, alice.ID)
+	if err != nil {
+		t.Fatalf("ListTaskLeases after Unsuspend: %v", err)
+	}
+	var foundTask *docstore.TaskLease
+	for i := range taskLeases {
+		if taskLeases[i].RunID == parkedRunID {
+			foundTask = &taskLeases[i]
+			break
+		}
+	}
+	if foundTask == nil || !foundTask.Runnable || foundTask.WaitingReason != docstore.WaitNone {
+		t.Fatalf("expected parked task re-armed after Unsuspend, got %+v", foundTask)
+	}
+
+	// Verify conversation & scheduler wakes were re-armed and Instance B worker pool resumed conversation!
+	wakesAfterUnsuspend, err := sharedBackend.ListUserWakes(ctx, alice.ID)
+	if err != nil {
+		t.Fatalf("ListUserWakes after Unsuspend: %v", err)
+	}
+	seenLanes := map[string]bool{}
+	for _, w := range wakesAfterUnsuspend {
+		if w.Runnable || w.Owner != "" {
+			seenLanes[w.Lane] = true
+		}
+	}
+	if !seenLanes[docstore.LaneConversation] || !seenLanes[docstore.LaneScheduler] {
+		t.Fatalf("expected conversation and scheduler lanes re-armed after Unsuspend, got wakes=%+v", wakesAfterUnsuspend)
+	}
+	select {
+	case <-workStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Instance B worker pool to resume Alice's conversation after Unsuspend")
+	}
+
+	// HTTP requests on Instance B immediately return 200 OK again.
+	postUnsuspendRec := httptest.NewRecorder()
+	handlerB.ServeHTTP(postUnsuspendRec, httptest.NewRequest(http.MethodGet, "/users/"+alice.ID+"/v1/capabilities", nil))
+	if postUnsuspendRec.Code != http.StatusOK {
+		t.Fatalf("post-unsuspend GET capabilities = %d %s, want 200", postUnsuspendRec.Code, postUnsuspendRec.Body.String())
+	}
 }
 
 // Scenario 5: BYOK bypass.

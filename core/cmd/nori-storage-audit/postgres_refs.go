@@ -174,44 +174,75 @@ func (p *postgresReferenceStore) InspectUser(ctx context.Context, user users.Use
 	return snap, release, nil
 }
 
-// ExpireUnattachedUploads finds pending/ready uploads older than cutoff (never touching retained
-// uploads attached to messages/tasks). When dryRun is false, marks them expired and decrements
-// nori_user_storage via FinishExpiredUpload.
+// ExpireUnattachedUploads finds pending/ready/expiring uploads older than cutoff (never touching
+// retained or legacy "" uploads). When dryRun is false, it transactionally claims eligible uploads
+// via ClaimExpiredUploads (Pending/Ready -> Expiring) before finalizing them with FinishExpiredUpload
+// so concurrent Ready -> Retained attachments can never be overwritten or deleted.
 func (p *postgresReferenceStore) ExpireUnattachedUploads(ctx context.Context, user users.User, cutoff time.Time, dryRun bool) ([]string, int64, error) {
 	client := docstore.New(p.backend)
 	root := client.Collection("owners").Doc(user.DataOwner())
-	var expiredIDs []string
 	var expiredKeys []string
 	var freedBytes int64
 
-	if err := forEachDoc(root.Collection("uploads").Documents(ctx), func(doc *docstore.DocumentSnapshot) error {
-		var upload state.Upload
-		if err := doc.DataTo(&upload); err != nil {
-			return err
-		}
-		switch upload.Lifecycle {
-		case state.UploadRetained, state.UploadExpired:
+	if dryRun {
+		if err := forEachDoc(root.Collection("uploads").Documents(ctx), func(doc *docstore.DocumentSnapshot) error {
+			var upload state.Upload
+			if err := doc.DataTo(&upload); err != nil {
+				return err
+			}
+			switch upload.Lifecycle {
+			case state.UploadExpiring:
+				// Already claimed for expiry.
+			case state.UploadPending, state.UploadReady:
+				if upload.CreatedAt.IsZero() || !upload.CreatedAt.Before(cutoff) {
+					return nil
+				}
+			default:
+				// Never touch legacy "" uploads, Retained uploads, or already Expired uploads.
+				return nil
+			}
+			expiredKeys = append(expiredKeys, state.UploadKey(doc.Ref.ID))
+			if upload.Size > 0 {
+				freedBytes += upload.Size
+			}
 			return nil
+		}); err != nil {
+			return nil, 0, err
 		}
-		if upload.CreatedAt.IsZero() || !upload.CreatedAt.Before(cutoff) {
-			return nil
-		}
-		expiredIDs = append(expiredIDs, doc.Ref.ID)
-		expiredKeys = append(expiredKeys, state.UploadKey(doc.Ref.ID))
-		if upload.Size > 0 {
-			freedBytes += upload.Size
-		}
-		return nil
-	}); err != nil {
-		return nil, 0, err
+		return expiredKeys, freedBytes, nil
 	}
 
-	if !dryRun && len(expiredIDs) > 0 {
-		db := records.NewShared(p.backend, user, 1)
-		for _, id := range expiredIDs {
+	const claimBatchSize = 200
+	db := records.NewShared(p.backend, user, 1)
+	seen := map[string]struct{}{}
+	for {
+		claimedIDs, err := db.ClaimExpiredUploads(ctx, cutoff, cutoff, claimBatchSize)
+		if err != nil {
+			return expiredKeys, freedBytes, err
+		}
+		if len(claimedIDs) == 0 {
+			break
+		}
+		progressed := false
+		for _, id := range claimedIDs {
+			if _, dup := seen[id]; dup {
+				continue
+			}
+			seen[id] = struct{}{}
+			progressed = true
+			if doc, gErr := root.Collection("uploads").Doc(id).Get(ctx); gErr == nil {
+				var upload state.Upload
+				if doc.DataTo(&upload) == nil && upload.Size > 0 {
+					freedBytes += upload.Size
+				}
+			}
 			if err := db.FinishExpiredUpload(ctx, id); err != nil {
 				return expiredKeys, freedBytes, err
 			}
+			expiredKeys = append(expiredKeys, state.UploadKey(id))
+		}
+		if !progressed || len(claimedIDs) < claimBatchSize {
+			break
 		}
 	}
 	return expiredKeys, freedBytes, nil

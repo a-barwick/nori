@@ -64,10 +64,12 @@ const (
 	UsageBillingHosted = "hosted"
 	UsageBillingBYOK   = "byok"
 	UsageBillingLocal  = "local"
+	UsageBillingSystem = "system"
 
 	UsageCategoryLLM      = "llm"
 	UsageCategorySearch   = "search"
 	UsageCategoryComputer = "computer"
+	UsageCategorySystem   = "system"
 )
 
 type Usage struct {

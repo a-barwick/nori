@@ -996,3 +996,123 @@ func TestManagerJanitorLeaderElection(t *testing.T) {
 		t.Fatalf("m2 statusCalls after failover = %d, want 1", prov2.statusCalls.Load())
 	}
 }
+
+type failingRestoreProvider struct {
+	computer.Provider
+	restoreCalls atomic.Int32
+	failRestore  error
+}
+
+func (p *failingRestoreProvider) Restore(ctx context.Context, providerID, checkpointID string) error {
+	p.restoreCalls.Add(1)
+	if p.failRestore != nil {
+		return p.failRestore
+	}
+	return p.Provider.Restore(ctx, providerID, checkpointID)
+}
+
+func TestRestoreAndResetEnforceFleetCap(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	nowFn := func() time.Time { return now }
+
+	fp := fake.New()
+	fp.Now = nowFn
+	prov := &failingRestoreProvider{Provider: fp}
+	store := computer.NewMemoryStore()
+	store.Now = nowFn
+	mgr := computer.NewManager(prov, store, computer.Config{
+		MaxFleet:       1,
+		RatePerHourUSD: 0.15,
+	})
+	mgr.SetClock(nowFn)
+
+	// Provision user-b with a baseline checkpoint, then put user-b to sleep.
+	recB, err := mgr.Ensure(ctx, "user-b")
+	if err != nil {
+		t.Fatalf("Ensure user-b: %v", err)
+	}
+	if recB.BaselineCheckpointID == "" {
+		t.Fatal("expected user-b baseline checkpoint")
+	}
+	if err := mgr.Sleep(ctx, "user-b"); err != nil {
+		t.Fatalf("Sleep user-b: %v", err)
+	}
+
+	// Fill the 1-slot fleet with user-a.
+	if _, err := mgr.Ensure(ctx, "user-a"); err != nil {
+		t.Fatalf("Ensure user-a: %v", err)
+	}
+
+	// Sleeping user-b MUST fail Restore with ErrFleetCapReached without calling provider.Restore!
+	if err := mgr.Restore(ctx, "user-b", recB.BaselineCheckpointID); !errors.Is(err, computer.ErrFleetCapReached) {
+		t.Fatalf("Restore sleeping user-b with full fleet = %v, want ErrFleetCapReached", err)
+	}
+	if prov.restoreCalls.Load() != 0 {
+		t.Fatalf("provider.Restore called %d times despite full fleet, want 0", prov.restoreCalls.Load())
+	}
+
+	// Sleeping user-b MUST also fail Reset with ErrFleetCapReached!
+	if _, err := mgr.Reset(ctx, "user-b"); !errors.Is(err, computer.ErrFleetCapReached) {
+		t.Fatalf("Reset sleeping user-b with full fleet = %v, want ErrFleetCapReached", err)
+	}
+	if prov.restoreCalls.Load() != 0 {
+		t.Fatalf("provider.Restore called %d times on Reset despite full fleet, want 0", prov.restoreCalls.Load())
+	}
+
+	// Verify user-b remained sleeping.
+	gotB, err := store.GetComputer(ctx, "user-b")
+	if err != nil || gotB.Status != computer.StatusSleeping {
+		t.Fatalf("user-b status = (%+v, %v), want sleeping", gotB, err)
+	}
+
+	// Once user-a sleeps, fleet slot opens and user-b Restore + Reset succeed.
+	if err := mgr.Sleep(ctx, "user-a"); err != nil {
+		t.Fatalf("Sleep user-a: %v", err)
+	}
+	if err := mgr.Restore(ctx, "user-b", recB.BaselineCheckpointID); err != nil {
+		t.Fatalf("Restore user-b after slot freed: %v", err)
+	}
+	if _, err := mgr.Reset(ctx, "user-b"); err != nil {
+		t.Fatalf("Reset user-b after slot freed: %v", err)
+	}
+	if prov.restoreCalls.Load() != 2 {
+		t.Fatalf("provider.Restore calls = %d, want 2", prov.restoreCalls.Load())
+	}
+}
+
+func TestStatusErrorMetersAwakeTime(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	nowFn := func() time.Time { return now }
+
+	fp := fake.New()
+	fp.Now = nowFn
+	prov := &failingRestoreProvider{Provider: fp, failRestore: errors.New("restore boom")}
+	store := computer.NewMemoryStore()
+	store.Now = nowFn
+	mgr := computer.NewManager(prov, store, computer.Config{
+		RatePerHourUSD: 0.15,
+	})
+	mgr.SetClock(nowFn)
+
+	rec, err := mgr.Ensure(ctx, "user-err")
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+
+	// Advance 1 hour of awake time, then trigger a restore failure -> StatusError.
+	now = now.Add(time.Hour)
+	if err := mgr.Restore(ctx, "user-err", rec.BaselineCheckpointID); err == nil {
+		t.Fatal("expected Restore to fail")
+	}
+
+	got, err := store.GetComputer(ctx, "user-err")
+	if err != nil || got.Status != computer.StatusError || got.AwakeSince != nil {
+		t.Fatalf("after failed Restore, rec = (%+v, %v), want status=error awake_since=nil", got, err)
+	}
+	usage := store.MeteredUsage("user-err")
+	if len(usage) != 1 || usage[0].CostUSD == nil || *usage[0].CostUSD < 0.149 || *usage[0].CostUSD > 0.151 {
+		t.Fatalf("expected 1h awake time ($0.15) metered before StatusError, got %+v", usage)
+	}
+}

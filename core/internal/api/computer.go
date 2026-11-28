@@ -20,7 +20,27 @@ import (
 const (
 	desktopWSLimitExceededCode = "desktop_ws_limit_exceeded"
 	defaultDesktopWSRetryAfter = 5
+
+	// Distinct server-initiated WebSocket close codes in the 4000-4099 application range so
+	// desktop clients stop auto-reconnecting and cannot hold Sprites awake indefinitely.
+	DesktopWSCloseMaxLifetime    websocket.StatusCode = 4001
+	DesktopWSCloseIdleSleeping   websocket.StatusCode = 4002
+	DesktopWSCloseEntitlement    websocket.StatusCode = 4003
+	DesktopWSCloseSessionRevoked websocket.StatusCode = 4004
 )
+
+func desktopCloseCodeForReason(reason computer.DesktopCloseReason) (websocket.StatusCode, string) {
+	switch reason {
+	case computer.DesktopCloseMaxLifetime:
+		return DesktopWSCloseMaxLifetime, "max session lifetime reached"
+	case computer.DesktopCloseIdleSleeping:
+		return DesktopWSCloseIdleSleeping, "computer idle or sleeping"
+	case computer.DesktopCloseEntitlement:
+		return DesktopWSCloseEntitlement, "account access or hosted credit unavailable"
+	default:
+		return DesktopWSCloseSessionRevoked, "desktop session revoked"
+	}
+}
 
 // ComputerAPI exposes /v1/computer/* management endpoints and the authenticated
 // RFB WebSocket reverse proxy for live desktop viewing and user takeover.
@@ -33,7 +53,7 @@ type ComputerAPI struct {
 	WSPollInterval time.Duration // default computer.DefaultDesktopWSPollInterval (5s)
 
 	wsMu      sync.Mutex
-	wsCancels map[string]map[uint64]func()
+	wsCancels map[string]map[uint64]func(computer.DesktopCloseReason)
 	wsNextID  uint64
 }
 
@@ -59,23 +79,29 @@ func (c *ComputerAPI) register(mux *http.ServeMux) {
 // CloseDesktopSessions immediately closes all active Desktop VNC WebSocket connections for userID
 // registered on this handler and its underlying computer.Manager.
 func (c *ComputerAPI) CloseDesktopSessions(userID string) int {
+	return c.CloseDesktopSessionsWithReason(userID, computer.DesktopCloseSessionRevoked)
+}
+
+// CloseDesktopSessionsWithReason immediately closes all active Desktop VNC WebSocket connections
+// for userID with an explicit server-initiated close reason.
+func (c *ComputerAPI) CloseDesktopSessionsWithReason(userID string, reason computer.DesktopCloseReason) int {
 	if c == nil {
 		return 0
 	}
 	closed := 0
 	if c.Manager != nil {
-		closed += c.Manager.CloseDesktopSessions(userID)
+		closed += c.Manager.CloseDesktopSessionsWithReason(userID, reason)
 	}
 	c.wsMu.Lock()
 	subs := c.wsCancels[userID]
 	delete(c.wsCancels, userID)
-	cancels := make([]func(), 0, len(subs))
+	cancels := make([]func(computer.DesktopCloseReason), 0, len(subs))
 	for _, fn := range subs {
 		cancels = append(cancels, fn)
 	}
 	c.wsMu.Unlock()
 	for _, fn := range cancels {
-		fn()
+		fn(reason)
 	}
 	if closed == 0 {
 		closed = len(cancels)
@@ -83,17 +109,17 @@ func (c *ComputerAPI) CloseDesktopSessions(userID string) int {
 	return closed
 }
 
-func (c *ComputerAPI) registerLocalWS(userID string, cancel func()) func() {
+func (c *ComputerAPI) registerLocalWS(userID string, closeFn func(computer.DesktopCloseReason)) func() {
 	c.wsMu.Lock()
 	c.wsNextID++
 	id := c.wsNextID
 	if c.wsCancels == nil {
-		c.wsCancels = map[string]map[uint64]func(){}
+		c.wsCancels = map[string]map[uint64]func(computer.DesktopCloseReason){}
 	}
 	if c.wsCancels[userID] == nil {
-		c.wsCancels[userID] = map[uint64]func(){}
+		c.wsCancels[userID] = map[uint64]func(computer.DesktopCloseReason){}
 	}
-	c.wsCancels[userID][id] = cancel
+	c.wsCancels[userID][id] = closeFn
 	c.wsMu.Unlock()
 
 	var once sync.Once
@@ -125,6 +151,9 @@ func (c *ComputerAPI) billingService() *billing.Service {
 }
 
 func (c *ComputerAPI) checkDesktopEntitlement(ctx context.Context) (billing.Entitlement, error) {
+	if c.Manager != nil && c.Manager.Billing() != nil && (c.Billing == nil || c.Billing == c.Manager.Billing()) {
+		return c.Manager.CheckDesktopAccess(ctx, c.UserID)
+	}
 	bsvc := c.billingService()
 	if bsvc == nil {
 		return billing.Entitlement{}, nil
@@ -133,12 +162,21 @@ func (c *ComputerAPI) checkDesktopEntitlement(ctx context.Context) (billing.Enti
 	if err != nil {
 		return ent, err
 	}
+	if c.Manager != nil && c.Manager.MeteringDisabled() {
+		return ent, nil
+	}
 	bal, err := bsvc.Store.CreditBalance(ctx, c.UserID)
 	if err != nil {
 		return ent, err
 	}
 	if bal.AvailableMicros <= 0 {
 		return ent, billing.ErrCreditExhausted
+	}
+	if bsvc.GlobalBudget.HostedAllMaxMicrosPerDay > 0 {
+		used, gErr := bsvc.Store.GetGlobalBudget(ctx, time.Now().UTC(), billing.ScopeHostedAll)
+		if gErr == nil && used.SpentMicros >= bsvc.GlobalBudget.HostedAllMaxMicrosPerDay {
+			return ent, billing.ErrGlobalBudgetExceeded
+		}
 	}
 	return ent, nil
 }
@@ -522,18 +560,51 @@ func (c *ComputerAPI) proxyDesktopWS(w http.ResponseWriter, r *http.Request) {
 		slog.WarnContext(r.Context(), "computer desktop client websocket accept failed", "session_id", sessionID, "err", err)
 		return
 	}
-	defer clientConn.Close(websocket.StatusNormalClosure, "")
-	clientConn.SetReadLimit(4 << 20)
-
-	// Enforce 2-hour hard maximum WebSocket session lifetime.
-	proxyCtx, cancel := context.WithTimeout(r.Context(), c.wsMaxLifetime())
+	var closeOnce sync.Once
+	var closeDone chan struct{}
+	proxyCtx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
+	// closeClient sends the WebSocket Close frame asynchronously BEFORE cancelling proxyCtx so:
+	//  1. Callers like mgr.Sleep, EndSession, and HandleEntitlementChanged never block on a slow WS close handshake.
+	//  2. coder/websocket delivers the exact 400x status code rather than aborting the read with 1006.
+	closeClient := func(code websocket.StatusCode, reason string) {
+		closeOnce.Do(func() {
+			done := make(chan struct{})
+			closeDone = done
+			go func() {
+				defer close(done)
+				_ = clientConn.Close(code, reason)
+				cancel()
+			}()
+		})
+	}
+	defer func() {
+		closeOnce.Do(func() {
+			_ = clientConn.Close(websocket.StatusNormalClosure, "")
+			cancel()
+		})
+		if closeDone != nil {
+			<-closeDone
+		}
+	}()
+	clientConn.SetReadLimit(4 << 20)
+
+	// Enforce 2-hour hard maximum WebSocket session lifetime (close code 4001).
+	lifetimeTimer := time.AfterFunc(c.wsMaxLifetime(), func() {
+		closeClient(DesktopWSCloseMaxLifetime, "max session lifetime reached")
+	})
+	defer lifetimeTimer.Stop()
+
 	// Track active WS connection on both Manager and handler so entitlement:<uid> notify
-	// can immediately close all live desktop sockets for this user.
-	unregMgr := c.Manager.RegisterDesktopSession(c.UserID, cancel)
+	// and sleep/revocation hooks can immediately close all live desktop sockets with the right code.
+	onCloseReason := func(reason computer.DesktopCloseReason) {
+		code, msg := desktopCloseCodeForReason(reason)
+		closeClient(code, msg)
+	}
+	unregMgr := c.Manager.RegisterDesktopSessionWithReason(c.UserID, onCloseReason)
 	defer unregMgr()
-	unregLocal := c.registerLocalWS(c.UserID, cancel)
+	unregLocal := c.registerLocalWS(c.UserID, onCloseReason)
 	defer unregLocal()
 
 	var currentMode atomic.Pointer[computer.SessionMode]
@@ -547,13 +618,13 @@ func (c *ComputerAPI) proxyDesktopWS(w http.ResponseWriter, r *http.Request) {
 	unsub := c.Manager.SubscribeSession(sessionID, func(ev computer.SessionEvent) {
 		currentMode.Store(&ev.Mode)
 		if ev.Revoked {
-			cancel()
+			closeClient(DesktopWSCloseSessionRevoked, "desktop session revoked")
 		}
 	})
 	defer unsub()
 
-	// Cross-replica poll fallback (5s cadence): enforces DB revocation, TTL/idle deadline,
-	// and live entitlement/suspension/credit checks.
+	// Cross-replica poll fallback (5s cadence): enforces live entitlement/suspension/credit checks (4003),
+	// computer sleeping/idle timeout (4002), and DB revocation (4004).
 	go func() {
 		ticker := time.NewTicker(c.wsPollInterval())
 		defer ticker.Stop()
@@ -562,15 +633,29 @@ func (c *ComputerAPI) proxyDesktopWS(w http.ResponseWriter, r *http.Request) {
 			case <-proxyCtx.Done():
 				return
 			case <-ticker.C:
-				modeBeforeRead := currentMode.Load()
-				cur, gErr := c.Manager.GetSession(proxyCtx, c.UserID, sessionID)
-				now := time.Now().UTC()
-				if gErr != nil || cur.EndedAt != nil || !cur.ExpiresAt.After(now) || now.Sub(cur.LastActivityAt) > idleCap {
-					cancel()
+				if _, entErr := c.checkDesktopEntitlement(proxyCtx); entErr != nil {
+					if proxyCtx.Err() == nil {
+						closeClient(DesktopWSCloseEntitlement, "account access or hosted credit unavailable")
+					}
 					return
 				}
-				if _, entErr := c.checkDesktopEntitlement(proxyCtx); entErr != nil {
-					cancel()
+				if compStatus, stErr := c.Manager.StoredComputerStatus(proxyCtx, c.UserID); stErr == nil &&
+					(compStatus == computer.StatusSleeping || compStatus == computer.StatusDeleted || compStatus == computer.StatusDeleting) {
+					closeClient(DesktopWSCloseIdleSleeping, "computer is sleeping")
+					return
+				}
+				modeBeforeRead := currentMode.Load()
+				cur, gErr := c.Manager.GetSession(proxyCtx, c.UserID, sessionID)
+				if proxyCtx.Err() != nil {
+					return
+				}
+				now := time.Now().UTC()
+				if gErr != nil || cur.EndedAt != nil {
+					closeClient(DesktopWSCloseSessionRevoked, "desktop session revoked")
+					return
+				}
+				if !cur.ExpiresAt.After(now) || now.Sub(cur.LastActivityAt) > idleCap {
+					closeClient(DesktopWSCloseIdleSleeping, "desktop session idle or expired")
 					return
 				}
 				// A local PATCH or revocation may have arrived while the store read was in flight.

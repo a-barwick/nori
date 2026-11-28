@@ -12,11 +12,12 @@ const (
 	LaneConversation = "conversation"
 	LaneScheduler    = "scheduler"
 
-	WaitNone           = ""
-	WaitQuestion       = "question"
-	WaitPaused         = "paused"
-	WaitRoutingPending = "routing_pending"
-	WaitFinishing      = "finishing"
+	WaitNone             = ""
+	WaitQuestion         = "question"
+	WaitPaused           = "paused"
+	WaitRoutingPending   = "routing_pending"
+	WaitFinishing        = "finishing"
+	WaitAccountSuspended = "account_suspended"
 
 	WakePayloadPause   = "pause"
 	WakePayloadAllTask = "t:*"

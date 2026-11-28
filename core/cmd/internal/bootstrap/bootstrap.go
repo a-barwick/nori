@@ -189,6 +189,15 @@ func Run(ctx context.Context, opts Options) {
 				}
 			}
 		}()
+	} else if runAPI {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			slog.InfoContext(runCtx, "entitlement wake listener started", "role", role)
+			if err := nori.StartEntitlementListener(runCtx); err != nil && runCtx.Err() == nil {
+				slog.WarnContext(runCtx, "entitlement wake listener stopped", "role", role, "err", err)
+			}
+		}()
 	}
 
 	if server != nil {

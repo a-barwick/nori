@@ -145,7 +145,7 @@ func (b *backend) ReadUsageCosts(ctx context.Context, collection string, start, 
 
 func effectiveUsageBilling(rawBilling, costStatus string) string {
 	switch rawBilling {
-	case "hosted", "byok", "local":
+	case "hosted", "byok", "local", "system":
 		return rawBilling
 	default:
 		if costStatus == "local" {
@@ -158,7 +158,7 @@ func effectiveUsageBilling(rawBilling, costStatus string) string {
 
 func effectiveUsageCategory(rawCategory string) string {
 	switch rawCategory {
-	case "llm", "search", "computer":
+	case "llm", "search", "computer", "system":
 		return rawCategory
 	default:
 		return "llm"
@@ -244,12 +244,16 @@ func (b *backend) ReserveUsageWithBilling(ctx context.Context, req docstore.Usag
 	incomingExposure := req.EstimatedExposureUSD
 	if effBilling == "local" || req.CostStatus == "local" {
 		incomingExposure = 0
+	} else if effBilling == "system" {
+		if incomingExposure < 0 {
+			incomingExposure = 0
+		}
 	} else if incomingExposure <= 0 {
 		incomingExposure = req.UnknownEstimateUSD
 	}
 
-	// Step 3: Rolling 1h LLM-only call cap (excludes search & computer).
-	if effCategory == "llm" && policy.MaxCallsPerHour > 0 {
+	// Step 3: Rolling 1h LLM-only call cap (excludes search, computer, and system).
+	if effCategory == "llm" && effBilling != "system" && policy.MaxCallsPerHour > 0 {
 		var llmCalls int
 		hourRFC := req.HourCutoff.UTC().Format(time.RFC3339Nano)
 		if err := tx.QueryRow(ctx, `
@@ -377,6 +381,25 @@ func (b *backend) ReserveUsageWithBilling(ctx context.Context, req docstore.Usag
 				EffectiveCategory: effCategory,
 			}, billing.ErrBYOKNotAllowed
 		}
+
+	case "system":
+		// Platform internal infrastructure calls (e.g. Jev classifier): suspension/status is already
+		// checked above, but system calls never drain user hosted credits, never block BYOK/trial
+		// users, and never count against user hourly LLM or BYOK 24h caps. Track global hosted_all
+		// only when explicitly priced (incomingExposure > 0).
+		if incomingExposure > 0 {
+			incomingMicros := billing.USDToMicrosCeil(incomingExposure)
+			if err := billing.CheckAndIncrementGlobalBudgetTx(
+				ctx, tx, now, billing.ScopeHostedAll, incomingMicros, req.HostedAllMaxMicrosPerDay, 1, 0,
+			); err != nil {
+				return docstore.UsageReserveResult{
+					Allowed:           false,
+					UsedEntitlement:   true,
+					EffectiveBilling:  effBilling,
+					EffectiveCategory: effCategory,
+				}, err
+			}
+		}
 	}
 
 	// Step 5: Persist usage document in the SAME transaction.
@@ -492,6 +515,29 @@ func (b *backend) RecordAndReconcileUsage(ctx context.Context, req docstore.Usag
 						return err
 					}
 				}
+			} else if effBilling == "system" {
+				prevMicros := billing.USDToMicrosCeil(prev.EstimatedExposureUSD)
+				var newMicros int64
+				switch {
+				case req.RequestStatus == "not_sent":
+					newMicros = 0
+				case req.CostUSD != nil && *req.CostUSD >= 0:
+					newMicros = billing.USDToMicros(*req.CostUSD)
+				default:
+					newMicros = prevMicros
+				}
+				if delta := newMicros - prevMicros; delta != 0 {
+					day := prev.CreatedAt
+					if day.IsZero() {
+						day = req.CreatedAt
+					}
+					if day.IsZero() {
+						day = time.Now().UTC()
+					}
+					if err := billing.ReconcileGlobalBudgetTx(ctx, tx, day, billing.ScopeHostedAll, delta); err != nil {
+						return err
+					}
+				}
 			}
 		}
 	} else if !hasPrev && req.RequestStatus != "pending" && req.RequestStatus != "not_sent" {
@@ -520,6 +566,17 @@ func (b *backend) RecordAndReconcileUsage(ctx context.Context, req docstore.Usag
 					return err
 				}
 				if err := billing.CheckAndIncrementGlobalBudgetTx(ctx, tx, day, hostedBudgetScopeForCategory(cat), actualMicros, 0, 1, 0); err != nil {
+					return err
+				}
+			}
+		} else if effBilling == "system" && req.CostUSD != nil && *req.CostUSD > 0 {
+			actualMicros := billing.USDToMicros(*req.CostUSD)
+			if actualMicros > 0 {
+				day := req.CreatedAt
+				if day.IsZero() {
+					day = time.Now().UTC()
+				}
+				if err := billing.CheckAndIncrementGlobalBudgetTx(ctx, tx, day, billing.ScopeHostedAll, actualMicros, 0, 1, 0); err != nil {
 					return err
 				}
 			}

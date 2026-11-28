@@ -17,6 +17,7 @@ import (
 	"nori/internal/connections"
 	"nori/internal/conversation"
 	"nori/internal/modelkeys"
+	"nori/internal/modelprofiles"
 	"nori/internal/permissions"
 	"nori/internal/scheduler"
 	"nori/internal/secret"
@@ -298,7 +299,7 @@ func TestCostsServiceKeysCapabilitiesTierCapsAndLibraryPurge(t *testing.T) {
 		t.Fatalf("short interval routine = %d %s, want 403 %s", rec.Code, rec.Body.String(), codeRoutineIntervalShort)
 	}
 
-	// 7. Library delete purges underlying blob and decrements nori_user_storage.
+	// 7. Library delete purges underlying blob without decrementing uploads-only nori_user_storage.
 	runID := uuid.NewString()
 	if _, err := tasks.AcceptBatch(ctx, []state.Command{{ID: runID, RunID: runID, Kind: state.CommandStart, Text: "make report"}}, nil); err != nil {
 		t.Fatalf("AcceptBatch start run: %v", err)
@@ -308,7 +309,8 @@ func TestCostsServiceKeysCapabilitiesTierCapsAndLibraryPurge(t *testing.T) {
 	if err := store.PutFile(ctx, state.ResultKey(resID), "text/plain", fileBytes); err != nil {
 		t.Fatalf("PutFile: %v", err)
 	}
-	if err := records.SetUserStorageBytes(ctx, backend, u, int64(len(fileBytes))); err != nil {
+	const priorUploadBytes = int64(1234)
+	if err := records.SetUserStorageBytes(ctx, backend, u, priorUploadBytes); err != nil {
 		t.Fatalf("SetUserStorageBytes: %v", err)
 	}
 	if _, err := db.SaveResult(ctx, state.Result{
@@ -334,8 +336,8 @@ func TestCostsServiceKeysCapabilitiesTierCapsAndLibraryPurge(t *testing.T) {
 		t.Fatalf("expected library file blob to be purged on delete")
 	}
 	afterBytes, err := records.GetUserStorageBytes(ctx, backend, u)
-	if err != nil || afterBytes != 0 {
-		t.Fatalf("storage bytes after library delete = %d (err=%v), want 0", afterBytes, err)
+	if err != nil || afterBytes != priorUploadBytes {
+		t.Fatalf("storage bytes after library delete = %d (err=%v), want unchanged %d (uploads-only quota)", afterBytes, err, priorUploadBytes)
 	}
 
 	// 8. Expired subscription allows GET /v1/costs (read-only) but blocks POST message with 402 subscription_inactive.
@@ -356,5 +358,102 @@ func TestCostsServiceKeysCapabilitiesTierCapsAndLibraryPurge(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusPaymentRequired || !strings.Contains(rec.Body.String(), billing.CodeSubscriptionInactive) {
 		t.Fatalf("expired POST message = %d %s, want 402 subscription_inactive", rec.Code, rec.Body.String())
+	}
+}
+
+func TestChatSendReturns402CreditExhaustedForHostedAndAllowsBYOK(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 27, 14, 0, 0, 0, time.UTC)
+	nowFn := func() time.Time { return now }
+	backend := memstore.New(memstore.WithClock(nowFn))
+	t.Cleanup(func() { _ = backend.Close() })
+
+	dir := records.NewSharedUsers(backend)
+	dir.Now = nowFn
+	u := users.User{ID: "33333333-3333-4333-8333-333333333311", Email: "chat-credit@example.com", TimeZone: "UTC"}
+	if err := dir.Create(ctx, u); err != nil {
+		t.Fatalf("Create user: %v", err)
+	}
+
+	db := records.NewShared(backend, u, 5.0)
+	db.Now = nowFn
+	db.EnforceBilling = true
+	// Exhaust trial $5.00 hosted credit completely.
+	spent := 5.0
+	if err := db.RecordUsage(ctx, state.Usage{
+		ID: "spent-all", Provider: "gateway", Model: "google/gemini-4-neon",
+		Billing: state.UsageBillingHosted, Category: state.UsageCategoryLLM,
+		CostUSD: &spent, CostStatus: "provider", RequestStatus: "received", CreatedAt: now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("RecordUsage: %v", err)
+	}
+
+	store := state.Compose(db, memstore.NewArtifacts())
+	tasks := &conversation.Tasks{Store: store, Now: nowFn}
+	runner := conversation.New(&stubReplyModel{
+		fn: func(context.Context, conversation.ReplyRequest) (conversation.Reply, error) {
+			return conversation.Reply{Text: "ok"}, nil
+		},
+	}, nil, nil, tasks)
+	runner.Now = nowFn
+
+	httpOK := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"data":[]}`)),
+		}, nil
+	})}
+	modelKeys := &modelkeys.Service{Store: newMemModelKeyStore(), Now: nowFn, HTTPClient: httpOK, HostedAvailable: true}
+	account := &modelprofiles.Account{Keys: modelKeys, Store: db, HostedEnabled: true}
+	billingSvc := billing.NewService(backend, false, billing.GlobalBudgetConfig{})
+	assistant := &Assistant{
+		UserID:      u.ID,
+		Store:       store,
+		ModelKeys:   modelKeys,
+		Models:      account,
+		AccountBYOK: true,
+		Billing:     billingSvc,
+		UsageNow:    nowFn,
+	}
+	h := Handler(Deps{Runner: runner, Tasks: tasks, Assistant: assistant})
+
+	// 1. Default hosted chat model with $0 balance -> immediate 402 credit_exhausted on send!
+	rawMsg, _ := json.Marshal(map[string]any{"id": uuid.NewString(), "text": "hello hosted"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/conversations/assistant/messages", bytes.NewReader(rawMsg))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusPaymentRequired || !strings.Contains(rec.Body.String(), billing.CodeCreditExhausted) {
+		t.Fatalf("hosted exhausted POST message = %d %s, want 402 credit_exhausted", rec.Code, rec.Body.String())
+	}
+
+	// 2. Switch user to BYOK tier ($0 hosted credit) and pin a BYOK chat model -> POST message succeeds (202)!
+	if _, err := billingSvc.SetTier(ctx, u.ID, billing.TierBYOK, billing.SetTierOptions{}); err != nil {
+		t.Fatalf("SetTier byok: %v", err)
+	}
+	if _, err := modelKeys.Set(ctx, "openai", "sk-test-byok-key-1234567890"); err != nil {
+		t.Fatalf("set openai key: %v", err)
+	}
+	view, err := account.View(ctx)
+	if err != nil {
+		t.Fatalf("account.View: %v", err)
+	}
+	if _, err := account.Save(ctx, state.ModelSelection{
+		ChatProfileID: "openai-sol",
+		ChatReasoning: "low",
+		TaskProfileID: "openai-sol",
+		TaskReasoning: "low",
+	}, view.Revision, nil); err != nil {
+		t.Fatalf("account.Save BYOK profile: %v", err)
+	}
+
+	rawBYOK, _ := json.Marshal(map[string]any{"id": uuid.NewString(), "text": "hello byok"})
+	reqBYOK := httptest.NewRequest(http.MethodPost, "/v1/conversations/assistant/messages", bytes.NewReader(rawBYOK))
+	reqBYOK.Header.Set("Content-Type", "application/json")
+	recBYOK := httptest.NewRecorder()
+	h.ServeHTTP(recBYOK, reqBYOK)
+	if recBYOK.Code != http.StatusAccepted {
+		t.Fatalf("BYOK POST message with $0 hosted credit = %d %s, want 202", recBYOK.Code, recBYOK.Body.String())
 	}
 }

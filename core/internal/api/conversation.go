@@ -103,9 +103,21 @@ func (s *server) turn(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if s.Assistant != nil {
+		if _, _, err := s.Assistant.checkActiveAccess(r.Context()); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
 	sel, ok := s.resolveModelSelection(w, input.ModelSelection)
 	if !ok {
 		return
+	}
+	if s.Assistant != nil {
+		if err := s.Assistant.checkChatHostedCredit(r.Context(), sel, s.ModelProvider); err != nil {
+			writeError(w, err)
+			return
+		}
 	}
 	input.ModelSelection = sel
 	session, err := s.Runner.HandleInput(r.Context(), input)
@@ -150,6 +162,16 @@ func (s *server) retry(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		writeJSON(w, 400, map[string]string{"error": "Invalid turn or message ID."})
 		return
+	}
+	if s.Assistant != nil {
+		if _, _, err := s.Assistant.checkActiveAccess(r.Context()); err != nil {
+			writeError(w, err)
+			return
+		}
+		if err := s.Assistant.checkChatHostedCredit(r.Context(), nil, s.ModelProvider); err != nil {
+			writeError(w, err)
+			return
+		}
 	}
 	session, err := s.Runner.Retry(r.Context(), turnID, messageID)
 	if err != nil {

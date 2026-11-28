@@ -129,6 +129,16 @@ type inflightStatus struct {
 	err  error
 }
 
+// DesktopCloseReason identifies why the server initiated closing an active Desktop VNC WebSocket.
+type DesktopCloseReason int
+
+const (
+	DesktopCloseSessionRevoked DesktopCloseReason = iota // WS close 4004
+	DesktopCloseMaxLifetime                              // WS close 4001
+	DesktopCloseIdleSleeping                             // WS close 4002
+	DesktopCloseEntitlement                              // WS close 4003
+)
+
 // Manager coordinates lifecycle, policy, cost attribution, sessions, file links,
 // awake-time metering, idle auto-sleep, and account-deletion teardown across any computer.Provider.
 type Manager struct {
@@ -150,7 +160,7 @@ type Manager struct {
 	statusInflight map[string]*inflightStatus
 	statusGen      map[string]uint64
 	listeners      map[string]map[uint64]func(SessionEvent)
-	desktopCancels map[string]map[uint64]func()
+	desktopCancels map[string]map[uint64]func(DesktopCloseReason)
 	nextSubID      uint64
 }
 
@@ -171,7 +181,7 @@ func NewManager(provider Provider, store Store, cfg Config) *Manager {
 		statusInflight: map[string]*inflightStatus{},
 		statusGen:      map[string]uint64{},
 		listeners:      map[string]map[uint64]func(SessionEvent){},
-		desktopCancels: map[string]map[uint64]func(){},
+		desktopCancels: map[string]map[uint64]func(DesktopCloseReason){},
 	}
 }
 
@@ -300,6 +310,40 @@ func (m *Manager) effectiveRatePerHour() float64 {
 	return m.cfg.RatePerHourUSD
 }
 
+// MeteringDisabled reports whether compute metering / credit balance gating is disabled on this manager.
+func (m *Manager) MeteringDisabled() bool {
+	return m != nil && m.cfg.DisableMetering
+}
+
+// StoredComputerStatus returns the persisted computer lifecycle status for userID without contacting the provider.
+func (m *Manager) StoredComputerStatus(ctx context.Context, userID string) (Status, error) {
+	if !m.Enabled() {
+		return "", ErrDisabled
+	}
+	rec, err := m.store.GetComputer(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	return rec.Status, nil
+}
+
+func (m *Manager) markError(ctx context.Context, userID string) {
+	if !m.Enabled() {
+		return
+	}
+	res, err := m.store.MeterAwakeTime(ctx, MeterAwakeRequest{
+		UserID:           userID,
+		Now:              m.now(),
+		RatePerHourUSD:   m.effectiveRatePerHour(),
+		TransitionStatus: StatusError,
+	})
+	if err == nil {
+		emitMeteredUsage(ctx, userID, res)
+		return
+	}
+	_ = m.store.UpdateComputerStatus(ctx, userID, StatusError, nil)
+}
+
 func (m *Manager) SessionIdleCap() time.Duration {
 	if m == nil {
 		return DefaultSessionIdleCap
@@ -313,16 +357,25 @@ func (m *Manager) RegisterDesktopSession(userID string, cancel func()) func() {
 	if m == nil || cancel == nil {
 		return func() {}
 	}
+	return m.RegisterDesktopSessionWithReason(userID, func(DesktopCloseReason) { cancel() })
+}
+
+// RegisterDesktopSessionWithReason tracks an active Desktop VNC WebSocket close callback for userID
+// that receives the server-initiated DesktopCloseReason so the WS proxy can send the matching 400x close code.
+func (m *Manager) RegisterDesktopSessionWithReason(userID string, closeFn func(DesktopCloseReason)) func() {
+	if m == nil || closeFn == nil {
+		return func() {}
+	}
 	m.mu.Lock()
 	m.nextSubID++
 	id := m.nextSubID
 	if m.desktopCancels == nil {
-		m.desktopCancels = map[string]map[uint64]func(){}
+		m.desktopCancels = map[string]map[uint64]func(DesktopCloseReason){}
 	}
 	if m.desktopCancels[userID] == nil {
-		m.desktopCancels[userID] = map[uint64]func(){}
+		m.desktopCancels[userID] = map[uint64]func(DesktopCloseReason){}
 	}
-	m.desktopCancels[userID][id] = cancel
+	m.desktopCancels[userID][id] = closeFn
 	m.mu.Unlock()
 
 	var once sync.Once
@@ -343,19 +396,25 @@ func (m *Manager) RegisterDesktopSession(userID string, cancel func()) func() {
 // CloseDesktopSessions immediately closes all active Desktop VNC WebSocket connections for userID
 // and returns the number of connections signalled. Safe to call from entitlement:<uid> notify handlers.
 func (m *Manager) CloseDesktopSessions(userID string) int {
+	return m.CloseDesktopSessionsWithReason(userID, DesktopCloseSessionRevoked)
+}
+
+// CloseDesktopSessionsWithReason immediately closes all active Desktop VNC WebSocket connections
+// for userID with an explicit server-initiated close reason.
+func (m *Manager) CloseDesktopSessionsWithReason(userID string, reason DesktopCloseReason) int {
 	if m == nil {
 		return 0
 	}
 	m.mu.Lock()
 	subs := m.desktopCancels[userID]
 	delete(m.desktopCancels, userID)
-	cancels := make([]func(), 0, len(subs))
+	cancels := make([]func(DesktopCloseReason), 0, len(subs))
 	for _, fn := range subs {
 		cancels = append(cancels, fn)
 	}
 	m.mu.Unlock()
 	for _, fn := range cancels {
-		fn()
+		fn(reason)
 	}
 	return len(cancels)
 }
@@ -754,14 +813,14 @@ func (m *Manager) Ensure(ctx context.Context, userID string) (ComputerRecord, er
 	inst, err := m.provider.Ensure(ctx, spec)
 	if err != nil {
 		m.invalidateEnsure(userID)
-		_ = m.store.UpdateComputerStatus(ctx, userID, StatusError, nil)
+		m.markError(ctx, userID)
 		return ComputerRecord{}, err
 	}
 
 	// Enforce baseline SSRF egress block on every ensure/provision.
 	if err := m.provider.SetNetworkPolicy(ctx, inst.ProviderID, DefaultNetworkPolicy()); err != nil {
 		m.invalidateEnsure(userID)
-		_ = m.store.UpdateComputerStatus(ctx, userID, StatusError, nil)
+		m.markError(ctx, userID)
 		return ComputerRecord{}, fmt.Errorf("apply computer network policy: %w", err)
 	}
 
@@ -1105,7 +1164,7 @@ func (m *Manager) Sleep(ctx context.Context, userID string) error {
 	lock := m.userLock(userID)
 	lock.Lock()
 	defer lock.Unlock()
-	return m.sleepLocked(ctx, userID, false)
+	return m.sleepLocked(ctx, userID, false, DesktopCloseIdleSleeping)
 }
 
 // ForceSleepUser immediately terminates open Desktop VNC sessions, revokes session tokens,
@@ -1116,21 +1175,21 @@ func (m *Manager) ForceSleepUser(ctx context.Context, userID string) error {
 	if !m.Enabled() {
 		return nil
 	}
-	m.CloseDesktopSessions(userID)
+	m.CloseDesktopSessionsWithReason(userID, DesktopCloseEntitlement)
 	lock := m.userLock(userID)
 	lock.Lock()
 	defer lock.Unlock()
-	err := m.sleepLocked(ctx, userID, true)
+	err := m.sleepLocked(ctx, userID, true, DesktopCloseEntitlement)
 	if errors.Is(err, ErrNotProvisioned) || errors.Is(err, ErrNotFound) {
 		return nil
 	}
 	return err
 }
 
-func (m *Manager) sleepLocked(ctx context.Context, userID string, force bool) error {
+func (m *Manager) sleepLocked(ctx context.Context, userID string, force bool, closeReason DesktopCloseReason) error {
 	m.invalidateEnsure(userID)
 	m.invalidateStatus(userID)
-	m.CloseDesktopSessions(userID)
+	m.CloseDesktopSessionsWithReason(userID, closeReason)
 	m.notifyUserSessionsRevoked(ctx, userID)
 	_ = m.store.RevokeUserSessions(ctx, userID, m.now())
 
@@ -1411,7 +1470,7 @@ func (m *Manager) reconcileAndMeterComputer(ctx context.Context, listed Computer
 			meterEnd := chooseProviderStopTime(cur, live.LastActiveAt, now)
 			m.invalidateEnsure(cur.UserID)
 			m.invalidateStatus(cur.UserID)
-			m.CloseDesktopSessions(cur.UserID)
+			m.CloseDesktopSessionsWithReason(cur.UserID, DesktopCloseIdleSleeping)
 			m.notifyUserSessionsRevoked(ctx, cur.UserID)
 			_ = m.store.RevokeUserSessions(ctx, cur.UserID, now)
 			res, mErr := m.store.MeterAwakeTime(ctx, MeterAwakeRequest{
@@ -1432,7 +1491,7 @@ func (m *Manager) reconcileAndMeterComputer(ctx context.Context, listed Computer
 				meterEnd := chooseProviderStopTime(cur, live.LastActiveAt, now)
 				m.invalidateEnsure(cur.UserID)
 				m.invalidateStatus(cur.UserID)
-				m.CloseDesktopSessions(cur.UserID)
+				m.CloseDesktopSessionsWithReason(cur.UserID, DesktopCloseIdleSleeping)
 				m.notifyUserSessionsRevoked(ctx, cur.UserID)
 				_ = m.store.RevokeUserSessions(ctx, cur.UserID, now)
 				res, mErr := m.store.MeterAwakeTime(ctx, MeterAwakeRequest{
@@ -1453,14 +1512,14 @@ func (m *Manager) reconcileAndMeterComputer(ctx context.Context, listed Computer
 	// 2. Reap awake Sprites for suspended, subscription_inactive, or credit_exhausted users.
 	if reap, reason := m.shouldReapUser(ctx, cur.UserID, now); reap {
 		slog.InfoContext(ctx, "reaping awake computer due to entitlement state", "user_id", cur.UserID, "computer_id", cur.ComputerID, "reason", reason)
-		return m.sleepLocked(ctx, cur.UserID, true)
+		return m.sleepLocked(ctx, cur.UserID, true, DesktopCloseEntitlement)
 	}
 
 	// 3. Auto-sleep Sprites idle for >= IdleAutoSleep (default 15m).
 	lastAct := lastActivityTime(cur)
 	if !lastAct.IsZero() && now.Sub(lastAct) >= m.cfg.IdleAutoSleep {
 		slog.InfoContext(ctx, "auto-sleeping idle computer", "user_id", cur.UserID, "computer_id", cur.ComputerID, "idle", now.Sub(lastAct).Round(time.Second))
-		return m.sleepLocked(ctx, cur.UserID, true)
+		return m.sleepLocked(ctx, cur.UserID, true, DesktopCloseIdleSleeping)
 	}
 
 	// 4. Periodic single-tx awake-time metering for active Sprites.
@@ -1478,7 +1537,7 @@ func (m *Manager) reconcileAndMeterComputer(ctx context.Context, listed Computer
 	if res.Metered {
 		if reap, reason := m.shouldReapUser(ctx, cur.UserID, now); reap {
 			slog.InfoContext(ctx, "sleeping computer after metering exhausted balance", "user_id", cur.UserID, "computer_id", cur.ComputerID, "reason", reason)
-			return m.sleepLocked(ctx, cur.UserID, true)
+			return m.sleepLocked(ctx, cur.UserID, true, DesktopCloseEntitlement)
 		}
 	}
 	return nil
@@ -1580,18 +1639,23 @@ func (m *Manager) Restore(ctx context.Context, userID, checkpointID string) erro
 	if target == "" {
 		return errors.New("no checkpoint available to restore")
 	}
+	if !isAwakeStatus(rec.Status) {
+		if capErr := m.store.CheckFleetCapAndMarkWaking(ctx, userID, m.effectiveMaxFleet(), m.now()); capErr != nil {
+			return capErr
+		}
+	}
 	m.invalidateEnsure(userID)
 	m.invalidateStatus(userID)
-	m.CloseDesktopSessions(userID)
+	m.CloseDesktopSessionsWithReason(userID, DesktopCloseSessionRevoked)
 	m.notifyUserSessionsRevoked(ctx, userID)
 	_ = m.store.RevokeUserSessions(ctx, userID, m.now())
 	_ = m.store.UpdateComputerStatus(ctx, userID, StatusResetting, nil)
 	if err := m.provider.Restore(ctx, rec.ProviderID, target); err != nil {
-		_ = m.store.UpdateComputerStatus(ctx, userID, StatusError, nil)
+		m.markError(ctx, userID)
 		return err
 	}
 	if err := m.provider.SetNetworkPolicy(ctx, rec.ProviderID, DefaultNetworkPolicy()); err != nil {
-		_ = m.store.UpdateComputerStatus(ctx, userID, StatusError, nil)
+		m.markError(ctx, userID)
 		return err
 	}
 	// Re-apply purged-file tombstones so restoring an older checkpoint cannot resurrect forgotten/deleted files.
@@ -1628,11 +1692,11 @@ func (m *Manager) Reset(ctx context.Context, userID string) (StatusView, error) 
 	lock.Lock()
 	m.invalidateEnsure(userID)
 	m.invalidateStatus(userID)
-	m.CloseDesktopSessions(userID)
+	m.CloseDesktopSessionsWithReason(userID, DesktopCloseSessionRevoked)
 	_ = m.store.RevokeUserSessions(ctx, userID, m.now())
 	_ = m.store.UpdateComputerStatus(ctx, userID, StatusResetting, nil)
 	if err := m.provider.Destroy(ctx, rec.ProviderID); err != nil && !errors.Is(err, ErrNotFound) {
-		_ = m.store.UpdateComputerStatus(ctx, userID, StatusError, nil)
+		m.markError(ctx, userID)
 		lock.Unlock()
 		return StatusView{}, err
 	}

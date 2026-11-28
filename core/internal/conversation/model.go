@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"nori/internal/billing"
 	"nori/internal/state"
 	"nori/internal/usage"
 )
@@ -64,8 +65,18 @@ func modelMessage(value any) json.RawMessage {
 	return data
 }
 
+func isBillingError(err error) bool {
+	return errors.Is(err, billing.ErrCreditExhausted) ||
+		errors.Is(err, billing.ErrSubscriptionInactive) ||
+		errors.Is(err, billing.ErrAccountSuspended) ||
+		errors.Is(err, billing.ErrBYOKNotAllowed) ||
+		errors.Is(err, billing.ErrGlobalBudgetExceeded) ||
+		errors.Is(err, billing.ErrEntitlementMissing)
+}
+
 func usageRecordError(err error) error {
 	if errors.Is(err, usage.ErrUserQuotaExceeded) ||
+		isBillingError(err) ||
 		errors.Is(err, state.ErrConversationStale) ||
 		errors.Is(err, state.ErrConversationBusy) ||
 		errors.Is(err, context.Canceled) ||
