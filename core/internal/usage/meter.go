@@ -164,7 +164,7 @@ func WithBillingAdmission(local Meter, fallbackCallsPerHour int, fallbackUSDPerD
 			}
 			return nil
 		}
-		if u.CostUSD != nil || u.RequestStatus == "not_sent" || u.RequestStatus == "stale_aborted" {
+		if u.CostUSD != nil || u.RequestStatus == "not_sent" {
 			u.EstimatedExposureUSD = 0
 		}
 		return local.RecordUsage(ctx, u)

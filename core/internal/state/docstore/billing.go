@@ -38,14 +38,16 @@ type UsageReserveResult struct {
 }
 
 type UsageReconcileRequest struct {
-	Collection    string
-	UsageID       string
-	UsageFields   map[string]any
-	Billing       string
-	Category      string
-	CostUSD       *float64
-	RequestStatus string
-	CreatedAt     time.Time
+	Collection           string
+	UsageID              string
+	UsageFields          map[string]any
+	Billing              string
+	Category             string
+	CostStatus           string
+	EstimatedExposureUSD float64
+	CostUSD              *float64
+	RequestStatus        string
+	CreatedAt            time.Time
 }
 
 // AtomicBillingReserver is implemented by backends (Postgres, memstore) that support

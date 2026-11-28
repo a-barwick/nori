@@ -216,3 +216,58 @@ func TestMemstoreBillingTrialCapAndSuspensionAndWakes(t *testing.T) {
 		t.Fatalf("restored entitlement mismatch: %+v, %v", restoredEnt, err)
 	}
 }
+
+func TestMemstoreDirectFinalHostedBudgetAndStaleAbortedNoRefund(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 27, 15, 0, 0, 0, time.UTC)
+	b := memstore.New(memstore.WithClock(func() time.Time { return now }))
+
+	user := users.User{ID: uuid.NewString(), Email: "direct@example.com", TimeZone: "UTC"}
+	dir := records.NewSharedUsers(b)
+	if err := dir.Create(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	db := records.NewShared(b, user, 10)
+	db.Now = func() time.Time { return now }
+	db.EnforceBilling = true
+
+	// 1. Direct-final hosted Sprites usage (no prior pending row) must increment global budget!
+	spritesCost := 0.05
+	if err := db.RecordUsage(ctx, state.Usage{
+		ID: "sprite-tick-1", Provider: "sprites", Model: "sprites-vm",
+		Billing: state.UsageBillingHosted, Category: state.UsageCategoryComputer,
+		CostUSD: &spritesCost, CostStatus: "calculated", RequestStatus: "received", CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("direct-final RecordUsage: %v", err)
+	}
+	allRow, _ := b.GetGlobalBudget(ctx, now, billing.ScopeHostedAll)
+	sprRow, _ := b.GetGlobalBudget(ctx, now, billing.ScopeHostedSprites)
+	if allRow.SpentMicros != 50_000 || sprRow.SpentMicros != 50_000 {
+		t.Fatalf("direct-final global budget mismatch: all=%+v sprites=%+v", allRow, sprRow)
+	}
+
+	// 2. Reserve pending $0.03 then finalize as stale_aborted -> NO refund in global budget or user balance!
+	meter := usage.WithBillingAdmission(db, 0, 0, func() time.Time { return now })
+	if err := meter.RecordUsage(ctx, state.Usage{
+		ID: "aborted-call", Provider: "gateway", Model: "google/gemini-4-neon",
+		Billing: state.UsageBillingHosted, Category: state.UsageCategoryLLM,
+		EstimatedExposureUSD: 0.03, RequestStatus: "pending", CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("reserve pending: %v", err)
+	}
+	if err := meter.RecordUsage(ctx, state.Usage{
+		ID: "aborted-call", Provider: "gateway", Model: "google/gemini-4-neon",
+		Billing: state.UsageBillingHosted, Category: state.UsageCategoryLLM,
+		EstimatedExposureUSD: 0.03, RequestStatus: "stale_aborted", CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("finalize stale_aborted: %v", err)
+	}
+	allAfter, _ := b.GetGlobalBudget(ctx, now, billing.ScopeHostedAll)
+	if allAfter.SpentMicros != 80_000 {
+		t.Fatalf("stale_aborted refunded global budget! got %+v, want 80_000", allAfter)
+	}
+	bal, err := b.CreditBalance(ctx, user.ID)
+	if err != nil || bal.AvailableMicros != 4_920_000 {
+		t.Fatalf("stale_aborted refunded user credit! got %+v, want 4_920_000", bal)
+	}
+}

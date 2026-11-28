@@ -179,14 +179,16 @@ func (d *Database) RecordUsage(ctx context.Context, usage state.Usage) error {
 		return err
 	}
 	reconciled, err := d.db.RecordAndReconcileUsage(ctx, docstore.UsageReconcileRequest{
-		Collection:    d.usage().Path,
-		UsageID:       usage.ID,
-		UsageFields:   fields,
-		Billing:       usage.Billing,
-		Category:      usage.Category,
-		CostUSD:       usage.CostUSD,
-		RequestStatus: usage.RequestStatus,
-		CreatedAt:     usage.CreatedAt,
+		Collection:           d.usage().Path,
+		UsageID:              usage.ID,
+		UsageFields:          fields,
+		Billing:              usage.Billing,
+		Category:             usage.Category,
+		CostStatus:           usage.CostStatus,
+		EstimatedExposureUSD: usage.EstimatedExposureUSD,
+		CostUSD:              usage.CostUSD,
+		RequestStatus:        usage.RequestStatus,
+		CreatedAt:            usage.CreatedAt,
 	})
 	if err != nil {
 		return err
@@ -196,7 +198,7 @@ func (d *Database) RecordUsage(ctx context.Context, usage state.Usage) error {
 			return err
 		}
 	}
-	if usage.RequestStatus != "pending" && usage.RequestStatus != "not_sent" && usage.RequestStatus != "stale_aborted" {
+	if usage.RequestStatus != "pending" && usage.RequestStatus != "not_sent" {
 		billingMode := usage.Billing
 		if billingMode == "" {
 			if usage.CostStatus == "local" {

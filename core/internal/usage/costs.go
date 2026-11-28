@@ -71,7 +71,7 @@ func ReadCostReport(
 	}
 	models := make([]map[string]*CostAmount, len(buckets))
 	err := read(ctx, report.StartAt, now.Add(time.Nanosecond), func(row docstore.UsageCostRecord) {
-		if row.RequestStatus == "not_sent" || row.RequestStatus == "stale_aborted" {
+		if row.RequestStatus == "not_sent" {
 			return
 		}
 		i := sort.Search(len(buckets), func(i int) bool { return row.CreatedAt.Before(buckets[i].EndAt) })

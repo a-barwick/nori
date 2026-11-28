@@ -53,6 +53,13 @@ type billingState struct {
 	grants       map[string]billing.CreditGrant
 	globalBudget map[billingBudgetKey]billing.GlobalBudgetUsage
 	trialMaxDay  int
+	allowSandbox bool
+}
+
+func (b *Backend) SetAllowSandboxBilling(allow bool) {
+	b.mu.Lock()
+	b.billing.allowSandbox = allow
+	b.mu.Unlock()
 }
 
 func newBillingState() billingState {
@@ -296,9 +303,23 @@ func (b *Backend) SetTier(ctx context.Context, userID string, tier billing.Tier,
 		v := *opts.CreditOverrideMicros
 		ent.CreditOverrideMicros = &v
 	}
-	ent.ProviderUpdatedAt = now
+	if !exists {
+		ent.ProviderUpdatedAt = time.Time{}
+	}
 	ent.UpdatedAt = now
 	b.billing.entitlements[userID] = ent
+
+	// Close any prior active period grants at pStart so overlapping active grants never stack free credit.
+	for id, g := range b.billing.grants {
+		if g.UserID == userID && g.Kind == billing.GrantPeriod && (g.ValidUntil == nil || g.ValidUntil.UTC().After(pStart)) {
+			closed := pStart
+			if g.ValidFrom.UTC().After(closed) {
+				closed = g.ValidFrom.UTC()
+			}
+			g.ValidUntil = &closed
+			b.billing.grants[id] = g
+		}
+	}
 
 	if !opts.SkipGrant {
 		if tier == billing.TierTrial {
@@ -319,6 +340,9 @@ func (b *Backend) SetTier(ctx context.Context, userID string, tier billing.Tier,
 		} else if tier == billing.TierStandard || tier == billing.TierPower {
 			if amt := ent.EffectiveHostedCreditGrantMicros(); amt > 0 {
 				grantID := billing.ManualPeriodGrantID(userID, pStart)
+				if _, exists := b.billing.grants[grantID]; exists {
+					grantID = billing.ManualSetTierGrantID(userID, tier, pStart)
+				}
 				if _, ok := b.billing.grants[grantID]; !ok {
 					var vu *time.Time
 					if ent.PeriodEnd != nil {
@@ -388,8 +412,9 @@ func (b *Backend) AddCreditGrant(ctx context.Context, grant billing.CreditGrant)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if strings.TrimSpace(grant.ID) == "" || strings.TrimSpace(grant.UserID) == "" || !billing.ValidGrantKind(grant.Kind) {
-		return billing.ErrInvalidChange
+	isExternal := grant.SourceProvider == billing.ProviderStripe || grant.SourceProvider == billing.ProviderAppleIAP
+	if err := billing.ValidateCreditGrant(grant, isExternal); err != nil {
+		return err
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -437,7 +462,10 @@ func (b *Backend) ApplyEvent(ctx context.Context, change billing.Change) (billin
 	if err := ctx.Err(); err != nil {
 		return billing.Entitlement{}, err
 	}
-	if err := billing.ValidateChange(change, false); err != nil {
+	b.mu.Lock()
+	allowSandbox := b.billing.allowSandbox
+	if err := billing.ValidateChange(change, !allowSandbox); err != nil {
+		b.mu.Unlock()
 		return billing.Entitlement{}, err
 	}
 	env := change.Environment
@@ -445,7 +473,6 @@ func (b *Backend) ApplyEvent(ctx context.Context, change billing.Change) (billin
 		env = billing.EnvProduction
 	}
 
-	b.mu.Lock()
 	userID := strings.TrimSpace(change.UserID)
 	if userID == "" && change.AppAccountToken != "" {
 		userID = b.billing.byAppToken[strings.TrimSpace(change.AppAccountToken)]
@@ -469,9 +496,15 @@ func (b *Backend) ApplyEvent(ctx context.Context, change billing.Change) (billin
 	now := b.now()
 	if change.Subscription != nil {
 		sk := billingSubKey{provider: change.Provider, env: env, extSubID: change.Subscription.ExternalSubscriptionID}
-		if existing, found := b.billing.subs[sk]; found && change.ProviderUpdatedAt.UTC().Before(existing.ProviderUpdatedAt.UTC()) {
-			b.mu.Unlock()
-			return billing.Entitlement{}, billing.ErrStaleEvent
+		if existing, found := b.billing.subs[sk]; found {
+			if existing.UserID != userID {
+				b.mu.Unlock()
+				return billing.Entitlement{}, billing.ErrSubscriptionConflict
+			}
+			if change.ProviderUpdatedAt.UTC().Before(existing.ProviderUpdatedAt.UTC()) {
+				b.mu.Unlock()
+				return billing.Entitlement{}, billing.ErrStaleEvent
+			}
 		}
 		sub := billing.Subscription{
 			ID:                     uuid.NewString(),
@@ -756,7 +789,7 @@ func (b *Backend) ReserveUsageWithBilling(ctx context.Context, req docstore.Usag
 			if json.Unmarshal(raw, &u) != nil {
 				continue
 			}
-			if u.RequestStatus == "not_sent" || u.RequestStatus == "stale_aborted" {
+			if u.RequestStatus == "not_sent" {
 				continue
 			}
 			if u.Category != "" && u.Category != "llm" {
@@ -826,7 +859,10 @@ func (b *Backend) ReserveUsageWithBilling(ctx context.Context, req docstore.Usag
 			}, billing.ErrBYOKNotAllowed
 		}
 		if policy.MaxBYOKMicrosPerDay > 0 {
-			staleCutoff := now.Add(-billing.StalePendingTTL)
+			fallbackUSD := req.UnknownEstimateUSD
+			if fallbackUSD <= 0 {
+				fallbackUSD = billing.DefaultUnknownExposureUSD
+			}
 			var usedMicros int64
 			for _, raw := range b.docs[req.Collection] {
 				var u struct {
@@ -840,7 +876,7 @@ func (b *Backend) ReserveUsageWithBilling(ctx context.Context, req docstore.Usag
 				if json.Unmarshal(raw, &u) != nil {
 					continue
 				}
-				if u.RequestStatus == "not_sent" || u.RequestStatus == "stale_aborted" || u.Billing != "byok" {
+				if u.RequestStatus == "not_sent" || u.Billing != "byok" {
 					continue
 				}
 				if u.CreatedAt.UTC().Before(req.DayCutoff.UTC()) {
@@ -849,18 +885,16 @@ func (b *Backend) ReserveUsageWithBilling(ctx context.Context, req docstore.Usag
 				switch {
 				case u.CostUSD != nil && *u.CostUSD > 0:
 					usedMicros += billing.USDToMicros(*u.CostUSD)
-				case u.RequestStatus == "pending":
-					if !u.CreatedAt.UTC().Before(staleCutoff) {
-						exp := u.EstimatedExposureUSD
-						if exp <= 0 {
-							exp = req.UnknownEstimateUSD
-						}
-						usedMicros += billing.USDToMicrosCeil(exp)
+				case u.RequestStatus == "pending" || u.RequestStatus == "stale_aborted":
+					exp := u.EstimatedExposureUSD
+					if exp <= 0 {
+						exp = fallbackUSD
 					}
+					usedMicros += billing.USDToMicrosCeil(exp)
 				case u.CostStatus != "provider" && u.CostStatus != "calculated" && u.CostStatus != "local":
 					exp := u.EstimatedExposureUSD
 					if exp <= 0 {
-						exp = req.UnknownEstimateUSD
+						exp = fallbackUSD
 					}
 					usedMicros += billing.USDToMicrosCeil(exp)
 				}
@@ -952,8 +986,10 @@ func (b *Backend) RecordAndReconcileUsage(ctx context.Context, req docstore.Usag
 				prevMicros := billing.USDToMicrosCeil(prev.EstimatedExposureUSD)
 				var newMicros int64
 				switch {
-				case req.RequestStatus == "not_sent" || req.RequestStatus == "stale_aborted":
+				case req.RequestStatus == "not_sent":
 					newMicros = 0
+				case req.RequestStatus == "stale_aborted":
+					newMicros = prevMicros
 				case req.CostUSD != nil && *req.CostUSD >= 0:
 					newMicros = billing.USDToMicros(*req.CostUSD)
 				default:
@@ -971,6 +1007,30 @@ func (b *Backend) RecordAndReconcileUsage(ctx context.Context, req docstore.Usag
 					b.reconcileGlobalBudgetLocked(day, billing.ScopeHostedAll, delta)
 					b.reconcileGlobalBudgetLocked(day, memBudgetScopeForCategory(cat), delta)
 				}
+			}
+		}
+	} else if !hasPrev && req.RequestStatus != "pending" && req.RequestStatus != "not_sent" {
+		effBilling := memEffectiveBilling(req.Billing, req.CostStatus)
+		if effBilling == "hosted" {
+			var actualMicros int64
+			switch {
+			case req.CostUSD != nil && *req.CostUSD > 0:
+				actualMicros = billing.USDToMicros(*req.CostUSD)
+			case req.CostStatus != "provider" && req.CostStatus != "calculated" && req.CostStatus != "local":
+				if req.EstimatedExposureUSD > 0 {
+					actualMicros = billing.USDToMicrosCeil(req.EstimatedExposureUSD)
+				} else {
+					actualMicros = billing.DefaultUnknownExposureMicros
+				}
+			}
+			if actualMicros > 0 {
+				day := req.CreatedAt
+				if day.IsZero() {
+					day = b.now()
+				}
+				cat := memEffectiveCategory(req.Category)
+				_ = b.checkAndIncrementGlobalBudgetLocked(day, billing.ScopeHostedAll, actualMicros, 0, 1, 0)
+				_ = b.checkAndIncrementGlobalBudgetLocked(day, memBudgetScopeForCategory(cat), actualMicros, 0, 1, 0)
 			}
 		}
 	}

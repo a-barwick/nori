@@ -161,10 +161,11 @@ func TestManualRolloverAndPendingDowngradeAndCreditLedger(t *testing.T) {
 	samples = append(samples, billing.UsageSample{
 		CreatedAt: now.Add(time.Hour), Billing: "hosted", CostUSD: &cost3, CostStatus: "provider", RequestStatus: "received",
 	})
-	// Add stale pending (>15m) + active pending (<15m) + non-expiring topup $2.
+	// Add stale pending (>15m, $0.25) + active pending (<15m, $0.50) + stale_aborted (exposure 0 -> fallback $0.02) + non-expiring topup $2.
 	samples = append(samples,
-		billing.UsageSample{CreatedAt: now.Add(-20 * time.Minute), Billing: "hosted", EstimatedExposureUSD: 99.0, RequestStatus: "pending"},
+		billing.UsageSample{CreatedAt: now.Add(30 * time.Minute), Billing: "hosted", EstimatedExposureUSD: 0.25, RequestStatus: "pending"},
 		billing.UsageSample{CreatedAt: now.Add(2 * time.Hour), Billing: "hosted", EstimatedExposureUSD: 0.50, RequestStatus: "pending"},
+		billing.UsageSample{CreatedAt: now.Add(2 * time.Hour), Billing: "hosted", EstimatedExposureUSD: 0, RequestStatus: "stale_aborted"},
 	)
 	now = now.Add(2*time.Hour + 5*time.Minute)
 	if err := store.AddCreditGrant(ctx, billing.CreditGrant{
@@ -172,20 +173,19 @@ func TestManualRolloverAndPendingDowngradeAndCreditLedger(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// Balance should be $10 (period) + $2 (topup) - $3 (spent) - $0.50 (active pending) = $8.50 (stale pending ignored!).
+	// Balance: $10 (period) + $2 (topup) - $3 (spent) - $0.25 (stale pending charged as spent!) - $0.50 (active pending) - $0.02 (stale_aborted fallback) = $8.23!
 	bal, err = store.CreditBalance(ctx, "u1")
-	if err != nil || bal.AvailableMicros != 8_500_000 {
-		t.Fatalf("mid-month balance = %+v, want 8_500_000", bal)
+	if err != nil || bal.AvailableMicros != 8_230_000 {
+		t.Fatalf("mid-month balance = %+v, want 8_230_000", bal)
 	}
 
 	// Rollover into Dec 1 (still standard): unused Nov period credit expires, Dec $10 grant created, $2 topup carries over!
-	// Advance time past Nov's active pending too (>15m).
+	// Nov $10 grant absorbed all Nov usage ($3 + $0.25 + $0.50 + $0.02 = $3.77 <= $10); Dec $10 grant + $2 topup = $12 available!
 	now = time.Date(2026, 12, 2, 0, 0, 0, 0, time.UTC)
 	bal, err = store.CreditBalance(ctx, "u1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Nov $10 grant absorbed the $3 Nov spend; Dec $10 grant + $2 topup = $12 available!
 	if bal.AvailableMicros != 12_000_000 {
 		t.Fatalf("after rollover balance = %+v, want 12_000_000", bal)
 	}
@@ -304,5 +304,167 @@ func TestApplyEventIdempotencySandboxStaleAndMultiSubscription(t *testing.T) {
 	}
 	if appleEnt.Tier != billing.TierPower || appleEnt.BillingProvider != billing.ProviderAppleIAP {
 		t.Fatalf("expected Apple Power to win multi-subscription precedence, got %+v", appleEnt)
+	}
+}
+
+func TestSetTierTwiceNoStackingAndExpiredWindowSingleAssignment(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	var samples []billing.UsageSample
+	store := billing.NewMemoryStore(func() time.Time { return now })
+	store.UsageReader = func(string) []billing.UsageSample { return samples }
+
+	// SetTier power on Nov 20 -> $25 live.
+	if _, err := store.SetTier(ctx, "u1", billing.TierPower, billing.SetTierOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	bal, err := store.CreditBalance(ctx, "u1")
+	if err != nil || bal.AvailableMicros != 25_000_000 {
+		t.Fatalf("Nov 20 balance = %+v, want 25_000_000", bal)
+	}
+
+	// Re-setting SetTier power on Dec 5 closes the Nov 20 grant -> $25 live (NOT $50!).
+	now = time.Date(2026, 12, 5, 12, 0, 0, 0, time.UTC)
+	if _, err := store.SetTier(ctx, "u1", billing.TierPower, billing.SetTierOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	bal, err = store.CreditBalance(ctx, "u1")
+	if err != nil || bal.AvailableMicros != 25_000_000 {
+		t.Fatalf("Dec 5 balance after re-SetTier = %+v, want 25_000_000", bal)
+	}
+
+	// Explicit overlapping expired grants must NOT double-absorb the same usage row.
+	t1 := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC)
+	t3 := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	t4 := time.Date(2026, 11, 15, 0, 0, 0, 0, time.UTC)
+	cost12 := 12.0
+	grants := []billing.CreditGrant{
+		{ID: "trial:u2", UserID: "u2", Kind: billing.GrantTrial, AmountMicros: 5_000_000, ValidFrom: t1},
+		{ID: "exp-a", UserID: "u2", Kind: billing.GrantPeriod, AmountMicros: 10_000_000, ValidFrom: t1, ValidUntil: &t3},
+		{ID: "exp-b", UserID: "u2", Kind: billing.GrantPeriod, AmountMicros: 10_000_000, ValidFrom: t2, ValidUntil: &t4},
+	}
+	overlapUsage := []billing.UsageSample{
+		{CreatedAt: t2.Add(time.Hour), Billing: "hosted", CostUSD: &cost12, CostStatus: "provider", RequestStatus: "received"},
+	}
+	// $12 usage falls in BOTH [Oct 1, Nov 1) and [Oct 15, Nov 15).
+	// Deterministic single-assignment gives it ONLY to exp-a (earliest valid_until = Nov 1), which absorbs $10.
+	// Remaining $2 draws from the $5 trial grant -> strictly $3 available (NOT $5!).
+	for i := 0; i < 20; i++ {
+		got := billing.ComputeCreditBalance(billing.Entitlement{UserID: "u2"}, grants, overlapUsage, t4.Add(time.Hour))
+		if got.AvailableMicros != 3_000_000 {
+			t.Fatalf("iter %d: overlapping expired balance = %+v, want 3_000_000", i, got)
+		}
+	}
+}
+
+func TestHardeningBillingRetrySandboxHijackAndGrantValidation(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	store := billing.NewMemoryStore(func() time.Time { return now })
+	// Default zero Service rejects sandbox events (production-safe by default).
+	svc := &billing.Service{Store: store, Now: func() time.Time { return now }}
+
+	if _, err := store.ProvisionTrial(ctx, "u1", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ProvisionTrial(ctx, "u2", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	// billing_retry with nil GraceUntil and nil PeriodEnd fails closed.
+	if err := (billing.Entitlement{Status: billing.StatusBillingRetry}).CheckAccess(now); !errors.Is(err, billing.ErrSubscriptionInactive) {
+		t.Fatalf("expected ErrSubscriptionInactive when billing_retry has nil GraceUntil & PeriodEnd, got %v", err)
+	}
+	futureEnd := now.Add(time.Hour)
+	if err := (billing.Entitlement{Status: billing.StatusBillingRetry, PeriodEnd: &futureEnd}).CheckAccess(now); err != nil {
+		t.Fatalf("expected billing_retry with nil GraceUntil to fall back to future PeriodEnd, got %v", err)
+	}
+
+	// Direct store.ApplyEvent and default Service both reject sandbox events by default.
+	pEnd := now.AddDate(0, 1, 0)
+	sandboxChange := billing.Change{
+		Provider:          billing.ProviderStripe,
+		Environment:       billing.EnvSandbox,
+		EventID:           "evt_sbx",
+		EventType:         "invoice.paid",
+		ProviderUpdatedAt: now,
+		UserID:            "u1",
+		Subscription: &billing.SubscriptionSnapshot{
+			ExternalSubscriptionID: "sub_sbx",
+			Tier:                   billing.TierStandard,
+			Status:                 billing.StatusActive,
+			PeriodStart:            now,
+			PeriodEnd:              &pEnd,
+		},
+	}
+	if _, err := svc.ApplyEvent(ctx, sandboxChange); !errors.Is(err, billing.ErrInvalidEnvironment) {
+		t.Fatalf("default Service must reject sandbox, got %v", err)
+	}
+	if _, err := store.ApplyEvent(ctx, sandboxChange); !errors.Is(err, billing.ErrInvalidEnvironment) {
+		t.Fatalf("default MemoryStore must reject sandbox, got %v", err)
+	}
+
+	// Grant kind/sign validation.
+	if err := store.AddCreditGrant(ctx, billing.CreditGrant{
+		ID: "bad-clawback", UserID: "u1", Kind: billing.GrantClawback, AmountMicros: 100,
+	}); !errors.Is(err, billing.ErrInvalidChange) {
+		t.Fatalf("positive clawback must fail, got %v", err)
+	}
+	if err := store.AddCreditGrant(ctx, billing.CreditGrant{
+		ID: "bad-topup", UserID: "u1", Kind: billing.GrantTopup, AmountMicros: -100,
+	}); !errors.Is(err, billing.ErrInvalidChange) {
+		t.Fatalf("negative topup must fail, got %v", err)
+	}
+	if err := store.AddCreditGrant(ctx, billing.CreditGrant{
+		ID: "bad-ext-trial", UserID: "u1", Kind: billing.GrantTrial, AmountMicros: 5_000_000, SourceProvider: billing.ProviderStripe,
+	}); !errors.Is(err, billing.ErrInvalidChange) {
+		t.Fatalf("external provider trial grant must fail, got %v", err)
+	}
+
+	// Cross-user subscription hijack rejected.
+	prodSub := billing.Change{
+		Provider:          billing.ProviderStripe,
+		Environment:       billing.EnvProduction,
+		EventID:           "evt_u1_sub",
+		EventType:         "customer.subscription.created",
+		ProviderUpdatedAt: now,
+		UserID:            "u1",
+		Subscription: &billing.SubscriptionSnapshot{
+			ExternalSubscriptionID: "sub_shared_id",
+			Tier:                   billing.TierStandard,
+			Status:                 billing.StatusActive,
+			PeriodStart:            now,
+			PeriodEnd:              &pEnd,
+		},
+	}
+	if _, err := svc.ApplyEvent(ctx, prodSub); err != nil {
+		t.Fatalf("apply u1 sub: %v", err)
+	}
+	hijack := prodSub
+	hijack.EventID = "evt_u2_hijack"
+	hijack.UserID = "u2"
+	hijack.ProviderUpdatedAt = now.Add(time.Minute)
+	if _, err := svc.ApplyEvent(ctx, hijack); !errors.Is(err, billing.ErrSubscriptionConflict) {
+		t.Fatalf("expected ErrSubscriptionConflict on cross-user hijack, got %v", err)
+	}
+
+	// Operator SetTier must not clobber provider_updated_at for subsequent non-subscription events.
+	now = now.Add(10 * time.Minute)
+	if _, err := store.SetTier(ctx, "u1", billing.TierPower, billing.SetTierOptions{}); err != nil {
+		t.Fatalf("SetTier: %v", err)
+	}
+	// Real provider event with timestamp after prodSub (now-10m + 2m) but BEFORE SetTier (now) must succeed!
+	if _, err := svc.ApplyEvent(ctx, billing.Change{
+		Provider:          billing.ProviderStripe,
+		Environment:       billing.EnvProduction,
+		EventID:           "evt_u1_promo",
+		EventType:         "credit.applied",
+		ProviderUpdatedAt: now.Add(-8 * time.Minute),
+		UserID:            "u1",
+		CreditDeltaMicros: 1_000_000,
+		CreditGrantKind:   billing.GrantPromo,
+	}); err != nil {
+		t.Fatalf("expected provider event before manual SetTier to succeed, got %v", err)
 	}
 }

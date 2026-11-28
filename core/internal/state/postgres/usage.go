@@ -64,7 +64,6 @@ FROM (
 	FROM nori_records
 	WHERE shard = $1 AND collection = $2 AND idx_created_at IS NOT NULL AND idx_created_at >= least($3::jsonb, $4::jsonb)
 	  AND data->>'request_status' IS DISTINCT FROM 'not_sent'
-	  AND data->>'request_status' IS DISTINCT FROM 'stale_aborted'
 ) usage
 `
 
@@ -118,7 +117,6 @@ WHERE shard = $1 AND collection = $2
   AND idx_created_at IS NOT NULL
   AND idx_created_at >= to_jsonb($3::text) AND idx_created_at < to_jsonb($4::text)
   AND data->>'request_status' IS DISTINCT FROM 'not_sent'
-  AND data->>'request_status' IS DISTINCT FROM 'stale_aborted'
 `
 
 func (b *backend) ReadUsageCosts(ctx context.Context, collection string, start, end time.Time, visit func(docstore.UsageCostRecord)) error {
@@ -261,7 +259,7 @@ func (b *backend) ReserveUsageWithBilling(ctx context.Context, req docstore.Usag
 			  AND collection = $2
 			  AND idx_created_at IS NOT NULL
 			  AND idx_created_at >= to_jsonb($3::text)
-			  AND COALESCE(data->>'request_status', '') NOT IN ('not_sent', 'stale_aborted')
+			  AND COALESCE(data->>'request_status', '') <> 'not_sent'
 			  AND COALESCE(data->>'category', 'llm') IN ('', 'llm')`,
 			shard, req.Collection, hourRFC,
 		).Scan(&llmCalls); err != nil {
@@ -331,19 +329,20 @@ func (b *backend) ReserveUsageWithBilling(ctx context.Context, req docstore.Usag
 		}
 		if policy.MaxBYOKMicrosPerDay > 0 {
 			dayRFC := req.DayCutoff.UTC().Format(time.RFC3339Nano)
-			staleRFC := now.Add(-billing.StalePendingTTL).UTC().Format(time.RFC3339Nano)
+			fallbackUSD := req.UnknownEstimateUSD
+			if fallbackUSD <= 0 {
+				fallbackUSD = billing.DefaultUnknownExposureUSD
+			}
 			var byokUsedMicros int64
 			if err := tx.QueryRow(ctx, `
 				SELECT COALESCE(SUM(
 					CASE
 						WHEN (data->>'cost_usd')::double precision > 0
 							THEN ROUND(((data->>'cost_usd')::double precision) * 1000000)::bigint
-						WHEN COALESCE(data->>'request_status', '') = 'pending'
-						     AND idx_created_at >= to_jsonb($4::text)
-							THEN CEIL(GREATEST(COALESCE(NULLIF((data->>'estimated_exposure_usd')::double precision, 0), $5), 0) * 1000000)::bigint
-						WHEN COALESCE(data->>'request_status', '') <> 'pending'
-						     AND COALESCE(data->>'cost_status', '') NOT IN ('provider', 'calculated', 'local')
-							THEN CEIL(GREATEST(COALESCE(NULLIF((data->>'estimated_exposure_usd')::double precision, 0), $5), 0) * 1000000)::bigint
+						WHEN COALESCE(data->>'request_status', '') IN ('pending', 'stale_aborted')
+							THEN CEIL(GREATEST(COALESCE(NULLIF((data->>'estimated_exposure_usd')::double precision, 0), $4), 0) * 1000000)::bigint
+						WHEN COALESCE(data->>'cost_status', '') NOT IN ('provider', 'calculated', 'local')
+							THEN CEIL(GREATEST(COALESCE(NULLIF((data->>'estimated_exposure_usd')::double precision, 0), $4), 0) * 1000000)::bigint
 						ELSE 0
 					END
 				), 0)
@@ -352,9 +351,9 @@ func (b *backend) ReserveUsageWithBilling(ctx context.Context, req docstore.Usag
 				  AND collection = $2
 				  AND idx_created_at IS NOT NULL
 				  AND idx_created_at >= to_jsonb($3::text)
-				  AND COALESCE(data->>'request_status', '') NOT IN ('not_sent', 'stale_aborted')
+				  AND COALESCE(data->>'request_status', '') <> 'not_sent'
 				  AND data->>'billing' = 'byok'`,
-				shard, req.Collection, dayRFC, staleRFC, req.UnknownEstimateUSD,
+				shard, req.Collection, dayRFC, fallbackUSD,
 			).Scan(&byokUsedMicros); err != nil {
 				return docstore.UsageReserveResult{}, err
 			}
@@ -467,8 +466,11 @@ func (b *backend) RecordAndReconcileUsage(ctx context.Context, req docstore.Usag
 				prevMicros := billing.USDToMicrosCeil(prev.EstimatedExposureUSD)
 				var newMicros int64
 				switch {
-				case req.RequestStatus == "not_sent" || req.RequestStatus == "stale_aborted":
+				case req.RequestStatus == "not_sent":
 					newMicros = 0
+				case req.RequestStatus == "stale_aborted":
+					// Aborted/stale calls retain their reserved exposure (no refund).
+					newMicros = prevMicros
 				case req.CostUSD != nil && *req.CostUSD >= 0:
 					newMicros = billing.USDToMicros(*req.CostUSD)
 				default:
@@ -489,6 +491,36 @@ func (b *backend) RecordAndReconcileUsage(ctx context.Context, req docstore.Usag
 					if err := billing.ReconcileGlobalBudgetTx(ctx, tx, day, hostedBudgetScopeForCategory(cat), delta); err != nil {
 						return err
 					}
+				}
+			}
+		}
+	} else if !hasPrev && req.RequestStatus != "pending" && req.RequestStatus != "not_sent" {
+		// Direct-final hosted usage written without a prior pending reservation (e.g. Sprites janitor
+		// metering or direct Exa writes) must still account against nori_global_budget_daily.
+		effBilling := effectiveUsageBilling(req.Billing, req.CostStatus)
+		if effBilling == "hosted" {
+			var actualMicros int64
+			switch {
+			case req.CostUSD != nil && *req.CostUSD > 0:
+				actualMicros = billing.USDToMicros(*req.CostUSD)
+			case req.CostStatus != "provider" && req.CostStatus != "calculated" && req.CostStatus != "local":
+				if req.EstimatedExposureUSD > 0 {
+					actualMicros = billing.USDToMicrosCeil(req.EstimatedExposureUSD)
+				} else {
+					actualMicros = billing.DefaultUnknownExposureMicros
+				}
+			}
+			if actualMicros > 0 {
+				day := req.CreatedAt
+				if day.IsZero() {
+					day = time.Now().UTC()
+				}
+				cat := effectiveUsageCategory(req.Category)
+				if err := billing.CheckAndIncrementGlobalBudgetTx(ctx, tx, day, billing.ScopeHostedAll, actualMicros, 0, 1, 0); err != nil {
+					return err
+				}
+				if err := billing.CheckAndIncrementGlobalBudgetTx(ctx, tx, day, hostedBudgetScopeForCategory(cat), actualMicros, 0, 1, 0); err != nil {
+					return err
 				}
 			}
 		}

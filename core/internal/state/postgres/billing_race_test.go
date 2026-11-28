@@ -317,4 +317,125 @@ func TestPostgresBillingUserProvisioningCapsAndLifecycle(t *testing.T) {
 	if report.ByBilling.Hosted.PricedCalls != 1 || report.ByCategory.Search.PricedCalls != 1 {
 		t.Fatalf("unexpected Postgres cost report breakdowns: hosted=%+v search=%+v", report.ByBilling.Hosted, report.ByCategory.Search)
 	}
+
+	// Direct-final hosted Sprites metering (no prior pending row) must update nori_global_budget_daily.
+	spritesCost := 0.05
+	if err := db1.RecordUsage(ctx, state.Usage{
+		ID: "pg-sprite-direct-1", Provider: "sprites", Model: "sprites-vm",
+		Billing: state.UsageBillingHosted, Category: state.UsageCategoryComputer,
+		CostUSD: &spritesCost, CostStatus: "calculated", RequestStatus: "received", CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("direct-final sprites RecordUsage: %v", err)
+	}
+	sprBudget, err := bStore.GetGlobalBudget(ctx, now, billing.ScopeHostedSprites)
+	if err != nil || sprBudget.SpentMicros != 50_000 || sprBudget.Count != 1 {
+		t.Fatalf("expected direct-final hosted sprites in global budget, got %+v (err=%v)", sprBudget, err)
+	}
+
+	// Stale/aborted call retains reserved exposure (no $0 leak and no global budget refund).
+	allBefore, _ := bStore.GetGlobalBudget(ctx, now, billing.ScopeHostedAll)
+	balBefore, _ := bStore.CreditBalance(ctx, u1.ID)
+	if err := meter1.RecordUsage(ctx, state.Usage{
+		ID: "pg-aborted-1", Provider: "gateway", Model: "google/gemini-4-neon",
+		Billing: state.UsageBillingHosted, Category: state.UsageCategoryLLM,
+		EstimatedExposureUSD: 0.04, RequestStatus: "pending", CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("reserve pg-aborted-1: %v", err)
+	}
+	if err := meter1.RecordUsage(ctx, state.Usage{
+		ID: "pg-aborted-1", Provider: "gateway", Model: "google/gemini-4-neon",
+		Billing: state.UsageBillingHosted, Category: state.UsageCategoryLLM,
+		EstimatedExposureUSD: 0.04, RequestStatus: "stale_aborted", CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("finalize pg-aborted-1 stale_aborted: %v", err)
+	}
+	allAfter, _ := bStore.GetGlobalBudget(ctx, now, billing.ScopeHostedAll)
+	balAfter, _ := bStore.CreditBalance(ctx, u1.ID)
+	if allAfter.SpentMicros != allBefore.SpentMicros+40_000 {
+		t.Fatalf("stale_aborted refunded Postgres global budget: before=%d after=%d", allBefore.SpentMicros, allAfter.SpentMicros)
+	}
+	if balAfter.AvailableMicros != balBefore.AvailableMicros-40_000 {
+		t.Fatalf("stale_aborted refunded Postgres user credit: before=%d after=%d", balBefore.AvailableMicros, balAfter.AvailableMicros)
+	}
+
+	// SetTier twice in overlapping months must NOT stack free credit, and overlapping expired windows
+	// must NOT double-absorb usage in Postgres SQL.
+	uOverlap := users.User{ID: uuid.NewString(), Email: "overlap@example.com", TimeZone: "UTC"}
+	dir.SetTrialMaxSignupsPerDay(10)
+	if err := dir.Create(ctx, uOverlap); err != nil {
+		t.Fatalf("create uOverlap: %v", err)
+	}
+	tNov20 := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	bStore.Now = func() time.Time { return tNov20 }
+	if _, err := bStore.SetTier(ctx, uOverlap.ID, billing.TierPower, billing.SetTierOptions{}); err != nil {
+		t.Fatalf("SetTier Nov 20: %v", err)
+	}
+	tDec5 := time.Date(2026, 12, 5, 12, 0, 0, 0, time.UTC)
+	bStore.Now = func() time.Time { return tDec5 }
+	if _, err := bStore.SetTier(ctx, uOverlap.ID, billing.TierPower, billing.SetTierOptions{}); err != nil {
+		t.Fatalf("SetTier Dec 5: %v", err)
+	}
+	// Active grants at Dec 5: $5 trial (valid_from=now <= Dec 5 only if created <= Dec 5) + $25 Dec 5 power (Nov 20 closed!).
+	ovBal, err := bStore.CreditBalance(ctx, uOverlap.ID)
+	if err != nil {
+		t.Fatalf("CreditBalance uOverlap: %v", err)
+	}
+	// Must be at most $30 ($5 trial + $25 single active power grant), NEVER $55 ($5 + $25 + $25)!
+	if ovBal.GrantedMicros > 30_000_000 {
+		t.Fatalf("SetTier twice stacked overlapping active grants: %+v", ovBal)
+	}
+
+	// Explicit overlapping expired grants in Postgres: single-assignment lateral join prevents double-absorption.
+	uExp := users.User{ID: uuid.NewString(), Email: "exp-single@example.com", TimeZone: "UTC"}
+	t1 := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC)
+	t3 := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	t4 := time.Date(2026, 11, 15, 0, 0, 0, 0, time.UTC)
+	dir.Now = func() time.Time { return t1 }
+	if err := dir.Create(ctx, uExp); err != nil {
+		t.Fatalf("create uExp: %v", err)
+	}
+	if err := bStore.AddCreditGrant(ctx, billing.CreditGrant{
+		ID: "pg-exp-a", UserID: uExp.ID, Kind: billing.GrantPeriod, AmountMicros: 10_000_000, ValidFrom: t1, ValidUntil: &t3,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := bStore.AddCreditGrant(ctx, billing.CreditGrant{
+		ID: "pg-exp-b", UserID: uExp.ID, Kind: billing.GrantPeriod, AmountMicros: 10_000_000, ValidFrom: t2, ValidUntil: &t4,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	expDB := records.NewShared(b, uExp, 10)
+	cost12 := 12.0
+	if err := expDB.RecordUsage(ctx, state.Usage{
+		ID: "pg-overlap-spend", Provider: "gateway", Model: "google/gemini-4-neon",
+		Billing: state.UsageBillingHosted, Category: state.UsageCategoryLLM,
+		CostUSD: &cost12, CostStatus: "provider", RequestStatus: "received", CreatedAt: t2.Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bStore.Now = func() time.Time { return t4.Add(time.Hour) }
+	expBal, err := bStore.CreditBalance(ctx, uExp.ID)
+	if err != nil || expBal.AvailableMicros != 3_000_000 {
+		t.Fatalf("Postgres overlapping expired balance = %+v (err=%v), want 3_000_000", expBal, err)
+	}
+
+	// Cross-user subscription hijack rejected in Postgres.
+	if _, err := svc.ApplyEvent(ctx, billing.Change{
+		Provider:          billing.ProviderStripe,
+		Environment:       billing.EnvProduction,
+		EventID:           "evt_pg_hijack",
+		EventType:         "customer.subscription.updated",
+		ProviderUpdatedAt: now.Add(5 * time.Minute),
+		UserID:            u2.ID,
+		Subscription: &billing.SubscriptionSnapshot{
+			ExternalSubscriptionID: "sub_pg_1", // owned by u1!
+			Tier:                   billing.TierPower,
+			Status:                 billing.StatusActive,
+			PeriodStart:            now,
+			PeriodEnd:              &pEnd,
+		},
+	}); !errors.Is(err, billing.ErrSubscriptionConflict) {
+		t.Fatalf("expected ErrSubscriptionConflict on Postgres cross-user hijack, got %v", err)
+	}
 }

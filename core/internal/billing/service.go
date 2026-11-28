@@ -24,20 +24,21 @@ type Store interface {
 	NotifyEntitlementChanged(ctx context.Context, userID string) error
 }
 
-// Service wraps a billing Store with environment validation (production rejects sandbox events)
-// and convenience helpers consumed by API, worker, computer, and CLI layers.
+// Service wraps a billing Store with environment validation (production-safe by default:
+// sandbox events are rejected unless AllowSandbox is explicitly set) and convenience helpers
+// consumed by API, worker, computer, and CLI layers.
 type Service struct {
-	Store         Store
-	ProductionEnv bool
-	GlobalBudget  GlobalBudgetConfig
-	Now           func() time.Time
+	Store        Store
+	AllowSandbox bool
+	GlobalBudget GlobalBudgetConfig
+	Now          func() time.Time
 }
 
 func NewService(store Store, productionEnv bool, globalBudget GlobalBudgetConfig) *Service {
 	return &Service{
-		Store:         store,
-		ProductionEnv: productionEnv,
-		GlobalBudget:  globalBudget,
+		Store:        store,
+		AllowSandbox: !productionEnv,
+		GlobalBudget: globalBudget,
 	}
 }
 
@@ -116,7 +117,7 @@ func (s *Service) ApplyEvent(ctx context.Context, change Change) (Entitlement, e
 	if s == nil || s.Store == nil {
 		return Entitlement{}, ErrEntitlementMissing
 	}
-	if err := ValidateChange(change, s.ProductionEnv); err != nil {
+	if err := ValidateChange(change, !s.AllowSandbox); err != nil {
 		return Entitlement{}, err
 	}
 	return s.Store.ApplyEvent(ctx, change)
@@ -173,6 +174,25 @@ func ValidateChange(change Change, productionEnv bool) error {
 	}
 	if change.CreditGrantKind != "" && !ValidGrantKind(change.CreditGrantKind) {
 		return ErrInvalidChange
+	}
+	if change.CreditDeltaMicros != 0 {
+		kind := change.CreditGrantKind
+		if kind == "" {
+			if change.CreditDeltaMicros < 0 {
+				kind = GrantClawback
+			} else {
+				kind = GrantPeriod
+			}
+		}
+		isExternal := change.Provider == ProviderStripe || change.Provider == ProviderAppleIAP
+		if err := ValidateCreditGrant(CreditGrant{
+			ID:           EventGrantID(change.Provider, change.EventID, change.CreditDeltaMicros),
+			UserID:       "validation",
+			Kind:         kind,
+			AmountMicros: change.CreditDeltaMicros,
+		}, isExternal); err != nil {
+			return err
+		}
 	}
 	return nil
 }

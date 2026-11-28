@@ -2,10 +2,12 @@ package usage
 
 import (
 	"context"
+	"errors"
 	"math"
 	"testing"
 	"time"
 
+	"nori/internal/state"
 	"nori/internal/state/docstore"
 )
 
@@ -78,7 +80,7 @@ func TestReadCostReportBreakdowns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadCostReport: %v", err)
 	}
-	if math.Abs(report.ByBilling.Hosted.CostUSD-(c1+c2)) > 1e-9 || report.ByBilling.Hosted.PricedCalls != 2 {
+	if math.Abs(report.ByBilling.Hosted.CostUSD-(c1+c2)) > 1e-9 || report.ByBilling.Hosted.PricedCalls != 2 || report.ByBilling.Hosted.UnpricedCalls != 1 {
 		t.Fatalf("unexpected hosted breakdown: %+v", report.ByBilling.Hosted)
 	}
 	if math.Abs(report.ByBilling.BYOK.CostUSD-c3) > 1e-9 || report.ByBilling.BYOK.PricedCalls != 1 {
@@ -90,7 +92,36 @@ func TestReadCostReportBreakdowns(t *testing.T) {
 	if math.Abs(report.ByCategory.Search.CostUSD-c2) > 1e-9 || report.ByCategory.Search.PricedCalls != 1 {
 		t.Fatalf("unexpected search category breakdown: %+v", report.ByCategory.Search)
 	}
-	if math.Abs(report.ByCategory.LLM.CostUSD-(c1+c3)) > 1e-9 || report.ByCategory.LLM.LocalCalls != 1 {
+	if math.Abs(report.ByCategory.LLM.CostUSD-(c1+c3)) > 1e-9 || report.ByCategory.LLM.LocalCalls != 1 || report.ByCategory.LLM.UnpricedCalls != 1 {
 		t.Fatalf("unexpected llm category breakdown: %+v", report.ByCategory.LLM)
+	}
+}
+
+type stubAtomicReserver struct {
+	reserveCalled int
+	reserveErr    error
+}
+
+func (s *stubAtomicReserver) RecordUsage(context.Context, state.Usage) error { return nil }
+func (s *stubAtomicReserver) ReserveUsage(context.Context, state.Usage, time.Time, time.Time, int, float64, float64) (bool, error) {
+	s.reserveCalled++
+	if s.reserveErr != nil {
+		return false, s.reserveErr
+	}
+	return true, nil
+}
+
+func TestOpenAlwaysEnablesBillingAdmissionWhenReserverPresent(t *testing.T) {
+	sentinel := errors.New("credit_exhausted")
+	reserver := &stubAtomicReserver{reserveErr: sentinel}
+	// Even with MaxCallsPerHour=0 and MaxUSDPerDay=0, Open must wrap with WithBillingAdmission!
+	meter, err := Open(Config{Mode: "store", MaxCallsPerHour: 0, MaxUSDPerDay: 0}, "u1", reserver)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := meter.RecordUsage(context.Background(), state.Usage{
+		ID: "call-1", Billing: state.UsageBillingHosted, Category: state.UsageCategoryLLM, RequestStatus: "pending",
+	}); !errors.Is(err, sentinel) || reserver.reserveCalled != 1 {
+		t.Fatalf("expected Open() to enforce ReserveUsage with zero legacy limits: calls=%d err=%v", reserver.reserveCalled, err)
 	}
 }

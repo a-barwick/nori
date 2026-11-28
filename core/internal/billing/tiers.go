@@ -12,8 +12,15 @@ import (
 const MicrosPerUSD int64 = 1_000_000
 
 // StalePendingTTL is the duration after which an unfinalized pending usage reservation
-// no longer blocks a user's hosted credit balance.
+// is treated as stale/aborted spent exposure rather than active pending exposure.
 const StalePendingTTL = 15 * time.Minute
+
+// DefaultUnknownExposureUSD / Micros is the conservative fallback exposure charged when
+// an unpriced/aborted hosted or BYOK call has estimated_exposure_usd <= 0.
+const (
+	DefaultUnknownExposureUSD    float64 = 0.02
+	DefaultUnknownExposureMicros int64   = 20_000
+)
 
 type Tier string
 

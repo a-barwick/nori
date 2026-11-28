@@ -1,5 +1,9 @@
 -- Track A monetization, unified micro-USD credit ledger, Stripe/Apple IAP ports,
 -- fleet-wide daily hosted budgets, GCS storage quota tracking, and Sprites metering columns.
+--
+-- Note on Row-Level Security: Like nori_user_computers and nori_push_devices, the new
+-- billing/entitlement/budget/storage tables below are system-owned tables accessed by
+-- backend services with explicit user_id predicates (no tenant RLS on these tables).
 
 CREATE TABLE IF NOT EXISTS nori_user_entitlements (
     user_id TEXT PRIMARY KEY,
@@ -83,17 +87,6 @@ CREATE TABLE IF NOT EXISTS nori_user_storage (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-ALTER TABLE nori_user_computers
-    ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ NOT NULL DEFAULT now();
-ALTER TABLE nori_user_computers
-    ADD COLUMN IF NOT EXISTS awake_since TIMESTAMPTZ NULL;
-ALTER TABLE nori_user_computers
-    ADD COLUMN IF NOT EXISTS last_metered_at TIMESTAMPTZ NULL;
-ALTER TABLE nori_user_computers
-    ADD COLUMN IF NOT EXISTS sleeping_since TIMESTAMPTZ NULL;
-ALTER TABLE nori_user_computers
-    ADD COLUMN IF NOT EXISTS provider_owner TEXT NOT NULL DEFAULT 'platform';
-
 -- Backfill pre-existing users as manual active BYOK so no existing account spends platform credits unexpectedly.
 INSERT INTO nori_user_entitlements (user_id, tier, status, billing_provider, period_start, provider_updated_at, updated_at)
 SELECT id, 'byok', 'active', 'manual', now(), now(), now()
@@ -114,3 +107,15 @@ SET data = jsonb_set(
 )
 WHERE collection LIKE 'owners/%/model_usage'
   AND COALESCE(data->>'billing', '') = '';
+
+-- Alter nori_user_computers LAST so ACCESS EXCLUSIVE lock is not held during the nori_records backfill above.
+ALTER TABLE nori_user_computers
+    ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE nori_user_computers
+    ADD COLUMN IF NOT EXISTS awake_since TIMESTAMPTZ NULL;
+ALTER TABLE nori_user_computers
+    ADD COLUMN IF NOT EXISTS last_metered_at TIMESTAMPTZ NULL;
+ALTER TABLE nori_user_computers
+    ADD COLUMN IF NOT EXISTS sleeping_since TIMESTAMPTZ NULL;
+ALTER TABLE nori_user_computers
+    ADD COLUMN IF NOT EXISTS provider_owner TEXT NOT NULL DEFAULT 'platform';

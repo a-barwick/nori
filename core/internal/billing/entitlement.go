@@ -20,6 +20,7 @@ var (
 	ErrInvalidEnvironment   = errors.New("billing: invalid billing environment")
 	ErrInvalidTier          = errors.New("billing: invalid tier")
 	ErrInvalidChange        = errors.New("billing: invalid entitlement change")
+	ErrSubscriptionConflict = errors.New("billing: external subscription belongs to another user")
 )
 
 const (
@@ -107,7 +108,13 @@ func (e Entitlement) IsActiveAt(now time.Time) bool {
 	case StatusActive:
 		return true
 	case StatusBillingRetry:
-		return e.GraceUntil == nil || now.Before(e.GraceUntil.UTC())
+		if e.GraceUntil != nil {
+			return now.Before(e.GraceUntil.UTC())
+		}
+		if e.PeriodEnd != nil {
+			return now.Before(e.PeriodEnd.UTC())
+		}
+		return false
 	case StatusCanceled:
 		return e.PeriodEnd != nil && now.Before(e.PeriodEnd.UTC())
 	case StatusPastDue, StatusExpired:
@@ -315,6 +322,33 @@ func ManualPeriodGrantID(userID string, periodStart time.Time) string {
 	return fmt.Sprintf("manual:%s:%s", userID, periodStart.UTC().Format("2006-01"))
 }
 
+// ManualSetTierGrantID returns a deterministic grant ID for an operator SetTier grant when
+// the base monthly ID was already used/closed in the same calendar month.
+func ManualSetTierGrantID(userID string, tier Tier, periodStart time.Time) string {
+	return fmt.Sprintf("manual:%s:%s:%s:%d", userID, periodStart.UTC().Format("2006-01"), tier, periodStart.UTC().Unix())
+}
+
+// ValidateCreditGrant checks grant kind/sign consistency and prevents external providers from creating trial grants.
+func ValidateCreditGrant(grant CreditGrant, fromExternalProvider bool) error {
+	if grant.ID == "" || grant.UserID == "" || !ValidGrantKind(grant.Kind) {
+		return ErrInvalidChange
+	}
+	if fromExternalProvider && grant.Kind == GrantTrial {
+		return ErrInvalidChange
+	}
+	switch grant.Kind {
+	case GrantClawback:
+		if grant.AmountMicros >= 0 {
+			return ErrInvalidChange
+		}
+	default:
+		if grant.AmountMicros <= 0 {
+			return ErrInvalidChange
+		}
+	}
+	return nil
+}
+
 // EventGrantID returns the deterministic grant ID for a provider event credit delta or clawback.
 func EventGrantID(provider Provider, eventID string, deltaMicros int64) string {
 	if deltaMicros < 0 {
@@ -388,7 +422,13 @@ func SelectWinningSubscription(subs []Subscription, now time.Time) (Subscription
 		case StatusActive:
 			return 4
 		case StatusBillingRetry:
-			if s.GraceUntil == nil || now.Before(s.GraceUntil.UTC()) {
+			if s.GraceUntil != nil {
+				if now.Before(s.GraceUntil.UTC()) {
+					return 3
+				}
+				return 1
+			}
+			if s.PeriodEnd != nil && now.Before(s.PeriodEnd.UTC()) {
 				return 3
 			}
 			return 1

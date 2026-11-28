@@ -42,6 +42,7 @@ type budgetKey struct {
 type MemoryStore struct {
 	mu           sync.Mutex
 	Now          func() time.Time
+	AllowSandbox bool
 	UsageReader  func(userID string) []UsageSample
 	OnNotify     func(userID string)
 	entitlements map[string]Entitlement
@@ -213,9 +214,26 @@ func (m *MemoryStore) SetTier(_ context.Context, userID string, tier Tier, opts 
 		v := *opts.CreditOverrideMicros
 		ent.CreditOverrideMicros = &v
 	}
-	ent.ProviderUpdatedAt = now
+	// Do not clobber provider_updated_at on existing rows so external provider events are not
+	// falsely rejected as stale after an operator manual tier change.
+	if !exists {
+		ent.ProviderUpdatedAt = time.Time{}
+	}
 	ent.UpdatedAt = now
 	m.entitlements[userID] = ent
+
+	// Close any prior active period grants at pStart so re-setting or upgrading a paid tier
+	// never stacks overlapping active period credits.
+	for id, g := range m.grants {
+		if g.UserID == userID && g.Kind == GrantPeriod && (g.ValidUntil == nil || g.ValidUntil.UTC().After(pStart)) {
+			closed := pStart
+			if g.ValidFrom.UTC().After(closed) {
+				closed = g.ValidFrom.UTC()
+			}
+			g.ValidUntil = &closed
+			m.grants[id] = g
+		}
+	}
 
 	if !opts.SkipGrant {
 		if tier == TierTrial {
@@ -236,6 +254,9 @@ func (m *MemoryStore) SetTier(_ context.Context, userID string, tier Tier, opts 
 		} else if tier == TierStandard || tier == TierPower {
 			if amt := ent.EffectiveHostedCreditGrantMicros(); amt > 0 {
 				grantID := ManualPeriodGrantID(userID, pStart)
+				if _, exists := m.grants[grantID]; exists {
+					grantID = ManualSetTierGrantID(userID, tier, pStart)
+				}
 				if _, ok := m.grants[grantID]; !ok {
 					var vu *time.Time
 					if ent.PeriodEnd != nil {
@@ -296,8 +317,9 @@ func (m *MemoryStore) Unsuspend(_ context.Context, userID string) (Entitlement, 
 }
 
 func (m *MemoryStore) AddCreditGrant(_ context.Context, grant CreditGrant) error {
-	if strings.TrimSpace(grant.ID) == "" || strings.TrimSpace(grant.UserID) == "" || !ValidGrantKind(grant.Kind) {
-		return ErrInvalidChange
+	isExternal := grant.SourceProvider == ProviderStripe || grant.SourceProvider == ProviderAppleIAP
+	if err := ValidateCreditGrant(grant, isExternal); err != nil {
+		return err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -353,35 +375,57 @@ func (m *MemoryStore) CreditBalance(ctx context.Context, userID string) (CreditB
 }
 
 // ComputeCreditBalance calculates exact micro-USD hosted credit balance from grants and usage samples.
-// Expired positive period grants absorb usage that occurred during their [valid_from, valid_until) window
-// (up to the expired window's total grant cap) so unused period credits expire cleanly while non-expiring
-// grants (trial/topup/promo/clawback) carry over accurately.
+// Only request_status == "not_sent" is free; stale pending (>15m) and stale_aborted rows are charged
+// at CEIL(estimated_exposure_usd) (falling back to DefaultUnknownExposureMicros when <= 0).
+// Each usage row is deterministically assigned to at most ONE expired positive grant ordered by
+// (valid_until ASC, id ASC) so overlapping expired grants never double-absorb usage.
 func ComputeCreditBalance(ent Entitlement, grants []CreditGrant, usage []UsageSample, now time.Time) CreditBalance {
 	now = now.UTC()
 	staleCutoff := now.Add(-StalePendingTTL)
 
-	type windowKey struct {
-		from  int64
-		until int64
+	type expiredGrant struct {
+		id           string
+		from         time.Time
+		until        time.Time
+		amountMicros int64
 	}
-	expiredWindows := map[windowKey]int64{}
+	var expired []expiredGrant
 	var activeGranted int64
 	for _, g := range grants {
 		if g.IsActiveAt(now) {
 			activeGranted += g.AmountMicros
 			continue
 		}
-		if g.ValidUntil != nil && !now.Before(g.ValidUntil.UTC()) && g.AmountMicros > 0 {
-			wk := windowKey{from: g.ValidFrom.UTC().UnixNano(), until: g.ValidUntil.UTC().UnixNano()}
-			expiredWindows[wk] += g.AmountMicros
+		if g.ValidUntil != nil && !now.Before(g.ValidUntil.UTC()) && g.AmountMicros > 0 && g.ValidUntil.UTC().After(g.ValidFrom.UTC()) {
+			expired = append(expired, expiredGrant{
+				id:           g.ID,
+				from:         g.ValidFrom.UTC(),
+				until:        g.ValidUntil.UTC(),
+				amountMicros: g.AmountMicros,
+			})
 		}
 	}
+	slices.SortFunc(expired, func(a, b expiredGrant) int {
+		if c := a.until.Compare(b.until); c != 0 {
+			return c
+		}
+		return strings.Compare(a.id, b.id)
+	})
 
 	var totalSpent, totalPending int64
-	windowUsage := make(map[windowKey]int64, len(expiredWindows))
+	usedByGrant := make([]int64, len(expired))
+
+	exposureMicros := func(est float64) int64 {
+		if est > 0 {
+			if m := USDToMicrosCeil(est); m > 0 {
+				return m
+			}
+		}
+		return DefaultUnknownExposureMicros
+	}
 
 	for _, u := range usage {
-		if u.RequestStatus == "not_sent" || u.RequestStatus == "stale_aborted" {
+		if u.RequestStatus == "not_sent" {
 			continue
 		}
 		effectiveBilling := u.Billing
@@ -401,23 +445,27 @@ func ComputeCreditBalance(ent Entitlement, grants []CreditGrant, usage []UsageSa
 		case u.CostUSD != nil && *u.CostUSD > 0:
 			spentMicros = USDToMicros(*u.CostUSD)
 		case u.RequestStatus == "pending":
+			exp := exposureMicros(u.EstimatedExposureUSD)
 			if !u.CreatedAt.UTC().Before(staleCutoff) {
-				pendingMicros = USDToMicrosCeil(u.EstimatedExposureUSD)
+				pendingMicros = exp
+			} else {
+				// Stale pending (>15m) is treated as spent at estimated exposure (not $0).
+				spentMicros = exp
 			}
+		case u.RequestStatus == "stale_aborted":
+			spentMicros = exposureMicros(u.EstimatedExposureUSD)
 		case u.CostStatus != "provider" && u.CostStatus != "calculated" && u.CostStatus != "local":
-			if u.EstimatedExposureUSD > 0 {
-				spentMicros = USDToMicrosCeil(u.EstimatedExposureUSD)
-			}
+			spentMicros = exposureMicros(u.EstimatedExposureUSD)
 		}
 
 		totalSpent += spentMicros
 		totalPending += pendingMicros
 
-		if len(expiredWindows) > 0 && (spentMicros+pendingMicros) > 0 {
-			ts := u.CreatedAt.UTC().UnixNano()
-			for wk := range expiredWindows {
-				if ts >= wk.from && ts < wk.until {
-					windowUsage[wk] += spentMicros + pendingMicros
+		if len(expired) > 0 && (spentMicros+pendingMicros) > 0 {
+			ts := u.CreatedAt.UTC()
+			for idx, eg := range expired {
+				if !ts.Before(eg.from) && ts.Before(eg.until) {
+					usedByGrant[idx] += spentMicros + pendingMicros
 					break
 				}
 			}
@@ -425,10 +473,10 @@ func ComputeCreditBalance(ent Entitlement, grants []CreditGrant, usage []UsageSa
 	}
 
 	var absorbedByExpired int64
-	for wk, capMicros := range expiredWindows {
-		used := windowUsage[wk]
-		if used > capMicros {
-			absorbedByExpired += capMicros
+	for idx, eg := range expired {
+		used := usedByGrant[idx]
+		if used > eg.amountMicros {
+			absorbedByExpired += eg.amountMicros
 		} else {
 			absorbedByExpired += used
 		}
@@ -454,7 +502,7 @@ func ComputeCreditBalance(ent Entitlement, grants []CreditGrant, usage []UsageSa
 }
 
 func (m *MemoryStore) ApplyEvent(_ context.Context, change Change) (Entitlement, error) {
-	if err := ValidateChange(change, false); err != nil {
+	if err := ValidateChange(change, !m.AllowSandbox); err != nil {
 		return Entitlement{}, err
 	}
 	env := change.Environment
@@ -486,9 +534,15 @@ func (m *MemoryStore) ApplyEvent(_ context.Context, change Change) (Entitlement,
 	now := m.now()
 	if change.Subscription != nil {
 		sk := subKey{provider: change.Provider, env: env, extSubID: change.Subscription.ExternalSubscriptionID}
-		if existing, found := m.subs[sk]; found && change.ProviderUpdatedAt.UTC().Before(existing.ProviderUpdatedAt.UTC()) {
-			m.mu.Unlock()
-			return Entitlement{}, ErrStaleEvent
+		if existing, found := m.subs[sk]; found {
+			if existing.UserID != userID {
+				m.mu.Unlock()
+				return Entitlement{}, ErrSubscriptionConflict
+			}
+			if change.ProviderUpdatedAt.UTC().Before(existing.ProviderUpdatedAt.UTC()) {
+				m.mu.Unlock()
+				return Entitlement{}, ErrStaleEvent
+			}
 		}
 		sub := Subscription{
 			ID:                     uuid.NewString(),

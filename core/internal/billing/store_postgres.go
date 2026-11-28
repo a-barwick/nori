@@ -23,9 +23,11 @@ type Executor interface {
 }
 
 // PostgresStore implements Store on Postgres via pgxpool.Pool.
+// AllowSandbox defaults to false (production-safe: rejects sandbox provider events unless opted in).
 type PostgresStore struct {
-	pool *pgxpool.Pool
-	Now  func() time.Time
+	pool         *pgxpool.Pool
+	Now          func() time.Time
+	AllowSandbox bool
 }
 
 var _ Store = (*PostgresStore)(nil)
@@ -168,7 +170,7 @@ func ProvisionTrialTx(ctx context.Context, q Executor, userID string, now time.T
 	ent, err := scanEntitlement(q.QueryRow(ctx, `
 		INSERT INTO nori_user_entitlements
 			(user_id, tier, status, billing_provider, period_start, provider_updated_at, updated_at)
-		VALUES ($1, 'trial', 'active', 'manual', $2, $2, $2)
+		VALUES ($1, 'trial', 'active', 'manual', $2, to_timestamp(0), $2)
 		ON CONFLICT (user_id) DO UPDATE SET user_id = EXCLUDED.user_id
 		RETURNING `+selectEntitlementCols,
 		userID, now,
@@ -251,6 +253,10 @@ func ReconcileGlobalBudgetTx(ctx context.Context, q Executor, day time.Time, sco
 
 // ComputeHostedCreditBalanceTx computes a user's exact micro-USD hosted credit balance inside tx.
 // Usage is read from nori_records for the user's owner collection (owners/<dataOwner>/model_usage).
+// Only request_status == "not_sent" is free; stale pending (>15m), stale_aborted, and unpriced
+// non-pending rows are charged at CEIL(estimated_exposure_usd) (falling back to DefaultUnknownExposureMicros).
+// Each usage row is deterministically assigned to at most ONE expired positive grant ordered by
+// (valid_until ASC, id ASC) in a single SQL pass so overlapping expired windows never double-absorb.
 func ComputeHostedCreditBalanceTx(ctx context.Context, q Executor, ent Entitlement, dataOwner string, now time.Time) (CreditBalance, error) {
 	now = now.UTC()
 	staleCutoff := now.Add(-StalePendingTTL)
@@ -260,127 +266,104 @@ func ComputeHostedCreditBalanceTx(ctx context.Context, q Executor, ent Entitleme
 	shard := "owners/" + dataOwner
 	collection := shard + "/model_usage"
 
-	rows, err := q.Query(ctx, `
-		SELECT id, user_id, kind, amount_micros, valid_from, valid_until, source_provider, source_event_id, created_at
-		FROM nori_credit_grants
-		WHERE user_id = $1`,
-		ent.UserID,
-	)
-	if err != nil {
-		return CreditBalance{}, err
-	}
-	type windowKey struct {
-		from  time.Time
-		until time.Time
-	}
 	var activeGranted int64
-	expiredWindows := map[windowKey]int64{}
-	for rows.Next() {
-		var g CreditGrant
-		var kind, provider string
-		if err := rows.Scan(&g.ID, &g.UserID, &kind, &g.AmountMicros, &g.ValidFrom, &g.ValidUntil, &provider, &g.SourceEventID, &g.CreatedAt); err != nil {
-			rows.Close()
-			return CreditBalance{}, err
-		}
-		g.Kind = GrantKind(kind)
-		g.SourceProvider = Provider(provider)
-		if g.IsActiveAt(now) {
-			activeGranted += g.AmountMicros
-		} else if g.ValidUntil != nil && !now.Before(g.ValidUntil.UTC()) && g.AmountMicros > 0 {
-			wk := windowKey{from: g.ValidFrom.UTC(), until: g.ValidUntil.UTC()}
-			expiredWindows[wk] += g.AmountMicros
-		}
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
+	if err := q.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount_micros), 0)
+		FROM nori_credit_grants
+		WHERE user_id = $1
+		  AND valid_from <= $2
+		  AND (valid_until IS NULL OR valid_until > $2)`,
+		ent.UserID, now,
+	).Scan(&activeGranted); err != nil {
 		return CreditBalance{}, err
 	}
-	rows.Close()
 
-	// Aggregate total hosted actual spend + non-stale pending exposure.
-	// Post-016 rows with empty billing (and cost_status != 'local') fail closed as 'hosted'.
-	var totalSpentMicros, totalPendingMicros int64
+	var totalSpentMicros, totalPendingMicros, absorbedByExpired int64
 	staleCutoffRFC := staleCutoff.UTC().Format(time.RFC3339Nano)
-	err = q.QueryRow(ctx, `
-		SELECT
-			COALESCE(SUM(
+	err := q.QueryRow(ctx, `
+		WITH expired_grants AS (
+			SELECT id, valid_from, valid_until, amount_micros
+			FROM nori_credit_grants
+			WHERE user_id = $1
+			  AND valid_until IS NOT NULL
+			  AND valid_until <= $4
+			  AND valid_until > valid_from
+			  AND amount_micros > 0
+		),
+		hosted_usage AS (
+			SELECT
+				(idx_created_at #>> '{}')::timestamptz AS ts,
 				CASE
 					WHEN (data->>'cost_usd')::double precision > 0
 						THEN ROUND(((data->>'cost_usd')::double precision) * 1000000)::bigint
+					WHEN COALESCE(data->>'request_status', '') = 'pending'
+					     AND idx_created_at < to_jsonb($5::text)
+						THEN COALESCE(
+							NULLIF(CEIL(GREATEST(COALESCE((data->>'estimated_exposure_usd')::double precision, 0), 0) * 1000000)::bigint, 0),
+							$6::bigint
+						)
+					WHEN COALESCE(data->>'request_status', '') = 'stale_aborted'
+						THEN COALESCE(
+							NULLIF(CEIL(GREATEST(COALESCE((data->>'estimated_exposure_usd')::double precision, 0), 0) * 1000000)::bigint, 0),
+							$6::bigint
+						)
 					WHEN COALESCE(data->>'request_status', '') <> 'pending'
 					     AND COALESCE(data->>'cost_status', '') NOT IN ('provider', 'calculated', 'local')
-					     AND GREATEST(COALESCE((data->>'estimated_exposure_usd')::double precision, 0), 0) > 0
-						THEN CEIL(((data->>'estimated_exposure_usd')::double precision) * 1000000)::bigint
+						THEN COALESCE(
+							NULLIF(CEIL(GREATEST(COALESCE((data->>'estimated_exposure_usd')::double precision, 0), 0) * 1000000)::bigint, 0),
+							$6::bigint
+						)
 					ELSE 0
-				END
-			), 0),
-			COALESCE(SUM(
+				END AS spent_micros,
 				CASE
 					WHEN COALESCE(data->>'request_status', '') = 'pending'
 					     AND COALESCE((data->>'cost_usd')::double precision, 0) <= 0
-					     AND idx_created_at >= to_jsonb($3::text)
-					     AND GREATEST(COALESCE((data->>'estimated_exposure_usd')::double precision, 0), 0) > 0
-						THEN CEIL(((data->>'estimated_exposure_usd')::double precision) * 1000000)::bigint
-					ELSE 0
-				END
-			), 0)
-		FROM nori_records
-		WHERE shard = $1
-		  AND collection = $2
-		  AND idx_created_at IS NOT NULL
-		  AND COALESCE(data->>'request_status', '') NOT IN ('not_sent', 'stale_aborted')
-		  AND (
-				data->>'billing' = 'hosted'
-				OR (COALESCE(data->>'billing', '') = '' AND COALESCE(data->>'cost_status', '') <> 'local')
-		  )`,
-		shard, collection, staleCutoffRFC,
-	).Scan(&totalSpentMicros, &totalPendingMicros)
-	if err != nil {
-		return CreditBalance{}, err
-	}
-
-	var absorbedByExpired int64
-	for wk, capMicros := range expiredWindows {
-		var usedInWindow int64
-		err := q.QueryRow(ctx, `
-			SELECT COALESCE(SUM(
-				CASE
-					WHEN (data->>'cost_usd')::double precision > 0
-						THEN ROUND(((data->>'cost_usd')::double precision) * 1000000)::bigint
-					WHEN COALESCE(data->>'request_status', '') = 'pending'
 					     AND idx_created_at >= to_jsonb($5::text)
-					     AND GREATEST(COALESCE((data->>'estimated_exposure_usd')::double precision, 0), 0) > 0
-						THEN CEIL(((data->>'estimated_exposure_usd')::double precision) * 1000000)::bigint
-					WHEN COALESCE(data->>'request_status', '') <> 'pending'
-					     AND COALESCE(data->>'cost_status', '') NOT IN ('provider', 'calculated', 'local')
-					     AND GREATEST(COALESCE((data->>'estimated_exposure_usd')::double precision, 0), 0) > 0
-						THEN CEIL(((data->>'estimated_exposure_usd')::double precision) * 1000000)::bigint
+						THEN COALESCE(
+							NULLIF(CEIL(GREATEST(COALESCE((data->>'estimated_exposure_usd')::double precision, 0), 0) * 1000000)::bigint, 0),
+							$6::bigint
+						)
 					ELSE 0
-				END
-			), 0)
+				END AS pending_micros
 			FROM nori_records
-			WHERE shard = $1
-			  AND collection = $2
-			  AND idx_created_at >= to_jsonb($3::text)
-			  AND idx_created_at < to_jsonb($4::text)
-			  AND COALESCE(data->>'request_status', '') NOT IN ('not_sent', 'stale_aborted')
+			WHERE shard = $2
+			  AND collection = $3
+			  AND idx_created_at IS NOT NULL
+			  AND COALESCE(data->>'request_status', '') <> 'not_sent'
 			  AND (
 					data->>'billing' = 'hosted'
 					OR (COALESCE(data->>'billing', '') = '' AND COALESCE(data->>'cost_status', '') <> 'local')
-			  )`,
-			shard, collection,
-			wk.from.UTC().Format(time.RFC3339Nano),
-			wk.until.UTC().Format(time.RFC3339Nano),
-			staleCutoffRFC,
-		).Scan(&usedInWindow)
-		if err != nil {
-			return CreditBalance{}, err
-		}
-		if usedInWindow > capMicros {
-			absorbedByExpired += capMicros
-		} else {
-			absorbedByExpired += usedInWindow
-		}
+			  )
+		),
+		assigned AS (
+			SELECT
+				u.spent_micros,
+				u.pending_micros,
+				g.id AS grant_id,
+				g.amount_micros AS grant_cap
+			FROM hosted_usage u
+			LEFT JOIN LATERAL (
+				SELECT eg.id, eg.amount_micros
+				FROM expired_grants eg
+				WHERE u.ts >= eg.valid_from AND u.ts < eg.valid_until
+				ORDER BY eg.valid_until ASC, eg.id ASC
+				LIMIT 1
+			) g ON true
+		),
+		per_grant AS (
+			SELECT grant_id, LEAST(MAX(grant_cap), SUM(spent_micros + pending_micros)) AS absorbed
+			FROM assigned
+			WHERE grant_id IS NOT NULL
+			GROUP BY grant_id
+		)
+		SELECT
+			(SELECT COALESCE(SUM(spent_micros), 0) FROM hosted_usage),
+			(SELECT COALESCE(SUM(pending_micros), 0) FROM hosted_usage),
+			(SELECT COALESCE(SUM(absorbed), 0) FROM per_grant)`,
+		ent.UserID, shard, collection, now, staleCutoffRFC, DefaultUnknownExposureMicros,
+	).Scan(&totalSpentMicros, &totalPendingMicros, &absorbedByExpired)
+	if err != nil {
+		return CreditBalance{}, err
 	}
 
 	netConsumed := (totalSpentMicros + totalPendingMicros) - absorbedByExpired
@@ -490,7 +473,7 @@ func (s *PostgresStore) SetTier(ctx context.Context, userID string, tier Tier, o
 		ent, err = scanEntitlement(tx.QueryRow(ctx, `
 			INSERT INTO nori_user_entitlements
 				(user_id, tier, status, billing_provider, period_start, period_end, credit_override_micros, provider_updated_at, updated_at)
-			VALUES ($1, $2, $3, 'manual', $4, $5, $6, $7, $7)
+			VALUES ($1, $2, $3, 'manual', $4, $5, $6, to_timestamp(0), $7)
 			RETURNING `+selectEntitlementCols,
 			userID, string(tier), string(status), pStart, pEnd, opts.CreditOverrideMicros, now,
 		))
@@ -545,11 +528,13 @@ func (s *PostgresStore) SetTier(ctx context.Context, userID string, tier Tier, o
 			v := *opts.CreditOverrideMicros
 			creditOverride = &v
 		}
+		// Preserve provider_updated_at on manual updates so subsequent provider events
+		// are not falsely rejected as stale.
 		ent, err = scanEntitlement(tx.QueryRow(ctx, `
 			UPDATE nori_user_entitlements
 			SET tier = $2, pending_tier = NULL, status = $3, billing_provider = 'manual',
 			    period_start = $4, period_end = $5, credit_override_micros = $6,
-			    provider_updated_at = $7, updated_at = $7
+			    updated_at = $7
 			WHERE user_id = $1
 			RETURNING `+selectEntitlementCols,
 			userID, string(tier), string(status), pStart, pEnd, creditOverride, now,
@@ -557,6 +542,19 @@ func (s *PostgresStore) SetTier(ctx context.Context, userID string, tier Tier, o
 		if err != nil {
 			return Entitlement{}, err
 		}
+	}
+
+	// Close any prior active period grants at ent.PeriodStart so re-setting or upgrading a paid tier
+	// never leaves overlapping active period grants that stack free credit.
+	if _, err := tx.Exec(ctx, `
+		UPDATE nori_credit_grants
+		SET valid_until = GREATEST(valid_from, $2)
+		WHERE user_id = $1
+		  AND kind = 'period'
+		  AND (valid_until IS NULL OR valid_until > $2)`,
+		userID, ent.PeriodStart,
+	); err != nil {
+		return Entitlement{}, err
 	}
 
 	if !opts.SkipGrant {
@@ -576,8 +574,16 @@ func (s *PostgresStore) SetTier(ctx context.Context, userID string, tier Tier, o
 			}
 		} else if tier == TierStandard || tier == TierPower {
 			if amt := ent.EffectiveHostedCreditGrantMicros(); amt > 0 {
+				grantID := ManualPeriodGrantID(userID, ent.PeriodStart)
+				var baseExists bool
+				if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM nori_credit_grants WHERE id = $1)`, grantID).Scan(&baseExists); err != nil {
+					return Entitlement{}, err
+				}
+				if baseExists {
+					grantID = ManualSetTierGrantID(userID, tier, ent.PeriodStart)
+				}
 				if err := InsertCreditGrantTx(ctx, tx, CreditGrant{
-					ID:             ManualPeriodGrantID(userID, ent.PeriodStart),
+					ID:             grantID,
 					UserID:         userID,
 					Kind:           GrantPeriod,
 					AmountMicros:   amt,
@@ -656,8 +662,9 @@ func (s *PostgresStore) Unsuspend(ctx context.Context, userID string) (Entitleme
 }
 
 func (s *PostgresStore) AddCreditGrant(ctx context.Context, grant CreditGrant) error {
-	if strings.TrimSpace(grant.ID) == "" || strings.TrimSpace(grant.UserID) == "" || !ValidGrantKind(grant.Kind) {
-		return ErrInvalidChange
+	isExternal := grant.SourceProvider == ProviderStripe || grant.SourceProvider == ProviderAppleIAP
+	if err := ValidateCreditGrant(grant, isExternal); err != nil {
+		return err
 	}
 	return InsertCreditGrantTx(ctx, s.pool, grant)
 }
@@ -688,7 +695,29 @@ func (s *PostgresStore) ListCreditGrants(ctx context.Context, userID string) ([]
 	return out, rows.Err()
 }
 
+func resolveDataOwnerTx(ctx context.Context, q Executor, userID string) string {
+	if userID != "owner" {
+		return userID
+	}
+	var email string
+	if err := q.QueryRow(ctx, `
+		SELECT COALESCE(NULLIF(data->>'email', ''), 'owner')
+		FROM nori_records
+		WHERE shard = 'users' AND collection = 'users' AND id = 'owner'
+		LIMIT 1`,
+	).Scan(&email); err == nil && email != "" {
+		return email
+	}
+	return userID
+}
+
 func (s *PostgresStore) CreditBalance(ctx context.Context, userID string) (CreditBalance, error) {
+	return s.CreditBalanceForOwner(ctx, userID, "")
+}
+
+// CreditBalanceForOwner computes hosted credit balance using an explicit dataOwner (matching users.User.DataOwner()).
+// When dataOwner is empty, LegacyID ("owner") is resolved via nori_records.
+func (s *PostgresStore) CreditBalanceForOwner(ctx context.Context, userID, dataOwner string) (CreditBalance, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return CreditBalance{}, err
@@ -700,7 +729,10 @@ func (s *PostgresStore) CreditBalance(ctx context.Context, userID string) (Credi
 	if err != nil {
 		return CreditBalance{}, err
 	}
-	bal, err := ComputeHostedCreditBalanceTx(ctx, tx, ent, userID, now)
+	if dataOwner == "" {
+		dataOwner = resolveDataOwnerTx(ctx, tx, userID)
+	}
+	bal, err := ComputeHostedCreditBalanceTx(ctx, tx, ent, dataOwner, now)
 	if err != nil {
 		return CreditBalance{}, err
 	}
@@ -711,7 +743,7 @@ func (s *PostgresStore) CreditBalance(ctx context.Context, userID string) (Credi
 }
 
 func (s *PostgresStore) ApplyEvent(ctx context.Context, change Change) (Entitlement, error) {
-	if err := ValidateChange(change, false); err != nil {
+	if err := ValidateChange(change, !s.AllowSandbox); err != nil {
 		return Entitlement{}, err
 	}
 	env := change.Environment
@@ -761,15 +793,19 @@ func (s *PostgresStore) ApplyEvent(ctx context.Context, change Change) (Entitlem
 	now := s.now()
 	if change.Subscription != nil {
 		sub := change.Subscription
-		// Reject stale out-of-order updates for the same subscription.
+		// Reject stale out-of-order updates and cross-user subscription hijacks.
+		var existingUserID string
 		var existingUpdated time.Time
 		err := tx.QueryRow(ctx, `
-			SELECT provider_updated_at FROM nori_subscriptions
+			SELECT user_id, provider_updated_at FROM nori_subscriptions
 			WHERE provider = $1 AND environment = $2 AND external_subscription_id = $3
 			FOR UPDATE`,
 			string(change.Provider), string(env), sub.ExternalSubscriptionID,
-		).Scan(&existingUpdated)
+		).Scan(&existingUserID, &existingUpdated)
 		if err == nil {
+			if existingUserID != userID {
+				return Entitlement{}, ErrSubscriptionConflict
+			}
 			if change.ProviderUpdatedAt.UTC().Before(existingUpdated.UTC()) {
 				return Entitlement{}, ErrStaleEvent
 			}
