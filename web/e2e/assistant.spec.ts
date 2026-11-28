@@ -145,9 +145,9 @@ test("Work waits for pending approvals and offers a retry after a failed read", 
     }
   });
 
-  await page.goto(signInURL("second", "/work"));
+  await page.goto(signInURL("second", "/work/tasks"));
   await waiting;
-  await expect(page.getByRole("tab", { name: "Tasks" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Tasks", exact: true })).toBeVisible();
   await expect(page.getByText("All clear", { exact: true })).toHaveCount(0);
   release();
   await expect(page.getByRole("alert").filter({ hasText: "Approval status unavailable" })).toBeVisible();
@@ -177,7 +177,7 @@ test("Work reports a failed read while the pending approval read is still loadin
     }
   });
 
-  await page.goto(signInURL("second", "/work"));
+  await page.goto(signInURL("second", "/work/tasks"));
   await waiting;
   await expect(page.getByRole("alert").filter({ hasText: "Work status unavailable" })).toBeVisible();
   await expect(page.getByText("All clear", { exact: true })).toHaveCount(0);
@@ -207,7 +207,7 @@ test("Work reports a failed approval read while the Work read is still loading",
     }
   });
 
-  await page.goto(signInURL("second", "/work"));
+  await page.goto(signInURL("second", "/work/tasks"));
   await waiting;
   await expect(page.getByRole("alert").filter({ hasText: "Approval status unavailable" })).toBeVisible();
   await expect(page.getByText("All clear", { exact: true })).toHaveCount(0);
@@ -228,7 +228,7 @@ test("Work reports unavailable capabilities and retries them after a successful 
     }
   });
   const snapshot = page.waitForResponse((response) => response.url().endsWith("/api/v1/snapshot") && response.ok());
-  await page.goto(signInURL("second", "/work"));
+  await page.goto(signInURL("second", "/work/tasks"));
   expect((await (await snapshot).json()).runs).toEqual([]);
   await expect(page.getByRole("alert").filter({ hasText: "Capabilities unavailable" })).toBeVisible();
   await expect(page.getByText("All clear", { exact: true })).toHaveCount(0);
@@ -243,12 +243,12 @@ test("a worker-created approval appears after a live task update", async ({ page
   await page.goto(signInURL("second", "/work"));
   expect((await (await emptyPending).json()).items).toEqual([]);
   await eventStream;
-  await expect(page.getByText("All clear", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Workspace", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Allow once", exact: true })).toHaveCount(0);
 
   const created = await request.post(controlURL("/worker-approval"));
   expect(created.status()).toBe(204);
   await expect(page.getByRole("button", { name: "Allow once", exact: true })).toBeVisible({ timeout: 5_000 });
-  await expect(page.getByText("All clear", { exact: true })).toHaveCount(0);
 });
 
 test.describe("routine scheduling", () => {
