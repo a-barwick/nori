@@ -729,7 +729,7 @@ func (p *Pool) handleTask(workCtx context.Context, claim docstore.TaskLease) {
 	if p.service.IsUserSuspended(workCtx, claim.UserID) {
 		cctx, cancel := finCtx()
 		defer cancel()
-		_, _ = p.leases.ParkTask(cctx, claim.UserID, claim.RunID, p.owner, claim.WakeSeq, "account_suspended")
+		_, _ = p.leases.ParkTask(cctx, claim.UserID, claim.RunID, p.owner, claim.WakeSeq, docstore.WaitAccountSuspended)
 		return
 	}
 	taskCtx, untrack := p.trackUserWork(workCtx, claim.UserID)
@@ -779,7 +779,7 @@ func (p *Pool) handleTask(workCtx context.Context, claim docstore.TaskLease) {
 		cctx, cancel := finCtx()
 		defer cancel()
 		if p.service.IsUserSuspended(cctx, claim.UserID) {
-			_, _ = p.leases.ParkTask(cctx, claim.UserID, claim.RunID, p.owner, claim.WakeSeq, "account_suspended")
+			_, _ = p.leases.ParkTask(cctx, claim.UserID, claim.RunID, p.owner, claim.WakeSeq, docstore.WaitAccountSuspended)
 			return
 		}
 	}

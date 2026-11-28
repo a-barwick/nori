@@ -52,7 +52,7 @@ func run() error {
 	graceFlag := flag.Duration("grace", DefaultGraceWindow, "minimum age before an unreferenced object is flagged as an orphan")
 	unattachedTTLFlag := flag.Duration("unattached-ttl", DefaultUnattachedTTL, "minimum age before an unattached upload is expired")
 	expireUnattachedFlag := flag.Bool("expire-unattached", true, "expire unattached uploads older than --unattached-ttl (dry-run unless --delete --confirm)")
-	reconcileQuotasFlag := flag.Bool("reconcile-quotas", false, "reconcile nori_user_storage.active_bytes against actual live referenced bytes")
+	reconcileQuotasFlag := flag.Bool("reconcile-quotas", false, "reconcile nori_user_storage.active_bytes against active non-expired uploads (skipped in dry-run; requires --delete --confirm)")
 	userFlag := flag.String("user", "", "optional user UUID to audit exclusively")
 	deleteFlag := flag.Bool("delete", false, "delete verified orphans and expired unattached uploads (dry-run when false)")
 	confirmFlag := flag.Bool("confirm", false, "required with --delete to authorize object deletion")

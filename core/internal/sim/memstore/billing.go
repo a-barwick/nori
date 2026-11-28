@@ -694,7 +694,7 @@ func (b *Backend) emitEntitlementWake(userID string) {
 
 func memEffectiveBilling(rawBilling, costStatus string) string {
 	switch rawBilling {
-	case "hosted", "byok", "local":
+	case "hosted", "byok", "local", "system":
 		return rawBilling
 	default:
 		if costStatus == "local" {
@@ -706,7 +706,7 @@ func memEffectiveBilling(rawBilling, costStatus string) string {
 
 func memEffectiveCategory(rawCategory string) string {
 	switch rawCategory {
-	case "llm", "search", "computer":
+	case "llm", "search", "computer", "system":
 		return rawCategory
 	default:
 		return "llm"
@@ -773,12 +773,16 @@ func (b *Backend) ReserveUsageWithBilling(ctx context.Context, req docstore.Usag
 	incomingExposure := req.EstimatedExposureUSD
 	if effBilling == "local" || req.CostStatus == "local" {
 		incomingExposure = 0
+	} else if effBilling == "system" {
+		if incomingExposure < 0 {
+			incomingExposure = 0
+		}
 	} else if incomingExposure <= 0 {
 		incomingExposure = req.UnknownEstimateUSD
 	}
 
-	// Rolling 1h LLM-only call cap (excludes search/computer).
-	if effCategory == "llm" && policy.MaxCallsPerHour > 0 {
+	// Rolling 1h LLM-only call cap (excludes search, computer, and system).
+	if effCategory == "llm" && effBilling != "system" && policy.MaxCallsPerHour > 0 {
 		calls := 0
 		for _, raw := range b.docs[req.Collection] {
 			var u struct {
@@ -919,6 +923,26 @@ func (b *Backend) ReserveUsageWithBilling(ctx context.Context, req docstore.Usag
 				EffectiveCategory: effCategory,
 			}, billing.ErrBYOKNotAllowed
 		}
+
+	case "system":
+		// Platform internal infrastructure calls (e.g. Jev classifier): suspension/status is already
+		// checked above, but system calls never drain user hosted credits, never block BYOK/trial
+		// users, and never count against user hourly LLM or BYOK 24h caps. Track global hosted_all
+		// only when explicitly priced (incomingExposure > 0).
+		if incomingExposure > 0 {
+			incomingMicros := billing.USDToMicrosCeil(incomingExposure)
+			dayStr := now.Format("2006-01-02")
+			allKey := billingBudgetKey{day: dayStr, scope: billing.ScopeHostedAll}
+			if req.HostedAllMaxMicrosPerDay > 0 && b.billing.globalBudget[allKey].SpentMicros+incomingMicros > req.HostedAllMaxMicrosPerDay {
+				return docstore.UsageReserveResult{
+					Allowed:           false,
+					UsedEntitlement:   true,
+					EffectiveBilling:  effBilling,
+					EffectiveCategory: effCategory,
+				}, billing.ErrGlobalBudgetExceeded
+			}
+			_ = b.checkAndIncrementGlobalBudgetLocked(now, billing.ScopeHostedAll, incomingMicros, req.HostedAllMaxMicrosPerDay, 1, 0)
+		}
 	}
 
 	fields := make(map[string]any, len(req.UsageFields)+3)
@@ -1007,6 +1031,27 @@ func (b *Backend) RecordAndReconcileUsage(ctx context.Context, req docstore.Usag
 					b.reconcileGlobalBudgetLocked(day, billing.ScopeHostedAll, delta)
 					b.reconcileGlobalBudgetLocked(day, memBudgetScopeForCategory(cat), delta)
 				}
+			} else if effBilling == "system" {
+				prevMicros := billing.USDToMicrosCeil(prev.EstimatedExposureUSD)
+				var newMicros int64
+				switch {
+				case req.RequestStatus == "not_sent":
+					newMicros = 0
+				case req.CostUSD != nil && *req.CostUSD >= 0:
+					newMicros = billing.USDToMicros(*req.CostUSD)
+				default:
+					newMicros = prevMicros
+				}
+				if delta := newMicros - prevMicros; delta != 0 {
+					day := prev.CreatedAt
+					if day.IsZero() {
+						day = req.CreatedAt
+					}
+					if day.IsZero() {
+						day = b.now()
+					}
+					b.reconcileGlobalBudgetLocked(day, billing.ScopeHostedAll, delta)
+				}
 			}
 		}
 	} else if !hasPrev && req.RequestStatus != "pending" && req.RequestStatus != "not_sent" {
@@ -1031,6 +1076,15 @@ func (b *Backend) RecordAndReconcileUsage(ctx context.Context, req docstore.Usag
 				cat := memEffectiveCategory(req.Category)
 				_ = b.checkAndIncrementGlobalBudgetLocked(day, billing.ScopeHostedAll, actualMicros, 0, 1, 0)
 				_ = b.checkAndIncrementGlobalBudgetLocked(day, memBudgetScopeForCategory(cat), actualMicros, 0, 1, 0)
+			}
+		} else if effBilling == "system" && req.CostUSD != nil && *req.CostUSD > 0 {
+			actualMicros := billing.USDToMicros(*req.CostUSD)
+			if actualMicros > 0 {
+				day := req.CreatedAt
+				if day.IsZero() {
+					day = b.now()
+				}
+				_ = b.checkAndIncrementGlobalBudgetLocked(day, billing.ScopeHostedAll, actualMicros, 0, 1, 0)
 			}
 		}
 	}

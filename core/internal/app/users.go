@@ -204,7 +204,7 @@ func (s *Service) SetComputerManager(mgr *computer.Manager) {
 			mgr.SetBilling(s.billing)
 		}
 		s.SetDisconnectDesktop(func(uid string) {
-			mgr.CloseDesktopSessions(uid)
+			mgr.CloseDesktopSessionsWithReason(uid, computer.DesktopCloseEntitlement)
 		})
 		s.SetSleepUserComputer(mgr.ForceSleepUser)
 	}

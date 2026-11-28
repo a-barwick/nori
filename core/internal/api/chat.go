@@ -123,6 +123,12 @@ func (s *server) assistantConversationMessage(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
+	if s.Assistant != nil {
+		if err := s.Assistant.checkChatHostedCredit(r.Context(), sel, s.ModelProvider); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
 	session, err := s.Runner.HandleInput(r.Context(), conversation.Input{ID: body.ID, Message: body.Text, Attachments: body.Attachments, ModelSelection: sel})
 	if err != nil {
 		writeError(w, err)
@@ -167,6 +173,10 @@ func (s *server) assistantConversationRetry(w http.ResponseWriter, r *http.Reque
 	}
 	if s.Assistant != nil {
 		if _, _, err := s.Assistant.checkActiveAccess(r.Context()); err != nil {
+			writeError(w, err)
+			return
+		}
+		if err := s.Assistant.checkChatHostedCredit(r.Context(), nil, s.ModelProvider); err != nil {
 			writeError(w, err)
 			return
 		}

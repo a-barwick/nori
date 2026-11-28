@@ -68,8 +68,8 @@ func Attempt(ctx context.Context, provider, model string) state.Usage {
 	return s.Attempt(ctx, provider, model)
 }
 
-// AttemptWithMeta constructs a pending state.Usage attempt tagged with billing ("hosted"|"byok"|"local")
-// and category ("llm"|"search"|"computer").
+// AttemptWithMeta constructs a pending state.Usage attempt tagged with billing ("hosted"|"byok"|"local"|"system")
+// and category ("llm"|"search"|"computer"|"system").
 func AttemptWithMeta(ctx context.Context, provider, model, billingMode, category string) state.Usage {
 	u := Attempt(ctx, provider, model)
 	u.Billing = billingMode
@@ -100,8 +100,12 @@ func RecordReportedCost(record *state.Usage, cost *float64) bool {
 }
 
 func Finish(ctx context.Context, meter Meter, u state.Usage) error {
-	if u.CostStatus == "local" {
+	if u.CostStatus == "local" || u.Billing == state.UsageBillingLocal {
 		u.EstimatedExposureUSD = 0
+	} else if u.Billing == state.UsageBillingSystem {
+		if u.EstimatedExposureUSD < 0 || u.CostUSD != nil || u.RequestStatus == "not_sent" {
+			u.EstimatedExposureUSD = 0
+		}
 	} else if u.CostUSD == nil && u.EstimatedExposureUSD <= 0 && u.RequestStatus != "not_sent" {
 		u.EstimatedExposureUSD = EstimateExposureUSD(u.Model)
 	}
@@ -150,6 +154,11 @@ func WithBillingAdmission(local Meter, fallbackCallsPerHour int, fallbackUSDPerD
 			if u.CostStatus == "local" || u.Billing == state.UsageBillingLocal {
 				spendLimit = 0
 				u.EstimatedExposureUSD = 0
+			} else if u.Billing == state.UsageBillingSystem {
+				spendLimit = 0
+				if u.EstimatedExposureUSD < 0 {
+					u.EstimatedExposureUSD = 0
+				}
 			} else if u.EstimatedExposureUSD <= 0 {
 				u.EstimatedExposureUSD = EstimateExposureUSD(u.Model)
 			}
@@ -204,9 +213,14 @@ func WithAdmission(local Meter, reader WindowReader, maxCallsPerHour int, maxUSD
 				dayCutoff = t.Add(-24 * time.Hour)
 			}
 			spendLimit := maxUSDPerDay
-			if u.CostStatus == "local" {
+			if u.CostStatus == "local" || u.Billing == state.UsageBillingLocal {
 				spendLimit = 0
 				u.EstimatedExposureUSD = 0
+			} else if u.Billing == state.UsageBillingSystem {
+				spendLimit = 0
+				if u.EstimatedExposureUSD < 0 {
+					u.EstimatedExposureUSD = 0
+				}
 			} else if u.EstimatedExposureUSD <= 0 {
 				u.EstimatedExposureUSD = EstimateExposureUSD(u.Model)
 			}

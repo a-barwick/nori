@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"nori/internal/billing"
+	"nori/internal/modelprofiles"
 	"nori/internal/scheduler"
 	"nori/internal/state"
 	"nori/internal/state/records"
@@ -30,7 +31,7 @@ const (
 func billingErrorDetails(err error) (status int, code, message string, ok bool) {
 	if errors.Is(err, records.ErrStorageQuotaExceeded) {
 		return http.StatusRequestEntityTooLarge, codeStorageQuotaExceeded,
-			"Your storage limit has been reached. Delete items from Library or upgrade your plan to upload more files.", true
+			"Your upload storage limit has been reached. Upgrade your plan to upload more files.", true
 	}
 	if errors.Is(err, ErrRoutineLimitExceeded) {
 		return http.StatusForbidden, codeRoutineLimitExceeded, err.Error(), true
@@ -119,6 +120,51 @@ func (a *Assistant) checkBYOKAllowed(ctx context.Context) error {
 	}
 	if !ent.EffectivePolicy().AllowBYOK {
 		return billing.ErrBYOKNotAllowed
+	}
+	return nil
+}
+
+// isEffectiveChatHosted reports whether chat messages submitted for this user will run on
+// a platform-hosted model (as opposed to BYOK or Home AI).
+func (a *Assistant) isEffectiveChatHosted(ctx context.Context, sel *state.ModelSelection, defaultProvider string) bool {
+	if a == nil {
+		return false
+	}
+	if a.Models != nil {
+		effective := sel
+		if effective.IsEmpty() || effective.ChatProfileVersion != state.ModelSettingsVersion {
+			cur, err := a.Models.CurrentSelection(ctx)
+			if err != nil {
+				return false
+			}
+			effective = cur
+		}
+		if effective != nil && effective.ChatPinned != nil {
+			return effective.ChatPinned.Backend == modelprofiles.BackendHosted
+		}
+		return a.Models.HostedEnabled && !a.AccountBYOK
+	}
+	if a.AccountBYOK {
+		return false
+	}
+	return defaultProvider != "home" && defaultProvider != "local"
+}
+
+// checkChatHostedCredit rejects chat submissions immediately with 402 credit_exhausted when
+// the user's effective chat model is hosted and their hosted credit balance is <= 0.
+func (a *Assistant) checkChatHostedCredit(ctx context.Context, sel *state.ModelSelection, defaultProvider string) error {
+	if a == nil || a.Billing == nil || a.UserID == "" {
+		return nil
+	}
+	if !a.isEffectiveChatHosted(ctx, sel, defaultProvider) {
+		return nil
+	}
+	sum, err := a.Billing.Summary(ctx, a.UserID)
+	if err != nil {
+		return err
+	}
+	if sum.Balance.AvailableMicros <= 0 {
+		return billing.ErrCreditExhausted
 	}
 	return nil
 }

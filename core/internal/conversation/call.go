@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+	"nori/internal/billing"
 	"nori/internal/contextview"
 	"nori/internal/homeai"
 	"nori/internal/modelkeys"
@@ -530,6 +531,28 @@ func classifyModelFailure(modelErr error, fromUser bool) state.MessageError {
 	suffix := ""
 	if fromUser {
 		suffix = " Your message is saved — tap Retry to try again."
+	}
+	if code := billing.ErrorCode(modelErr); code != "" {
+		msg := modelErr.Error()
+		switch {
+		case errors.Is(modelErr, billing.ErrCreditExhausted):
+			msg = "Your hosted credit balance is exhausted. Add your own API key or upgrade your plan to continue."
+		case errors.Is(modelErr, billing.ErrSubscriptionInactive):
+			msg = "Your subscription is inactive. Resubscribe or update billing to continue."
+		case errors.Is(modelErr, billing.ErrAccountSuspended):
+			msg = "Your account has been suspended."
+		case errors.Is(modelErr, billing.ErrBYOKNotAllowed):
+			msg = "Bring-your-own API keys require a paid plan."
+		case errors.Is(modelErr, billing.ErrGlobalBudgetExceeded):
+			msg = "Nori's hosted service is temporarily at daily capacity. Try again tomorrow or use your own API key."
+		case errors.Is(modelErr, billing.ErrEntitlementMissing):
+			msg = "Account access is not configured."
+		}
+		return state.MessageError{
+			Code:      code,
+			Message:   msg,
+			Retryable: false,
+		}
 	}
 	if errors.Is(modelErr, contextview.ErrOverflow) {
 		msg := "This conversation grew too long for one reply."

@@ -224,7 +224,7 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 	requestStarted = m.now()
 	res, err := m.doWithRetry(reqCtx, body, onRetry)
 	if err != nil {
-		if errors.Is(err, usage.ErrUserQuotaExceeded) || isSupersededCallError(err) {
+		if errors.Is(err, usage.ErrUserQuotaExceeded) || isBillingError(err) || isSupersededCallError(err) {
 			reply.Usage.RequestStatus = "not_sent"
 			return reply, err
 		}

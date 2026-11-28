@@ -513,8 +513,9 @@ func (a *Assistant) deleteLibraryItem(ctx context.Context, id, requestID string,
 		},
 	})
 	if err == nil {
-		// Purge underlying GCS/artifact blobs and decrement nori_user_storage for newly deleted items.
-		var freedBytes int64
+		// Purge underlying GCS/artifact blobs for newly deleted library items.
+		// Storage quota tracks user uploads only, so deleting un-reserved task results
+		// does not call ReleaseStorageBytes.
 		for _, delID := range newlyDeleted {
 			res := result
 			if delID != id {
@@ -524,9 +525,6 @@ func (a *Assistant) deleteLibraryItem(ctx context.Context, id, requestID string,
 					continue
 				}
 			}
-			if res.Size > 0 {
-				freedBytes += res.Size
-			}
 			switch res.Kind {
 			case state.ResultFile:
 				_ = a.Store.DeleteFile(ctx, state.ResultKey(res.ID))
@@ -535,9 +533,6 @@ func (a *Assistant) deleteLibraryItem(ctx context.Context, id, requestID string,
 					_ = a.Store.DeleteFile(ctx, res.RunID+"/"+res.ArtifactID+".png")
 				}
 			}
-		}
-		if freedBytes > 0 && a.ReleaseStorageBytes != nil {
-			_ = a.ReleaseStorageBytes(ctx, freedBytes)
 		}
 		if value.Scope == "all_versions" && a.OnLibraryDelete != nil {
 			allIDs := append([]string{id}, siblings...)

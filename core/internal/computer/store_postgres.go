@@ -348,7 +348,7 @@ func (s *PostgresStore) UpdateComputerStatus(ctx context.Context, userID string,
 		    last_active_at = COALESCE($3, last_active_at),
 		    last_activity_at = COALESCE($3, last_activity_at),
 		    awake_since = CASE
-		        WHEN $2 IN ('sleeping', 'deleted', 'error') THEN NULL
+		        WHEN $2 IN ('sleeping', 'deleted') THEN NULL
 		        WHEN $2 = 'ready' AND awake_since IS NULL THEN COALESCE($3, clock_timestamp())
 		        ELSE awake_since
 		    END,
@@ -499,6 +499,15 @@ func (s *PostgresStore) MeterAwakeTime(ctx context.Context, req MeterAwakeReques
 		}
 	case StatusDeleting, StatusDeleted:
 		rec.Status = req.TransitionStatus
+		rec.AwakeSince = nil
+		if isAwake && end.After(start) {
+			mAt := end
+			rec.LastMeteredAt = &mAt
+		}
+	case StatusError:
+		if rec.Status != StatusDeleting && rec.Status != StatusDeleted {
+			rec.Status = StatusError
+		}
 		rec.AwakeSince = nil
 		if isAwake && end.After(start) {
 			mAt := end

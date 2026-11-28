@@ -206,7 +206,9 @@ func Reconcile(ctx context.Context, refs ReferenceStore, store ObjectStore, opts
 				report.ObjectsScanned++
 				relKey := strings.TrimPrefix(obj.Name, prefix)
 				if _, referenced := snap.ReferencedKeys[relKey]; referenced {
-					actualActiveBytes += obj.Size
+					if strings.HasPrefix(relKey, "uploads/") {
+						actualActiveBytes += obj.Size
+					}
 					continue
 				}
 				_, wasJustExpired := expiredSet[relKey]
@@ -247,7 +249,7 @@ func Reconcile(ctx context.Context, refs ReferenceStore, store ObjectStore, opts
 				}
 			}
 
-			if opts.ReconcileQuotas {
+			if opts.ReconcileQuotas && opts.Delete {
 				if reconciler, ok := refs.(StorageQuotaReconciler); ok {
 					prevBytes, recErr := reconciler.ReconcileUserStorageBytes(ctx, user, actualActiveBytes)
 					if recErr != nil {

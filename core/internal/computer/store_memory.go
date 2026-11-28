@@ -285,8 +285,11 @@ func (s *MemoryStore) UpdateComputerStatus(_ context.Context, userID string, sta
 			t := now
 			rec.SleepingSince = &t
 		}
-	case StatusDeleted, StatusError:
+	case StatusDeleted:
 		rec.AwakeSince = nil
+	case StatusError:
+		// Preserve awake_since so unmetered awake time is not silently discarded;
+		// use MeterAwakeTime(TransitionStatus: StatusError) to meter and clear atomically.
 	case StatusReady:
 		rec.SleepingSince = nil
 		if rec.AwakeSince == nil {
@@ -423,6 +426,15 @@ func (s *MemoryStore) MeterAwakeTime(ctx context.Context, req MeterAwakeRequest)
 		}
 	case StatusDeleting, StatusDeleted:
 		rec.Status = req.TransitionStatus
+		rec.AwakeSince = nil
+		if isAwake && end.After(start) {
+			mAt := end
+			rec.LastMeteredAt = &mAt
+		}
+	case StatusError:
+		if rec.Status != StatusDeleting && rec.Status != StatusDeleted {
+			rec.Status = StatusError
+		}
 		rec.AwakeSince = nil
 		if isAwake && end.After(start) {
 			mAt := end
