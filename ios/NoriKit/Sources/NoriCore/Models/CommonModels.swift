@@ -1060,6 +1060,25 @@ public struct PermissionRule: Sendable, Codable, Hashable, Identifiable {
         self.updatedAt = updatedAt
         self.summary = summary
     }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+        self.revision = try c.decodeIfPresent(Int.self, forKey: .revision) ?? 1
+        self.effect = try c.decode(RuleEffect.self, forKey: .effect)
+        self.toolIDs = try c.decodeIfPresent([String].self, forKey: .toolIDs) ?? []
+        self.connectionIDs = try c.decodeIfPresent([String].self, forKey: .connectionIDs) ?? []
+        self.resourceIDs = try c.decodeIfPresent([String].self, forKey: .resourceIDs) ?? []
+        self.actionClasses = try c.decodeIfPresent([Effect].self, forKey: .actionClasses) ?? []
+        self.recipients = try c.decodeIfPresent([String].self, forKey: .recipients)
+        self.automationID = try c.decodeIfPresent(String.self, forKey: .automationID)
+        self.expiresAt = try c.decodeIfPresent(String.self, forKey: .expiresAt)
+        self.maxOperations = try c.decodeIfPresent(Int.self, forKey: .maxOperations)
+        self.title = try c.decodeIfPresent(String.self, forKey: .title)
+        self.createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt)
+        self.updatedAt = try c.decodeIfPresent(String.self, forKey: .updatedAt)
+        self.summary = try c.decodeIfPresent(String.self, forKey: .summary)
+    }
 }
 
 public struct PermissionRuleEditable: Sendable, Codable, Hashable {

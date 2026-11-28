@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: scripts/ci-status.sh <commit-sha> [--wait] [--exclude-job <name>]"
+  echo "Usage: scripts/ci-status.sh <commit-sha> [--wait] [--exclude-job <name>] [--only-job <name>]"
   echo "Prints success, failure, or pending for the CI checks on a pushed commit (image and release jobs excluded)."
   echo "Exits 0 only on success. --wait polls for up to NORI_CI_WAIT_SECONDS (default 2400)."
 }
@@ -11,6 +11,7 @@ sha="$1"
 shift
 wait=0
 exclude_jobs=("Build images" "Release")
+only_jobs=()
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --wait) wait=1; shift ;;
@@ -19,10 +20,20 @@ while [[ "$#" -gt 0 ]]; do
       exclude_jobs+=("$2")
       shift 2
       ;;
+    --only-job)
+      [[ "$#" -ge 2 ]] || { usage >&2; exit 2; }
+      only_jobs+=("$2")
+      shift 2
+      ;;
     *) usage >&2; exit 2 ;;
   esac
 done
 exclude_json="$(printf '%s\n' "${exclude_jobs[@]}" | jq -R . | jq -s .)"
+if [[ "${#only_jobs[@]}" -gt 0 ]]; then
+  only_json="$(printf '%s\n' "${only_jobs[@]}" | jq -R . | jq -s .)"
+else
+  only_json="[]"
+fi
 repo="${NORI_GITHUB_REPO:-${GITHUB_REPOSITORY:-a-barwick/nori}}"
 deadline=$((SECONDS + ${NORI_CI_WAIT_SECONDS:-2400}))
 
@@ -33,9 +44,14 @@ status() {
     echo pending
     return
   fi
-  gh run view "$run_id" --repo "$repo" --json jobs | jq -r --argjson exclude "$exclude_json" '
-    [.jobs[] | select(.name as $n | ($exclude | index($n)) | not)] as $checks
+  gh run view "$run_id" --repo "$repo" --json jobs | jq -r --argjson exclude "$exclude_json" --argjson only "$only_json" '
+    (if ($only | length) > 0 then
+      [.jobs[] | select(.name as $n | ($only | index($n)) != null)]
+    else
+      [.jobs[] | select(.name as $n | ($exclude | index($n)) | not)]
+    end) as $checks
     | if ($checks | length) == 0 then "pending"
+      elif ($only | length) > 0 and ($checks | length) < ($only | length) then "pending"
       elif any($checks[]; (.conclusion // "") != "" and .conclusion != "success") then "failure"
       elif all($checks[]; .conclusion == "success") then "success"
       else "pending" end'
