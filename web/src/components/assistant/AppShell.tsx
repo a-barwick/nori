@@ -5,13 +5,23 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Tooltip } from "radix-ui";
-import { ListChecks, LoaderCircle, MoreHorizontal } from "lucide-react";
+import { ListChecks, LoaderCircle, Settings } from "lucide-react";
 import { NoriTabIcon } from "@/components/mark/NoriMark";
 import { AppFrame } from "@/components/shell/AppFrame";
 import { Button } from "@/components/ui/primitives";
 import { useAppearance } from "@/lib/appearance";
 import { AssistantProvider, ResourceCacheProvider, useAssistant } from "@/lib/assistant/context";
-import { ACCOUNT_DELETED_REDIRECT, APIError, deleteAccount, errorText, getJSON, resetUserData } from "@/lib/assistant/api";
+import {
+  ACCOUNT_DELETED_REDIRECT,
+  APIError,
+  deleteAccount,
+  errorText,
+  getJSON,
+  resetUserData,
+  type ModelKeysResponse,
+  type ModelSettings,
+} from "@/lib/assistant/api";
+import { hasSelectedHomeChat, needsByokSetup } from "@/lib/assistant/modelSetup";
 import { shouldShowOnboarding } from "@/lib/assistant/onboarding";
 import { useHydrated } from "@/lib/hooks";
 import {
@@ -35,7 +45,7 @@ import { SIGNED_OUT_EVENT_KEY } from "@/lib/runtime/session";
 import type { Preferences } from "@/lib/contracts/assistant";
 import { cn } from "@/lib/utils";
 import { SignOutForm } from "./SignOutForm";
-import { Badge, Failure, inputClass, Loading, Notice } from "./ui";
+import { Failure, inputClass, Loading, Notice } from "./ui";
 
 const OnboardingFlow = dynamic(
   () => import("./OnboardingFlow").then((mod) => mod.OnboardingFlow),
@@ -46,8 +56,6 @@ type NavItem = {
   href: string;
   label: string;
   renderIcon: (active: boolean, size: number) => ReactNode;
-  badge?: number;
-  badgeLabel?: string;
   dot?: boolean;
   dotLabel?: string;
   match: (path: string) => boolean;
@@ -267,6 +275,8 @@ function Frame({ scope, children }: { scope: string; children: ReactNode }) {
   const summary = useSummary();
   const pendingInteractions = usePendingInteractions();
   const preferences = useResource<Preferences>("/preferences", { poll: 30_000, versioned: false });
+  const modelKeys = useResource<ModelKeysResponse>("/settings/model-keys", { poll: 60_000, versioned: false });
+  const models = useResource<ModelSettings>("/settings/models", { poll: 60_000 });
   const path = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -317,6 +327,8 @@ function Frame({ scope, children }: { scope: string; children: ReactNode }) {
     ? pendingInteractions.items.filter(isActionableInteraction).length
     : (summary.needs_you ?? 0);
   const appsAttention = summary.apps_attention ?? 0;
+  const requiresByok = needsByokSetup(modelKeys.data, hasSelectedHomeChat(models.data));
+  const settingsAttention = appsAttention > 0 || requiresByok;
   const { busy } = runtime;
 
   const items: NavItem[] = [
@@ -330,28 +342,25 @@ function Frame({ scope, children }: { scope: string; children: ReactNode }) {
       href: "/work",
       label: "Work",
       renderIcon: (_active, size) => <ListChecks size={size} strokeWidth={1.85} aria-hidden />,
-      badge: pending,
-      badgeLabel: pending === 1 ? "item needing action" : "items needing action",
+      dot: pending > 0,
+      dotLabel: pending === 1 ? "1 item needing action" : `${pending} items needing action`,
       match: (p) =>
         p.startsWith("/work") ||
         p.startsWith("/library") ||
         p.startsWith("/routines") ||
         p.startsWith("/computer"),
     },
-    {
-      href: "/more",
-      label: "More",
-      renderIcon: (_active, size) => <MoreHorizontal size={size} strokeWidth={1.85} aria-hidden />,
-      dot: appsAttention > 0,
-      dotLabel: appsAttention === 1 ? "1 app requires attention" : `${appsAttention} apps require attention`,
-      match: (p) =>
-        p.startsWith("/more") ||
-        p.startsWith("/apps") ||
-        p.startsWith("/memory") ||
-        p.startsWith("/settings") ||
-        p.startsWith("/connector"),
-    },
   ];
+
+  const settingsActive =
+    path.startsWith("/more") ||
+    path.startsWith("/apps") ||
+    path.startsWith("/memory") ||
+    path.startsWith("/settings") ||
+    path.startsWith("/connector");
+  const settingsDotLabel = appsAttention > 0
+    ? (appsAttention === 1 ? "1 app requires attention" : `${appsAttention} apps require attention`)
+    : "model setup required";
 
   const onNavClick = (item: NavItem, active: boolean) => (event: React.MouseEvent<HTMLAnchorElement>) => {
     if (active && item.href === "/") {
@@ -360,7 +369,7 @@ function Frame({ scope, children }: { scope: string; children: ReactNode }) {
     }
   };
 
-  const desktopNav = (
+  const centerNav = (
     <nav aria-label="Main" className="nori-pill-nav">
       {items.map((item) => {
         const active = item.match(path);
@@ -369,15 +378,15 @@ function Frame({ scope, children }: { scope: string; children: ReactNode }) {
             key={item.href}
             href={item.href}
             onClick={onNavClick(item, active)}
+            aria-label={item.dot && item.dotLabel ? `${item.label}, ${item.dotLabel}` : undefined}
             aria-current={active ? "page" : undefined}
             className="nori-pill-nav-item"
           >
             {item.renderIcon(active, 18)}
             <span>{item.label}</span>
-            {item.badge ? <Badge count={item.badge} label={item.badgeLabel ?? ""} /> : null}
-            {!item.badge && item.dot ? (
+            {item.dot ? (
               <span
-                aria-label={item.dotLabel}
+                aria-hidden="true"
                 className="size-[6.5px] shrink-0 rounded-full bg-accent"
               />
             ) : null}
@@ -387,36 +396,22 @@ function Frame({ scope, children }: { scope: string; children: ReactNode }) {
     </nav>
   );
 
-  const mobileTabs = (
-    <nav aria-label="Main" className="nori-tabbar flex shrink-0 border-t border-hairline bg-surface sm:hidden">
-      {items.map((item) => {
-        const active = item.match(path);
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            onClick={onNavClick(item, active)}
-            aria-current={active ? "page" : undefined}
-            className={cn("nori-tab", active && "text-accent-text")}
-          >
-            <span className="relative">
-              {item.renderIcon(active, 22)}
-              {item.badge ? (
-                <span className="absolute -top-1.5 -right-2.5">
-                  <Badge count={item.badge} label={item.badgeLabel ?? ""} />
-                </span>
-              ) : item.dot ? (
-                <span
-                  aria-label={item.dotLabel}
-                  className="absolute -top-0.5 -right-1.5 size-2 rounded-full bg-accent"
-                />
-              ) : null}
-            </span>
-            <span>{item.label}</span>
-          </Link>
-        );
-      })}
-    </nav>
+  const settingsNav = (
+    <Link
+      href="/more"
+      aria-label={settingsAttention ? `Settings, ${settingsDotLabel}` : "Settings"}
+      title="Settings"
+      aria-current={settingsActive ? "page" : undefined}
+      className={cn("nori-icon-nav-btn", settingsActive && "is-active")}
+    >
+      <Settings size={19} strokeWidth={1.85} aria-hidden />
+      {settingsAttention ? (
+        <span
+          aria-hidden="true"
+          className="absolute top-1.5 right-1.5 size-[7px] rounded-full bg-accent ring-2 ring-canvas"
+        />
+      ) : null}
+    </Link>
   );
 
   if (showOnboarding && path !== "/connector/activate") {
@@ -435,7 +430,7 @@ function Frame({ scope, children }: { scope: string; children: ReactNode }) {
       >
         Skip to content
       </a>
-      <AppFrame state={busy ? "thinking" : "idle"} nav={desktopNav} footer={mobileTabs}>
+      <AppFrame state={busy ? "thinking" : "idle"} nav={centerNav} trailing={settingsNav}>
         {children}
         <div id="nori-announcer" role="status" aria-live="polite" className="sr-only" />
       </AppFrame>

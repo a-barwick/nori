@@ -108,7 +108,7 @@ const SECTIONS: {
 export function SettingsIndex() {
   const { capabilities, capabilitiesError, has, refreshCapabilities } = useAssistantConfig();
   return (
-    <Screen title="Settings" back="/more" backLabel="More">
+    <Screen title="Settings" back="/more" backLabel="Back">
       {capabilitiesError && (
         <div className="mb-4">
           <Failure error={capabilitiesError} onRetry={refreshCapabilities} />
@@ -172,7 +172,7 @@ export function SettingsScreen({ section, userEmail }: { section: SettingsSectio
   const { has, capabilities } = useAssistantConfig();
   const meta = SECTIONS.find((item) => item.id === section)!;
   const back = meta.back ?? "/more";
-  const backLabel = meta.backLabel ?? "More";
+  const backLabel = meta.backLabel ?? "Settings";
   if (meta.feature && !has(meta.feature)) {
     return (
       <Screen title={meta.title} back={back} backLabel={backLabel}>

@@ -19,7 +19,7 @@ All Web visual tokens and reusable primitives live in `web/src/app/globals.css`,
 | `web/src/components/ui/primitives.tsx` | Base controls (`Button` with 5 semantic kinds + centralized disabled state, `IconButton` + `Tip`) |
 | `web/src/components/assistant/ui.tsx` | Screen & list primitives (`Screen`, `Section`, `Rows`, `Row`, `Switch`, `Pill`, `Badge`, `Notice`, `Empty`, `Confirm`, `UnderlineTabs`, `Tabs`, `Field`, `inputBase`) |
 | `web/src/components/assistant/BrandIcons.tsx` | Brand mark wells (`BrandIconWell`, `AppBrandIcon`, `ProviderBrandIcon`) for Google services, custom apps, and model providers |
-| `web/src/components/shell/AppFrame.tsx` | Full-bleed desktop top bar (`60px`) and mobile bottom 3-tab shell (`Chat`, `Work`, `More`) |
+| `web/src/components/shell/AppFrame.tsx` | Always-on-top 3-zone header (`60px` desktop / `54px` narrow) with Nori mark, centered `Chat · Work` pill, and right-aligned `Settings` cog button (integrates macOS Electron traffic lights) |
 
 ---
 
@@ -84,17 +84,18 @@ Never pair `bg-ink` with `text-surface` for selected pills, tabs, or tooltips (i
   - `"light"` sets `data-appearance="light"` on `<html>`.
   - `"dark"` sets `data-appearance="dark"` on `<html>`.
 - **Zero-flash boot:** `web/src/app/layout.tsx` runs `APPEARANCE_BOOT_SCRIPT` synchronously in `<head>` (with `suppressHydrationWarning` on `<html>`) so Dark Mode resolves before first paint.
-- **Settings UI:** Exposed at **More → Settings → Appearance** (`/settings/appearance`), featuring a live interactive chat preview and a `System | Light | Dark` segmented radio group.
+- **Settings UI:** Exposed at **Settings → General → Appearance** (`/settings/appearance`), featuring a live interactive chat preview and a `System | Light | Dark` segmented radio group.
 
 ---
 
 ## 4. Web Shell, Layout & Component Contracts
 
 ### Unified Column & Top Navigation
-- Every primary screen (`Chat`, `Work`, `More`, and detail pages) aligns to the unified `960px` centered column (`.nori-page-col`, `32px` desktop padding, `18px` mobile padding).
-- Desktop renders a calm `60px` top bar with the Nori mark on the left and a centered 3-pillar pill switcher (`Chat`, `Work`, `More`). Mobile (`< 640px`) renders a bottom 3-tab bar.
+- Every primary screen (`Chat`, `Work`, `Settings`, and detail pages) aligns to the unified `960px` centered column (`.nori-page-col`, `32px` desktop padding, `18px` mobile padding).
+- All viewports render a single always-on-top bar (`60px` desktop, `54px` under `640px`, no mobile bottom tab bar): `NoriMark` on the left (wordmark hides under `540px`), a centered 2-tab pill switcher (`Chat`, `Work`), and a circular `Settings` cog button on the right. In the macOS Electron app, the top bar integrates the native traffic lights (`titleBarStyle: "hiddenInset"`).
+- `Work` and `Settings` use calm exception dots only (no numeric counters).
 - The `Chat` tab uses `NoriTabIcon` (solid negative-space onigiri when active, outlined silhouette when inactive), matching iOS `NoriMark.tabBarIcon(selected:)`.
-- Top-level tab hubs (`Work`, `More`) omit redundant visible page titles via `<Screen hideHeaderTitle>` while keeping an `<h1 className="sr-only">` for keyboard/screen-reader focus management.
+- Top-level hubs (`Work`, `Settings`) omit redundant visible page titles via `<Screen hideHeaderTitle>` while keeping an `<h1 className="sr-only">` for keyboard/screen-reader focus management.
 
 ### Single-Column Full-Width Hub Stacks
 - **Work (`/work`, Hybrid Hub):** Surfaces `Action needed` approval cards (capped at 3 with a bottom `See all >` bar → `/work/action-needed`) and `In progress` running tasks (capped at 3 with a bottom `See all >` bar → `/work/tasks`), followed by a `More`-style **Workspace** grouped list (`Tasks` → `/work/tasks`, `Automations` → `/routines`, `Artifacts` → `/library`, and `Computer` → `/computer` when enabled).
@@ -102,8 +103,8 @@ Never pair `bg-ink` with `text-surface` for selected pills, tabs, or tooltips (i
 - **Work → Automations (`/routines`):** Recurring routines, monitors, and event-relative automations with quick Run / Pause controls.
 - **Work → Artifacts (`/library`):** Starts directly with Search + Kind filter chips + clean chronological list (no oversized hero banner pulling the newest item out of flow).
 - **Work → Computer (`/computer`):** Personal Computer status, `Open Desktop` drawer, sleep/wake controls, and checkpoints.
-- **More:** Flat grouped rows with zero navigation sublabels under **Nori** (`Apps`, `Memory`, `Permissions`), **Settings** (`Models`, `Usage & Budgets`, `Preferences`, `Appearance`), and **Account** (`Account`, housing `Action History`, `Diagnostics`, `Legal`, `Reset data`, `Delete account`, and `Sign out`). Pills appear only for exceptions (`1 attention`, `Required`, `Reconnecting`, `Offline`).
-- **More Subpages:**
+- **Settings:** Flat grouped rows with zero navigation sublabels under **Nori** (`Apps`, `Memory`, `Permissions`), **General** (`Notifications`, `Models`, `Usage & Budgets`, `Preferences`, `Appearance`), and **Account** (`Account`, housing `Action History`, `Diagnostics`, `Legal`, `Reset data`, `Delete account`, and `Sign out`). Pills appear only for exceptions (`1 attention`, `Required`, `Reconnecting`, `Offline`).
+- **Settings Subpages:**
   - **Apps (`/apps`):** Real Google Calendar, Google Drive, Gmail, Linear, and Notion icons (`AppBrandIcon`), direct switches for Google services, collapsed `Sign-in options` when adding a custom app, and plain on/off `Actions` switches on app detail screens.
   - **Memory (`/memory`):** Unified search bar across saved facts and past chat notes, canonical topic folders with counts, and inline `×` → `Forget` / `Keep` confirmation.
   - **Permissions (`/settings/permissions`):** Simple `Allowed`, `Ask first`, and `Blocked` groups with semantic status dots and inline `×` → `Remove` / `Keep` confirmation.

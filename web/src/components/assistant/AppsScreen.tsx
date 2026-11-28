@@ -94,13 +94,13 @@ export function AppsScreen() {
   }, [signedInServer, signInResult, router]);
   if (!has("mcp") && !has("connections")) {
     return (
-      <Screen title="Apps" back="/more" backLabel="More">
+      <Screen title="Apps" back="/more" backLabel="Settings">
         <NotYet what="Apps" />
       </Screen>
     );
   }
   return (
-    <Screen title="Apps" back="/more" backLabel="More">
+    <Screen title="Apps" back="/more" backLabel="Settings">
       {has("connections") && <GoogleConnection />}
       {has("mcp") ? <CustomApps /> : <NotYet what="Custom apps" />}
       {has("connections") && <ActiveConnections />}

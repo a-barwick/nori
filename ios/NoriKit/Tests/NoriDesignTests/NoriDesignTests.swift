@@ -48,6 +48,17 @@ struct NoriDesignTests {
         #expect(NoriAppearance(storedRawValue: "light") == .light)
     }
 
+    @Test("NoriTabBarPosition supports Top and Bottom with Top as default")
+    func tabBarPositionOptions() {
+        #expect(NoriTabBarPosition.allCases == [.top, .bottom])
+        #expect(NoriTabBarPosition.storageKey == "nori.tabBarPosition")
+        #expect(NoriTabBarPosition.top.displayLabel == "Top")
+        #expect(NoriTabBarPosition.bottom.displayLabel == "Bottom")
+        #expect(NoriTabBarPosition(storedRawValue: "unknown") == .top)
+        #expect(NoriTabBarPosition(storedRawValue: "top") == .top)
+        #expect(NoriTabBarPosition(storedRawValue: "bottom") == .bottom)
+    }
+
     @Test("Dark mode foundation, typography, brand, and mascot tokens match calibrated design palette")
     func darkModeFoundationTokens() {
         #expect(hexString(for: NoriColors.Background.canvas, dark: true) == "#000000")

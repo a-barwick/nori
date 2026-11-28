@@ -427,7 +427,7 @@ test("reset clears saved model keys and choices and opens onboarding in both tab
   expect(before.models.selection.chat_profile_id).toBe("anthropic-opus");
   const secondTab = await context.newPage();
   await secondTab.goto(`${app}/more`);
-  await expect(secondTab.getByText("Settings", { exact: true })).toBeVisible();
+  await expect(secondTab.getByRole("heading", { name: "General", exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Account" }).click();
   await page.getByRole("link", { name: "Reset data" }).click();
   await expect(page.getByText(/saved API keys, and model choices/)).toBeVisible();

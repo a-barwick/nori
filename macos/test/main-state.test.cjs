@@ -290,3 +290,46 @@ test("expired session during restore signs out and reports welcome error", async
   assert.match(controller.welcomeStatus().message, /expired/i);
   controller.dispose();
 });
+
+test("web window integrates hiddenInset titlebar and forwards fullscreen transitions while welcome keeps standard chrome", async () => {
+  const { electron, windows } = createFakeElectron();
+  const webOrigin = "https://nori.example";
+  let signedIn = false;
+  const account = {
+    accountID: () => "sub-5",
+    async restore() { return signedIn; },
+    async signIn() { signedIn = true; },
+    async clear() { signedIn = false; },
+  };
+  const home = {
+    pairingInProgress: false,
+    async retryRevocation() { return { revocationPending: false }; },
+    async disconnect() { return { revocationPending: false }; },
+  };
+  const config = {
+    webOrigin,
+    browserOrigin: webOrigin,
+    relayOrigin: webOrigin,
+    googleClientId: "desktop.apps.googleusercontent.com",
+    googleClientSecret: "secret",
+    local: false,
+  };
+
+  const controller = createAppController({ electron, config, account, home });
+  await controller.start();
+  const welcomeWindow = windows.at(-1);
+  assert.equal(welcomeWindow.options.titleBarStyle, undefined);
+
+  await controller.signIn();
+  const webWindow = windows.at(-1);
+  assert.equal(webWindow.options.titleBarStyle, "hiddenInset");
+  assert.deepEqual(webWindow.options.trafficLightPosition, { x: 16, y: 22 });
+
+  webWindow.emit("enter-full-screen");
+  webWindow.emit("leave-full-screen");
+  assert.deepEqual(webWindow.sentMessages, [
+    { channel: "nori:fullscreen-changed", payload: true },
+    { channel: "nori:fullscreen-changed", payload: false },
+  ]);
+  controller.dispose();
+});

@@ -39,7 +39,7 @@ export function MoreScreen({ userEmail: _userEmail }: { userEmail?: string } = {
   const requiresByok = needsByokSetup(modelKeys.data, hasSelectedHomeChat(models.data));
 
   return (
-    <Screen title="More" hideHeaderTitle>
+    <Screen title="Settings" hideHeaderTitle>
       {requiresByok && (
         <div className="mb-6">
           <Notice
@@ -88,8 +88,8 @@ export function MoreScreen({ userEmail: _userEmail }: { userEmail?: string } = {
         </Rows>
       </Section>
 
-      <Section title="Settings">
-        <Rows label="Settings">
+      <Section title="General">
+        <Rows label="General">
           <Row
             href="/settings/notifications"
             leading={

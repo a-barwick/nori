@@ -131,7 +131,7 @@ export function MemoryScreen() {
 
   if (!enabled) {
     return (
-      <Screen title="Memory" back="/more" backLabel="More">
+      <Screen title="Memory" back="/more" backLabel="Settings">
         <NotYet what="Memory" />
       </Screen>
     );
@@ -256,7 +256,7 @@ export function MemoryScreen() {
   const logHits = trimmed ? (searchRes.data?.items ?? []).filter((hit) => hit.layer === "log") : [];
 
   return (
-    <Screen title="Memory" back="/more" backLabel="More">
+    <Screen title="Memory" back="/more" backLabel="Settings">
       <div className="space-y-4">
         <label className="relative block">
           <span className="sr-only">Search everything Nori remembers</span>

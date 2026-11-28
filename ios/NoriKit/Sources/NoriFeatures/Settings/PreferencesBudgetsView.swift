@@ -1,6 +1,9 @@
 import SwiftUI
 import NoriCore
 import NoriDesign
+#if canImport(UIKit)
+import UIKit
+#endif
 
 private let preferenceDayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 private let preferenceDayOrder = [1, 2, 3, 4, 5, 6, 0]
@@ -33,12 +36,27 @@ private func brandForPurpose(_ purpose: String) -> NoriBrandKind {
 }
 
 public struct PreferencesBudgetsView: View {
+    @AppStorage(NoriTabBarPosition.storageKey) private var tabBarPositionRawValue: String = NoriTabBarPosition.top.rawValue
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var tabBarPickerNamespace
     @Bindable private var store: NoriStore
     @State private var editingField: RegionField?
     @State private var draftValue = ""
     @State private var isSaving = false
     @State private var isLoading = false
     @State private var loadError: String?
+
+    private var tabBarPosition: NoriTabBarPosition {
+        NoriTabBarPosition(storedRawValue: tabBarPositionRawValue)
+    }
+
+    private var showPhoneTabBarOption: Bool {
+        #if os(iOS)
+        UIDevice.current.userInterfaceIdiom == .phone
+        #else
+        false
+        #endif
+    }
 
     private enum RegionField: Hashable {
         case timezone
@@ -88,6 +106,58 @@ public struct PreferencesBudgetsView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
+                if showPhoneTabBarOption {
+                    VStack(alignment: .leading, spacing: 0) {
+                        NoriSectionHeader("Layout")
+                        NoriRows {
+                            NoriRow(title: "Tab bar position", showChevron: false, showDivider: false) {
+                                HStack(spacing: 3) {
+                                    ForEach(NoriTabBarPosition.allCases) { option in
+                                        let isSelected = tabBarPosition == option
+                                        Button {
+                                            if reduceMotion {
+                                                tabBarPositionRawValue = option.rawValue
+                                            } else {
+                                                withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                                                    tabBarPositionRawValue = option.rawValue
+                                                }
+                                            }
+                                        } label: {
+                                            Text(option.displayLabel)
+                                                .font(.system(size: 12.5, weight: .semibold))
+                                                .foregroundStyle(isSelected ? NoriColors.chipSelectedFg : NoriColors.ink2)
+                                                .padding(.horizontal, 12)
+                                                .frame(height: 28)
+                                                .background {
+                                                    if isSelected {
+                                                        Capsule()
+                                                            .fill(NoriColors.chipSelectedBg)
+                                                            .overlay(
+                                                                Capsule()
+                                                                    .strokeBorder(NoriColors.chipSelectedBorder, lineWidth: 1)
+                                                            )
+                                                            .matchedGeometryEffect(id: "noriTabBarPositionSelection", in: tabBarPickerNamespace)
+                                                    }
+                                                }
+                                                .contentShape(Capsule())
+                                        }
+                                        .buttonStyle(.plain)
+                                        .accessibilityAddTraits(isSelected ? .isSelected : [])
+                                    }
+                                }
+                                .padding(3)
+                                .background(NoriColors.elevated, in: Capsule())
+                                .overlay(
+                                    Capsule()
+                                        .strokeBorder(NoriColors.cardBorder, lineWidth: 1)
+                                )
+                                .accessibilityElement(children: .contain)
+                                .accessibilityLabel("Tab bar position")
+                            }
+                        }
+                    }
+                }
+
                 if let loadError {
                     NoriNotice(title: "Could not load preferences", detail: loadError, tone: .danger) {
                         Button("Retry") {
@@ -183,7 +253,8 @@ public struct PreferencesBudgetsView: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
-            .padding(.bottom, 96)
+            .padding(.bottom, 32)
+            .noriReadableColumn()
         }
         .task {
             if !store.hasLoadedPreferences {
@@ -384,7 +455,8 @@ private struct WorkingHoursEditorView: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
-            .padding(.bottom, 96)
+            .padding(.bottom, 32)
+            .noriReadableColumn()
         }
         .background(NoriColors.canvas)
         .navigationTitle("Working hours")

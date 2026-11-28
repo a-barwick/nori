@@ -132,6 +132,7 @@ public struct ChatView: View {
             threadArea
 
             ChatComposerView(store: store)
+                .noriReadableColumn()
         }
         .background(NoriColors.canvas.ignoresSafeArea())
         .sheet(item: $editingReminder) { target in
@@ -229,6 +230,7 @@ public struct ChatView: View {
                     .padding(.horizontal, 14)
                     .padding(.top, 12)
                     .padding(.bottom, 12)
+                    .noriReadableColumn()
                 }
                 .defaultScrollAnchor(.bottom)
                 .onScrollGeometryChange(for: ChatScrollMetrics.self) { geo in

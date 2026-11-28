@@ -57,7 +57,7 @@ public struct MoreHubView: View {
                 NoriSectionHeader("Nori")
                 noriRows
 
-                NoriSectionHeader("Settings")
+                NoriSectionHeader("General")
                 settingsRows
 
                 NoriSectionHeader("Account")
@@ -65,7 +65,8 @@ public struct MoreHubView: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)
-            .padding(.bottom, 96)
+            .padding(.bottom, 32)
+            .noriReadableColumn()
         }
         .refreshable {
             async let moreTask: Void = store.refreshForTab(.more, force: true)
@@ -74,7 +75,7 @@ public struct MoreHubView: View {
             _ = await (moreTask, modelSettingsTask, homeConnectorsTask)
         }
         .background(NoriColors.canvas.ignoresSafeArea())
-        .navigationTitle("More")
+        .navigationTitle("Settings")
         #if os(iOS)
         .toolbar(.hidden, for: .navigationBar)
         #endif

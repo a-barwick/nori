@@ -13,7 +13,7 @@ All iOS visual tokens and reusable primitives live in the `NoriDesign` target in
 | File | Responsibility |
 | --- | --- |
 | `ios/NoriKit/Sources/NoriDesign/NoriTheme.swift` | Adaptive Light/Dark `NoriColors`, structured namespaces, `NoriSpacing`, `NoriRadius`, `NoriTypography` |
-| `ios/NoriKit/Sources/NoriDesign/NoriAppearance.swift` | `NoriAppearance` (`system`, `light`, `dark`) + `@AppStorage("nori.appearance")` key |
+| `ios/NoriKit/Sources/NoriDesign/NoriAppearance.swift` | `NoriAppearance` (`system`, `light`, `dark`) + `NoriTabBarPosition` (`top`, `bottom`) `@AppStorage` preferences |
 | `ios/NoriKit/Sources/NoriDesign/NoriMark.swift` | Appearance-aware animated SwiftUI `Canvas` mascot (`NoriMark`, `NoriMedallion`) |
 | `ios/NoriKit/Sources/NoriDesign/NoriPrimitives.swift` | Core reusable components (`NoriCard`, `NoriRows`, `NoriRow`, `NoriPill`, `NoriTone`, `NoriButtonStyle`, `NoriNotice`, etc.) |
 | `ios/NoriKit/Sources/NoriDesign/NoriBrandIcon.swift` | Brand icon tiles and rows (`NoriBrandIcon`, `NoriBrandKind`, `NoriBrandRow`) for Google services, custom apps, and model providers |
@@ -91,9 +91,10 @@ In Dark Mode, `NoriTone.border` resolves to transparent so pills and `NoriNotice
 
 ## 4. iOS Native Chrome, Materials & Components
 
-### Floating Navigation (`TabView`)
-- Use native SwiftUI `TabView` with `.tint(NoriColors.accent)` so iOS 26/27+ Liquid Glass renders the floating glass capsule in portrait and vertical rail in landscape automatically.
-- Do not build custom opaque bottom tab bars.
+### Floating Navigation (`NoriRootView`)
+- Uses a floating Liquid Glass 2-tab pill (`Chat`, `Work`) paired with a separate circular `Settings` cog button (`gearshape`), matching Web and macOS. Both `Work` and `Settings` use calm exception dots rather than numeric badges.
+- **Default placement is Top** on both iPhone and iPad, leaving Chat's bottom edge exclusively for the composer. On iPhone, the top bar hides when pushing a detail view so native `< Back` navigation owns the top; on iPad, it stays visible above detail views and content aligns to a centered `720pt` readable column (`.noriReadableColumn()`).
+- **iPhone Bottom option:** Exposed in **Settings → Preferences → Tab bar position** (`Top` | `Bottom`, `@AppStorage("nori.tabBarPosition")`), rendering a matched-height (`56pt`) bottom Liquid Glass `[Chat · Work]` capsule + separate circular `Settings` cog that hides automatically while the keyboard is up. Both Top and Bottom modes share the exact same selected-tab fill (`NoriColors.selected` dark / `NoriColors.surface` light).
 
 ### Modal Sheets
 Every `.sheet` presentation must follow the sheet surface contract so sheets sit cleanly one level above the `#000000` canvas:
@@ -121,8 +122,8 @@ Use `NoriButtonStyle(.primary | .neutral | .tonal | .quiet | .danger, fullWidth:
 - Border: `isInputFocused ? NoriColors.accentSignal : NoriColors.cardBorder` (`1.5 pt` when focused, invisible when unfocused in Dark Mode).
 - Keyboard appearance adapts automatically from the root `preferredColorScheme`—never hardcode `.keyboardAppearance`.
 
-### Settings & More Tab Conventions
-- **More Hub (`MoreHubView`):** Three groups totaling 9 rows: **Nori** (`Apps`, `Memory`, `Permissions`), **Settings** (`Notifications`, `Models`, `Usage & Budgets`, `Preferences`, `Appearance`), and **Account** (`Account`, containing `Action History`, `Diagnostics`, `Legal`, `Reset data`, `Delete account`, and `Sign Out`). Navigation rows omit sublabels and display `NoriPill` only for exceptions. **Notifications** (`NotificationsSettingsView`) holds `Push notifications` toggles (`Chats`, `Urgent & approvals`, `Morning brief`) and `Schedule` (`Quiet hours`, `Morning brief`).
+### Settings Hub Conventions
+- **Settings Hub (`MoreHubView`):** Three groups totaling 9 rows: **Nori** (`Apps`, `Memory`, `Permissions`), **General** (`Notifications`, `Models`, `Usage & Budgets`, `Preferences`, `Appearance`), and **Account** (`Account`, containing `Action History`, `Diagnostics`, `Legal`, `Reset data`, `Delete account`, and `Sign Out`). Navigation rows omit sublabels and display `NoriPill` only for exceptions. **Notifications** (`NotificationsSettingsView`) holds `Push notifications` toggles (`Chats`, `Urgent & approvals`, `Morning brief`) and `Schedule` (`Quiet hours`, `Morning brief`). **Preferences** (`PreferencesBudgetsView`) adds an iPhone-only `Layout → Tab bar position` (`Top` | `Bottom`) control above `Region`.
 - **Brand Icons (`NoriBrandIcon`, `NoriBrandRow`):** Use `NoriBrandRow` for Google Calendar, Google Drive, Gmail, Linear, Notion, Anthropic, OpenAI, and Google rows. `NoriBrandIcon` reads `@Environment(\.colorScheme)` explicitly to switch between Light (`#FFFFFF`) and Dark (`#181820`) brand tile surfaces.
 - **More Subpages:** Match Web parity across `AppsView` / `MCPDetailView` (direct switches, plain `Actions` toggles), `MemoryView` (topic folders + unified search + inline `Forget` / `Keep`), `StandingPermissionsView` (`Allowed` / `Ask first` / `Blocked` + inline `Remove` / `Keep`), `ModelsSettingsView` (`Chat` / `Work` auto-save rows pushing a searchable `ModelPickerView` with `Reasoning` at the top), `APICostsView` (`Usage & Budgets` with monthly progress bar and inline-editable limits), and `PreferencesBudgetsView` (`Region`, `Working hours` drill-in, `Default accounts`).
 

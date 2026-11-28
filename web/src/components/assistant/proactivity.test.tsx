@@ -471,6 +471,9 @@ describe("More / Settings Notifications controls", () => {
       </AssistantProvider>,
     );
     assert.equal(moreHtml.includes("Proactivity"), false);
+    assert.equal(moreHtml.includes(">More<"), false);
+    assert.match(moreHtml, /Settings/);
+    assert.match(moreHtml, /General/);
     assert.match(moreHtml, /Notifications/);
     assert.match(moreHtml, /\/settings\/notifications/);
 

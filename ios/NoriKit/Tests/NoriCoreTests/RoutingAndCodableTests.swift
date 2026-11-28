@@ -74,6 +74,7 @@ struct RoutingAndCodableTests {
         #expect(NoriDeepLink.parse(URL(string: "nori://work/task-1")!) == .workDetail("task-1"))
         #expect(NoriDeepLink.parse(URL(string: "nori://more")!) == .tab(.more))
         #expect(NoriDeepLink.parse(URL(string: "nori://tab/more")!) == .tab(.more))
+        #expect(NoriDeepLink.parse(URL(string: "nori://tab/settings")!) == .tab(.more))
 
         #expect(NoriDeepLink.parse(URL(string: "nori://apps")!) == .apps)
         #expect(NoriDeepLink.parse(URL(string: "nori://tab/apps")!) == .apps)

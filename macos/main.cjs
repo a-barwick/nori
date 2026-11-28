@@ -72,6 +72,7 @@ function createAppController({
       minWidth: 420,
       minHeight: 480,
       title: "Nori",
+      ...(kind === "web" ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 16, y: 22 } } : {}),
       show: false,
       webPreferences: {
         session: browserSession,
@@ -87,6 +88,14 @@ function createAppController({
     state.mode = kind;
     state.window = next;
     next.once("ready-to-show", () => { if (!next.isDestroyed()) next.show(); });
+    if (kind === "web") {
+      next.on("enter-full-screen", () => {
+        if (!next.isDestroyed()) next.webContents.send("nori:fullscreen-changed", true);
+      });
+      next.on("leave-full-screen", () => {
+        if (!next.isDestroyed()) next.webContents.send("nori:fullscreen-changed", false);
+      });
+    }
     next.on("close", () => { state.lastBounds = next.getBounds(); });
     next.on("closed", () => {
       if (state.window !== next) return;

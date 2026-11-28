@@ -8,15 +8,16 @@ import type { MarkState } from "@/lib/types";
 export function AppFrame({
   children,
   nav,
-  footer,
+  trailing,
   state = "idle",
 }: {
   children: ReactNode;
   nav?: ReactNode;
-  footer?: ReactNode;
+  trailing?: ReactNode;
   state?: MarkState;
 }) {
   const shell = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const viewport = window.visualViewport;
     const frame = shell.current;
@@ -46,24 +47,25 @@ export function AppFrame({
   return (
     <div ref={shell} className="nori-shell">
       <header className="nori-topbar">
-        <div className="flex items-center">
+        <div className="nori-topbar-leading flex min-w-0 items-center">
           <Link
             href="/"
             aria-label="Nori home"
             className="-ml-2 inline-flex items-center gap-2.5 rounded-tile px-2 py-1.5 transition-colors hover:bg-fill-1"
           >
-            <NoriMark size={30} state={state} />
-            <span className="text-[17px] leading-none font-bold tracking-[-0.02em] text-ink">Nori</span>
+            <NoriMark size={28} state={state} />
+            <span className="hidden text-[17px] leading-none font-bold tracking-[-0.02em] text-ink min-[540px]:inline">
+              Nori
+            </span>
           </Link>
         </div>
 
-        <div className="hidden justify-center sm:flex">{nav}</div>
+        <div className="flex justify-center">{nav}</div>
 
-        <div aria-hidden />
+        <div className="flex items-center justify-end">{trailing}</div>
       </header>
 
       <div id="content" className="flex min-h-0 flex-1 flex-col overflow-clip">{children}</div>
-      {footer}
     </div>
   );
 }

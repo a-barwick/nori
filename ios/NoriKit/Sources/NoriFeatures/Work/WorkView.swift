@@ -314,7 +314,8 @@ public struct WorkView: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)
-            .padding(.bottom, 96)
+            .padding(.bottom, 32)
+            .noriReadableColumn()
         }
         .background(NoriColors.canvas.ignoresSafeArea())
         .refreshable {

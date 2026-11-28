@@ -758,3 +758,36 @@ public struct NoriTopWash: View {
         )
     }
 }
+
+public struct NoriReadableColumnModifier: ViewModifier {
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #endif
+    private let maxWidth: CGFloat
+
+    public init(maxWidth: CGFloat = 720) {
+        self.maxWidth = maxWidth
+    }
+
+    public func body(content: Content) -> some View {
+        #if os(iOS)
+        if horizontalSizeClass == .regular {
+            content
+                .frame(maxWidth: maxWidth)
+                .frame(maxWidth: .infinity)
+        } else {
+            content
+        }
+        #else
+        content
+            .frame(maxWidth: maxWidth)
+            .frame(maxWidth: .infinity)
+        #endif
+    }
+}
+
+public extension View {
+    func noriReadableColumn(maxWidth: CGFloat = 720) -> some View {
+        modifier(NoriReadableColumnModifier(maxWidth: maxWidth))
+    }
+}

@@ -36,6 +36,7 @@ public enum NoriDeepLink: Sendable, Hashable {
                     return .tab(tab)
                 }
                 switch name {
+                case "settings": return .tab(.more)
                 case "apps": return .apps
                 case "library": return .library
                 default: break
