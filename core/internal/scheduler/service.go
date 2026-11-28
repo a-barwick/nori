@@ -36,6 +36,7 @@ type Service struct {
 	Preferences            func(ctx context.Context) (connections.Preferences, error)
 	AppendProactiveMessage func(ctx context.Context, deliveryID string, message state.Message) (state.Message, error)
 	EnqueueProactiveEvent  func(ctx context.Context, event state.TaskEvent) error
+	OnPush                 func(ctx context.Context, delivery Delivery) error
 	DailyProactiveSpend    func(ctx context.Context, since time.Time) (ProactiveSpend, error)
 	ReadPosition           func(ctx context.Context) (state.ReadMark, error)
 	LastUserTurnAt         func(ctx context.Context) (time.Time, error)

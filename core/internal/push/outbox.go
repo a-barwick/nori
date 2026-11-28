@@ -30,7 +30,7 @@ const (
 var allowedLockScreenBodies = map[string]struct{}{
 	DefaultBody:                   {},
 	"Approval ready to review":    {},
-	"Something needs your review": {},
+	"Urgent update ready":         {},
 	"Your morning brief is ready": {},
 	"Your update is ready":        {},
 }
@@ -41,7 +41,7 @@ func CopyForKind(kind NotificationKind) (string, string) {
 	case KindApproval:
 		return DefaultTitle, "Approval ready to review"
 	case KindUrgent:
-		return DefaultTitle, "Something needs your review"
+		return DefaultTitle, "Urgent update ready"
 	case KindBrief:
 		return DefaultTitle, "Your morning brief is ready"
 	case KindUpdate:

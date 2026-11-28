@@ -183,6 +183,7 @@ type stored struct {
 	Checkpoint          string     `json:"checkpoint,omitempty"`
 	CheckpointKeys      []string   `json:"checkpoint_keys,omitempty"`
 	ConsecutiveFailures int        `json:"consecutive_failures,omitempty"`
+	TransientFailures   int        `json:"transient_failures,omitempty"`
 }
 
 type Action struct {

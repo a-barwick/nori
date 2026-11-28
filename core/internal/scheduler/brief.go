@@ -154,11 +154,15 @@ func (s *Service) EnsureMorningBrief(ctx context.Context, prefs connections.Pref
 		desiredStatus = AutomationPaused
 	}
 
-	reqID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(fmt.Sprintf("ensure-morning-brief:%s:%s:%s", briefTime, desiredStatus, zone))).String()
+	var existingRev int64
+	if cur, err := s.Store.Resource(ctx, CollectionAutomations, MorningBriefAutomationID); err == nil {
+		existingRev = cur.Revision
+	}
+	reqID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(fmt.Sprintf("ensure-morning-brief:%d:%s:%s:%s", existingRev, briefTime, desiredStatus, zone))).String()
 	receipt, err := s.arm(ctx)(s.Store.Mutate(ctx, state.Mutation{
 		RequestID: reqID, Method: "PUT", Target: "/v1/automations/" + MorningBriefAutomationID,
 		Collection: CollectionAutomations, ID: MorningBriefAutomationID, SkipRevisionCheck: true,
-		Payload: map[string]any{"time": briefTime, "status": desiredStatus, "zone": zone},
+		Payload: map[string]any{"revision": existingRev, "time": briefTime, "status": desiredStatus, "zone": zone},
 		Apply: func(current *state.Resource, _ func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
 			var a stored
 			revision := int64(1)
@@ -182,12 +186,23 @@ func (s *Service) EnsureMorningBrief(ctx context.Context, prefs connections.Pref
 			if desiredStatus == AutomationEnabled {
 				a.PausedReason = ""
 			}
+			if a.BudgetUSD <= 0 {
+				a.BudgetUSD = 0.15
+			}
 			a.Trigger = Trigger{
 				Kind:               "recurring",
 				LocalStart:         localStart,
 				Timezone:           zone,
 				FollowUserTimezone: true,
 				RRule:              "FREQ=DAILY",
+			}
+			// Avoid firing a second Morning Brief on the same local calendar day if
+			// the user changes the brief time or timezone after today's brief already ran.
+			if a.Cursor != nil && a.Cursor.In(loc).Format("2006-01-02") == now.In(loc).Format("2006-01-02") && a.LastOccurrenceID != "" {
+				tomorrow := now.In(loc).AddDate(0, 0, 1)
+				startOfTomorrow, _ := LocalTime(tomorrow.Year(), tomorrow.Month(), tomorrow.Day(), 0, 0, 0, loc)
+				cursorUTC := startOfTomorrow.UTC().Add(-time.Second)
+				a.Cursor = &cursorUTC
 			}
 			a.MaxActiveRuns = 1
 			a.MissedRun = "skip"
@@ -440,8 +455,8 @@ func BuildBriefMessage(a stored, o occurrenceDoc, outcome ProactiveOutcome, summ
 
 	var fallbackLines []string
 	fallbackLines = append(fallbackLines, fmt.Sprintf("%s — %s", greeting, meta))
-	if len(items) == 0 {
-		fallbackLines = append(fallbackLines, "Nothing new to catch up on this morning.")
+	if len(items) == 0 && strings.TrimSpace(summary) != "" {
+		fallbackLines = append(fallbackLines, strings.TrimSpace(summary))
 	} else {
 		for _, it := range items {
 			line := "• " + it.Title
@@ -560,23 +575,49 @@ func (s *Service) deliverMorningBrief(
 		return nil, err
 	}
 
+	if d.State == DeliveryStateDelivered && s.OnPush != nil {
+		_ = s.OnPush(ctx, d)
+	}
+
 	// ONLY AFTER brief delivery succeeds: mark included held deliveries as folded
-	// (receipt = brief occurrence ID) and record their brief fold count.
+	// (receipt = brief occurrence ID) and record their brief fold count only when
+	// the state transition actually succeeds.
 	for _, p := range toFold {
 		h := p.d
-		h.State = DeliveryStateFolded
-		h.Receipt = o.ID
-		h.UpdatedAt = &now
-		nextRes, err := state.NewResource(CollectionDeliveries, h.ID, 0, h, map[string]string{"occurrence_id": h.OccurrenceID, "state": DeliveryStateFolded}, now)
-		if err != nil {
-			continue
+		rev := p.res.Revision
+		folded := false
+		for attempt := 0; attempt < 2; attempt++ {
+			h.State = DeliveryStateFolded
+			h.Receipt = o.ID
+			h.UpdatedAt = &now
+			nextRes, err := state.NewResource(CollectionDeliveries, h.ID, 0, h, map[string]string{"occurrence_id": h.OccurrenceID, "state": DeliveryStateFolded}, now)
+			if err != nil {
+				break
+			}
+			if _, err := s.Store.PutResource(ctx, nextRes, rev); err == nil {
+				folded = true
+				break
+			} else if errors.Is(err, state.ErrRevisionConflict) {
+				freshRes, rerr := s.Store.Resource(ctx, CollectionDeliveries, h.ID)
+				if rerr != nil {
+					break
+				}
+				var fresh Delivery
+				if freshRes.Decode(&fresh) != nil || fresh.State != DeliveryStateHeld {
+					break
+				}
+				h = fresh
+				rev = freshRes.Revision
+				continue
+			} else {
+				slog.WarnContext(ctx, "scheduler mark folded failed", "delivery_id", h.ID, "err", err)
+				break
+			}
 		}
-		if _, err := s.Store.PutResource(ctx, nextRes, p.res.Revision); err != nil && !errors.Is(err, state.ErrRevisionConflict) {
-			slog.WarnContext(ctx, "scheduler mark folded failed", "delivery_id", h.ID, "err", err)
-			continue
-		}
-		if err := s.recordFindingSurfaced(ctx, h.FindingKeys, h.InteractionID, now, true); err != nil {
-			slog.WarnContext(ctx, "scheduler record brief fold failed", "delivery_id", h.ID, "err", err)
+		if folded {
+			if err := s.recordFindingSurfaced(ctx, h.FindingKeys, h.InteractionID, now, true); err != nil {
+				slog.WarnContext(ctx, "scheduler record brief fold failed", "delivery_id", h.ID, "err", err)
+			}
 		}
 	}
 

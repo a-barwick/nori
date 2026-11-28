@@ -167,8 +167,11 @@ func IsProactiveEvent(ev *state.TaskEvent) bool {
 		return true
 	}
 	kind := strings.ToLower(strings.TrimSpace(ev.Kind))
+	if strings.HasPrefix(kind, "proactive_") || strings.HasPrefix(kind, "scheduler_") || strings.HasPrefix(kind, "automation_") {
+		return true
+	}
 	switch kind {
-	case "brief", "morning_brief", "proactive_brief", "proactive_watch", "source_watch", "watch_alert", "eod_wrap", "pre_meeting_prep":
+	case "brief", "morning_brief", "proactive_brief", "proactive_watch", "proactive_alert", "source_watch", "watch_alert", "eod_wrap", "pre_meeting_prep":
 		return true
 	}
 	return false

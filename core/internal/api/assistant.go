@@ -75,6 +75,7 @@ type Assistant struct {
 	Stop                     func(ctx context.Context, commandID, taskID string) (state.Run, error)
 	OnLibraryDelete          func(ctx context.Context, resultIDs []string)
 	OnForget                 func(ctx context.Context, tags []string)
+	OnPreferencesSaved       func(ctx context.Context, prefs connections.Preferences)
 }
 
 type apiError struct {
@@ -493,6 +494,11 @@ func (a *Assistant) savePreferences(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, err, requestID, prefs)
 		return
 	}
+	if a.OnPreferencesSaved != nil {
+		if prefs, _, err := a.Connections.Preferences(r.Context()); err == nil {
+			a.OnPreferencesSaved(r.Context(), prefs)
+		}
+	}
 	writeReceipt(w, receipt)
 }
 
@@ -723,8 +729,19 @@ func (a *Assistant) respond(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if a.OnProactiveDraftResponse != nil && (value.Kind == "approve" || value.Kind == "decline") {
-		if draftErr := a.OnProactiveDraftResponse(r.Context(), id, value.Kind); draftErr != nil && !errors.Is(draftErr, state.ErrNotFound) {
+		draftCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
+		draftErr := a.OnProactiveDraftResponse(draftCtx, id, value.Kind)
+		cancel()
+		if draftErr != nil && !errors.Is(draftErr, state.ErrNotFound) {
 			slog.WarnContext(r.Context(), "proactive draft response handling failed", "interaction_id", id, "kind", value.Kind, "err", draftErr)
+			writeJSON(w, http.StatusServiceUnavailable, apiError{
+				Error:     "Your approval is saved; executing the draft failed. Retry to finish.",
+				Code:      "delivery_pending",
+				Retryable: true,
+				Accepted:  true,
+				RequestID: requestID,
+			})
+			return
 		}
 	}
 	writeReceipt(w, receipt)

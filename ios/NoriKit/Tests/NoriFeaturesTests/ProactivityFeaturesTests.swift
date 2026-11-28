@@ -153,7 +153,7 @@ struct ProactivityFeaturesTests {
         #expect(ProactivityTimeFormatting.formatClock("00:15") == "12:15 AM")
         #expect(ProactivityTimeFormatting.formatClock("12:00") == "12:00 PM")
 
-        #expect(ProactivityTimeFormatting.quietHoursLabel(nil) == "Off")
+        #expect(ProactivityTimeFormatting.quietHoursLabel(nil) == "9:00 PM – 7:30 AM")
         #expect(ProactivityTimeFormatting.quietHoursLabel(QuietHours(enabled: false, start: "21:00", end: "07:30")) == "Off")
         #expect(ProactivityTimeFormatting.quietHoursLabel(QuietHours(enabled: true, start: "21:00", end: "07:30")) == "9:00 PM – 7:30 AM")
 

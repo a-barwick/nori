@@ -21,7 +21,10 @@ public enum ProactivityTimeFormatting {
     }
 
     public static func quietHoursLabel(_ quietHours: QuietHours?) -> String {
-        guard let quietHours, quietHours.isEnabled else { return "Off" }
+        guard let quietHours else {
+            return "\(formatClock("21:00")) – \(formatClock("07:30"))"
+        }
+        guard quietHours.isEnabled else { return "Off" }
         return "\(formatClock(quietHours.start)) – \(formatClock(quietHours.end))"
     }
 

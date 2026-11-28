@@ -214,13 +214,29 @@ func (s *PostgresStore) ListPendingOutbox(ctx context.Context, limit int) ([]Out
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := s.pool.Query(ctx, `
-		SELECT delivery_id, user_id, interaction_id, collapse_id, title, body,
-		       status, attempts, last_error, sent_at, created_at, updated_at
-		FROM nori_push_outbox
-		WHERE status = 'pending'
-		ORDER BY created_at ASC, delivery_id ASC
-		LIMIT $1`, limit)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Claim pending rows atomically with FOR UPDATE SKIP LOCKED and bump updated_at
+	// so concurrent workers cannot double-send the same delivery.
+	rows, err := tx.Query(ctx, `
+		WITH claimed AS (
+			SELECT delivery_id
+			FROM nori_push_outbox
+			WHERE status = 'pending'
+			ORDER BY created_at ASC, delivery_id ASC
+			LIMIT $1
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE nori_push_outbox o
+		SET updated_at = clock_timestamp()
+		FROM claimed c
+		WHERE o.delivery_id = c.delivery_id
+		RETURNING o.delivery_id, o.user_id, o.interaction_id, o.collapse_id, o.title, o.body,
+		          o.status, o.attempts, o.last_error, o.sent_at, o.created_at, o.updated_at`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -241,6 +257,9 @@ func (s *PostgresStore) ListPendingOutbox(ctx context.Context, limit int) ([]Out
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return items, nil

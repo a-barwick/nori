@@ -122,6 +122,9 @@ func (s *Service) dispatchDelivery(ctx context.Context, d *Delivery, now time.Ti
 	if d.State == DeliveryStateDelivered && len(d.FindingKeys) > 0 {
 		_ = s.recordFindingSurfaced(ctx, d.FindingKeys, d.InteractionID, now, false)
 	}
+	if d.State == DeliveryStateDelivered && s.OnPush != nil {
+		_ = s.OnPush(ctx, *d)
+	}
 	return nil
 }
 

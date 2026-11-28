@@ -38,6 +38,7 @@ type Service struct {
 	computer      *computer.Manager
 	closeComputer func()
 	pushStore     push.Store
+	pushWorker    *push.OutboxWorker
 	storage       *platform.Storage
 	cfg           settings.Settings
 	waker         wake.Waker
@@ -99,11 +100,23 @@ func OpenServiceWithStorage(storage *platform.Storage, waker wake.Waker, cfg set
 	if pushStore == nil {
 		pushStore = push.NewMemoryStore()
 	}
+	var pushSender push.Sender
+	if apnsCfg, ok := push.ConfigFromEnv(); ok {
+		apnsCfg.Devices = pushStore
+		if client, err := push.NewAPNSClient(apnsCfg); err == nil {
+			pushSender = client
+		}
+	}
+	pushWorker := &push.OutboxWorker{
+		Store:  pushStore,
+		Sender: pushSender,
+	}
 	return &Service{
 		Users:         dir,
 		IdleTTL:       DefaultIdleTTL,
 		MaxCachedApps: DefaultMaxCachedApps,
 		pushStore:     pushStore,
+		pushWorker:    pushWorker,
 		storage:       storage,
 		cfg:           cfg,
 		waker:         waker,
@@ -372,6 +385,7 @@ func (s *Service) RepairUser(ctx context.Context, row users.User) error {
 		home:                   s.home,
 		computer:               s.computer,
 		pushStore:              s.pushStore,
+		pushWorker:             s.pushWorker,
 	})
 	if err != nil {
 		return err
@@ -448,6 +462,7 @@ func (s *Service) openUserApp(ctx context.Context, row users.User, done chan str
 		home:                   s.home,
 		computer:               s.computer,
 		pushStore:              s.pushStore,
+		pushWorker:             s.pushWorker,
 	})
 	if err != nil {
 		return nil, err

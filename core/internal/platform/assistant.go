@@ -2,8 +2,10 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"nori/internal/connections"
 	"nori/internal/connectors/google"
@@ -140,7 +142,33 @@ func openAssistant(
 	}
 	conn.UserTimezone = user.TimeZone
 	conn.DataResetAt = user.DataResetAt
-	perms := &permissions.Service{Store: store, UnattendedWrites: s.Connections.UnattendedWrites, UserSends: s.Connections.UserSends}
+	perms := &permissions.Service{
+		Store:            store,
+		UnattendedWrites: s.Connections.UnattendedWrites,
+		UserSends:        s.Connections.UserSends,
+		ValidateEditedPayload: func(toolID string, edited map[string]string, originalPayload json.RawMessage) error {
+			if len(edited) == 0 {
+				return nil
+			}
+			var meta struct {
+				Effect     string   `json:"effect"`
+				Recipients []string `json:"recipients"`
+			}
+			_ = json.Unmarshal(originalPayload, &meta)
+			lowTool := strings.ToLower(toolID)
+			isMessageTool := len(meta.Recipients) > 0 ||
+				meta.Effect == "sensitive_send" ||
+				strings.Contains(lowTool, "mail") ||
+				strings.Contains(lowTool, "email") ||
+				strings.Contains(lowTool, "draft") ||
+				strings.Contains(lowTool, "message") ||
+				strings.Contains(lowTool, "send")
+			if !isMessageTool {
+				return fmt.Errorf("edited_fields are only permitted for message or draft approvals")
+			}
+			return nil
+		},
+	}
 	sched := &scheduler.Service{Store: store, Tasks: tasks, Permissions: perms,
 		Results: func(ctx context.Context, taskID string) []string {
 			results, err := tasks.RecentResults(ctx, 200)

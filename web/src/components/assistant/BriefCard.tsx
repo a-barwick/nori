@@ -34,7 +34,7 @@ export function day1BodyText(part: Pick<Part, "text" | "fallback">): string {
     const lines = fallback.split("\n").map((line) => line.trim()).filter(Boolean);
     if (lines.length > 1) return lines.slice(1).join(" ");
   }
-  return "I'll check in like this each morning. What's on your mind today?";
+  return "";
 }
 
 function BriefRow({

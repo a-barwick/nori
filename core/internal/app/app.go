@@ -51,6 +51,7 @@ type App struct {
 	Scheduler       *scheduler.Service
 	Discovery       *proactivity.DiscoveryService
 	ProactiveDrafts *task.ProactiveDraftService
+	PushWorker      *push.OutboxWorker
 
 	guardWakeRepair func(context.Context) (func(), error)
 }
@@ -60,6 +61,7 @@ type openOptions struct {
 	home                   *homeai.Service
 	computer               *computer.Manager
 	pushStore              push.Store
+	pushWorker             *push.OutboxWorker
 }
 
 type appModels struct {
@@ -163,7 +165,8 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 	toolSource := &agent.Service{Extensions: services.Tools}
 	result.Scheduler = services.Scheduler
 	result.Discovery = &proactivity.DiscoveryService{Store: store}
-	wireSchedulerProactivityHooks(services.Scheduler, store)
+	result.PushWorker = opts.pushWorker
+	wireSchedulerProactivityHooks(services.Scheduler, store, services.Connections, opts.pushWorker, user.ID)
 	models := buildAppModels(&cfg, user, store, services, opts.home)
 
 	result.Assistant = &api.Assistant{
@@ -173,6 +176,13 @@ func openWithResources(ctx context.Context, waker wake.Waker, cfg settings.Setti
 		Features:      AssistantFeatures(services.Connections, cfg.Features.DisableBackgroundTasks),
 		NextScheduled: services.Scheduler.NextScheduled, InboxUnread: services.Scheduler.UnreadCount,
 		NormalizeMemory: newMemoryNormalizer(models.summarizer, models.outer, store, cfg),
+		OnPreferencesSaved: func(ctx context.Context, prefs connections.Preferences) {
+			if services.Scheduler != nil {
+				if _, err := services.Scheduler.EnsureMorningBrief(ctx, prefs); err != nil {
+					slog.WarnContext(ctx, "ensure morning brief after preferences save failed", "user_id", user.ID, "err", err)
+				}
+			}
+		},
 	}
 	if opts.pushStore != nil {
 		result.Assistant.PushDevices = &api.PushDevicesAPI{Store: opts.pushStore, UserID: user.ID}
@@ -465,10 +475,14 @@ func (a *App) Schedule(ctx context.Context) error {
 		_, expireErr = a.ProactiveDrafts.ExpirePendingDrafts(ctx, now)
 	}
 	_, err := a.Scheduler.Tick(ctx)
-	return errors.Join(expireErr, err, a.deliverAnswers(ctx))
+	var pushErr error
+	if a.PushWorker != nil && a.PushWorker.Sender != nil {
+		_, pushErr = a.PushWorker.ProcessPending(ctx, 20)
+	}
+	return errors.Join(expireErr, err, pushErr, a.deliverAnswers(ctx))
 }
 
-func wireSchedulerProactivityHooks(sched *scheduler.Service, store state.ConversationStore) {
+func wireSchedulerProactivityHooks(sched *scheduler.Service, store state.ConversationStore, conns *connections.Service, pushWorker *push.OutboxWorker, userID string) {
 	if sched == nil || store == nil {
 		return
 	}
@@ -494,6 +508,53 @@ func wireSchedulerProactivityHooks(sched *scheduler.Service, store state.Convers
 			}
 		}
 		return time.Time{}, nil
+	}
+	sched.LastActivity = func(ctx context.Context) (time.Time, error) {
+		var latest time.Time
+		if rm, err := store.ReadPosition(ctx); err == nil && !rm.Through.IsZero() {
+			latest = rm.Through
+		}
+		if sched.LastUserTurnAt != nil {
+			if t, err := sched.LastUserTurnAt(ctx); err == nil && t.After(latest) {
+				latest = t
+			}
+		}
+		return latest, nil
+	}
+	if pushWorker != nil && userID != "" {
+		sched.OnPush = func(ctx context.Context, d scheduler.Delivery) error {
+			policy := connections.PushPolicyUrgentAndApprovals
+			if conns != nil {
+				if prefs, _, err := conns.Preferences(ctx); err == nil {
+					policy = prefs.EffectiveProactivity().PushPolicy
+				}
+			}
+			if policy == connections.PushPolicyQuietOnly {
+				return nil
+			}
+			var kind push.NotificationKind
+			switch {
+			case d.InteractionID != "":
+				kind = push.KindApproval
+			case d.AutomationID == scheduler.MorningBriefAutomationID:
+				if policy != connections.PushPolicyIncludeBrief {
+					return nil
+				}
+				kind = push.KindBrief
+			case d.Outcome == scheduler.OutcomeAlert:
+				kind = push.KindUrgent
+			default:
+				return nil
+			}
+			_, _, err := pushWorker.Enqueue(ctx, push.EnqueueRequest{
+				DeliveryID:    d.ID,
+				UserID:        userID,
+				InteractionID: d.InteractionID,
+				CollapseID:    d.ID,
+				Kind:          kind,
+			})
+			return err
+		}
 	}
 }
 

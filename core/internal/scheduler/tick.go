@@ -369,7 +369,10 @@ func (s *Service) advance(ctx context.Context, r state.Resource, o occurrenceDoc
 		if window := time.Duration(a.ExecutionWindowSeconds) * time.Second; window > 0 && now.Sub(o.ScheduledAt) > window && o.Reason == "" {
 			return s.settle(ctx, r, o, OccurrenceExpired, "missed_window", "", nil)
 		}
-		if exceeded, _, _, budgetErr := s.CheckRuntimeBudget(ctx, now); budgetErr == nil && exceeded {
+		if exceeded, _, _, budgetErr := s.CheckRuntimeBudget(ctx, now); budgetErr != nil {
+			// Fail closed on spend read errors rather than launching unchecked runs.
+			return budgetErr
+		} else if exceeded {
 			return s.settle(ctx, r, o, OccurrenceSkipped, "budget_exhausted", "", nil)
 		}
 		id := taskID(o.ID)
@@ -474,18 +477,30 @@ func (s *Service) finish(ctx context.Context, r state.Resource, o occurrenceDoc,
 	}
 
 	// Determine failure throttle (report 1st failure, suppress intermediate retries,
-	// report threshold Nth failure and auto-pause).
+	// report threshold Nth failure and auto-pause). Sustained transient failures
+	// also throttle and auto-pause at 2*threshold so broken watches cannot loop indefinitely.
 	settleReason := ""
 	throttled := false
 	pausedOnFailure := false
-	if status == OccurrenceFailed && !modelkeys.IsAccessFailure(run.Error) && !isTransientAutomationFailure(run.Error) {
+	if status == OccurrenceFailed && !modelkeys.IsAccessFailure(run.Error) {
 		threshold := s.failurePauseThreshold()
-		nextFailures := a.ConsecutiveFailures + 1
-		if nextFailures > 1 && nextFailures < threshold {
-			throttled = true
-			settleReason = "failure_throttled"
-		} else if nextFailures >= threshold {
-			pausedOnFailure = true
+		if isTransientAutomationFailure(run.Error) {
+			transientLimit := threshold * 2
+			nextTransient := a.TransientFailures + 1
+			if nextTransient > 1 && nextTransient < transientLimit {
+				throttled = true
+				settleReason = "failure_throttled"
+			} else if nextTransient >= transientLimit {
+				pausedOnFailure = true
+			}
+		} else {
+			nextFailures := a.ConsecutiveFailures + 1
+			if nextFailures > 1 && nextFailures < threshold {
+				throttled = true
+				settleReason = "failure_throttled"
+			} else if nextFailures >= threshold {
+				pausedOnFailure = true
+			}
 		}
 	}
 
@@ -524,8 +539,11 @@ func (s *Service) finish(ctx context.Context, r state.Resource, o occurrenceDoc,
 		return err
 	}
 	if a.ID == MorningBriefAutomationID && status != OccurrenceCompleted {
-		// If the Morning Brief failed or was cancelled, flush held quiet-hours deliveries.
-		if err := s.flushHeldDeliveries(ctx, s.now(), true); err != nil {
+		// If the Morning Brief failed or was cancelled, flush held quiet-hours deliveries
+		// only if we are outside quiet hours; if still inside quiet hours, respect ScheduledFor.
+		now := s.now()
+		inQuiet, _ := s.quietHoursCheck(ctx, now)
+		if err := s.flushHeldDeliveries(ctx, now, !inQuiet); err != nil {
 			slog.WarnContext(ctx, "scheduler flush held deliveries after brief failure failed", "automation_id", a.ID, "err", err)
 		}
 	}
@@ -596,16 +614,27 @@ func (s *Service) recordOutcomeHealth(ctx context.Context, id string, status Occ
 	if status != OccurrenceCompleted && status != OccurrenceFailed {
 		return nil
 	}
-	if status == OccurrenceFailed && (modelkeys.IsAccessFailure(errText) || isTransientAutomationFailure(errText)) {
+	if status == OccurrenceFailed && modelkeys.IsAccessFailure(errText) {
 		return nil
 	}
+	transient := status == OccurrenceFailed && isTransientAutomationFailure(errText)
 	threshold := s.failurePauseThreshold()
 	return s.updateAutomationWithRetry(ctx, id, func(a *stored, _ state.Resource) (bool, map[string]string, error) {
 		if status == OccurrenceCompleted {
-			if a.ConsecutiveFailures == 0 {
+			if a.ConsecutiveFailures == 0 && a.TransientFailures == 0 {
 				return false, nil, nil
 			}
 			a.ConsecutiveFailures = 0
+			a.TransientFailures = 0
+		} else if transient {
+			a.TransientFailures++
+			if a.TransientFailures >= threshold*2 && a.Status == AutomationEnabled {
+				a.Status = AutomationPaused
+				a.PausedReason = "consecutive_transient_failures"
+				a.NextAt = nil
+				slog.WarnContext(ctx, "auto-pausing automation after sustained transient failures",
+					"automation_id", id, "transient_failures", a.TransientFailures)
+			}
 		} else {
 			a.ConsecutiveFailures++
 			if a.ConsecutiveFailures >= threshold && a.Status == AutomationEnabled {
