@@ -32,9 +32,9 @@ xcodebuild \
   build
 ```
 
-## 2. Immediate Exploration in Demo Mode
+## 2. Preview the workspace in Debug
 
-On first launch, Nori starts in **Demo Mode** — an in-memory simulation pre-seeded with a realistic workspace (Q4 Vendor Renewal Brief, procurement approval card, Friday design review calendar question, MCP servers including Linear sign-in, 3-layer Memory with 24 KB budget, Automations, Goals, and Permissions).
+When launched in Debug with `-nori-preview`, Nori uses a preview workspace — an in-memory simulation pre-seeded with a realistic workspace (Q4 Vendor Renewal Brief, procurement approval card, Friday design review calendar question, MCP servers including Linear sign-in, 3-layer Memory with 24 KB budget, Automations, Goals, and Permissions).
 
 No running backend is required to test messaging, approvals, task steering, document reading/revision, memory pinning/promotion, or MCP configuration.
 
@@ -99,6 +99,16 @@ The **iOS Private TestFlight** workflow waits 10 minutes after an `ios/` change 
 The `ios-testflight` GitHub environment is restricted to `main` and holds `ASC_KEY_ID`, `ASC_ISSUER_ID`, and the `.p8` contents in `ASC_PRIVATE_KEY`. The repository variable `NORI_TESTFLIGHT_ENABLED` activates the workflow when set to `true`. Set `SENTRY_IOS_DSN` as an Actions variable if this build should send telemetry. In GitHub Actions, select **iOS Private TestFlight** → **Run workflow** on `main` to start an upload without the ten-minute wait. Build numbering starts after build 174 and uses the workflow run number so retrying the same run uses the same build number.
 
 The Developer-role API key authenticates the upload. Signing uses the base64-encoded Apple Distribution `.p12` in `APPLE_DISTRIBUTION_P12`, its password in `APPLE_DISTRIBUTION_P12_PASSWORD`, and the base64-encoded **Nori TestFlight CI** provisioning profile in `APPLE_NORI_PROFILE`. Rotate the certificate and provisioning profile together when either expires.
+
+### Invite a private tester
+
+In App Store Connect, open [Nori Private Beta](https://appstoreconnect.apple.com/teams/c27a8b0c-0535-4ac4-adb1-5ffcf9beefd8/apps/6839451136/testflight/groups/67c1a0f8-4939-4652-93b2-e1c4b154e020). Under **Testers**, add the person's Gmail or Google Workspace address by email. Keep the public link off. Apple lets you import a CSV when inviting several people.
+
+The **Sync private testers** workflow reads this group every 15 minutes. Run it on `main` to sync sooner. A successful run grants the invited address access to iOS, web and Mac. Nori creates a trial with $5 of hosted AI credit on first sign-in and binds it to the verified Google account. For Workspace addresses, sign in on iOS first so Google can verify the hosted domain. Connecting Gmail, Calendar or Drive uses a separate Google OAuth client and its own tester list.
+
+Apple sends the installation invitation when the group has an approved build. The tester opens the email on their iPhone, installs Nori through TestFlight and taps **Sign in with Google** using the address you invited. Removing someone from the group removes beta access on the next sync. Existing independent access grants and account data are preserved.
+
+To distribute a build, select the group’s **Builds** tab and add the release you want testers to install. Supply working sign-in credentials for a dedicated reviewer account under **Test Information** before submitting the first external build for Beta App Review. Check that Apple lists the build as **Testing** in this group.
 
 ### Uploading dSYMs for TestFlight / App Store Releases
 The archive and TestFlight workflows verify that the dSYMs match the Nori executable and its linked Sentry framework. The TestFlight export sends both sets of symbols to Apple with the build. The shared Xcode scheme can also upload symbols to your Sentry project. To enable that upload for local archives, add these settings to `ios/Config/Local.xcconfig`:

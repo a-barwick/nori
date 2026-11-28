@@ -10,6 +10,8 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -101,6 +103,39 @@ func TestIdentityBindingSecuritySimulation(t *testing.T) {
 			t.Fatalf("status %d, want %d: %s", res.Code, status, res.Body.String())
 		}
 	}
+
+	t.Run("private tester signs in on iOS and web with one trial", func(t *testing.T) {
+		roster := filepath.Join(t.TempDir(), "emails.json")
+		if err := os.WriteFile(roster, []byte(`["tester@gmail.com","tester@workspace.example"]`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		betaAuth := auth
+		betaAuth.PrivateBeta = serviceauth.NewPrivateBeta(roster)
+		betaAuth.AllowedEmails = []string{"alice@gmail.com"}
+		original := handler
+		defer func() { handler = original }()
+		handler = betaAuth.Protect(api.UserHandlerWithOptions(directory, open, false, "test", api.UserHandlerOptions{
+			DisableRateLimit: true, ProvisioningMode: settings.UserProvisioningManual, PrivateBeta: betaAuth.PrivateBeta,
+		}))
+		ios := signGoogle("tester-id", "tester@gmail.com", "")
+		res := request("POST", "/api/users/resolve", ios, "{}", nil)
+		assertStatus(res, http.StatusOK)
+		var row struct{ ID string }
+		if err := json.Unmarshal(res.Body.Bytes(), &row); err != nil || !users.ValidID(row.ID) {
+			t.Fatal("invalid account", err)
+		}
+		web := request("POST", "/api/users/resolve", serviceToken, `{"email":"tester@gmail.com"}`, identityHeaders("tester-id", true))
+		assertStatus(web, http.StatusOK)
+		if res.Body.String() != web.Body.String() {
+			t.Fatal("web resolved a different user")
+		}
+		assertStatus(request("GET", "/users/"+row.ID+"/v1/test", ios, "", nil), http.StatusOK)
+		assertStatus(request("POST", "/api/users/resolve", signGoogle("stranger", "stranger@gmail.com", ""), "{}", nil), http.StatusUnauthorized)
+		assertStatus(request("POST", "/api/users/resolve", signGoogle("unverified", "tester@workspace.example", ""), "{}", nil), http.StatusUnauthorized)
+		assertStatus(request("POST", "/api/users/resolve", serviceToken, `{"email":"tester@workspace.example"}`, identityHeaders("unverified", false)), http.StatusForbidden)
+		assertStatus(request("POST", "/api/users/resolve", signGoogle("workspace", "tester@workspace.example", "workspace.example"), "{}", nil), http.StatusOK)
+		assertStatus(request("POST", "/api/users/resolve", signGoogle("another-subject", "tester@gmail.com", ""), "{}", nil), http.StatusForbidden)
+	})
 
 	res := request("POST", "/api/users/resolve", serviceToken, `{"email":"alice@gmail.com"}`, nil)
 	assertStatus(res, http.StatusForbidden)

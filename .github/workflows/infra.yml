@@ -23,6 +23,7 @@ jobs:
     name: Terraform
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    environment: infrastructure
     timeout-minutes: 20
     permissions:
       contents: read
@@ -54,6 +55,8 @@ jobs:
       # The repository is public, so the log shows which resources change, not the diff.
       - name: Plan
         id: plan
+        env:
+          TF_VAR_platform_ai_gateway_key: ${{ secrets.NORI_PLATFORM_AI_GATEWAY_KEY }}
         run: |
           set +e
           terraform plan -input=false -no-color -lock-timeout=5m -detailed-exitcode -out=tfplan > plan.log 2>&1
@@ -91,5 +94,7 @@ jobs:
           exit 1
 
       - name: Apply
+        env:
+          TF_VAR_platform_ai_gateway_key: ${{ secrets.NORI_PLATFORM_AI_GATEWAY_KEY }}
         if: github.event_name != 'schedule' && steps.plan.outputs.changes == 'true'
         run: terraform apply -input=false -no-color -lock-timeout=5m tfplan > apply.log 2>&1 || { grep -E '^(Error|│)' apply.log || tail -20 apply.log; exit 1; }

@@ -37,6 +37,7 @@ type UserHandlerOptions struct {
 	RateLimiter      *RateLimiter
 	DisableRateLimit bool
 	ProvisioningMode settings.UserProvisioningMode
+	PrivateBeta      *serviceauth.PrivateBeta
 	CheckEntitlement func(context.Context, string) (billing.Entitlement, error)
 }
 
@@ -437,6 +438,10 @@ func (u *userRouter) serveIdentityResolve(w http.ResponseWriter, r *http.Request
 	if !ok {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Nori could not check your account. Try again shortly."})
 		return
+	}
+	// Only the invited, Google-verified address may create a trial without a code.
+	if mode == settings.UserProvisioningManual && u.opts.PrivateBeta.Invited(identity, email) {
+		mode = settings.UserProvisioningOpen
 	}
 	row, err := identities.ResolveIdentity(r.Context(), identity, email, name, string(mode), inviteCode)
 	if err != nil {

@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { directIAPUsers, macAllowedIdentities } from "./macAccess";
+import { iapUsers, macAllowedIdentities } from "./macAccess";
 
 test("Mac Web mirrors explicit unconditional IAP users without widening their access", () => {
-  assert.deepEqual([...directIAPUsers({
+  assert.deepEqual([...iapUsers({
     bindings: [
       {
         role: "roles/iap.httpsResourceAccessor",
@@ -19,8 +19,8 @@ test("Mac Web mirrors explicit unconditional IAP users without widening their ac
         members: ["user:Admin@example.test"],
       },
     ],
-  })], ["allowed@example.test"]);
-  assert.deepEqual([...directIAPUsers({ bindings: [] })], []);
+  }).direct], ["allowed@example.test"]);
+  assert.deepEqual([...iapUsers({ bindings: [] }).direct], []);
 });
 
 test("Mac subject and email configuration must be complete and one-to-one", () => {

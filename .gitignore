@@ -12,3 +12,5 @@ ios/Config/Local.xcconfig
 .agents/
 infra/.terraform/
 infra/tfplan
+infra/private-beta/.terraform/
+infra/private-beta/*.tfvars.json

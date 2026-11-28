@@ -50,14 +50,21 @@ export async function oidcIdentity(headers: Headers): Promise<VerifiedIdentity |
         (Array.isArray(payload.aud) && payload.aud.length > 1 && payload.azp !== audience) ||
         (payload.azp !== undefined && payload.azp !== audience)) return null;
     const email = payload.email.trim().toLowerCase();
+    const emailAuthoritative = issuer === GOOGLE_ISSUER && googleEmailAuthoritative(email, payload.hd);
     const source = process.env.NORI_OIDC_IAP_POLICY_RESOURCE;
     const allowedIdentities = process.env.NORI_OIDC_IAP_ALLOWED_IDENTITIES;
     if (source !== undefined || allowedIdentities !== undefined) {
       const identities = macAllowedIdentities(allowedIdentities);
-      if (!source || issuer !== GOOGLE_ISSUER || identities?.get(payload.sub) !== email ||
-          !(await macAccessPolicy(source))?.has(email)) return null;
+      if (!source || issuer !== GOOGLE_ISSUER || !identities) return null;
+      const policy = await macAccessPolicy(source);
+      if (!policy) return null;
+      const pinned = identities.get(payload.sub);
+      if (pinned !== undefined || [...identities.values()].includes(email)) {
+        if (pinned !== email || !(policy.direct.has(email) || policy.privateBeta.has(email))) return null;
+      } else if (!emailAuthoritative || !policy.privateBeta.has(email)) {
+        return null;
+      }
     }
-    const emailAuthoritative = issuer === GOOGLE_ISSUER && googleEmailAuthoritative(email, payload.hd);
     const name = typeof payload.name === "string" ? payload.name.trim() : "";
     return {
       email,

@@ -14,7 +14,7 @@ import {
   type ModelSettings,
 } from "@/lib/assistant/api";
 import { useResource, useResourceInvalidation } from "@/lib/assistant/useResource";
-import type { MemoryFact, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
+import type { Capabilities, MemoryFact, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
 import type { MarkState } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { hasSelectedHomeChat } from "@/lib/assistant/modelSetup";
@@ -76,7 +76,12 @@ export function OnboardingFlow({
   onComplete: () => void;
   initialStep?: OnboardingStep;
 }) {
-  const [step, setStep] = useState<OnboardingStep>(initialStep);
+  const capabilities = useResource<Capabilities>("/capabilities", { poll: 0 });
+  const allowKeys = capabilities.data?.entitlement?.allow_byok !== false;
+  const steps: OnboardingStep[] = allowKeys ? [1, 2, 3, 4] : [1, 2, 4];
+  const [selectedStep, setStep] = useState<OnboardingStep>(initialStep);
+  const step = selectedStep === 3 && !allowKeys ? 4 : selectedStep;
+  const index = steps.indexOf(step);
   const [appearance, setAppearance] = useAppearance();
   const keys = useResource<ModelKeysResponse>("/settings/model-keys", { poll: 0, versioned: false });
   const models = useResource<ModelSettings>("/settings/models", { poll: 0 });
@@ -298,7 +303,7 @@ export function OnboardingFlow({
           disabled={step === 1}
           aria-hidden={step === 1}
           tabIndex={step === 1 ? -1 : undefined}
-          onClick={() => step > 1 && goStep((step - 1) as OnboardingStep)}
+          onClick={() => index > 0 && goStep(steps[index - 1])}
           className={cn(
             "t-fast justify-self-start rounded-full px-2.5 py-1.5 text-meta font-medium text-ink-2 hover:bg-fill-1 hover:text-ink",
             step === 1 && "invisible pointer-events-none",
@@ -309,13 +314,13 @@ export function OnboardingFlow({
 
         <div
           role="progressbar"
-          aria-valuenow={step}
+          aria-valuenow={index + 1}
           aria-valuemin={1}
-          aria-valuemax={4}
-          aria-label={`Step ${step} of 4`}
+          aria-valuemax={steps.length}
+          aria-label={`Step ${index + 1} of ${steps.length}`}
           className="flex items-center gap-1.5"
         >
-          {([1, 2, 3, 4] as const).map((idx) => (
+          {steps.map((idx) => (
             <span
               key={idx}
               className={cn(
@@ -364,7 +369,7 @@ export function OnboardingFlow({
               appearance={appearance}
               onTap={() => triggerMood("hop", { happy: true })}
               onPick={handleAppearancePick}
-              onNext={() => goStep(3)}
+              onNext={() => goStep(allowKeys ? 3 : 4)}
             />
           )}
 

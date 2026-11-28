@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ type Config struct {
 	Key, Audience   string
 	GoogleClientIDs []string
 	AllowedEmails   []string
+	PrivateBeta     *PrivateBeta
 	GoogleJWKSURL   string
 }
 
@@ -80,7 +82,12 @@ func (c Config) Protect(next http.Handler) http.Handler {
 			return
 		}
 		if jwks != nil {
-			if email, identity, ok := verifyGoogleIDToken(r.Context(), jwks, token, c.GoogleClientIDs, c.AllowedEmails); ok {
+			if email, identity, ok := verifyGoogleIDToken(r.Context(), jwks, token, c.GoogleClientIDs); ok {
+				restricted := len(c.AllowedEmails) > 0 || c.PrivateBeta != nil
+				if restricted && !slices.Contains(c.AllowedEmails, email) && !c.PrivateBeta.Invited(identity, email) {
+					writeUnauthorized(w)
+					return
+				}
 				ctx := WithVerifiedIdentity(r.Context(), email, identity)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return

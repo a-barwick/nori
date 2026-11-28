@@ -49,6 +49,10 @@ public struct SignInView: View {
                             .font(NoriTypography.display)
                             .foregroundStyle(NoriColors.ink)
                             .accessibilityAddTraits(.isHeader)
+                        Text("Use the Google account that received your invitation.")
+                            .font(NoriTypography.body)
+                            .foregroundStyle(NoriColors.ink2)
+                            .multilineTextAlignment(.center)
                     }
 
                     if let errorMessage = localError ?? store.authError {

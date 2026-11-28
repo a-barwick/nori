@@ -15,6 +15,7 @@ locals {
     "nori-mac-google-identities",
     "nori-mac-pilot-identities",
     "nori-postgres-url",
+    "nori-private-beta-emails",
     "nori-sentry-auth-token",
     "nori-service-token-key",
     "nori-sprites-api-key",
@@ -55,13 +56,39 @@ resource "google_secret_manager_secret_iam_member" "readers" {
   member    = each.value.member
 }
 
+# Core can mount the roster before the first private tester sync.
+resource "google_secret_manager_secret_version" "empty_private_beta" {
+  secret      = google_secret_manager_secret.this["nori-private-beta-emails"].id
+  secret_data = "[]"
+}
+
+# GitHub supplies the production gateway key to Terraform during plan and apply.
+# The write-only argument keeps the key out of saved plans and state.
+variable "platform_ai_gateway_key" {
+  type      = string
+  sensitive = true
+  ephemeral = true
+  nullable  = false
+  validation {
+    condition     = startswith(var.platform_ai_gateway_key, "vck_")
+    error_message = "Supply the production Vercel AI Gateway credential."
+  }
+}
+
+resource "google_secret_manager_secret_version" "platform_gateway" {
+  secret                 = google_secret_manager_secret.this["nori-vercel-ai-gateway-key"].id
+  secret_data_wo         = var.platform_ai_gateway_key
+  secret_data_wo_version = 1
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
 # JSON object with values that must not appear in this public repository:
 #   allowed_emails                     NORI_ALLOWED_EMAILS on Core, Worker and migrations
 #   google_workspace_test_users        NORI_GOOGLE_WORKSPACE_TEST_USERS on Core and Worker ("" removes it)
 #   apns_key_id                        NORI_APNS_KEY_ID on Core (optional; "" disables APNs)
 #   apns_team_id                       NORI_APNS_TEAM_ID on Core (optional; "" disables APNs)
-#   enable_platform_ai_gateway_secret  Optional boolean (default false); set true only after adding a
-#                                      nori-vercel-ai-gateway-key version in Secret Manager
 #   billing_account                    Optional GCP billing account ID ("" disables billing budget alert)
 #   billing_monthly_budget_usd         Optional monthly budget amount in USD (default 150)
 data "google_secret_manager_secret_version" "terraform_private" {

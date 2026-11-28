@@ -96,8 +96,10 @@ infra-check:
 	terraform -chdir=infra fmt -check -recursive
 	terraform -chdir=infra init -backend=false -input=false -lockfile=readonly >/dev/null
 	terraform -chdir=infra validate
+	terraform -chdir=infra/private-beta init -backend=false -input=false -lockfile=readonly >/dev/null
+	terraform -chdir=infra/private-beta validate
 
 infra-plan:
 	terraform -chdir=infra init -input=false -lockfile=readonly >/dev/null
-	terraform -chdir=infra plan -input=false
+	@TF_VAR_platform_ai_gateway_key="$${TF_VAR_platform_ai_gateway_key:-$$(gcloud secrets versions access latest --project=bot-111549 --secret=nori-vercel-ai-gateway-key)}" terraform -chdir=infra plan -input=false
 	infra/check-unmanaged.sh

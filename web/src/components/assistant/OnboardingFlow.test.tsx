@@ -21,6 +21,35 @@ describe("OnboardingFlow save-failure handling", () => {
     restoreDOM();
   });
 
+  test("a hosted trial skips personal key setup in both directions", async () => {
+    globalThis.fetch = asFetch(async input => {
+      if (String(input) === "/api/v1/capabilities") return Response.json({ entitlement: { allow_byok: false } });
+      return Response.json({ providers: [], connectors: [] });
+    });
+    const target = document.createElement("div");
+    const root = createRoot(target);
+    const click = async (label: string) => {
+      const button = [...target.querySelectorAll("button")].find(item => item.textContent?.trim() === label);
+      assert.ok(button, label);
+      await act(async () => button.click());
+    };
+    try {
+      await act(async () => root.render(
+        <ResourceCacheContext.Provider value={createResourceCache()}>
+          <OnboardingFlow initialStep={2} onComplete={() => {}} />
+        </ResourceCacheContext.Provider>,
+      ));
+      await settleTestDOM();
+      await click("Continue");
+      assert.equal(target.querySelector("[role=progressbar]")?.getAttribute("aria-label"), "Step 3 of 3");
+      assert.doesNotMatch(target.textContent ?? "", /Paste API key|Add your API key/);
+      await click("Back");
+      assert.equal(target.querySelector("h1")?.textContent, "Appearance");
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
   test("surfaces PUT /preferences failure with Retry and does not duplicate saved memory facts on retry", async () => {
     let failPreferences = true;
     const calls: { url: string; method: string; body?: unknown }[] = [];

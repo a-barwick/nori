@@ -355,6 +355,7 @@ func fromEnvironment(defaultCloud string, simulation bool) Settings {
 			Key:             os.Getenv("NORI_SERVICE_TOKEN_KEY"),
 			Audience:        get("NORI_SERVICE_AUDIENCE", "nori"),
 			GoogleClientIDs: splitCSV(os.Getenv("NORI_GOOGLE_OAUTH_CLIENT_IDS"), false),
+			PrivateBeta:     serviceauth.NewPrivateBeta(os.Getenv("NORI_PRIVATE_BETA_FILE")),
 			AllowedEmails:   splitCSV(os.Getenv("NORI_ALLOWED_EMAILS"), true),
 		},
 		BindHost:                 get("BIND_HOST", "127.0.0.1"),

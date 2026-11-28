@@ -69,6 +69,7 @@ locals {
     {
       NORI_GOOGLE_WORKSPACE_CLIENT_SECRET = "nori-google-workspace-beta-client-secret:1"
       NORI_HOME_AI_KEY                    = "nori-home-ai-key:1"
+      NORI_PLATFORM_AI_GATEWAY_KEY        = "nori-vercel-ai-gateway-key:${google_secret_manager_secret_version.platform_gateway.version}"
     },
     lookup(local.private, "apns_key_id", "") != "" && lookup(local.private, "apns_team_id", "") != "" ? {
       NORI_APNS_PRIVATE_KEY = "nori-apns-private-key:latest"
@@ -76,19 +77,13 @@ locals {
     local.computer_provider == "sprites" ? {
       NORI_SPRITES_API_TOKEN = "nori-sprites-api-key:latest"
     } : {},
-    # Deploy ordering safety: populate a secret version before setting
-    # enable_platform_ai_gateway_secret = true in nori-terraform-private so
-    # Cloud Run revision creation never fails on a missing :latest version:
-    #   gcloud secrets versions add nori-vercel-ai-gateway-key --data-file=-
-    try(local.private.enable_platform_ai_gateway_secret, false) == true ? {
-      NORI_PLATFORM_AI_GATEWAY_KEY = "nori-vercel-ai-gateway-key:latest"
-    } : {},
   )
 
   # Each map is NAME => { value } or NAME => { secret, version }, sorted by name.
   env = {
     core = merge(
       { for k, v in merge(local.runtime_env, local.feature_env, {
+        NORI_PRIVATE_BETA_FILE  = "/var/run/nori-beta/emails.json"
         NORI_HOME_AI_MAX_CONNS  = "4"
         NORI_HOME_AI_RELAY_HOST = "relay.noribot.chat"
         NORI_POSTGRES_MAX_CONNS = "8"
@@ -135,6 +130,8 @@ locals {
 # --- Core API ------------------------------------------------------------------
 
 resource "google_cloud_run_v2_service" "nori_core" {
+  depends_on = [google_secret_manager_secret_version.empty_private_beta]
+
   name     = "nori-core"
   location = local.region
   ingress  = "INGRESS_TRAFFIC_ALL"
@@ -198,11 +195,26 @@ resource "google_cloud_run_v2_service" "nori_core" {
       }
 
       volume_mounts {
+        name       = "private-beta"
+        mount_path = "/var/run/nori-beta"
+      }
+
+      volume_mounts {
         name       = "cloudsql"
         mount_path = "/cloudsql"
       }
     }
 
+    volumes {
+      name = "private-beta"
+      secret {
+        secret = google_secret_manager_secret.this["nori-private-beta-emails"].secret_id
+        items {
+          path    = "emails.json"
+          version = "latest"
+        }
+      }
+    }
     volumes {
       name = "cloudsql"
       cloud_sql_instance {
@@ -368,9 +380,8 @@ resource "google_cloud_run_v2_service_iam_member" "web_iap" {
   member   = "serviceAccount:service-${local.project_number}@gcp-sa-iap.iam.gserviceaccount.com"
 }
 
-# Mac Web reads the IAP access policy to decide who may sign in. Grants to
-# people (roles/iap.httpsResourceAccessor) are user access, managed with
-# `gcloud iap web add-iam-policy-binding` rather than here.
+# Mac Web reads both the existing direct IAP grants and the private tester
+# binding managed in infra/private-beta/.
 resource "google_iap_web_cloud_run_service_iam_member" "web_mac_policy_reader" {
   location               = local.region
   cloud_run_service_name = google_cloud_run_v2_service.nori_web.name

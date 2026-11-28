@@ -620,6 +620,7 @@ func (s *Service) Handler(local bool) http.Handler {
 		GoogleOAuthUser:  googleOAuthUser,
 		RateLimiter:      s.rateLimiter,
 		CheckEntitlement: checkEntitlement,
+		PrivateBeta:      s.cfg.ServiceAuth.PrivateBeta,
 	}))
 }
 

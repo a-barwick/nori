@@ -246,7 +246,8 @@ describe("oidcIdentity and resolveUser", () => {
       if (url === `https://iap.googleapis.com/v1/${resource}:getIamPolicy`) {
         return Response.json({ bindings: [{ role: "roles/iap.httpsResourceAccessor", members: [
           "user:allowed@gmail.com", "user:staff@workspace.test", "user:person@thirdparty.test",
-        ] }] });
+        ] }, { role: "roles/iap.httpsResourceAccessor", members: ["user:beta@gmail.com", "user:allowed@gmail.com", "user:beta@thirdparty.test"],
+          condition: { title: "NoriPrivateBeta", expression: "true" } }] });
       }
       return oidcFetch(input, init);
     });
@@ -261,6 +262,10 @@ describe("oidcIdentity and resolveUser", () => {
     assert.equal(await oidcIdentity(new Headers({ authorization: `Bearer ${denied}` })), null);
     assert.equal((await oidcIdentity(new Headers({ authorization: `Bearer ${workspace}` })))?.subject, "456");
     assert.equal((await oidcIdentity(new Headers({ authorization: `Bearer ${thirdParty}` })))?.subject, "789");
+    const beta = await signIDToken({ sub: "beta", email: "beta@gmail.com", email_verified: true }, { issuer: GOOGLE_ISSUER });
+    assert.equal((await oidcIdentity(new Headers({ authorization: `Bearer ${beta}` })))?.subject, "beta");
+    const nonAuthoritative = await signIDToken({ sub: "other", email: "beta@thirdparty.test", email_verified: true }, { issuer: GOOGLE_ISSUER });
+    assert.equal(await oidcIdentity(new Headers({ authorization: `Bearer ${nonAuthoritative}` })), null);
     delete env.NORI_OIDC_IAP_ALLOWED_IDENTITIES;
     assert.equal(await oidcIdentity(new Headers({ authorization: `Bearer ${allowed}` })), null);
     env.NORI_OIDC_IAP_ALLOWED_IDENTITIES = JSON.stringify({ "123": "allowed@gmail.com" });

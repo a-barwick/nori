@@ -8,7 +8,7 @@ export async function GET() {
   if (macConfigured) {
     const identities = macAllowedIdentities(rawIdentities);
     const policy = source && identities ? await macAccessPolicy(source) : null;
-    ready = !!policy && !!identities && [...identities.values()].some((email) => policy.has(email));
+    ready = !!policy && !!identities && [...identities.values()].some((email) => policy.direct.has(email) || policy.privateBeta.has(email));
   }
   return Response.json({ status: ready ? "ok" : "unavailable" }, {
     status: ready ? 200 : 503,

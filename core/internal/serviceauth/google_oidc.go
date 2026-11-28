@@ -159,7 +159,7 @@ func (c *jwksCache) fetch(ctx context.Context) (map[string]*rsa.PublicKey, error
 	return out, nil
 }
 
-func verifyGoogleIDToken(ctx context.Context, cache *jwksCache, raw string, clientIDs, allowedEmails []string) (string, users.Identity, bool) {
+func verifyGoogleIDToken(ctx context.Context, cache *jwksCache, raw string, clientIDs []string) (string, users.Identity, bool) {
 	if len(clientIDs) == 0 || len(raw) == 0 || len(raw) > 8192 {
 		return "", users.Identity{}, false
 	}
@@ -196,9 +196,6 @@ func verifyGoogleIDToken(ctx context.Context, cache *jwksCache, raw string, clie
 	}
 	email := strings.ToLower(strings.TrimSpace(claims.Email))
 	if email == "" {
-		return "", users.Identity{}, false
-	}
-	if len(allowedEmails) > 0 && !slices.Contains(allowedEmails, email) {
 		return "", users.Identity{}, false
 	}
 	_, domain, found := strings.Cut(email, "@")

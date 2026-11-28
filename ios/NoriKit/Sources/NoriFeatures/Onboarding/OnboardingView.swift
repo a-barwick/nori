@@ -9,7 +9,9 @@ public struct OnboardingView: View {
     @Bindable private var store: NoriStore
     @AppStorage(NoriAppearance.storageKey) private var appearanceRawValue: String = NoriAppearance.system.rawValue
 
-    @State private var step: Int = 1
+    @State private var selectedStep: Int = 1
+    private var step: Int { selectedStep == 3 && !store.allowBYOK ? 4 : selectedStep }
+    private var steps: [Int] { store.allowBYOK ? [1, 2, 3, 4] : [1, 2, 4] }
     @State private var moodRequest: OnboardingMoodRequest?
 
     @State private var keyInput = ""
@@ -97,7 +99,7 @@ public struct OnboardingView: View {
                                 },
                                 onContinue: {
                                     triggerHaptic(.light)
-                                    goToStep(3)
+                                    goToStep(store.allowBYOK ? 3 : 4)
                                 }
                             )
                         case 3:
@@ -193,7 +195,7 @@ public struct OnboardingView: View {
             HStack {
                 Button("Back") {
                     if step > 1 {
-                        goToStep(step - 1)
+                        goToStep(step == 4 && !store.allowBYOK ? 2 : step - 1)
                     }
                 }
                 .font(NoriTypography.metaSemibold)
@@ -219,7 +221,7 @@ public struct OnboardingView: View {
             }
 
             HStack(spacing: 6) {
-                ForEach(1...4, id: \.self) { idx in
+                ForEach(steps, id: \.self) { idx in
                     Capsule()
                         .fill(
                             idx == step
@@ -233,7 +235,7 @@ public struct OnboardingView: View {
                 }
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Step \(step) of 4")
+            .accessibilityLabel("Step \((steps.firstIndex(of: step) ?? 0) + 1) of \(steps.count)")
         }
         .padding(.horizontal, 20)
         .padding(.top, 12)
@@ -260,7 +262,7 @@ public struct OnboardingView: View {
             finishError = nil
         }
         withAnimation(.easeOut(duration: 0.22)) {
-            step = next
+            selectedStep = next
         }
         if next == 1 {
             triggerMood(.hello, sparkles: true)
