@@ -11,6 +11,7 @@ export interface RFBClientOptions {
   url: string;
   viewOnly: boolean;
   onStateChange?: (state: RFBConnectionState, detail?: string) => void;
+  refreshURL?: () => Promise<string>;
 }
 
 class ByteQueue {
@@ -47,6 +48,7 @@ export class NoriRFBClient {
   private url: string;
   private viewOnly: boolean;
   private onStateChange?: (state: RFBConnectionState, detail?: string) => void;
+  private refreshURL?: () => Promise<string>;
 
   private ws: WebSocket | null = null;
   private queue = new ByteQueue();
@@ -66,6 +68,7 @@ export class NoriRFBClient {
     this.url = opts.url;
     this.viewOnly = opts.viewOnly;
     this.onStateChange = opts.onStateChange;
+    this.refreshURL = opts.refreshURL;
     this.bindInput();
   }
 
@@ -117,22 +120,45 @@ export class NoriRFBClient {
     };
 
     ws.onerror = () => {
-      if (!this.closed) {
-        this.onStateChange?.("error", "Connection interrupted");
-      }
+      // Browser always follows onerror with onclose, which drives reconnect/disconnect cleanly
+      // without flashing an error state before retries run.
     };
 
     ws.onclose = () => {
-      if (this.closed) return;
+      if (this.closed || this.ws !== ws) return;
       this.ws = null;
-      if (this.reconnectAttempts < 5) {
-        this.reconnectAttempts += 1;
-        this.onStateChange?.("reconnecting");
-        this.reconnectTimer = setTimeout(() => this.openSocket(), Math.min(1000 * this.reconnectAttempts, 5000));
-      } else {
-        this.onStateChange?.("disconnected", "Desktop connection closed");
-      }
+      this.scheduleReconnect();
     };
+  }
+
+  private scheduleReconnect() {
+    if (this.closed) return;
+    if (this.reconnectAttempts < 5) {
+      this.reconnectAttempts += 1;
+      this.onStateChange?.("reconnecting");
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        void this.reconnectNow();
+      }, Math.min(1000 * this.reconnectAttempts, 5000));
+    } else {
+      this.onStateChange?.("disconnected", "Could not connect to your computer desktop.");
+    }
+  }
+
+  private async reconnectNow() {
+    if (this.closed) return;
+    if (this.refreshURL) {
+      try {
+        const nextURL = await this.refreshURL();
+        if (this.closed) return;
+        this.url = nextURL;
+      } catch {
+        if (this.closed) return;
+        this.scheduleReconnect();
+        return;
+      }
+    }
+    this.openSocket();
   }
 
   private send(bytes: Uint8Array) {

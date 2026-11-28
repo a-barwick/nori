@@ -341,10 +341,58 @@ func TestSpritesProviderExecAndBootstrapCanonicalHomeAndNPMPrefix(t *testing.T) 
 		`HOME="/home/nori"`,
 		`NPM_CONFIG_PREFIX="/home/nori/.local/npm"`,
 		`PATH="/home/nori/.nori/bin:/home/nori/.local/npm/bin:/home/nori/.local/bin:/home/nori/.local/venv/bin:`,
+		`flock 9`,
+		`/home/nori/.nori/bin/nori-browser close`,
 		`ln -s /home/sprite /home/nori`,
 	} {
 		if !strings.Contains(firstCmd[2], want) {
 			t.Fatalf("first exec missing %q in:\n%s", want, firstCmd[2])
+		}
+	}
+	if strings.Contains(firstCmd[2], `rm -rf "${bak}"`) {
+		t.Fatalf("canonical-home migration must retain backup directory instead of rm -rf:\n%s", firstCmd[2])
+	}
+	assertBracketedPkillF := func(label, script string) {
+		t.Helper()
+		for _, flag := range []string{"pkill -f ", "pgrep -f "} {
+			rest := script
+			for {
+				idx := strings.Index(rest, flag)
+				if idx < 0 {
+					break
+				}
+				after := rest[idx+len(flag):]
+				qStart := strings.IndexByte(after, '"')
+				if qStart < 0 {
+					t.Fatalf("%s: unquoted %s pattern", label, flag)
+				}
+				qEnd := strings.IndexByte(after[qStart+1:], '"')
+				if qEnd < 0 {
+					t.Fatalf("%s: unterminated %s pattern", label, flag)
+				}
+				pat := after[qStart+1 : qStart+1+qEnd]
+				if !strings.Contains(pat, "[") || !strings.Contains(pat, "]") {
+					t.Fatalf("%s: %s pattern %q must use [x] bracket trick so bash -lc cannot match itself", label, flag, pat)
+				}
+				rest = after[qStart+1+qEnd+1:]
+			}
+		}
+	}
+	assertBracketedPkillF("ensureCanonicalHome", firstCmd[2])
+
+	// Verify Sleep kills both nori-desktop-gate and legacy node -e desktop.token processes.
+	if err := p.Sleep(t.Context(), inst.ProviderID); err != nil {
+		t.Fatalf("Sleep: %v", err)
+	}
+	sleepCmd := execCmds[len(execCmds)-1][2]
+	assertBracketedPkillF("Sleep", sleepCmd)
+	for _, want := range []string{
+		`pkill -f "[d]esktop-gate"`,
+		`pkill -f "/home/nori/.nori/[d]esktop.token"`,
+		`pkill -9 -P "$wpid"`,
+	} {
+		if !strings.Contains(sleepCmd, want) {
+			t.Fatalf("Sleep command missing %q in:\n%s", want, sleepCmd)
 		}
 	}
 

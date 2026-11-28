@@ -59,17 +59,190 @@ var (
 	sentenceEndRe       = regexp.MustCompile(`^[^\n]*?[.!?](?:\s|$)`)
 )
 
-// StripCardMarkupForStream removes <card ...> / </card> tags and holds back
-// any incomplete trailing card tag prefix so raw markup never flashes mid-stream.
+type byteSpan struct{ start, end int }
+
+// markdownCodeSpans returns byte ranges [start, end) covering fenced code
+// blocks (``` / ~~~) and inline backtick code spans (`...`, “...“, etc.).
+// When allowUnclosedInline is true (used while streaming), an unclosed inline
+// backtick run extends to the next blank line (\n\n) or end of input so
+// partial inline code like "`<card" is not stripped mid-stream.
+func markdownCodeSpans(s string, allowUnclosedInline bool) []byteSpan {
+	var spans []byteSpan
+	var fenced []byteSpan
+
+	// 1. Collect fenced code blocks.
+	pos := 0
+	inFence := false
+	fenceChar := byte(0)
+	fenceLen := 0
+	fenceStart := 0
+	for pos <= len(s) {
+		nl := strings.IndexByte(s[pos:], '\n')
+		var line string
+		var nextPos int
+		if nl < 0 {
+			line = s[pos:]
+			nextPos = len(s) + 1
+		} else {
+			line = s[pos : pos+nl]
+			nextPos = pos + nl + 1
+		}
+		trimmed := strings.TrimSpace(line)
+		if !inFence {
+			if len(trimmed) >= 3 && (trimmed[0] == '`' || trimmed[0] == '~') {
+				ch := trimmed[0]
+				n := 0
+				for n < len(trimmed) && trimmed[n] == ch {
+					n++
+				}
+				if n >= 3 && (ch == '~' || !strings.ContainsRune(trimmed[n:], '`')) {
+					inFence = true
+					fenceChar = ch
+					fenceLen = n
+					fenceStart = pos
+				}
+			}
+		} else if len(trimmed) >= fenceLen && trimmed[0] == fenceChar {
+			n := 0
+			for n < len(trimmed) && trimmed[n] == fenceChar {
+				n++
+			}
+			if n >= fenceLen && strings.TrimSpace(trimmed[n:]) == "" {
+				inFence = false
+				fenced = append(fenced, byteSpan{start: fenceStart, end: min(nextPos, len(s))})
+			}
+		}
+		pos = nextPos
+	}
+	if inFence {
+		fenced = append(fenced, byteSpan{start: fenceStart, end: len(s)})
+	}
+	spans = append(spans, fenced...)
+
+	// 2. Collect inline backtick code spans outside fenced code blocks.
+	inFenced := func(offset int) (int, bool) {
+		for _, sp := range fenced {
+			if offset >= sp.start && offset < sp.end {
+				return sp.end, true
+			}
+		}
+		return 0, false
+	}
+
+	i := 0
+	for i < len(s) {
+		if end, ok := inFenced(i); ok {
+			i = end
+			continue
+		}
+		if s[i] != '`' {
+			i++
+			continue
+		}
+		openStart := i
+		for i < len(s) && s[i] == '`' {
+			i++
+		}
+		ticks := i - openStart
+
+		// Search for a matching closing run of exact length `ticks` outside fences.
+		j := i
+		closed := false
+		for j < len(s) {
+			if end, ok := inFenced(j); ok {
+				j = end
+				continue
+			}
+			if s[j] != '`' {
+				j++
+				continue
+			}
+			runStart := j
+			for j < len(s) && s[j] == '`' {
+				j++
+			}
+			if j-runStart == ticks {
+				spans = append(spans, byteSpan{start: openStart, end: j})
+				i = j
+				closed = true
+				break
+			}
+		}
+		if !closed && allowUnclosedInline {
+			end := len(s)
+			if blank := strings.Index(s[i:], "\n\n"); blank >= 0 {
+				end = i + blank
+			}
+			for _, sp := range fenced {
+				if sp.start >= i && sp.start < end {
+					end = sp.start
+				}
+			}
+			spans = append(spans, byteSpan{start: openStart, end: end})
+			i = end
+		}
+	}
+	return spans
+}
+
+func offsetInSpans(offset int, spans []byteSpan) bool {
+	for _, sp := range spans {
+		if offset >= sp.start && offset < sp.end {
+			return true
+		}
+	}
+	return false
+}
+
+func isLineStart(s string, offset int) bool {
+	lineStart := strings.LastIndexByte(s[:offset], '\n') + 1
+	return strings.TrimSpace(s[lineStart:offset]) == ""
+}
+
+func stripCardTagsOutsideCode(s string, allowUnclosedInline bool) string {
+	if s == "" || !strings.Contains(strings.ToLower(s), "card") {
+		return s
+	}
+	spans := markdownCodeSpans(s, allowUnclosedInline)
+	var b strings.Builder
+	b.Grow(len(s))
+	cursor := 0
+	for cursor < len(s) {
+		openLoc := cardOpenTagRe.FindStringIndex(s[cursor:])
+		closeLoc := cardCloseTagRe.FindStringIndex(s[cursor:])
+		var loc []int
+		if openLoc != nil && (closeLoc == nil || openLoc[0] <= closeLoc[0]) {
+			loc = openLoc
+		} else if closeLoc != nil {
+			loc = closeLoc
+		}
+		if loc == nil {
+			b.WriteString(s[cursor:])
+			break
+		}
+		matchStart := cursor + loc[0]
+		matchEnd := cursor + loc[1]
+		if offsetInSpans(matchStart, spans) {
+			b.WriteString(s[cursor:matchEnd])
+		} else {
+			b.WriteString(s[cursor:matchStart])
+		}
+		cursor = matchEnd
+	}
+	return b.String()
+}
+
+// StripCardMarkupForStream removes <card ...> / </card> tags outside code
+// blocks and inline code spans, and holds back any incomplete trailing card
+// tag prefix so raw markup never flashes mid-stream.
 func StripCardMarkupForStream(s string) string {
 	if s == "" {
 		return ""
 	}
-	cleaned := cardOpenTagRe.ReplaceAllString(s, "")
-	cleaned = cardCloseTagRe.ReplaceAllString(cleaned, "")
+	cleaned := stripCardTagsOutsideCode(s, true)
 	if idx := strings.LastIndexByte(cleaned, '<'); idx >= 0 {
 		tail := strings.ToLower(cleaned[idx:])
-		if !strings.Contains(tail, ">") {
+		if !strings.Contains(tail, ">") && !offsetInSpans(idx, markdownCodeSpans(cleaned, true)) {
 			if strings.HasPrefix("<card", tail) ||
 				strings.HasPrefix("</card", tail) ||
 				strings.HasPrefix(tail, "<card ") ||
@@ -84,100 +257,40 @@ func StripCardMarkupForStream(s string) string {
 }
 
 // parseCardBlocks extracts explicit <card title="...">...</card> blocks outside
-// fenced code blocks, preserving surrounding conversational text in order.
-// Returns (parts, true) when at least one card block was found.
+// fenced code blocks and inline code spans, preserving surrounding
+// conversational text in order. Returns (parts, true) when at least one card
+// block was found.
 func parseCardBlocks(markdown string) ([]Part, bool) {
 	if !cardOpenTagRe.MatchString(markdown) {
 		return nil, false
 	}
 
-	// Build byte spans of fenced code blocks so <card> examples inside code
-	// blocks are never treated as real cards.
-	type span struct{ start, end int }
-	var codeSpans []span
-	{
-		pos := 0
-		inFence := false
-		fenceMarker := ""
-		fenceStart := 0
-		for pos <= len(markdown) {
-			nl := strings.IndexByte(markdown[pos:], '\n')
-			var line string
-			var nextPos int
-			if nl < 0 {
-				line = markdown[pos:]
-				nextPos = len(markdown) + 1
-			} else {
-				line = markdown[pos : pos+nl]
-				nextPos = pos + nl + 1
-			}
-			trimmed := strings.TrimSpace(line)
-			if !inFence {
-				if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
-					inFence = true
-					fenceMarker = trimmed[:3]
-					fenceStart = pos
-				}
-			} else if strings.HasPrefix(trimmed, fenceMarker) {
-				inFence = false
-				codeSpans = append(codeSpans, span{start: fenceStart, end: min(nextPos, len(markdown))})
-			}
-			pos = nextPos
-		}
-		if inFence {
-			codeSpans = append(codeSpans, span{start: fenceStart, end: len(markdown)})
-		}
-	}
+	codeSpans := markdownCodeSpans(markdown, false)
 	inCode := func(offset int) bool {
-		for _, sp := range codeSpans {
-			if offset >= sp.start && offset < sp.end {
-				return true
-			}
-		}
-		return false
+		return offsetInSpans(offset, codeSpans)
 	}
 
 	var out []Part
 	cursor := 0
 	found := false
 	for cursor < len(markdown) {
-		loc := cardOpenTagRe.FindStringIndex(markdown[cursor:])
-		if loc == nil {
+		openStart, openEnd := -1, -1
+		searchFrom := cursor
+		for searchFrom < len(markdown) {
+			loc := cardOpenTagRe.FindStringIndex(markdown[searchFrom:])
+			if loc == nil {
+				break
+			}
+			os := searchFrom + loc[0]
+			oe := searchFrom + loc[1]
+			if !inCode(os) {
+				openStart, openEnd = os, oe
+				break
+			}
+			searchFrom = oe
+		}
+		if openStart < 0 {
 			break
-		}
-		openStart := cursor + loc[0]
-		openEnd := cursor + loc[1]
-		if inCode(openStart) {
-			// Skip past this tag inside a code fence; keep searching later text
-			// without advancing cursor so surrounding text stays intact.
-			nextLoc := cardOpenTagRe.FindStringIndex(markdown[openEnd:])
-			if nextLoc == nil {
-				break
-			}
-			// Advance search offset carefully via a local scan loop.
-			searchFrom := openEnd
-			matched := false
-			for searchFrom < len(markdown) {
-				nl := cardOpenTagRe.FindStringIndex(markdown[searchFrom:])
-				if nl == nil {
-					break
-				}
-				os := searchFrom + nl[0]
-				oe := searchFrom + nl[1]
-				if !inCode(os) {
-					openStart, openEnd = os, oe
-					matched = true
-					break
-				}
-				searchFrom = oe
-			}
-			if !matched {
-				break
-			}
-		}
-
-		if lead := strings.TrimSpace(markdown[cursor:openStart]); lead != "" {
-			out = append(out, Part{Type: PartText, Text: lead})
 		}
 
 		openTag := markdown[openStart:openEnd]
@@ -190,7 +303,7 @@ func parseCardBlocks(markdown string) ([]Part, bool) {
 			}
 		}
 
-		// Find matching </card> outside code fences.
+		// Find matching </card> outside code spans/fences.
 		closeStart, closeEnd := -1, -1
 		searchClose := openEnd
 		for searchClose < len(markdown) {
@@ -205,6 +318,17 @@ func parseCardBlocks(markdown string) ([]Part, bool) {
 				break
 			}
 			searchClose = ce
+		}
+
+		// Without a closing </card>, only treat an opening tag as a truncated
+		// card if it has a title attribute or starts its own line; ignore
+		// stray inline mentions like "the <card> flow".
+		if closeStart < 0 && title == "" && !isLineStart(markdown, openStart) {
+			break
+		}
+
+		if lead := strings.TrimSpace(markdown[cursor:openStart]); lead != "" {
+			out = append(out, Part{Type: PartText, Text: lead})
 		}
 
 		var body string

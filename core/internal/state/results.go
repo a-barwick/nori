@@ -157,8 +157,7 @@ func PlainExcerpt(text string, maxRunes int) string {
 	}
 	s := strings.ReplaceAll(text, "\r\n", "\n")
 	s = replyHint.ReplaceAllString(s, "")
-	s = cardOpenTagRe.ReplaceAllString(s, "")
-	s = cardCloseTagRe.ReplaceAllString(s, "")
+	s = stripCardTagsOutsideCode(s, false)
 	s = mdRuleRe.ReplaceAllString(s, " ")
 	s = mdLinkRe.ReplaceAllString(s, "$1")
 	s = mdHeadingRe.ReplaceAllString(s, "")

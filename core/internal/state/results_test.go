@@ -86,6 +86,24 @@ func TestTextPartsSegmentsCoverPageAndTrailingNarrative(t *testing.T) {
 		t.Fatalf("code fence card parts = %+v, want single PartText", inCode)
 	}
 
+	// <card> inside inline code backticks is NOT parsed as a document card.
+	inInlineCode := TextParts("It looks consistent across web and iOS and fits your new `<card>` flow. You lose live co-editing, but you could add an \"Open in Docs\" button.")
+	if len(inInlineCode) != 1 || inInlineCode[0].Type != PartText {
+		t.Fatalf("inline code card parts = %+v, want single PartText", inInlineCode)
+	}
+
+	// Stray unclosed inline <card> mention in prose is NOT parsed as a card.
+	strayInline := TextParts("It fits your new <card> flow nicely.")
+	if len(strayInline) != 1 || strayInline[0].Type != PartText {
+		t.Fatalf("stray inline card parts = %+v, want single PartText", strayInline)
+	}
+
+	// Inline code `<card>` before a real card still parses the real card cleanly.
+	mixedInlineAndCard := TextParts("Using `<card>` below:\n\n<card title=\"Summary\">\nHello world\n</card>")
+	if len(mixedInlineAndCard) != 2 || mixedInlineAndCard[0].Type != PartText || mixedInlineAndCard[1].Type != PartPage || mixedInlineAndCard[1].Title != "Summary" {
+		t.Fatalf("mixed inline + real card parts = %+v", mixedInlineAndCard)
+	}
+
 	// Long/bulleted conversational status updates WITHOUT <card> stay regular chat.
 	statusUpdate := "Claude Code is installed. v2.1.332 went in through npm, and the shell output confirms it runs.\n\n" +
 		"- Node was already there (v24.22.1), so nothing extra was needed.\n" +
@@ -138,6 +156,15 @@ func TestTextPartsSegmentsCoverPageAndTrailingNarrative(t *testing.T) {
 	}
 	if got := StripCardMarkupForStream("Intro\n<card title=\"Draft\">Hello</card>\nDone"); got != "Intro\nHello\nDone" {
 		t.Fatalf("StripCardMarkupForStream complete = %q", got)
+	}
+	if got := StripCardMarkupForStream("Fits your new `<card>` flow."); got != "Fits your new `<card>` flow." {
+		t.Fatalf("StripCardMarkupForStream inline code = %q", got)
+	}
+	if got := StripCardMarkupForStream("Fits your new `<card"); got != "Fits your new `<card" {
+		t.Fatalf("StripCardMarkupForStream partial inline code = %q", got)
+	}
+	if got := StripCardMarkupForStream("Example:\n```html\n<card title=\"Demo\">hi</card>\n```"); got != "Example:\n```html\n<card title=\"Demo\">hi</card>\n```" {
+		t.Fatalf("StripCardMarkupForStream fenced code = %q", got)
 	}
 }
 

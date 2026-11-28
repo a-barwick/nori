@@ -56,6 +56,11 @@ public struct RoutinesView: View {
             .padding(.bottom, 96)
         }
         .background(NoriColors.canvas)
+        .navigationTitle("Automations")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        #endif
         .navigationDestination(item: $selectedRoutineID) { routineID in
             RoutineDetailView(store: store, automationID: routineID)
         }

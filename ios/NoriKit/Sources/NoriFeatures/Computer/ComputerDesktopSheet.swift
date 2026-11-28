@@ -16,6 +16,7 @@ public struct ComputerDesktopSheet: View {
     @State private var mode: ComputerSessionMode
     @State private var isSwitchingMode: Bool = false
     @State private var isCompleting: Bool = false
+    @State private var isStartingSession: Bool = false
     @State private var errorMessage: String?
     @State private var keyboardDraft: String = ""
     @State private var isSecureInput: Bool = true
@@ -39,6 +40,9 @@ public struct ComputerDesktopSheet: View {
     }
 
     private var statusPill: (label: String, tone: NoriTone) {
+        if isStartingSession {
+            return ("Starting desktop…", .warning)
+        }
         switch client.state {
         case .connected:
             return mode == .control ? ("In control", .accent) : ("Watching", .ok)
@@ -49,7 +53,7 @@ public struct ComputerDesktopSheet: View {
         case .error:
             return ("Disconnected", .danger)
         case .disconnected:
-            return ("Disconnected", .neutral)
+            return ("Disconnected", .danger)
         }
     }
 
@@ -158,6 +162,10 @@ public struct ComputerDesktopSheet: View {
         }
     }
 
+    private var isDisconnectedState: Bool {
+        !isStartingSession && (client.state == .error || client.state == .disconnected)
+    }
+
     private var desktopCanvas: some View {
         GeometryReader { geo in
             ZStack {
@@ -185,14 +193,32 @@ public struct ComputerDesktopSheet: View {
                                     client.sendPointer(x: pt.x, y: pt.y, buttonMask: 0)
                                 }
                         )
-                } else {
-                    VStack(spacing: 10) {
-                        ProgressView()
-                            .tint(.white)
-                        Text(client.state == .error ? "Desktop unavailable" : "Waking your computer…")
-                            .font(NoriTypography.meta)
-                            .foregroundStyle(.white.opacity(0.8))
+                }
+
+                if client.currentImage == nil || isDisconnectedState {
+                    VStack(spacing: 12) {
+                        if !isDisconnectedState {
+                            ProgressView()
+                                .tint(.white)
+                        }
+                        Text(
+                            isDisconnectedState
+                                ? "Desktop unavailable"
+                                : client.state == .reconnecting
+                                    ? "Reconnecting…"
+                                    : "Waking your computer…"
+                        )
+                        .font(NoriTypography.meta)
+                        .foregroundStyle(.white.opacity(0.85))
+                        if isDisconnectedState {
+                            Button("Reconnect") {
+                                Task { await startSession() }
+                            }
+                            .buttonStyle(NoriButtonStyle(.primary, compact: true))
+                        }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(client.currentImage == nil ? Color.clear : Color.black.opacity(0.65))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -275,10 +301,18 @@ public struct ComputerDesktopSheet: View {
     }
 
     private func startSession() async {
+        guard !isStartingSession else { return }
+        isStartingSession = true
+        defer { isStartingSession = false }
         errorMessage = nil
+        client.disconnect()
+        if let previous = session {
+            session = nil
+            await store.endComputerSession(sessionID: previous.id)
+        }
         do {
             let created = try await store.createComputerSession(
-                mode: initialMode,
+                mode: mode,
                 taskID: taskID,
                 interactionID: interactionID
             )
@@ -288,12 +322,16 @@ public struct ComputerDesktopSheet: View {
             let wsRequest = try await store.computerDesktopWebSocketRequest(for: created)
             client.connect(request: wsRequest) { [weak store] in
                 guard let store else { throw CancellationError() }
+                let previous = session
                 let refreshed = try await store.createComputerSession(
                     mode: mode,
                     taskID: taskID,
                     interactionID: interactionID
                 )
                 session = refreshed
+                if let previous, previous.id != refreshed.id {
+                    Task { await store.endComputerSession(sessionID: previous.id) }
+                }
                 return try await store.computerDesktopWebSocketRequest(for: refreshed)
             }
         } catch {

@@ -53,6 +53,26 @@ export function ComputerDesktopDrawer({
   );
 }
 
+export function desktopConnectionPill(
+  connState: RFBConnectionState,
+  mode: "view" | "control",
+): { tone: "ok" | "working" | "warning" | "danger"; label: string } {
+  switch (connState) {
+    case "connected":
+      return mode === "control"
+        ? { tone: "working", label: "In control" }
+        : { tone: "ok", label: "Watching" };
+    case "reconnecting":
+      return { tone: "warning", label: "Reconnecting…" };
+    case "error":
+    case "disconnected":
+      return { tone: "danger", label: "Disconnected" };
+    case "connecting":
+    default:
+      return { tone: "warning", label: "Starting desktop…" };
+  }
+}
+
 function ComputerDesktopDrawerBody({
   onOpenChange,
   initialMode,
@@ -64,12 +84,18 @@ function ComputerDesktopDrawerBody({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const clientRef = useRef<NoriRFBClient | null>(null);
   const sessionRef = useRef<CreateComputerSessionResponse | null>(null);
+  const modeRef = useRef<"view" | "control">(initialMode);
 
   const [mode, setMode] = useState<"view" | "control">(initialMode);
   const [connState, setConnState] = useState<RFBConnectionState>("connecting");
   const [error, setError] = useState<string | null>(null);
   const [switching, setSwitching] = useState(false);
   const [completing, setCompleting] = useState(false);
+  const [reconnectNonce, setReconnectNonce] = useState(0);
+
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -77,7 +103,7 @@ function ComputerDesktopDrawerBody({
     void (async () => {
       try {
         const session = await createComputerSession({
-          mode: initialMode,
+          mode: modeRef.current,
           task_id: taskId,
           interaction_id: interactionId,
         });
@@ -91,11 +117,30 @@ function ComputerDesktopDrawerBody({
         const client = new NoriRFBClient({
           canvas,
           url: buildDesktopWSURL(session),
-          viewOnly: initialMode === "view",
+          viewOnly: modeRef.current === "view",
+          refreshURL: async () => {
+            const previous = sessionRef.current;
+            const refreshed = await createComputerSession({
+              mode: modeRef.current,
+              task_id: taskId,
+              interaction_id: interactionId,
+            });
+            if (cancelled) {
+              void endComputerSession(refreshed.id).catch(() => {});
+              throw new Error("Session cancelled");
+            }
+            sessionRef.current = refreshed;
+            if (previous && previous.id !== refreshed.id) {
+              void endComputerSession(previous.id).catch(() => {});
+            }
+            return buildDesktopWSURL(refreshed);
+          },
           onStateChange: (nextState, detail) => {
             if (!cancelled) {
               setConnState(nextState);
-              if (nextState === "error" && detail) {
+              if (nextState === "connected" || nextState === "connecting" || nextState === "reconnecting") {
+                setError(null);
+              } else if ((nextState === "error" || nextState === "disconnected") && detail) {
                 setError(detail);
               }
             }
@@ -121,7 +166,7 @@ function ComputerDesktopDrawerBody({
         void endComputerSession(active.id).catch(() => {});
       }
     };
-  }, [initialMode, taskId, interactionId]);
+  }, [initialMode, taskId, interactionId, reconnectNonce]);
 
   async function toggleMode() {
     const active = sessionRef.current;
@@ -153,25 +198,8 @@ function ComputerDesktopDrawerBody({
     }
   }
 
-  const statusTone =
-    connState === "connected"
-      ? mode === "control"
-        ? "working"
-        : "ok"
-      : connState === "error"
-        ? "danger"
-        : "warning";
-
-  const statusLabel =
-    connState === "connected"
-      ? mode === "control"
-        ? "In control"
-        : "Watching"
-      : connState === "reconnecting"
-        ? "Reconnecting…"
-        : connState === "error"
-          ? "Disconnected"
-          : "Starting desktop…";
+  const { tone: statusTone, label: statusLabel } = desktopConnectionPill(connState, mode);
+  const isDisconnected = connState === "error" || connState === "disconnected";
 
   return (
     <Dialog.Content className="fixed inset-4 z-[51] mx-auto flex max-w-6xl flex-col overflow-hidden rounded-[28px] border border-card-border bg-sheet-bg shadow-2xl outline-none">
@@ -246,6 +274,30 @@ function ComputerDesktopDrawerBody({
           className="max-h-full max-w-full rounded-tile bg-black object-contain outline-none focus-visible:ring-2 focus-visible:ring-accent"
           aria-label="Live Nori computer desktop"
         />
+        {connState !== "connected" && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[#07070A]/80 px-6 text-center">
+            <p className="text-row font-medium text-white/90">
+              {isDisconnected
+                ? "Desktop unavailable"
+                : connState === "reconnecting"
+                  ? "Reconnecting to your computer…"
+                  : "Waking your computer…"}
+            </p>
+            {isDisconnected && (
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => {
+                  setConnState("connecting");
+                  setError(null);
+                  setReconnectNonce((n) => n + 1);
+                }}
+              >
+                Reconnect
+              </Button>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="flex items-center justify-between border-t border-hairline px-5 py-2.5 text-meta text-ink-2">

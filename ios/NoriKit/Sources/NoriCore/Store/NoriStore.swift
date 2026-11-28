@@ -400,21 +400,21 @@ public final class NoriStore {
             async let summaryTask: Void = refreshSummary(force: force)
             _ = await (sessionTask, summaryTask)
         case .work:
+            let computerEnabled = isComputerEnabled
             async let workTask: Void = refreshWorkAndInteractions(force: force)
             async let libraryTask: Void = refreshLibrary(force: force)
             async let automationsTask: Void = refreshAutomations(force: force)
-            _ = await (workTask, libraryTask, automationsTask)
-        case .more:
-            let computerEnabled = isComputerEnabled
-            async let summaryTask: Void = refreshSummary(force: force)
-            async let modelKeysTask: Void = refreshModelKeys(force: force)
-            async let prefsTask: Void = refreshPermissionsAndPreferences(force: force)
             async let computerTask: Void = {
                 if computerEnabled {
                     _ = await self.refreshComputerStatus(force: force)
                 }
             }()
-            _ = await (summaryTask, modelKeysTask, prefsTask, computerTask)
+            _ = await (workTask, libraryTask, automationsTask, computerTask)
+        case .more:
+            async let summaryTask: Void = refreshSummary(force: force)
+            async let modelKeysTask: Void = refreshModelKeys(force: force)
+            async let prefsTask: Void = refreshPermissionsAndPreferences(force: force)
+            _ = await (summaryTask, modelKeysTask, prefsTask)
         }
     }
 

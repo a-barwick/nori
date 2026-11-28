@@ -1,0 +1,57 @@
+#!/usr/bin/env node
+"use strict";
+
+// Authenticated WebSocket upgrade gate for Nori's live desktop (:8080 -> 127.0.0.1:5901).
+// Verifies X-Nori-Desktop-Token against the per-computer token file before proxying to websockify.
+const http = require("http");
+const net = require("net");
+const fs = require("fs");
+const crypto = require("crypto");
+
+const tokenFile = process.argv[2];
+const listenPort = Number(process.argv[3] || 8080);
+const targetPort = Number(process.argv[4] || 5901);
+
+function validToken(req) {
+  let expected;
+  try {
+    expected = Buffer.from(fs.readFileSync(tokenFile, "utf8").trim());
+  } catch {
+    return false;
+  }
+  const got = Buffer.from(String(req.headers["x-nori-desktop-token"] || "").trim());
+  return expected.length > 0 && got.length === expected.length && crypto.timingSafeEqual(got, expected);
+}
+
+const srv = http.createServer((req, res) => {
+  res.writeHead(404);
+  res.end("not found");
+});
+
+srv.on("upgrade", (req, socket, head) => {
+  if (!validToken(req)) {
+    socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+    return;
+  }
+  const upstream = net.connect(targetPort, "127.0.0.1", () => {
+    let raw = `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n`;
+    for (let i = 0; i < req.rawHeaders.length; i += 2) {
+      if (req.rawHeaders[i].toLowerCase() === "x-nori-desktop-token") continue;
+      raw += `${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\r\n`;
+    }
+    raw += "\r\n";
+    upstream.write(raw);
+    if (head && head.length) upstream.write(head);
+    upstream.pipe(socket);
+    socket.pipe(upstream);
+  });
+  upstream.on("error", () => socket.destroy());
+  socket.on("error", () => upstream.destroy());
+});
+
+srv.on("error", (err) => {
+  console.error("nori-desktop-gate error:", err instanceof Error ? err.message : String(err));
+  process.exit(1);
+});
+
+srv.listen(listenPort, "0.0.0.0");

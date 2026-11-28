@@ -19,7 +19,19 @@ WS_INTERNAL_PORT="5901"
 CDP_PORT="${NORI_CHROMIUM_CDP_PORT:-9222}"
 LOG_DIR="/home/nori/.nori/logs"
 TOKEN_FILE="/home/nori/.nori/desktop.token"
+GATE_SCRIPT="/home/nori/.nori/bin/nori-desktop-gate"
 mkdir -p "${LOG_DIR}" /home/nori/.config/chromium /home/nori/workspace/downloads
+
+# Publish the token atomically so concurrent desktop starts see the same value.
+if [[ ! -f "${TOKEN_FILE}" ]]; then
+  token_tmp="$(mktemp "${TOKEN_FILE}.XXXXXX")"
+  python3 -c 'import secrets; print(secrets.token_urlsafe(32), end="")' > "${token_tmp}"
+  ln "${token_tmp}" "${TOKEN_FILE}" 2>/dev/null || test -f "${TOKEN_FILE}"
+  rm -f "${token_tmp}"
+fi
+
+# Launch all long-lived daemons from / so home-directory migrations can never invalidate their CWD.
+cd /
 
 is_listening() {
   local port="$1"
@@ -30,17 +42,83 @@ is_listening() {
   fi
 }
 
-is_rfb_ready() {
-  python3 -c "import socket,sys; s=socket.socket(); s.settimeout(1.5); s.connect(('127.0.0.1', 5900)); banner=s.recv(12); s.close(); sys.exit(0 if banner.startswith(b'RFB ') else 1)" >/dev/null 2>&1
+kill_port_listener() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    local pids
+    pids="$(ss -tlnp "( sport = :${port} )" 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u || true)"
+    for pid in ${pids}; do
+      if [[ "${pid}" != "$$" ]]; then
+        kill -9 "${pid}" 2>/dev/null || true
+      fi
+    done
+  fi
 }
 
-# Publish the token atomically so concurrent desktop starts see the same value.
-if [[ ! -f "${TOKEN_FILE}" ]]; then
-  token_tmp="$(mktemp "${TOKEN_FILE}.XXXXXX")"
-  python3 -c 'import secrets; print(secrets.token_urlsafe(32), end="")' > "${token_tmp}"
-  ln "${token_tmp}" "${TOKEN_FILE}" 2>/dev/null || test -f "${TOKEN_FILE}"
-  rm -f "${token_tmp}"
-fi
+is_rfb_ready() {
+  python3 -c "import socket,sys; s=socket.socket(); s.settimeout(1.0); s.connect(('127.0.0.1', 5900)); banner=s.recv(12); s.close(); sys.exit(0 if banner.startswith(b'RFB ') else 1)" >/dev/null 2>&1
+}
+
+is_ws_rfb_ready() {
+  local port="$1"
+  local token_file="${2:-}"
+  python3 - "${port}" "${token_file}" >/dev/null 2>&1 <<'PY'
+import base64, os, socket, sys, time
+
+port = int(sys.argv[1])
+token_file = sys.argv[2] if len(sys.argv) > 2 else ""
+token_hdr = ""
+if token_file:
+    with open(token_file, "r", encoding="utf-8") as f:
+        tok = f.read().strip()
+    if not tok:
+        sys.exit(1)
+    token_hdr = f"X-Nori-Desktop-Token: {tok}\r\n"
+
+key = base64.b64encode(os.urandom(16)).decode("ascii")
+req = (
+    "GET /websockify HTTP/1.1\r\n"
+    f"Host: 127.0.0.1:{port}\r\n"
+    "Upgrade: websocket\r\n"
+    "Connection: Upgrade\r\n"
+    f"Sec-WebSocket-Key: {key}\r\n"
+    "Sec-WebSocket-Version: 13\r\n"
+    "Sec-WebSocket-Protocol: binary\r\n"
+    f"{token_hdr}\r\n"
+).encode("ascii")
+
+deadline = time.monotonic() + 2.0
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    s.settimeout(1.0)
+    s.connect(("127.0.0.1", port))
+    s.sendall(req)
+    buf = b""
+    while time.monotonic() < deadline:
+        rem = deadline - time.monotonic()
+        if rem <= 0:
+            break
+        s.settimeout(min(1.0, rem))
+        chunk = s.recv(4096)
+        if not chunk:
+            break
+        buf += chunk
+        sep = buf.find(b"\r\n\r\n")
+        if sep != -1:
+            head = buf[:sep]
+            if not (head.startswith(b"HTTP/1.1 101") or head.startswith(b"HTTP/1.0 101")):
+                sys.exit(1)
+            body = buf[sep + 4 :]
+            if b"RFB " in body:
+                sys.exit(0)
+finally:
+    try:
+        s.close()
+    except Exception:
+        pass
+sys.exit(1)
+PY
+}
 
 # 1. Xvfb
 if ! pgrep -f "Xvfb :99" >/dev/null 2>&1; then
@@ -67,72 +145,58 @@ if ! is_rfb_ready; then
   sleep 0.1
   nohup x11vnc -display :99 -localhost -rfbport 5900 -nopw -forever -shared -noxdamage -wait 10 -defer 10 \
     >"${LOG_DIR}/x11vnc.log" 2>&1 </dev/null &
-  for _ in $(seq 1 30); do
+  for _ in $(seq 1 15); do
     if is_rfb_ready; then break; fi
-    sleep 0.1
+    sleep 0.2
   done
 fi
 
-# 4. websockify on loopback 127.0.0.1:5901 + authenticated token gate on 0.0.0.0:8080
-if ! is_listening "${WS_INTERNAL_PORT}"; then
+# 4a. websockify on loopback 127.0.0.1:5901; probe actual WS+RFB handshake (with one retry before killing)
+if ! is_ws_rfb_ready "${WS_INTERNAL_PORT}" && ! is_ws_rfb_ready "${WS_INTERNAL_PORT}"; then
+  for wpid in $(pgrep -f "[w]ebsockify" 2>/dev/null || true); do
+    pkill -9 -P "${wpid}" >/dev/null 2>&1 || true
+  done
+  pkill -9 -f "[w]ebsockify" >/dev/null 2>&1 || true
+  kill_port_listener "${WS_INTERNAL_PORT}"
+  sleep 0.1
   nohup websockify "127.0.0.1:${WS_INTERNAL_PORT}" 127.0.0.1:5900 \
     >"${LOG_DIR}/websockify.log" 2>&1 </dev/null &
-  for _ in $(seq 1 30); do
-    if is_listening "${WS_INTERNAL_PORT}"; then break; fi
-    sleep 0.1
+  for _ in $(seq 1 15); do
+    if is_ws_rfb_ready "${WS_INTERNAL_PORT}"; then break; fi
+    sleep 0.2
   done
 fi
 
-if ! is_listening "${DESKTOP_PORT}"; then
-  nohup node -e '
-const http = require("http");
-const net = require("net");
-const fs = require("fs");
-const crypto = require("crypto");
-const tokenFile = process.argv[1];
-const listenPort = Number(process.argv[2]);
-const targetPort = Number(process.argv[3]);
-
-function validToken(req) {
-  let expected;
-  try { expected = fs.readFileSync(tokenFile); } catch { return false; }
-  const got = Buffer.from(String(req.headers["x-nori-desktop-token"] || "").trim());
-  return expected.length > 0 && got.length === expected.length && crypto.timingSafeEqual(got, expected);
-}
-
-const srv = http.createServer((req, res) => {
-  res.writeHead(404);
-  res.end("not found");
-});
-srv.on("upgrade", (req, socket, head) => {
-  if (!validToken(req)) {
-    socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-    return;
-  }
-  const upstream = net.connect(targetPort, "127.0.0.1", () => {
-    let raw = `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n`;
-    for (let i = 0; i < req.rawHeaders.length; i += 2) {
-      if (req.rawHeaders[i].toLowerCase() === "x-nori-desktop-token") continue;
-      raw += `${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\r\n`;
-    }
-    raw += "\r\n";
-    upstream.write(raw);
-    if (head && head.length) upstream.write(head);
-    upstream.pipe(socket);
-    socket.pipe(upstream);
-  });
-  upstream.on("error", () => socket.destroy());
-  socket.on("error", () => upstream.destroy());
-});
-srv.listen(listenPort, "0.0.0.0");
-' "${TOKEN_FILE}" "${DESKTOP_PORT}" "${WS_INTERNAL_PORT}" >"${LOG_DIR}/desktop-gate.log" 2>&1 </dev/null &
-  for _ in $(seq 1 30); do
-    if is_listening "${DESKTOP_PORT}"; then break; fi
-    sleep 0.1
+# 4b. Authenticated token gate on 0.0.0.0:8080; probe end-to-end WS+RFB handshake (with one retry before killing)
+if ! is_ws_rfb_ready "${DESKTOP_PORT}" "${TOKEN_FILE}" && ! is_ws_rfb_ready "${DESKTOP_PORT}" "${TOKEN_FILE}"; then
+  kill_port_listener "${DESKTOP_PORT}"
+  pkill -9 -f "[n]ori-desktop-gate" >/dev/null 2>&1 || true
+  pkill -9 -f "/home/nori/.nori/[d]esktop.token" >/dev/null 2>&1 || true
+  sleep 0.1
+  nohup node "${GATE_SCRIPT}" "${TOKEN_FILE}" "${DESKTOP_PORT}" "${WS_INTERNAL_PORT}" \
+    >"${LOG_DIR}/desktop-gate.log" 2>&1 </dev/null &
+  for _ in $(seq 1 15); do
+    if is_ws_rfb_ready "${DESKTOP_PORT}" "${TOKEN_FILE}"; then break; fi
+    sleep 0.2
   done
 fi
 
 # 5. Headed Chromium with persistent profile and loopback-only CDP
+# Restart Chromium if its CWD points to a deleted directory (e.g. after a home-dir migration)
+# so SQLite profile files (Cookies, Login Data) write to the live profile directory.
+if is_listening "${CDP_PORT}"; then
+  chrome_pid="$(pgrep -f "[r]emote-debugging-port=${CDP_PORT}" 2>/dev/null | head -n 1 || true)"
+  if [[ -n "${chrome_pid}" ]]; then
+    chrome_cwd="$(readlink "/proc/${chrome_pid}/cwd" 2>/dev/null || true)"
+    if [[ "${chrome_cwd}" == *"(deleted)" ]]; then
+      /home/nori/.nori/bin/nori-browser close >/dev/null 2>&1 || true
+      sleep 0.5
+      pkill -9 -f "[r]emote-debugging-port=${CDP_PORT}" >/dev/null 2>&1 || true
+      sleep 0.2
+    fi
+  fi
+fi
+
 if ! is_listening "${CDP_PORT}"; then
   CHROME_BIN=""
   for candidate in chromium chromium-browser google-chrome; do
@@ -159,9 +223,9 @@ if ! is_listening "${CDP_PORT}"; then
       --remote-debugging-port="${CDP_PORT}" \
       about:blank >"${LOG_DIR}/chromium.log" 2>&1 </dev/null &
     echo $! > "${LOG_DIR}/chromium.pid"
-    for _ in $(seq 1 50); do
+    for _ in $(seq 1 25); do
       if is_listening "${CDP_PORT}"; then break; fi
-      sleep 0.1
+      sleep 0.2
     done
   fi
 fi
@@ -171,13 +235,13 @@ if [[ -x /home/nori/.nori/bin/nori-watchdog ]] && ! pgrep -f "nori-watchdog" >/d
   nohup /home/nori/.nori/bin/nori-watchdog >"${LOG_DIR}/watchdog.log" 2>&1 </dev/null &
 fi
 
-# 7. Verify all required services are actually listening and x11vnc answers RFB before reporting ok.
-if [[ ! -S /tmp/.X11-unix/X99 ]] || ! is_rfb_ready || ! is_listening "${WS_INTERNAL_PORT}" || ! is_listening "${DESKTOP_PORT}" || ! is_listening "${CDP_PORT}"; then
+# 7. Verify end-to-end WS+RFB readiness through desktop-gate (:8080 -> :5901 -> :5900) plus Xvfb and CDP.
+if [[ ! -S /tmp/.X11-unix/X99 ]] || ! is_ws_rfb_ready "${DESKTOP_PORT}" "${TOKEN_FILE}" || ! is_listening "${CDP_PORT}"; then
   printf '{"ok":false,"error":"desktop services failed readiness check","xvfb":%s,"vnc":%s,"ws":%s,"gate":%s,"cdp":%s}\n' \
     "$([[ -S /tmp/.X11-unix/X99 ]] && echo true || echo false)" \
     "$(is_rfb_ready && echo true || echo false)" \
-    "$(is_listening "${WS_INTERNAL_PORT}" && echo true || echo false)" \
-    "$(is_listening "${DESKTOP_PORT}" && echo true || echo false)" \
+    "$(is_ws_rfb_ready "${WS_INTERNAL_PORT}" && echo true || echo false)" \
+    "$(is_ws_rfb_ready "${DESKTOP_PORT}" "${TOKEN_FILE}" && echo true || echo false)" \
     "$(is_listening "${CDP_PORT}" && echo true || echo false)" >&2
   exit 1
 fi
