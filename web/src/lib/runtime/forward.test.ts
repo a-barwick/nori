@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, test } from "node:test";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { asFetch } from "@/lib/test-fetch";
 import { MAX_FILE_BYTES } from "../submission";
-import { assistantRoute, fileRoute, operationRoute, uploadRoute, validSegment } from "./forward";
+import { assistantRoute, capabilitiesRoute, fileRoute, operationRoute, uploadRoute, validSegment } from "./forward";
 import * as settingsRoute from "@/app/api/v1/settings/[[...path]]/route";
 import { POST as redeemInviteRoute } from "@/app/api/invite/redeem/route";
 
@@ -779,5 +779,65 @@ describe("forward.ts path validation, body limits, OAuth sanitization, and share
       { params: Promise.resolve({ path: ["model-keys"] }) },
     );
     assert.equal(afterDelete.status, 403);
+  });
+
+  test("403 account_suspended from Core immediately evicts resolved user and shared read caches", async () => {
+    const email = "suspended-cache@example.test";
+    const userID = "88888888-8888-4888-8888-888888888888";
+    const { jwks } = await getKeys();
+    let suspended = false;
+    let resolveCalls = 0;
+    let capabilitiesCalls = 0;
+
+    globalThis.fetch = asFetch(async (input: RequestInfo | URL) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
+      if (url.toString() === `${ISSUER}/.well-known/openid-configuration`) {
+        return Response.json({ issuer: ISSUER, jwks_uri: JWKS_URI });
+      }
+      if (url.toString() === JWKS_URI) {
+        return Response.json(jwks);
+      }
+      if (url.pathname === "/api/users/resolve") {
+        resolveCalls++;
+        if (suspended) {
+          return Response.json({ error: "Your account is suspended.", code: "account_suspended" }, { status: 403 });
+        }
+        return Response.json({ id: userID }, { headers: { "X-Nori-Identity-Bound": "1" } });
+      }
+      if (url.pathname === `/users/${userID}/v1/capabilities`) {
+        capabilitiesCalls++;
+        return Response.json({ contract: "nori-chat-2", service: "nori", conversationModes: ["assistant"], features: {} });
+      }
+      if (url.pathname === `/users/${userID}/v1/work`) {
+        return Response.json({ error: "Your account is suspended.", code: "account_suspended" }, { status: 403 });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const headers = await authHeaders(email);
+    // 1. Prime both the 5-min resolved-user cache and the 8-sec sharedReads cache.
+    const capFirst = await capabilitiesRoute(new Request(`${APP_ORIGIN}/api/v1/capabilities`, { headers }));
+    assert.equal(capFirst.status, 200);
+    assert.equal(resolveCalls, 1);
+    assert.equal(capabilitiesCalls, 1);
+
+    // Confirm cached identity + shared read are active before suspension.
+    const capCached = await capabilitiesRoute(new Request(`${APP_ORIGIN}/api/v1/capabilities`, { headers }));
+    assert.equal(capCached.status, 200);
+    assert.equal(resolveCalls, 1);
+    assert.equal(capabilitiesCalls, 1);
+
+    // 2. Core suspends the user and returns 403 account_suspended on an authenticated route.
+    suspended = true;
+    const workRes = await assistantRoute(new Request(`${APP_ORIGIN}/api/v1/work`, { headers }), "work", []);
+    assert.equal(workRes.status, 403);
+    assert.deepEqual(await workRes.json(), { error: "Your account is suspended.", code: "account_suspended" });
+
+    // 3. Subsequent request MUST bypass both caches, re-resolve identity, and return 403 account_suspended.
+    const capAfter = await capabilitiesRoute(new Request(`${APP_ORIGIN}/api/v1/capabilities`, { headers }));
+    assert.equal(capAfter.status, 403);
+    assert.deepEqual(await capAfter.json(), { error: "Your account is suspended.", code: "account_suspended" });
+    assert.equal(resolveCalls, 2);
+    assert.equal(capabilitiesCalls, 1);
   });
 });

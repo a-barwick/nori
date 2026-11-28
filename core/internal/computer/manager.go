@@ -8,24 +8,36 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"os"
 	"path"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"nori/internal/billing"
 	"nori/internal/computer/vmscripts"
+	"nori/internal/observability"
+	"nori/internal/state"
+	"nori/internal/state/docstore"
+	"nori/internal/users"
 )
 
-// Config controls computer provisioning, limits, and desktop session lifetimes.
+// Config controls computer provisioning, limits, metering, janitor cadence, and desktop session lifetimes.
 type Config struct {
-	DisplayWidth   int
-	DisplayHeight  int
-	MemoryLimitMB  int
-	MaxDiskGB      int
-	SessionTTL     time.Duration
-	SessionIdleCap time.Duration
-	BootstrapVer   string
+	DisplayWidth    int
+	DisplayHeight   int
+	MemoryLimitMB   int
+	MaxDiskGB       int
+	SessionTTL      time.Duration
+	SessionIdleCap  time.Duration
+	BootstrapVer    string
+	MaxFleet        int           // 0 defaults to DefaultMaxFleet (10); < 0 disables cap
+	RatePerHourUSD  float64       // 0 defaults to DefaultSpritesRatePerHourUSD ($0.15/hr) unless DisableMetering is true
+	DisableMetering bool          // true for local Docker provider ($0 cloud cost)
+	IdleAutoSleep   time.Duration // default DefaultIdleAutoSleep (15m)
+	JanitorInterval time.Duration // default DefaultJanitorInterval (1m)
 }
 
 func (c Config) withDefaults() Config {
@@ -49,6 +61,18 @@ func (c Config) withDefaults() Config {
 	}
 	if c.BootstrapVer == "" {
 		c.BootstrapVer = vmscripts.Version
+	}
+	if c.MaxFleet == 0 {
+		c.MaxFleet = DefaultMaxFleet
+	}
+	if !c.DisableMetering && c.RatePerHourUSD <= 0 {
+		c.RatePerHourUSD = DefaultSpritesRatePerHourUSD
+	}
+	if c.IdleAutoSleep <= 0 {
+		c.IdleAutoSleep = DefaultIdleAutoSleep
+	}
+	if c.JanitorInterval <= 0 {
+		c.JanitorInterval = DefaultJanitorInterval
 	}
 	return c
 }
@@ -83,6 +107,8 @@ const (
 	ensureCacheTTL      = 2 * time.Minute
 	statusCacheTTL      = 5 * time.Second
 	eventualStatusGrace = 30 * time.Second
+	janitorLeaderUserID = "__computer_janitor__"
+	janitorLeaderLane   = "computer_janitor"
 )
 
 type ensuredComputer struct {
@@ -104,36 +130,174 @@ type inflightStatus struct {
 }
 
 // Manager coordinates lifecycle, policy, cost attribution, sessions, file links,
-// and account-deletion teardown across any computer.Provider implementation.
+// awake-time metering, idle auto-sleep, and account-deletion teardown across any computer.Provider.
 type Manager struct {
 	provider Provider
 	store    Store
 	cfg      Config
 	Now      func() time.Time
 
+	instanceID string
+
 	mu             sync.Mutex
+	billingSvc     *billing.Service
+	usageBackend   docstore.Backend
+	leases         docstore.LeaseStore
+	janitorStarted bool
 	locks          map[string]*sync.Mutex
 	ensured        map[string]ensuredComputer
 	statusCache    map[string]cachedInstanceStatus
 	statusInflight map[string]*inflightStatus
 	statusGen      map[string]uint64
 	listeners      map[string]map[uint64]func(SessionEvent)
+	desktopCancels map[string]map[uint64]func()
 	nextSubID      uint64
 }
 
 // NewManager creates a Manager backed by provider and store.
 func NewManager(provider Provider, store Store, cfg Config) *Manager {
+	host, _ := os.Hostname()
+	if host == "" {
+		host = "nori"
+	}
 	return &Manager{
 		provider:       provider,
 		store:          store,
 		cfg:            cfg.withDefaults(),
+		instanceID:     host + "-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:8],
 		locks:          map[string]*sync.Mutex{},
 		ensured:        map[string]ensuredComputer{},
 		statusCache:    map[string]cachedInstanceStatus{},
 		statusInflight: map[string]*inflightStatus{},
 		statusGen:      map[string]uint64{},
 		listeners:      map[string]map[uint64]func(SessionEvent){},
+		desktopCancels: map[string]map[uint64]func(){},
 	}
+}
+
+// SetBilling attaches the billing.Service used for fail-closed access/credit checks,
+// per-tier checkpoint limits, and exhausted/suspended Sprite reaping.
+func (m *Manager) SetBilling(svc *billing.Service) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.billingSvc = svc
+	m.mu.Unlock()
+	m.syncMemoryMeterHook()
+}
+
+// Billing returns the currently wired billing.Service (may be nil).
+func (m *Manager) Billing() *billing.Service {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.billingSvc
+}
+
+// SetUsageBackend attaches a docstore.Backend used by in-memory stores/DSTs to persist
+// finalized Sprite awake-time usage records alongside global budget accounting.
+// PostgresStore writes usage records and nori_global_budget_daily directly inside its SQL transaction.
+func (m *Manager) SetUsageBackend(backend docstore.Backend) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.usageBackend = backend
+	m.mu.Unlock()
+	m.syncMemoryMeterHook()
+}
+
+// SetLeases attaches a docstore.LeaseStore for multi-instance janitor leader election.
+func (m *Manager) SetLeases(leases docstore.LeaseStore) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.leases = leases
+	m.mu.Unlock()
+}
+
+// SetClock sets the deterministic clock used by Manager (and syncs MemoryStore if backed by one).
+func (m *Manager) SetClock(now func() time.Time) {
+	if m == nil {
+		return
+	}
+	m.Now = now
+	if ms, ok := m.store.(*MemoryStore); ok {
+		ms.Now = now
+	}
+}
+
+func (m *Manager) syncMemoryMeterHook() {
+	ms, ok := m.store.(*MemoryStore)
+	if !ok {
+		return
+	}
+	m.mu.Lock()
+	backend := m.usageBackend
+	bsvc := m.billingSvc
+	m.mu.Unlock()
+	if backend == nil && (bsvc == nil || bsvc.Store == nil) {
+		return
+	}
+	ms.OnMeterUsage = func(ctx context.Context, userID string, u state.Usage, costMicros int64) error {
+		reconciled := false
+		if backend != nil {
+			fields, err := docstore.Encode(u)
+			if err != nil {
+				return err
+			}
+			col := "owners/" + userID + "/model_usage"
+			client := docstore.New(backend)
+			var errRec error
+			reconciled, errRec = client.RecordAndReconcileUsage(ctx, docstore.UsageReconcileRequest{
+				Collection:           col,
+				UsageID:              u.ID,
+				UsageFields:          fields,
+				Billing:              u.Billing,
+				Category:             u.Category,
+				CostStatus:           u.CostStatus,
+				EstimatedExposureUSD: u.EstimatedExposureUSD,
+				CostUSD:              u.CostUSD,
+				RequestStatus:        u.RequestStatus,
+				CreatedAt:            u.CreatedAt,
+			})
+			if errRec != nil {
+				return errRec
+			}
+			if !reconciled {
+				if _, err := client.Collection(col).Doc(u.ID).Set(ctx, u); err != nil {
+					return err
+				}
+			}
+		}
+		if !reconciled && bsvc != nil && bsvc.Store != nil && costMicros > 0 {
+			if err := bsvc.Store.CheckAndIncrementGlobalBudget(ctx, u.CreatedAt, billing.ScopeHostedAll, costMicros, 0, 1, 0); err != nil {
+				return err
+			}
+			if err := bsvc.Store.CheckAndIncrementGlobalBudget(ctx, u.CreatedAt, billing.ScopeHostedSprites, costMicros, 0, 1, 0); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
+func (m *Manager) effectiveMaxFleet() int {
+	if m == nil || m.cfg.MaxFleet < 0 {
+		return 0
+	}
+	return m.cfg.MaxFleet
+}
+
+func (m *Manager) effectiveRatePerHour() float64 {
+	if m == nil || m.cfg.DisableMetering || m.cfg.RatePerHourUSD <= 0 {
+		return 0
+	}
+	return m.cfg.RatePerHourUSD
 }
 
 func (m *Manager) SessionIdleCap() time.Duration {
@@ -141,6 +305,59 @@ func (m *Manager) SessionIdleCap() time.Duration {
 		return DefaultSessionIdleCap
 	}
 	return m.cfg.SessionIdleCap
+}
+
+// RegisterDesktopSession tracks an active Desktop VNC WebSocket cancel function for userID
+// so CloseDesktopSessions(userID) can immediately terminate live sockets on suspension/sleep.
+func (m *Manager) RegisterDesktopSession(userID string, cancel func()) func() {
+	if m == nil || cancel == nil {
+		return func() {}
+	}
+	m.mu.Lock()
+	m.nextSubID++
+	id := m.nextSubID
+	if m.desktopCancels == nil {
+		m.desktopCancels = map[string]map[uint64]func(){}
+	}
+	if m.desktopCancels[userID] == nil {
+		m.desktopCancels[userID] = map[uint64]func(){}
+	}
+	m.desktopCancels[userID][id] = cancel
+	m.mu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			m.mu.Lock()
+			if subs := m.desktopCancels[userID]; subs != nil {
+				delete(subs, id)
+				if len(subs) == 0 {
+					delete(m.desktopCancels, userID)
+				}
+			}
+			m.mu.Unlock()
+		})
+	}
+}
+
+// CloseDesktopSessions immediately closes all active Desktop VNC WebSocket connections for userID
+// and returns the number of connections signalled. Safe to call from entitlement:<uid> notify handlers.
+func (m *Manager) CloseDesktopSessions(userID string) int {
+	if m == nil {
+		return 0
+	}
+	m.mu.Lock()
+	subs := m.desktopCancels[userID]
+	delete(m.desktopCancels, userID)
+	cancels := make([]func(), 0, len(subs))
+	for _, fn := range subs {
+		cancels = append(cancels, fn)
+	}
+	m.mu.Unlock()
+	for _, fn := range cancels {
+		fn()
+	}
+	return len(cancels)
 }
 
 // SubscribeSession registers a synchronous callback notified BEFORE SetSessionMode or EndSession returns.
@@ -341,6 +558,72 @@ func shouldInvalidateEnsureOnErr(err error) bool {
 		!errors.Is(err, ErrTimeout)
 }
 
+// checkHostedAccess enforces fail-closed billing access (suspension, subscription status,
+// hosted credit balance > 0, and fleet-wide daily hosted budget) whenever billingSvc is wired.
+func (m *Manager) checkHostedAccess(ctx context.Context, userID string, now time.Time) (billing.Entitlement, error) {
+	bsvc := m.Billing()
+	if bsvc == nil {
+		return billing.Entitlement{}, nil
+	}
+	ent, err := bsvc.GetEntitlement(ctx, userID)
+	if err != nil {
+		return billing.Entitlement{}, err
+	}
+	if err := ent.CheckAccess(now); err != nil {
+		return ent, err
+	}
+	if m.cfg.DisableMetering {
+		return ent, nil
+	}
+	bal, err := bsvc.Store.CreditBalance(ctx, userID)
+	if err != nil {
+		return ent, err
+	}
+	if bal.AvailableMicros <= 0 {
+		return ent, billing.ErrCreditExhausted
+	}
+	if bsvc.GlobalBudget.HostedAllMaxMicrosPerDay > 0 {
+		used, err := bsvc.Store.GetGlobalBudget(ctx, now, billing.ScopeHostedAll)
+		if err == nil && used.SpentMicros >= bsvc.GlobalBudget.HostedAllMaxMicrosPerDay {
+			return ent, billing.ErrGlobalBudgetExceeded
+		}
+	}
+	return ent, nil
+}
+
+// CheckDesktopAccess verifies whether userID is permitted to open/maintain a Desktop VNC session.
+func (m *Manager) CheckDesktopAccess(ctx context.Context, userID string) (billing.Entitlement, error) {
+	return m.checkHostedAccess(ctx, userID, m.now())
+}
+
+// TouchActivity records active computer usage for idle auto-sleep tracking.
+func (m *Manager) TouchActivity(ctx context.Context, userID string) error {
+	if !m.Enabled() {
+		return ErrDisabled
+	}
+	return m.store.TouchComputerActivity(ctx, userID, m.now())
+}
+
+func emitMeteredUsage(ctx context.Context, userID string, res MeterAwakeResult) {
+	if res.Usage == nil {
+		return
+	}
+	var costUSD float64
+	if res.Usage.CostUSD != nil && *res.Usage.CostUSD >= 0 {
+		costUSD = *res.Usage.CostUSD
+	}
+	observability.RecordUsage(
+		users.WithID(ctx, userID),
+		res.Usage.Provider,
+		res.Usage.Model,
+		res.Usage.Billing,
+		res.Usage.Category,
+		res.Usage.CostStatus,
+		res.Usage.RequestStatus,
+		costUSD,
+	)
+}
+
 // Status returns the current state of the user's computer without provisioning one.
 func (m *Manager) Status(ctx context.Context, userID string) (StatusView, error) {
 	if !m.Enabled() {
@@ -401,7 +684,8 @@ func (m *Manager) Status(ctx context.Context, userID string) (StatusView, error)
 }
 
 // Ensure provisions (if needed) and wakes the user's persistent computer,
-// applying Nori's SSRF network policy and recording the baseline checkpoint.
+// enforcing fail-closed billing/credit admission, awake-only global fleet cap,
+// Nori's SSRF network policy, and lifecycle/metering timestamps.
 func (m *Manager) Ensure(ctx context.Context, userID string) (ComputerRecord, error) {
 	if !m.Enabled() {
 		return ComputerRecord{}, ErrDisabled
@@ -409,6 +693,12 @@ func (m *Manager) Ensure(ctx context.Context, userID string) (ComputerRecord, er
 	lock := m.userLock(userID)
 	lock.Lock()
 	defer lock.Unlock()
+
+	now := m.now()
+	if _, err := m.checkHostedAccess(ctx, userID, now); err != nil {
+		m.invalidateEnsure(userID)
+		return ComputerRecord{}, err
+	}
 
 	rec, err := m.store.GetComputer(ctx, userID)
 	if err != nil && !errors.Is(err, ErrNotFound) {
@@ -420,11 +710,12 @@ func (m *Manager) Ensure(ctx context.Context, userID string) (ComputerRecord, er
 
 	if err == nil && rec.Status == StatusReady && rec.Provider == m.provider.Name() && rec.ProviderID != "" &&
 		rec.BootstrapVersion == m.cfg.BootstrapVer && m.isRecentlyEnsured(userID, rec.ProviderID, rec.BootstrapVersion) {
+		_ = m.store.TouchComputerActivity(ctx, userID, now)
 		m.applyPurgedTombstones(ctx, userID, rec.ProviderID)
 		return rec, nil
 	}
 
-	now := m.now()
+	maxFleet := m.effectiveMaxFleet()
 	if errors.Is(err, ErrNotFound) || rec.Status == StatusDeleted {
 		candidateID := "cmp_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:16]
 		placeholder := ComputerRecord{
@@ -435,12 +726,18 @@ func (m *Manager) Ensure(ctx context.Context, userID string) (ComputerRecord, er
 			Status:           StatusProvisioning,
 			BootstrapVersion: m.cfg.BootstrapVer,
 			LastActiveAt:     &now,
+			LastActivityAt:   &now,
+			ProviderOwner:    DefaultProviderOwner,
 		}
-		reserved, _, rErr := m.store.ReserveComputer(ctx, placeholder)
+		reserved, _, rErr := m.store.ReserveComputerWithCap(ctx, placeholder, maxFleet)
 		if rErr != nil {
 			return ComputerRecord{}, rErr
 		}
 		rec = reserved
+	} else if !isAwakeStatus(rec.Status) {
+		if capErr := m.store.CheckFleetCapAndMarkWaking(ctx, userID, maxFleet, now); capErr != nil {
+			return ComputerRecord{}, capErr
+		}
 	}
 	computerID := rec.ComputerID
 
@@ -491,6 +788,12 @@ func (m *Manager) Ensure(ctx context.Context, userID string) (ComputerRecord, er
 		status = StatusReady
 	}
 	activeAt := m.now()
+	awakeAt := activeAt
+	meteredAt := activeAt
+	owner := rec.ProviderOwner
+	if owner == "" {
+		owner = DefaultProviderOwner
+	}
 	updated := ComputerRecord{
 		UserID:               userID,
 		ComputerID:           computerID,
@@ -500,9 +803,17 @@ func (m *Manager) Ensure(ctx context.Context, userID string) (ComputerRecord, er
 		BaselineCheckpointID: baseline,
 		BootstrapVersion:     bootstrapVer,
 		LastActiveAt:         &activeAt,
+		LastActivityAt:       &activeAt,
+		AwakeSince:           &awakeAt,
+		LastMeteredAt:        &meteredAt,
+		SleepingSince:        nil,
+		ProviderOwner:        owner,
 	}
 	if err := m.store.UpsertComputer(ctx, updated); err != nil {
 		return ComputerRecord{}, err
+	}
+	if stored, gErr := m.store.GetComputer(ctx, userID); gErr == nil {
+		updated = stored
 	}
 	m.markEnsured(userID, updated.ProviderID, updated.BootstrapVersion)
 	m.invalidateStatus(userID)
@@ -785,30 +1096,392 @@ func (m *Manager) Wake(ctx context.Context, userID string) (StatusView, error) {
 	return m.Status(ctx, userID)
 }
 
-// Sleep ends active sessions and puts the computer to sleep to stop compute billing.
+// Sleep ends active sessions, puts the computer to sleep, and atomically meters
+// elapsed awake time + transitions status to sleeping in a single transaction.
 func (m *Manager) Sleep(ctx context.Context, userID string) error {
 	if !m.Enabled() {
 		return ErrDisabled
 	}
+	lock := m.userLock(userID)
+	lock.Lock()
+	defer lock.Unlock()
+	return m.sleepLocked(ctx, userID, false)
+}
+
+// ForceSleepUser immediately terminates open Desktop VNC sessions, revokes session tokens,
+// puts the user's Sprite to sleep, and atomically meters any unbilled awake time.
+// Safe and idempotent to call from cross-instance entitlement:<uid> notify handlers even if
+// the user has no computer or is already sleeping.
+func (m *Manager) ForceSleepUser(ctx context.Context, userID string) error {
+	if !m.Enabled() {
+		return nil
+	}
+	m.CloseDesktopSessions(userID)
+	lock := m.userLock(userID)
+	lock.Lock()
+	defer lock.Unlock()
+	err := m.sleepLocked(ctx, userID, true)
+	if errors.Is(err, ErrNotProvisioned) || errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
+func (m *Manager) sleepLocked(ctx context.Context, userID string, force bool) error {
 	m.invalidateEnsure(userID)
 	m.invalidateStatus(userID)
+	m.CloseDesktopSessions(userID)
+	m.notifyUserSessionsRevoked(ctx, userID)
+	_ = m.store.RevokeUserSessions(ctx, userID, m.now())
+
 	rec, err := m.store.GetComputer(ctx, userID)
 	if errors.Is(err, ErrNotFound) {
+		if force {
+			return nil
+		}
 		return ErrNotProvisioned
 	}
 	if err != nil {
 		return err
 	}
 	if rec.Status == StatusDeleting {
+		if force {
+			return nil
+		}
 		return ErrDeleting
 	}
-	m.notifyUserSessionsRevoked(ctx, userID)
-	_ = m.store.RevokeUserSessions(ctx, userID, m.now())
-	if err := m.provider.Sleep(ctx, rec.ProviderID); err != nil {
+	if rec.Status == StatusDeleted {
+		if force {
+			return nil
+		}
+		return ErrNotProvisioned
+	}
+	if rec.Status == StatusSleeping && rec.AwakeSince == nil {
+		return nil
+	}
+	if rec.ProviderID != "" && rec.Provider == m.provider.Name() {
+		if sErr := m.provider.Sleep(ctx, rec.ProviderID); sErr != nil {
+			if errors.Is(sErr, ErrNotFound) {
+				// Provider instance already vanished: finalize any elapsed time up to last activity and mark deleted.
+				now := m.now()
+				meterEnd := chooseProviderStopTime(rec, nil, now)
+				res, mErr := m.store.MeterAwakeTime(ctx, MeterAwakeRequest{
+					UserID:           userID,
+					Now:              now,
+					RatePerHourUSD:   m.effectiveRatePerHour(),
+					TransitionStatus: StatusDeleted,
+					MeterEndAt:       &meterEnd,
+				})
+				if mErr == nil {
+					emitMeteredUsage(ctx, userID, res)
+				}
+				m.invalidateStatus(userID)
+				if force {
+					return mErr
+				}
+				return sErr
+			}
+			return sErr
+		}
+	}
+	res, err := m.store.MeterAwakeTime(ctx, MeterAwakeRequest{
+		UserID:           userID,
+		Now:              m.now(),
+		RatePerHourUSD:   m.effectiveRatePerHour(),
+		TransitionStatus: StatusSleeping,
+	})
+	if err != nil {
 		return err
 	}
+	emitMeteredUsage(ctx, userID, res)
 	m.invalidateStatus(userID)
-	return m.store.UpdateComputerStatus(ctx, userID, StatusSleeping, nil)
+	return nil
+}
+
+// StartJanitor launches the background leader-elected Sprite janitor goroutine until ctx is cancelled.
+// Calling StartJanitor multiple times on the same Manager is a safe no-op.
+func (m *Manager) StartJanitor(ctx context.Context) {
+	if !m.Enabled() {
+		return
+	}
+	m.mu.Lock()
+	if m.janitorStarted {
+		m.mu.Unlock()
+		return
+	}
+	m.janitorStarted = true
+	interval := m.cfg.JanitorInterval
+	m.mu.Unlock()
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		defer func() {
+			m.releaseJanitorLeadership(context.Background())
+			m.mu.Lock()
+			m.janitorStarted = false
+			m.mu.Unlock()
+		}()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				passCtx, cancel := context.WithTimeout(ctx, max(interval-5*time.Second, 30*time.Second))
+				if err := m.RunJanitorPass(passCtx); err != nil && !errors.Is(err, context.Canceled) {
+					slog.WarnContext(passCtx, "computer janitor pass failed", "err", err)
+				}
+				cancel()
+			}
+		}
+	}()
+}
+
+// RunJanitorPass executes one leader-elected janitor cycle:
+// 1. Reconciles actual provider status (stops billing phantom awake time if Fly already slept/destroyed a Sprite).
+// 2. Reaps awake Sprites whose owner is suspended, subscription_inactive, or credit_exhausted.
+// 3. Auto-sleeps Sprites idle for >= IdleAutoSleep (default 15m).
+// 4. Atomically meters periodic awake time for remaining active Sprites (single-tx usage + global budget).
+func (m *Manager) RunJanitorPass(ctx context.Context) error {
+	if !m.Enabled() {
+		return nil
+	}
+	leader, err := m.acquireJanitorLeadership(ctx)
+	if err != nil {
+		return err
+	}
+	if !leader {
+		return nil
+	}
+
+	var errs []error
+	if err := m.ReapDeletingComputers(ctx); err != nil {
+		errs = append(errs, err)
+	}
+	if _, err := m.SweepIdleSessions(ctx); err != nil {
+		errs = append(errs, err)
+	}
+
+	awake, err := m.store.ListAwakeComputers(ctx, 200)
+	if err != nil {
+		errs = append(errs, err)
+		return errors.Join(errs...)
+	}
+	for _, rec := range awake {
+		if ctx.Err() != nil {
+			break
+		}
+		if err := m.reconcileAndMeterComputer(ctx, rec); err != nil {
+			errs = append(errs, fmt.Errorf("janitor computer %s (user %s): %w", rec.ComputerID, rec.UserID, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (m *Manager) acquireJanitorLeadership(ctx context.Context) (bool, error) {
+	m.mu.Lock()
+	leases := m.leases
+	leaseTTL := m.cfg.JanitorInterval * 2
+	m.mu.Unlock()
+	if leases == nil {
+		return true, nil
+	}
+	if leaseTTL < 90*time.Second {
+		leaseTTL = 90 * time.Second
+	}
+	if renewed, err := leases.RenewUserWake(ctx, janitorLeaderUserID, janitorLeaderLane, m.instanceID, leaseTTL); err == nil && renewed {
+		return true, nil
+	}
+	wakes, err := leases.ListUserWakes(ctx, janitorLeaderUserID)
+	if err != nil {
+		return false, err
+	}
+	needsWake := true
+	for _, w := range wakes {
+		if w.Lane == janitorLeaderLane {
+			needsWake = !w.Runnable
+			break
+		}
+	}
+	if needsWake {
+		if err := leases.WakeUser(ctx, janitorLeaderUserID, janitorLeaderLane, time.Time{}); err != nil {
+			return false, err
+		}
+	}
+	_, ok, err := leases.ClaimUserWake(ctx, janitorLeaderLane, m.instanceID, leaseTTL)
+	return ok, err
+}
+
+func (m *Manager) releaseJanitorLeadership(ctx context.Context) {
+	m.mu.Lock()
+	leases := m.leases
+	m.mu.Unlock()
+	if leases == nil {
+		return
+	}
+	relCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	_ = leases.ReleaseUserWake(relCtx, janitorLeaderUserID, janitorLeaderLane, m.instanceID, 0, time.Time{})
+}
+
+func (m *Manager) shouldReapUser(ctx context.Context, userID string, now time.Time) (bool, string) {
+	bsvc := m.Billing()
+	if bsvc == nil {
+		return false, ""
+	}
+	ent, err := bsvc.GetEntitlement(ctx, userID)
+	if err != nil {
+		if errors.Is(err, billing.ErrEntitlementMissing) {
+			return true, billing.CodeEntitlementMissing
+		}
+		return false, ""
+	}
+	if ent.IsSuspended() {
+		return true, billing.CodeAccountSuspended
+	}
+	if !ent.IsActiveAt(now) {
+		return true, billing.CodeSubscriptionInactive
+	}
+	if !m.cfg.DisableMetering {
+		bal, bErr := bsvc.Store.CreditBalance(ctx, userID)
+		if bErr == nil && bal.AvailableMicros <= 0 {
+			return true, billing.CodeCreditExhausted
+		}
+	}
+	return false, ""
+}
+
+func chooseProviderStopTime(rec ComputerRecord, providerLastActive *time.Time, now time.Time) time.Time {
+	end := now.UTC()
+	if providerLastActive != nil && !providerLastActive.IsZero() {
+		cand := providerLastActive.UTC()
+		if cand.Before(end) {
+			return cand
+		}
+		return end
+	}
+	if rec.LastActivityAt != nil && !rec.LastActivityAt.IsZero() && rec.LastActivityAt.UTC().Before(end) {
+		return rec.LastActivityAt.UTC()
+	}
+	if rec.LastActiveAt != nil && !rec.LastActiveAt.IsZero() && rec.LastActiveAt.UTC().Before(end) {
+		return rec.LastActiveAt.UTC()
+	}
+	return end
+}
+
+func lastActivityTime(rec ComputerRecord) time.Time {
+	if rec.LastActivityAt != nil && !rec.LastActivityAt.IsZero() {
+		return rec.LastActivityAt.UTC()
+	}
+	if rec.LastActiveAt != nil && !rec.LastActiveAt.IsZero() {
+		return rec.LastActiveAt.UTC()
+	}
+	if rec.AwakeSince != nil && !rec.AwakeSince.IsZero() {
+		return rec.AwakeSince.UTC()
+	}
+	return rec.UpdatedAt.UTC()
+}
+
+func (m *Manager) reconcileAndMeterComputer(ctx context.Context, listed ComputerRecord) error {
+	lock := m.userLock(listed.UserID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	cur, err := m.store.GetComputer(ctx, listed.UserID)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !isAwakeStatus(cur.Status) && cur.AwakeSince == nil {
+		return nil
+	}
+	if cur.Provider != "" && cur.Provider != m.provider.Name() {
+		return nil
+	}
+
+	now := m.now()
+
+	// 1. Reconcile actual Fly/Sprites provider status first so we never bill phantom awake time.
+	if cur.ProviderID != "" {
+		live, sErr := m.provider.Status(ctx, cur.ProviderID)
+		switch {
+		case errors.Is(sErr, ErrNotFound) || (sErr == nil && live.Status == StatusDeleted):
+			meterEnd := chooseProviderStopTime(cur, live.LastActiveAt, now)
+			m.invalidateEnsure(cur.UserID)
+			m.invalidateStatus(cur.UserID)
+			m.CloseDesktopSessions(cur.UserID)
+			m.notifyUserSessionsRevoked(ctx, cur.UserID)
+			_ = m.store.RevokeUserSessions(ctx, cur.UserID, now)
+			res, mErr := m.store.MeterAwakeTime(ctx, MeterAwakeRequest{
+				UserID:           cur.UserID,
+				Now:              now,
+				RatePerHourUSD:   m.effectiveRatePerHour(),
+				TransitionStatus: StatusDeleted,
+				MeterEndAt:       &meterEnd,
+			})
+			if mErr == nil {
+				emitMeteredUsage(ctx, cur.UserID, res)
+			}
+			return mErr
+
+		case sErr == nil && live.Status == StatusSleeping && !live.Standby:
+			recentTransition := !cur.UpdatedAt.IsZero() && now.Sub(cur.UpdatedAt) < eventualStatusGrace
+			if !live.EventuallyConsistent || !recentTransition {
+				meterEnd := chooseProviderStopTime(cur, live.LastActiveAt, now)
+				m.invalidateEnsure(cur.UserID)
+				m.invalidateStatus(cur.UserID)
+				m.CloseDesktopSessions(cur.UserID)
+				m.notifyUserSessionsRevoked(ctx, cur.UserID)
+				_ = m.store.RevokeUserSessions(ctx, cur.UserID, now)
+				res, mErr := m.store.MeterAwakeTime(ctx, MeterAwakeRequest{
+					UserID:           cur.UserID,
+					Now:              now,
+					RatePerHourUSD:   m.effectiveRatePerHour(),
+					TransitionStatus: StatusSleeping,
+					MeterEndAt:       &meterEnd,
+				})
+				if mErr == nil {
+					emitMeteredUsage(ctx, cur.UserID, res)
+				}
+				return mErr
+			}
+		}
+	}
+
+	// 2. Reap awake Sprites for suspended, subscription_inactive, or credit_exhausted users.
+	if reap, reason := m.shouldReapUser(ctx, cur.UserID, now); reap {
+		slog.InfoContext(ctx, "reaping awake computer due to entitlement state", "user_id", cur.UserID, "computer_id", cur.ComputerID, "reason", reason)
+		return m.sleepLocked(ctx, cur.UserID, true)
+	}
+
+	// 3. Auto-sleep Sprites idle for >= IdleAutoSleep (default 15m).
+	lastAct := lastActivityTime(cur)
+	if !lastAct.IsZero() && now.Sub(lastAct) >= m.cfg.IdleAutoSleep {
+		slog.InfoContext(ctx, "auto-sleeping idle computer", "user_id", cur.UserID, "computer_id", cur.ComputerID, "idle", now.Sub(lastAct).Round(time.Second))
+		return m.sleepLocked(ctx, cur.UserID, true)
+	}
+
+	// 4. Periodic single-tx awake-time metering for active Sprites.
+	res, err := m.store.MeterAwakeTime(ctx, MeterAwakeRequest{
+		UserID:         cur.UserID,
+		Now:            now,
+		RatePerHourUSD: m.effectiveRatePerHour(),
+	})
+	if err != nil {
+		return err
+	}
+	emitMeteredUsage(ctx, cur.UserID, res)
+
+	// If this metering tick just exhausted the user's hosted credit balance, sleep immediately.
+	if res.Metered {
+		if reap, reason := m.shouldReapUser(ctx, cur.UserID, now); reap {
+			slog.InfoContext(ctx, "sleeping computer after metering exhausted balance", "user_id", cur.UserID, "computer_id", cur.ComputerID, "reason", reason)
+			return m.sleepLocked(ctx, cur.UserID, true)
+		}
+	}
+	return nil
 }
 
 // ListCheckpoints reads saved checkpoints independently of the polled status.
@@ -839,14 +1512,39 @@ func (m *Manager) ListCheckpoints(ctx context.Context, userID string) ([]Checkpo
 	return lister.ListCheckpoints(ctx, rec.ProviderID)
 }
 
-// Checkpoint creates a point-in-time CoW snapshot of the user's computer.
+// Checkpoint creates a point-in-time CoW snapshot of the user's computer,
+// enforcing per-tier MaxSpriteCheckpoints from billing.PolicyFor(tier).
 func (m *Manager) Checkpoint(ctx context.Context, userID, label string) (string, error) {
 	rec, err := m.Ensure(ctx, userID)
 	if err != nil {
 		return "", err
 	}
+	if bsvc := m.Billing(); bsvc != nil {
+		ent, err := bsvc.CheckAccess(ctx, userID)
+		if err != nil {
+			return "", err
+		}
+		policy := ent.EffectivePolicy()
+		if policy.MaxSpriteCheckpoints > 0 {
+			existing, lErr := m.ListCheckpoints(ctx, userID)
+			if lErr != nil {
+				return "", lErr
+			}
+			userCheckpoints := 0
+			for _, ck := range existing {
+				if rec.BaselineCheckpointID != "" && ck.ID == rec.BaselineCheckpointID {
+					continue
+				}
+				userCheckpoints++
+			}
+			if userCheckpoints >= policy.MaxSpriteCheckpoints {
+				return "", ErrCheckpointLimitReached
+			}
+		}
+	}
 	id, err := m.provider.Checkpoint(ctx, rec.ProviderID, label)
 	if err == nil {
+		_ = m.store.TouchComputerActivity(ctx, userID, m.now())
 		m.invalidateStatus(userID)
 	}
 	return id, err
@@ -860,6 +1558,10 @@ func (m *Manager) Restore(ctx context.Context, userID, checkpointID string) erro
 	lock := m.userLock(userID)
 	lock.Lock()
 	defer lock.Unlock()
+
+	if _, err := m.checkHostedAccess(ctx, userID, m.now()); err != nil {
+		return err
+	}
 
 	rec, err := m.store.GetComputer(ctx, userID)
 	if errors.Is(err, ErrNotFound) {
@@ -880,6 +1582,7 @@ func (m *Manager) Restore(ctx context.Context, userID, checkpointID string) erro
 	}
 	m.invalidateEnsure(userID)
 	m.invalidateStatus(userID)
+	m.CloseDesktopSessions(userID)
 	m.notifyUserSessionsRevoked(ctx, userID)
 	_ = m.store.RevokeUserSessions(ctx, userID, m.now())
 	_ = m.store.UpdateComputerStatus(ctx, userID, StatusResetting, nil)
@@ -925,6 +1628,7 @@ func (m *Manager) Reset(ctx context.Context, userID string) (StatusView, error) 
 	lock.Lock()
 	m.invalidateEnsure(userID)
 	m.invalidateStatus(userID)
+	m.CloseDesktopSessions(userID)
 	_ = m.store.RevokeUserSessions(ctx, userID, m.now())
 	_ = m.store.UpdateComputerStatus(ctx, userID, StatusResetting, nil)
 	if err := m.provider.Destroy(ctx, rec.ProviderID); err != nil && !errors.Is(err, ErrNotFound) {
@@ -942,7 +1646,7 @@ func (m *Manager) Reset(ctx context.Context, userID string) (StatusView, error) 
 }
 
 // CreateSession wakes the computer, starts the desktop stack, and mints a short-lived
-// user-bound session token for the live desktop WebSocket proxy.
+// single-use user-bound session token for the live desktop WebSocket proxy.
 func (m *Manager) CreateSession(ctx context.Context, userID string, mode SessionMode, taskID, interactionID string) (CreatedSession, error) {
 	if mode == "" {
 		mode = SessionModeView
@@ -992,7 +1696,7 @@ func (m *Manager) CreateSession(ctx context.Context, userID string, mode Session
 	return CreatedSession{Session: sess, RawToken: rawToken}, nil
 }
 
-// ValidateSession verifies a desktop session ID + raw token for userID, checking expiry and idle cap.
+// ValidateSession verifies a desktop session ID + raw token for userID without consuming it.
 func (m *Manager) ValidateSession(ctx context.Context, userID, sessionID, rawToken string) (SessionRecord, error) {
 	if !m.Enabled() {
 		return SessionRecord{}, ErrDisabled
@@ -1022,6 +1726,36 @@ func (m *Manager) ValidateSession(ctx context.Context, userID, sessionID, rawTok
 	return sess, nil
 }
 
+// ConsumeSession atomically validates and consumes a single-use desktop session token so a
+// stolen or replayed token cannot open multiple concurrent WebSocket connections.
+func (m *Manager) ConsumeSession(ctx context.Context, userID, sessionID, rawToken string) (SessionRecord, error) {
+	if !m.Enabled() {
+		return SessionRecord{}, ErrDisabled
+	}
+	if strings.TrimSpace(rawToken) == "" {
+		return SessionRecord{}, ErrSessionRevoked
+	}
+	now := m.now()
+	existing, gErr := m.store.GetSession(ctx, userID, sessionID)
+	if gErr != nil {
+		return SessionRecord{}, gErr
+	}
+	if existing.EndedAt != nil {
+		return SessionRecord{}, ErrSessionRevoked
+	}
+	if !existing.ExpiresAt.After(now) || now.Sub(existing.LastActivityAt) > m.cfg.SessionIdleCap {
+		_ = m.store.EndSession(ctx, userID, sessionID, now)
+		return SessionRecord{}, ErrSessionExpired
+	}
+	consumedHash := hashToken("consumed:" + sessionID + ":" + uuid.NewString())
+	sess, err := m.store.ConsumeSessionToken(ctx, userID, sessionID, hashToken(rawToken), consumedHash, now)
+	if err != nil {
+		return SessionRecord{}, err
+	}
+	_ = m.store.TouchComputerActivity(ctx, userID, now)
+	return sess, nil
+}
+
 // GetSession returns the current session record (used by the WS proxy to check live mode changes).
 func (m *Manager) GetSession(ctx context.Context, userID, sessionID string) (SessionRecord, error) {
 	if !m.Enabled() {
@@ -1043,11 +1777,13 @@ func (m *Manager) SetSessionMode(ctx context.Context, userID, sessionID string, 
 	if err != nil {
 		return SessionRecord{}, err
 	}
+	_ = m.store.TouchComputerActivity(ctx, userID, m.now())
 	m.notifySession(sessionID, SessionEvent{Mode: mode})
 	return updated, nil
 }
 
-// TouchSession records active user input and extends session TTL.
+// TouchSession records active user input, extends session TTL (clamped to 2h max lifetime),
+// and touches computer last_activity_at.
 func (m *Manager) TouchSession(ctx context.Context, sessionID string) error {
 	if !m.Enabled() {
 		return ErrDisabled
@@ -1097,6 +1833,17 @@ func (m *Manager) DestroyForAccountDelete(ctx context.Context, userID string) er
 	defer lock.Unlock()
 	m.invalidateEnsure(userID)
 	m.invalidateStatus(userID)
+	m.CloseDesktopSessions(userID)
+
+	// Meter any remaining awake time before marking deleting/destroying.
+	if res, mErr := m.store.MeterAwakeTime(ctx, MeterAwakeRequest{
+		UserID:           userID,
+		Now:              m.now(),
+		RatePerHourUSD:   m.effectiveRatePerHour(),
+		TransitionStatus: StatusDeleting,
+	}); mErr == nil {
+		emitMeteredUsage(ctx, userID, res)
+	}
 
 	if err := m.store.MarkComputerDeleting(ctx, userID); err != nil {
 		return err

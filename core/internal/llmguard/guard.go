@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"nori/internal/netguard"
+	"nori/internal/state"
 	"nori/internal/usage"
 )
 
@@ -30,6 +31,10 @@ const (
 	ScopeDream      = "dream"
 	ScopeClassify   = "classify"
 	ScopeReview     = "review"
+	ScopeSearch     = "search"
+
+	defaultSpendWindow   = 24 * time.Hour
+	exaSearchEstimateUSD = 0.013
 )
 
 var (
@@ -58,8 +63,19 @@ type CallMeta struct {
 	Scope           string
 	Provider        string
 	Model           string
+	Billing         string
 	MaxOutputTokens int
 	BYOK            bool
+}
+
+func (m CallMeta) isHosted() bool {
+	if m.Provider == ProviderHome || m.Billing == state.UsageBillingLocal {
+		return false
+	}
+	if m.BYOK || m.Billing == state.UsageBillingBYOK {
+		return false
+	}
+	return true
 }
 
 type metaKey struct{}
@@ -78,6 +94,9 @@ func WithMeta(ctx context.Context, meta CallMeta) context.Context {
 	if meta.Model != "" {
 		cur.Model = meta.Model
 	}
+	if meta.Billing != "" {
+		cur.Billing = meta.Billing
+	}
 	if meta.MaxOutputTokens > 0 {
 		cur.MaxOutputTokens = meta.MaxOutputTokens
 	}
@@ -85,6 +104,38 @@ func WithMeta(ctx context.Context, meta CallMeta) context.Context {
 		cur.BYOK = true
 	}
 	return context.WithValue(ctx, metaKey{}, cur)
+}
+
+type CostObserver func(costUSD float64, costKnown bool, sent bool)
+
+type costObserverKey struct{}
+
+// WithCostObserver attaches an observer to ctx that receives cost notifications
+// from guarded model calls executed with ctx. If an observer is already attached,
+// both observers are invoked.
+func WithCostObserver(ctx context.Context, fn CostObserver) context.Context {
+	if fn == nil {
+		return ctx
+	}
+	if prev, ok := ctx.Value(costObserverKey{}).(CostObserver); ok && prev != nil {
+		combined := func(costUSD float64, costKnown bool, sent bool) {
+			prev(costUSD, costKnown, sent)
+			fn(costUSD, costKnown, sent)
+		}
+		return context.WithValue(ctx, costObserverKey{}, CostObserver(combined))
+	}
+	return context.WithValue(ctx, costObserverKey{}, fn)
+}
+
+// ObserveCallCost notifies any CostObserver attached to ctx of a model call's
+// cost outcome.
+func ObserveCallCost(ctx context.Context, costUSD float64, costKnown bool, sent bool) {
+	if ctx == nil {
+		return
+	}
+	if fn, ok := ctx.Value(costObserverKey{}).(CostObserver); ok && fn != nil {
+		fn(costUSD, costKnown, sent)
+	}
 }
 
 func WithScope(ctx context.Context, scope string) context.Context {
@@ -121,6 +172,7 @@ type Config struct {
 	BreakerMaxCooldown            time.Duration
 
 	MaxEstimatedUSD float64
+	SpendWindow     time.Duration
 
 	MaxTotalCalls int
 
@@ -140,6 +192,7 @@ func DefaultConfig() Config {
 		ProviderErrorBreakerThreshold: 5,
 		BreakerBaseCooldown:           30 * time.Second,
 		BreakerMaxCooldown:            15 * time.Minute,
+		SpendWindow:                   defaultSpendWindow,
 		Scopes: map[string]ScopePolicy{
 			ScopeCompaction: {MaxPerMinute: 6, MaxPerHour: 60, MaxInFlight: 1},
 			ScopeExtract:    {MaxPerMinute: 6, MaxPerHour: 60, MaxInFlight: 1},
@@ -148,6 +201,7 @@ func DefaultConfig() Config {
 			ScopeClassify:   {MaxPerMinute: 30, MaxPerHour: 600, MaxInFlight: 8},
 			ScopeReview:     {MaxPerMinute: 30, MaxPerHour: 600, MaxInFlight: 8},
 			ScopeTask:       {MaxPerMinute: 60, MaxPerHour: 1200, MaxInFlight: 16},
+			ScopeSearch:     {MaxPerMinute: 30, MaxPerHour: 300, MaxInFlight: 8},
 		},
 	}
 }
@@ -180,6 +234,9 @@ func normalizeConfig(cfg Config) Config {
 	}
 	if cfg.BreakerMaxCooldown <= 0 {
 		cfg.BreakerMaxCooldown = def.BreakerMaxCooldown
+	}
+	if cfg.SpendWindow <= 0 {
+		cfg.SpendWindow = def.SpendWindow
 	}
 	mergedScopes := make(map[string]ScopePolicy, len(def.Scopes)+len(cfg.Scopes))
 	for k, v := range def.Scopes {
@@ -249,6 +306,12 @@ type dupKey struct {
 	bodyHash string
 }
 
+type spendEntry struct {
+	at      time.Time
+	usd     float64
+	unknown bool
+}
+
 type Guard struct {
 	cfg    Config
 	parent *Guard
@@ -259,6 +322,7 @@ type Guard struct {
 	scopes         map[scopeKey]*scopeState
 	circuits       map[circuitKey]*circuitState
 	duplicates     map[dupKey][]time.Time
+	spendEntries   []spendEntry
 	stats          Snapshot
 }
 
@@ -387,12 +451,49 @@ func (g *Guard) Transport(base http.RoundTripper, defaults CallMeta) http.RoundT
 	return &guardedTransport{guard: g, base: base, defaults: defaults}
 }
 
-func (g *Guard) RecordActualCost(usd float64) {
-	if usd <= 0 {
+func (g *Guard) spendWindow() time.Duration {
+	if g.cfg.SpendWindow > 0 {
+		return g.cfg.SpendWindow
+	}
+	return defaultSpendWindow
+}
+
+func (g *Guard) pruneSpendLocked(now time.Time) {
+	cutoff := now.Add(-g.spendWindow())
+	keep := 0
+	var actual, unknown float64
+	for _, entry := range g.spendEntries {
+		if !entry.at.Before(cutoff) {
+			g.spendEntries[keep] = entry
+			keep++
+			if entry.unknown {
+				unknown += entry.usd
+			} else {
+				actual += entry.usd
+			}
+		}
+	}
+	g.spendEntries = g.spendEntries[:keep]
+	g.stats.RecordedActualUSD = actual
+	g.stats.EstimatedUnknownUSD = unknown
+}
+
+func (g *Guard) recordSpendLocked(now time.Time, usd float64, unknown bool) {
+	if usd <= 0 || math.IsNaN(usd) || math.IsInf(usd, 0) {
+		g.pruneSpendLocked(now)
 		return
 	}
+	g.spendEntries = append(g.spendEntries, spendEntry{at: now, usd: usd, unknown: unknown})
+	g.pruneSpendLocked(now)
+}
+
+func (g *Guard) RecordActualCost(usd float64) {
+	if usd <= 0 || math.IsNaN(usd) || math.IsInf(usd, 0) {
+		return
+	}
+	now := g.now()
 	g.mu.Lock()
-	g.stats.RecordedActualUSD += usd
+	g.recordSpendLocked(now, usd, false)
 	g.mu.Unlock()
 	if g.parent != nil {
 		g.parent.RecordActualCost(usd)
@@ -400,11 +501,12 @@ func (g *Guard) RecordActualCost(usd float64) {
 }
 
 func (g *Guard) RecordUnknownCost(usd float64) {
-	if usd <= 0 {
+	if usd <= 0 || math.IsNaN(usd) || math.IsInf(usd, 0) {
 		return
 	}
+	now := g.now()
 	g.mu.Lock()
-	g.stats.EstimatedUnknownUSD += usd
+	g.recordSpendLocked(now, usd, true)
 	g.mu.Unlock()
 	if g.parent != nil {
 		g.parent.RecordUnknownCost(usd)
@@ -429,8 +531,10 @@ func (g *Guard) SetMaxTotalCalls(maxCalls int) {
 }
 
 func (g *Guard) Stats() Snapshot {
+	now := g.now()
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.pruneSpendLocked(now)
 	return g.stats
 }
 
@@ -569,6 +673,9 @@ func mergeMeta(base, override CallMeta) CallMeta {
 	}
 	if override.Model != "" {
 		out.Model = override.Model
+	}
+	if override.Billing != "" {
+		out.Billing = override.Billing
 	}
 	if override.MaxOutputTokens > 0 {
 		out.MaxOutputTokens = override.MaxOutputTokens
@@ -721,6 +828,9 @@ func hashAndRestoreBody(req *http.Request) (string, int, error) {
 const ProviderHome = "home"
 
 func EstimateCallUSD(meta CallMeta, bodyBytes int) float64 {
+	if meta.Scope == ScopeSearch || strings.EqualFold(meta.Provider, "exa") {
+		return exaSearchEstimateUSD
+	}
 	return usage.EstimateCallUSD(meta.Provider, meta.Model, bodyBytes, meta.MaxOutputTokens)
 }
 
@@ -785,14 +895,20 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 		return nil, fmt.Errorf("%w (admitted %d >= limit %d)", ErrCallLimitExceeded, g.stats.TotalAdmitted, g.cfg.MaxTotalCalls)
 	}
 
+	hosted := meta.isHosted()
 	estCallUSD := EstimateCallUSD(meta, bodyBytes)
-	if g.cfg.MaxEstimatedUSD > 0 && meta.Provider != ProviderHome {
-		projected := g.stats.RecordedActualUSD + g.stats.EstimatedUnknownUSD + g.stats.InFlightEstimatedUSD + estCallUSD
+	hostedEstUSD := 0.0
+	if hosted {
+		hostedEstUSD = estCallUSD
+		g.pruneSpendLocked(now)
+	}
+	if g.cfg.MaxEstimatedUSD > 0 && hosted {
+		projected := g.stats.RecordedActualUSD + g.stats.EstimatedUnknownUSD + g.stats.InFlightEstimatedUSD + hostedEstUSD
 		if projected > g.cfg.MaxEstimatedUSD {
 			g.stats.TotalBlocked++
 			g.stats.BlockedBudget++
 			slog.ErrorContext(ctx, "llmguard rejected call: estimated spend ceiling exceeded",
-				"user_id", meta.UserID, "scope", meta.Scope,
+				"user_id", meta.UserID, "scope", meta.Scope, "billing", meta.Billing,
 				"recorded_usd", g.stats.RecordedActualUSD, "estimated_unknown_usd", g.stats.EstimatedUnknownUSD,
 				"in_flight_estimated_usd", g.stats.InFlightEstimatedUSD, "limit_usd", g.cfg.MaxEstimatedUSD)
 			return nil, fmt.Errorf("%w (projected $%.4f > limit $%.4f)", ErrBudgetExceeded, projected, g.cfg.MaxEstimatedUSD)
@@ -891,7 +1007,7 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 	}
 	g.globalInFlight++
 	st.inFlight++
-	g.stats.InFlightEstimatedUSD += estCallUSD
+	g.stats.InFlightEstimatedUSD += hostedEstUSD
 	g.globalMinute = append(g.globalMinute, now)
 	st.minuteCalls = append(st.minuteCalls, now)
 	st.hourCalls = append(st.hourCalls, now)
@@ -911,7 +1027,7 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 			if enteringHalfOpen {
 				cs.halfOpenInFlight = false
 			}
-			g.stats.InFlightEstimatedUSD = max(0, g.stats.InFlightEstimatedUSD-estCallUSD)
+			g.stats.InFlightEstimatedUSD = max(0, g.stats.InFlightEstimatedUSD-hostedEstUSD)
 			if errors.Is(resultErr, ErrDispatchBlocked) {
 				if g.stats.TotalAdmitted > 0 {
 					g.stats.TotalAdmitted--
@@ -928,10 +1044,12 @@ func (g *Guard) admit(ctx context.Context, meta CallMeta, endpoint, bodyHash str
 				}
 				return
 			}
-			if actual != nil {
-				g.stats.RecordedActualUSD += *actual
-			} else if resultErr != nil || (status >= 200 && status < 300) {
-				g.stats.EstimatedUnknownUSD += estCallUSD
+			if hosted {
+				if actual != nil {
+					g.recordSpendLocked(finishedAt, *actual, false)
+				} else if resultErr != nil || (status >= 200 && status < 300) {
+					g.recordSpendLocked(finishedAt, hostedEstUSD, true)
+				}
 			}
 			g.observeLocked(ctx, finishedAt, cs, meta, status, resultErr, accessErr)
 			g.mu.Unlock()
@@ -956,13 +1074,19 @@ func (g *Guard) admitGlobal(ctx context.Context, meta CallMeta, now time.Time, e
 		return nil, fmt.Errorf("%w (admitted %d >= limit %d)", ErrCallLimitExceeded, g.stats.TotalAdmitted, g.cfg.MaxTotalCalls)
 	}
 
-	if g.cfg.MaxEstimatedUSD > 0 && meta.Provider != ProviderHome {
-		projected := g.stats.RecordedActualUSD + g.stats.EstimatedUnknownUSD + g.stats.InFlightEstimatedUSD + estCallUSD
+	hosted := meta.isHosted()
+	hostedEstUSD := 0.0
+	if hosted {
+		hostedEstUSD = estCallUSD
+		g.pruneSpendLocked(now)
+	}
+	if g.cfg.MaxEstimatedUSD > 0 && hosted {
+		projected := g.stats.RecordedActualUSD + g.stats.EstimatedUnknownUSD + g.stats.InFlightEstimatedUSD + hostedEstUSD
 		if projected > g.cfg.MaxEstimatedUSD {
 			g.stats.TotalBlocked++
 			g.stats.BlockedBudget++
 			slog.ErrorContext(ctx, "llmguard rejected call: global estimated spend ceiling exceeded",
-				"user_id", meta.UserID, "scope", meta.Scope,
+				"user_id", meta.UserID, "scope", meta.Scope, "billing", meta.Billing,
 				"recorded_usd", g.stats.RecordedActualUSD, "estimated_unknown_usd", g.stats.EstimatedUnknownUSD,
 				"in_flight_estimated_usd", g.stats.InFlightEstimatedUSD, "limit_usd", g.cfg.MaxEstimatedUSD)
 			return nil, fmt.Errorf("%w (projected $%.4f > limit $%.4f)", ErrBudgetExceeded, projected, g.cfg.MaxEstimatedUSD)
@@ -988,19 +1112,20 @@ func (g *Guard) admitGlobal(ctx context.Context, meta CallMeta, now time.Time, e
 	}
 
 	g.globalInFlight++
-	g.stats.InFlightEstimatedUSD += estCallUSD
+	g.stats.InFlightEstimatedUSD += hostedEstUSD
 	g.globalMinute = append(g.globalMinute, now)
 	g.stats.TotalAdmitted++
 
 	var once sync.Once
 	return func(status int, actual *float64, resultErr error) {
 		once.Do(func() {
+			finishedAt := g.now()
 			g.mu.Lock()
 			defer g.mu.Unlock()
 			if g.globalInFlight > 0 {
 				g.globalInFlight--
 			}
-			g.stats.InFlightEstimatedUSD = max(0, g.stats.InFlightEstimatedUSD-estCallUSD)
+			g.stats.InFlightEstimatedUSD = max(0, g.stats.InFlightEstimatedUSD-hostedEstUSD)
 			if errors.Is(resultErr, ErrDispatchBlocked) {
 				if g.stats.TotalAdmitted > 0 {
 					g.stats.TotalAdmitted--
@@ -1008,10 +1133,12 @@ func (g *Guard) admitGlobal(ctx context.Context, meta CallMeta, now time.Time, e
 				g.globalMinute = removeTimestamp(g.globalMinute, now)
 				return
 			}
-			if actual != nil {
-				g.stats.RecordedActualUSD += *actual
-			} else if resultErr != nil || (status >= 200 && status < 300) {
-				g.stats.EstimatedUnknownUSD += estCallUSD
+			if hosted {
+				if actual != nil {
+					g.recordSpendLocked(finishedAt, *actual, false)
+				} else if resultErr != nil || (status >= 200 && status < 300) {
+					g.recordSpendLocked(finishedAt, hostedEstUSD, true)
+				}
 			}
 			if resultErr != nil {
 				g.stats.UnknownAborts++

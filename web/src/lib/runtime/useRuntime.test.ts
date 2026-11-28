@@ -483,4 +483,56 @@ describe("useRuntime SSE reconnect and resource invalidation", () => {
       hook.unmount();
     }
   });
+
+  test("402 credit_exhausted, 402 subscription_inactive, and 403 account_suspended enter read-only mode with calm errors", async () => {
+    const scenarios = [
+      { status: 402, code: "credit_exhausted", serverError: "", expected: /hosted credits are used up/i },
+      { status: 402, code: "subscription_inactive", serverError: "", expected: /subscription is inactive/i },
+      { status: 403, code: "account_suspended", serverError: "Account suspended by admin.", expected: /Account suspended by admin/i },
+    ] as const;
+
+    for (const scenario of scenarios) {
+      const turnCalls: string[] = [];
+      g.fetch = asFetch(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/api/v1/preferences") {
+          if (scenario.status === 403) {
+            return Response.json({ code: scenario.code, error: scenario.serverError }, { status: scenario.status });
+          }
+          return Response.json({ timezone: "UTC", working_hours: [], default_destination_ids: [], account_defaults: {}, budgets: { task_usd: 5 }, revision: 1 });
+        }
+        if (url.startsWith("/api/v1/snapshot")) return Response.json(baseSession());
+        if (url === "/api/turn") {
+          turnCalls.push(url);
+          return Response.json({ code: scenario.code, error: scenario.serverError }, { status: scenario.status });
+        }
+        return Response.json({ ok: true });
+      });
+
+      const localCache = createResourceCache();
+      const hook = mountTestHook(
+        () => useRuntime(false, `scope-${scenario.code}`),
+        (node) => createElement(ResourceCacheContext.Provider, { value: localCache }, node),
+      );
+      try {
+        await settleTestDOM();
+        if (scenario.status !== 403) {
+          assert.equal(hook.current.readOnly, false);
+          await act(async () => { hook.current.setDraft("Hello Nori"); });
+          await act(async () => { await hook.current.send(); });
+          assert.equal(turnCalls.length, 1);
+        }
+        assert.equal(hook.current.readOnly, true);
+        assert.equal(hook.current.accessBlock?.code, scenario.code);
+        assert.match(hook.current.error, scenario.expected);
+
+        // Further sends are blocked while read-only.
+        await act(async () => { hook.current.setDraft("Blocked follow-up"); });
+        await act(async () => { await hook.current.send(); });
+        assert.equal(turnCalls.length, scenario.status === 403 ? 0 : 1);
+      } finally {
+        hook.unmount();
+      }
+    }
+  });
 });

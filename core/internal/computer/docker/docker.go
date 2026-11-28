@@ -294,6 +294,9 @@ func (p *Provider) Exec(ctx context.Context, providerID string, req computer.Exe
 
 // Symlink-safe ReadFile: verifies realpath stays strictly inside /home/nori before reading.
 func (p *Provider) ReadFile(ctx context.Context, providerID, filePath string, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		maxBytes = computer.DefaultMaxReadBytes
+	}
 	py := `import base64, os, sys
 p, max_b = sys.argv[1], int(sys.argv[2])
 home = os.path.realpath('/home/nori')
@@ -304,10 +307,13 @@ if rp != home and not rp.startswith(home + os.sep):
     sys.exit(46)
 if not os.path.isfile(rp):
     sys.exit(44)
-if os.path.getsize(rp) > max_b:
+if max_b > 0 and os.path.getsize(rp) > max_b:
     sys.exit(45)
 with open(rp, 'rb') as f:
-    sys.stdout.write(base64.b64encode(f.read()).decode('ascii'))
+    data = f.read(max_b + 1) if max_b > 0 else f.read()
+if max_b > 0 and len(data) > max_b:
+    sys.exit(45)
+sys.stdout.write(base64.b64encode(data).decode('ascii'))
 `
 	stdout, stderr, code, err := p.runner(ctx, nil, "exec", providerID, "python3", "-c", py, filePath, strconv.FormatInt(maxBytes, 10))
 	if err != nil {

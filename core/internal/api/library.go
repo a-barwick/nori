@@ -353,6 +353,10 @@ func (a *Assistant) libraryAction(w http.ResponseWriter, r *http.Request) {
 	}
 	switch value.Action {
 	case "revise":
+		if err := a.checkConcurrentTaskCap(r.Context()); err != nil {
+			writeAPIError(w, err, requestID, nil)
+			return
+		}
 		if a.Revise == nil || strings.TrimSpace(value.Instruction) == "" {
 			writeAPIError(w, state.ErrInvalidResource, requestID, nil)
 			return
@@ -451,20 +455,27 @@ func (a *Assistant) deleteLibraryItem(ctx context.Context, id, requestID string,
 			return state.MutationReceipt{}, err
 		}
 	}
+	var newlyDeleted []string
 	receipt, err := a.Store.Mutate(ctx, state.Mutation{
 		RequestID: requestID, Method: "DELETE", Target: "/v1/library/" + id, ExpectedRevision: expected, Payload: value,
 		Collection: collectionLibrary, ID: id,
 		Apply: func(current *state.Resource, read func(string, string) (*state.Resource, error)) (state.MutationResult, error) {
+			newlyDeleted = nil
 			now := time.Now().UTC()
 			var o libraryOverlay
 			revision := int64(1)
+			alreadyDeleted := false
 			if current != nil {
 				if err := current.Decode(&o); err != nil {
 					return state.MutationResult{}, err
 				}
+				alreadyDeleted = o.DeletedAt != nil
 				revision = current.Revision + 1
 			}
 			o.DeletedAt = &now
+			if !alreadyDeleted {
+				newlyDeleted = append(newlyDeleted, id)
+			}
 			resource, err := state.NewResource(collectionLibrary, id, revision, o, nil, now)
 			if err != nil {
 				return state.MutationResult{}, err
@@ -488,6 +499,7 @@ func (a *Assistant) deleteLibraryItem(ctx context.Context, id, requestID string,
 					sibRev = sibCurrent.Revision + 1
 				}
 				sibOverlay.DeletedAt = &now
+				newlyDeleted = append(newlyDeleted, sibID)
 				sibRes, err := state.NewResource(collectionLibrary, sibID, sibRev, sibOverlay, nil, now)
 				if err != nil {
 					return state.MutationResult{}, err
@@ -500,9 +512,37 @@ func (a *Assistant) deleteLibraryItem(ctx context.Context, id, requestID string,
 			return state.MutationResult{Writes: writes, Receipt: state.MutationReceipt{Status: "applied", Resource: data, HTTPStatus: 200}}, nil
 		},
 	})
-	if err == nil && value.Scope == "all_versions" && a.OnLibraryDelete != nil {
-		allIDs := append([]string{id}, siblings...)
-		a.OnLibraryDelete(ctx, allIDs)
+	if err == nil {
+		// Purge underlying GCS/artifact blobs and decrement nori_user_storage for newly deleted items.
+		var freedBytes int64
+		for _, delID := range newlyDeleted {
+			res := result
+			if delID != id {
+				var getErr error
+				res, getErr = a.Store.GetResult(ctx, delID)
+				if getErr != nil {
+					continue
+				}
+			}
+			if res.Size > 0 {
+				freedBytes += res.Size
+			}
+			switch res.Kind {
+			case state.ResultFile:
+				_ = a.Store.DeleteFile(ctx, state.ResultKey(res.ID))
+			case state.ResultScreenshot:
+				if res.RunID != "" && res.ArtifactID != "" {
+					_ = a.Store.DeleteFile(ctx, res.RunID+"/"+res.ArtifactID+".png")
+				}
+			}
+		}
+		if freedBytes > 0 && a.ReleaseStorageBytes != nil {
+			_ = a.ReleaseStorageBytes(ctx, freedBytes)
+		}
+		if value.Scope == "all_versions" && a.OnLibraryDelete != nil {
+			allIDs := append([]string{id}, siblings...)
+			a.OnLibraryDelete(ctx, allIDs)
+		}
 	}
 	return receipt, err
 }

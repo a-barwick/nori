@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"nori/internal/billing"
 	"nori/internal/users"
 )
 
@@ -75,6 +76,10 @@ func (b *backend) FindOrCreateByEmail(ctx context.Context, email, displayName st
 				return existing, false, nil
 			}
 		}
+		return users.User{}, false, err
+	}
+
+	if _, err := billing.ProvisionTrialTx(ctx, tx, candidate.ID, time.Now().UTC(), b.trialMaxSignupsPerDay()); err != nil {
 		return users.User{}, false, err
 	}
 
@@ -266,6 +271,10 @@ func (b *backend) RedeemInviteAndCreateUser(ctx context.Context, code, email, di
 		"INSERT INTO nori_records(shard,collection,id,data) VALUES($1,$2,$3,$4::jsonb)",
 		usersCollection, usersCollection, candidate.ID, rawUser,
 	); err != nil {
+		return users.User{}, users.Invite{}, err
+	}
+
+	if _, err := billing.ProvisionTrialTx(ctx, tx, candidate.ID, now, b.trialMaxSignupsPerDay()); err != nil {
 		return users.User{}, users.Invite{}, err
 	}
 

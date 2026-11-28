@@ -31,15 +31,29 @@ type CostBucket struct {
 	Models  []ModelCost `json:"models"`
 }
 
+type BillingCosts struct {
+	Hosted CostAmount `json:"hosted"`
+	BYOK   CostAmount `json:"byok"`
+	Local  CostAmount `json:"local"`
+}
+
+type CategoryCosts struct {
+	LLM      CostAmount `json:"llm"`
+	Search   CostAmount `json:"search"`
+	Computer CostAmount `json:"computer"`
+}
+
 type CostReport struct {
-	Days       int          `json:"days"`
-	Timezone   string       `json:"timezone"`
-	StartAt    time.Time    `json:"start_at"`
-	EndAt      time.Time    `json:"end_at"`
-	BucketSize string       `json:"bucket_size"`
-	Totals     CostAmount   `json:"totals"`
-	Models     []ModelCost  `json:"models"`
-	Buckets    []CostBucket `json:"buckets"`
+	Days       int           `json:"days"`
+	Timezone   string        `json:"timezone"`
+	StartAt    time.Time     `json:"start_at"`
+	EndAt      time.Time     `json:"end_at"`
+	BucketSize string        `json:"bucket_size"`
+	Totals     CostAmount    `json:"totals"`
+	ByBilling  BillingCosts  `json:"by_billing"`
+	ByCategory CategoryCosts `json:"by_category"`
+	Models     []ModelCost   `json:"models"`
+	Buckets    []CostBucket  `json:"buckets"`
 }
 
 func ReadCostReport(
@@ -70,18 +84,43 @@ func ReadCostReport(
 		if models[i][row.Model] == nil {
 			models[i][row.Model] = &CostAmount{}
 		}
-		amount := models[i][row.Model]
+		var delta CostAmount
 		switch {
 		case row.RequestStatus == "pending":
-			amount.PendingCalls++
+			delta.PendingCalls = 1
 		case row.CostStatus == "local":
-			amount.LocalCalls++
+			delta.LocalCalls = 1
 		case row.CostUSD != nil && *row.CostUSD >= 0 && !math.IsInf(*row.CostUSD, 0) &&
 			(*row.CostUSD > 0 || row.CostStatus == "provider" || row.CostStatus == "calculated"):
-			amount.PricedCalls++
-			amount.CostUSD += *row.CostUSD
+			delta.PricedCalls = 1
+			delta.CostUSD = *row.CostUSD
 		default:
-			amount.UnpricedCalls++
+			delta.UnpricedCalls = 1
+		}
+		models[i][row.Model].add(delta)
+
+		switch row.Billing {
+		case "hosted":
+			report.ByBilling.Hosted.add(delta)
+		case "local":
+			report.ByBilling.Local.add(delta)
+		case "byok":
+			report.ByBilling.BYOK.add(delta)
+		default:
+			if row.CostStatus == "local" {
+				report.ByBilling.Local.add(delta)
+			} else {
+				report.ByBilling.BYOK.add(delta)
+			}
+		}
+
+		switch row.Category {
+		case "search":
+			report.ByCategory.Search.add(delta)
+		case "computer":
+			report.ByCategory.Computer.add(delta)
+		default:
+			report.ByCategory.LLM.add(delta)
 		}
 	})
 	if err != nil {

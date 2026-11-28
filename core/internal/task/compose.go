@@ -12,12 +12,33 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"nori/internal/extensions"
 	"nori/internal/state"
 	"nori/internal/transcript"
 )
+
+type composePaidTracker struct {
+	remaining int
+	executed  atomic.Int32
+}
+
+type composePaidTrackerKey struct{}
+
+func withComposePaidTracker(ctx context.Context, remaining int) (context.Context, *composePaidTracker) {
+	t := &composePaidTracker{remaining: max(0, remaining)}
+	return context.WithValue(ctx, composePaidTrackerKey{}, t), t
+}
+
+func composePaidTrackerFromContext(ctx context.Context) *composePaidTracker {
+	if ctx == nil {
+		return nil
+	}
+	t, _ := ctx.Value(composePaidTrackerKey{}).(*composePaidTracker)
+	return t
+}
 
 const (
 	ComposeRuntime        = "compose/v1"
@@ -362,7 +383,14 @@ func (a *Activities) composeTool(ctx context.Context, in ToolInput, persist pers
 	if err != nil {
 		return persist("failed", map[string]any{"runtime": ComposeRuntime}, err)
 	}
-	budget := &composeBudget{}
+	budget := &composeBudget{
+		paidLimited:   true,
+		paidRemaining: defaultMaxPaidTools,
+	}
+	paidTracker := composePaidTrackerFromContext(ctx)
+	if paidTracker != nil {
+		budget.paidRemaining = min(defaultMaxPaidTools, max(0, paidTracker.remaining))
+	}
 	run, err := a.Store.GetRun(ctx, in.RunID)
 	if err != nil {
 		if lc := composeLifecycleError(err); lc != nil {
@@ -405,6 +433,7 @@ func (a *Activities) composeTool(ctx context.Context, in ToolInput, persist pers
 	var stop, stopReason string
 	var interaction map[string]any
 	cost, costUnknown := 0.0, false
+	paidCalls := 0
 	for _, step := range script.Steps {
 		definition, ok := snapshot.Lookup(step.Tool)
 		if !ok || !composable(definition) {
@@ -453,14 +482,20 @@ func (a *Activities) composeTool(ctx context.Context, in ToolInput, persist pers
 			return nil, err
 		}
 		stepOutputs := make([]any, 0, len(outputs))
+		stepPaid := budget.isPaid(exec)
 		for _, r := range outputs {
 			results = append(results, r)
 			stepOutputs = append(stepOutputs, r.output)
-			if c, ok := r.output["cost_usd"].(float64); ok {
-				cost += c
+			callCost, _ := r.output["cost_usd"].(float64)
+			if callCost > 0 {
+				cost += callCost
 			}
-			if u, _ := r.output["cost_unknown"].(bool); u {
+			callUnknown, _ := r.output["cost_unknown"].(bool)
+			if callUnknown {
 				costUnknown = true
+			}
+			if r.Outcome != "skipped" && r.Outcome != "diverged" && !r.Reused && (stepPaid || callCost > 0 || callUnknown) {
+				paidCalls++
 			}
 			switch r.Outcome {
 			case "needs_interaction":
@@ -516,6 +551,12 @@ func (a *Activities) composeTool(ctx context.Context, in ToolInput, persist pers
 	}
 	if costUnknown {
 		output["cost_unknown"] = true
+	}
+	if paidCalls > 0 {
+		output["paid_calls"] = paidCalls
+		if paidTracker != nil {
+			paidTracker.executed.Add(int32(paidCalls))
+		}
 	}
 	if stop == "" {
 		if script.Output != nil {
@@ -581,22 +622,26 @@ func (a *Activities) runComposeCalls(ctx context.Context, in ToolInput, calls []
 		concurrency = 1
 	}
 	execOne := func(call composeCall) (composeResult, error) {
-		estimate := budget.estimate(call.exec)
-		if !budget.reserve(estimate) {
+		estimate, paid, ok, reason := budget.reserve(call.exec)
+		if !ok {
 			operation := fmt.Sprintf("%s-c%d", in.OperationID, call.index)
-			message := "not run: it could exceed the task's spending limit"
 			return composeResult{
-				Step: call.step, Tool: call.tool, OperationID: operation, Outcome: "skipped", Error: message,
-				output: map[string]any{"outcome": "skipped", "error": message, "operation_id": operation},
+				Step: call.step, Tool: call.tool, OperationID: operation, Outcome: "skipped", Error: reason,
+				output: map[string]any{"outcome": "skipped", "error": reason, "operation_id": operation},
 			}, nil
 		}
 		res, err := a.runComposeCall(ctx, in, call, schema, schemaErr)
 		if err != nil {
-			budget.settle(estimate, 0)
+			budget.refund(estimate, paid)
 			return res, err
 		}
 		actual, _ := res.output["cost_usd"].(float64)
-		budget.settle(estimate, actual)
+		unknown, _ := res.output["cost_unknown"].(bool)
+		if res.Reused {
+			budget.refund(estimate, paid)
+		} else {
+			budget.settle(estimate, actual, paid, actual > 0 || unknown)
+		}
 		return res, nil
 	}
 	if concurrency == 1 {
@@ -779,9 +824,15 @@ func composeCallID(in ToolInput, call composeCall) string {
 }
 
 type composeBudget struct {
-	mu        sync.Mutex
-	limited   bool
-	remaining float64
+	mu            sync.Mutex
+	limited       bool
+	remaining     float64
+	paidLimited   bool
+	paidRemaining int
+}
+
+func (b *composeBudget) isPaid(exec extensions.Exec) bool {
+	return exec.Policy.InterruptedCostUSD > 0 || exec.Policy.InterruptedCostUnknown
 }
 
 func (b *composeBudget) estimate(exec extensions.Exec) float64 {
@@ -794,24 +845,50 @@ func (b *composeBudget) estimate(exec extensions.Exec) float64 {
 	return 0
 }
 
-func (b *composeBudget) reserve(cost float64) bool {
-	if !b.limited {
-		return true
+func (b *composeBudget) reserve(exec extensions.Exec) (cost float64, paid bool, ok bool, reason string) {
+	paid = b.isPaid(exec)
+	cost = b.estimate(exec)
+	if !b.limited && !(paid && b.paidLimited) {
+		return cost, paid, true, ""
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.remaining <= 0 || cost > b.remaining {
-		return false
+	if paid && b.paidLimited && b.paidRemaining <= 0 {
+		return 0, true, false, fmt.Sprintf("not run: this task reached its limit of %d paid tool calls", defaultMaxPaidTools)
 	}
-	b.remaining -= cost
-	return true
+	if b.limited && (b.remaining <= 0 || cost > b.remaining) {
+		return 0, paid, false, "not run: it could exceed the task's spending limit"
+	}
+	if paid && b.paidLimited {
+		b.paidRemaining--
+	}
+	if b.limited {
+		b.remaining -= cost
+	}
+	return cost, paid, true, ""
 }
 
-func (b *composeBudget) settle(reserved, actual float64) {
-	if !b.limited || reserved == 0 && actual == 0 {
+func (b *composeBudget) refund(reserved float64, paid bool) {
+	if !b.limited && !(paid && b.paidLimited) {
 		return
 	}
 	b.mu.Lock()
-	b.remaining += reserved - actual
+	if b.limited {
+		b.remaining += reserved
+	}
+	if paid && b.paidLimited {
+		b.paidRemaining++
+	}
+	b.mu.Unlock()
+}
+
+func (b *composeBudget) settle(reserved, actual float64, reservedPaid, actualPaid bool) {
+	b.mu.Lock()
+	if b.limited && (reserved != 0 || actual != 0) {
+		b.remaining += reserved - actual
+	}
+	if !reservedPaid && actualPaid && b.paidLimited && b.paidRemaining > 0 {
+		b.paidRemaining--
+	}
 	b.mu.Unlock()
 }

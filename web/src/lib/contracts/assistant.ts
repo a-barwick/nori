@@ -19,12 +19,60 @@ export type Cost = Schemas["Cost"];
 export type AuthAttempt = Schemas["AuthAttempt"];
 export type MutationReceipt = Schemas["MutationReceipt"];
 export type APIError = Schemas["APIError"];
-export type ErrorCode = Schemas["ErrorCode"];
+export type BillingErrorCode =
+  | "credit_exhausted"
+  | "subscription_inactive"
+  | "account_suspended"
+  | "entitlement_missing"
+  | "byok_not_allowed"
+  | "global_budget_exceeded"
+  | "trial_limit_exceeded";
+export type ErrorCode = Schemas["ErrorCode"] | BillingErrorCode;
 export type AssistantSummary = Schemas["AssistantSummary"];
 export type UploadAccept = Schemas["UploadAccept"];
 export type AssistantFeatures = Schemas["AssistantFeatures"];
 export type AssistantFeature = keyof AssistantFeatures;
-export type Capabilities = Schemas["Capabilities"];
+export type BillingTier = "trial" | "byok" | "standard" | "power";
+export type EntitlementStatus = "active" | "billing_retry" | "past_due" | "canceled" | "expired";
+export type BillingProvider = "manual" | "stripe" | "apple_iap";
+export type EntitlementSummary = {
+  tier: BillingTier;
+  pending_tier?: BillingTier | null;
+  status: EntitlementStatus;
+  billing_provider: BillingProvider;
+  period_start?: Instant;
+  period_end?: Instant | null;
+  grace_until?: Instant | null;
+  suspended: boolean;
+  suspended_reason?: string;
+  allow_byok: boolean;
+  credit_grant_usd: number;
+  credit_used_usd: number;
+  credit_pending_usd: number;
+  credit_remaining_usd: number;
+  byok_max_usd_per_day?: number;
+  storage_used_bytes?: number;
+  storage_limit_bytes?: number;
+};
+export type ServiceKeySource = "user" | "platform" | "none" | string;
+export type ServiceKeyStatus = {
+  service: string;
+  label?: string;
+  configured: boolean;
+  masked_key?: string;
+  last4?: string;
+  updated_at?: Instant;
+  validated_at?: Instant;
+  source?: ServiceKeySource;
+};
+export type ServiceKeysResponse = {
+  allow_byok?: boolean;
+  services: ServiceKeyStatus[];
+};
+export type Capabilities = Schemas["Capabilities"] & {
+  entitlement?: EntitlementSummary;
+  service_keys?: ServiceKeyStatus[];
+};
 export type WorkingHoursSlot = Schemas["WorkingHoursSlot"];
 export type WorkingHours = Schemas["WorkingHours"];
 export type QuietHours = Schemas["QuietHours"];
@@ -61,7 +109,21 @@ export type HomeConnectorTestResponse = Schemas["HomeConnectorTestResponse"];
 export type CostAmount = Schemas["CostAmount"];
 export type ModelCost = Schemas["ModelCost"];
 export type CostBucket = Schemas["CostBucket"];
-export type CostReport = Schemas["CostReport"];
+export type BillingCosts = {
+  hosted: CostAmount;
+  byok: CostAmount;
+  local: CostAmount;
+};
+export type CategoryCosts = {
+  llm: CostAmount;
+  search: CostAmount;
+  computer: CostAmount;
+};
+export type CostReport = Schemas["CostReport"] & {
+  by_billing?: BillingCosts;
+  by_category?: CategoryCosts;
+  entitlement?: EntitlementSummary;
+};
 
 // Work & operations
 export type OperationProjection = Schemas["OperationProjection"];

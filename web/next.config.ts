@@ -60,7 +60,11 @@ if (uploadConfigured && !(process.env.SENTRY_AUTH_TOKEN && process.env.SENTRY_OR
   throw new Error("Source-map upload requires SENTRY_AUTH_TOKEN, SENTRY_ORG, SENTRY_PROJECT, and SENTRY_RELEASE together.");
 }
 export default withSentryConfig(nextConfig, {
-  tunnelRoute: "/sentry-tunnel",
+  // Intentionally omit tunnelRoute here: in @sentry/nextjs v11+, setting tunnelRoute
+  // calls instrumentTunnelServers() on non-Vercel Node servers (Cloud Run) and intercepts
+  // POST /sentry-tunnel at http.Server.emit before src/app/sentry-tunnel/route.ts runs,
+  // bypassing rate limiting, same-origin checks, user auth, and payload size caps.
+  // The browser SDK explicitly sets tunnel: "/sentry-tunnel" in src/instrumentation-client.ts.
   org: process.env.SENTRY_ORG,
   project: process.env.SENTRY_PROJECT,
   authToken: process.env.SENTRY_AUTH_TOKEN,

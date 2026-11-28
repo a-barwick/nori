@@ -6,20 +6,35 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
+	"nori/internal/billing"
 	"nori/internal/computer"
+)
+
+const (
+	desktopWSLimitExceededCode = "desktop_ws_limit_exceeded"
+	defaultDesktopWSRetryAfter = 5
 )
 
 // ComputerAPI exposes /v1/computer/* management endpoints and the authenticated
 // RFB WebSocket reverse proxy for live desktop viewing and user takeover.
 type ComputerAPI struct {
-	Manager *computer.Manager
-	UserID  string
+	Manager        *computer.Manager
+	UserID         string
+	RateLimiter    *RateLimiter
+	Billing        *billing.Service
+	MaxWSLifetime  time.Duration // default computer.DefaultDesktopWSMaxLifetime (2h)
+	WSPollInterval time.Duration // default computer.DefaultDesktopWSPollInterval (5s)
+
+	wsMu      sync.Mutex
+	wsCancels map[string]map[uint64]func()
+	wsNextID  uint64
 }
 
 // Register attaches the /v1/computer/* endpoints to mux.
@@ -39,6 +54,116 @@ func (c *ComputerAPI) register(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /v1/computer/sessions/{id}", jsonBody(c.updateSession))
 	mux.HandleFunc("DELETE /v1/computer/sessions/{id}", c.endSession)
 	mux.HandleFunc("GET /v1/computer/sessions/{id}/ws", c.proxyDesktopWS)
+}
+
+// CloseDesktopSessions immediately closes all active Desktop VNC WebSocket connections for userID
+// registered on this handler and its underlying computer.Manager.
+func (c *ComputerAPI) CloseDesktopSessions(userID string) int {
+	if c == nil {
+		return 0
+	}
+	closed := 0
+	if c.Manager != nil {
+		closed += c.Manager.CloseDesktopSessions(userID)
+	}
+	c.wsMu.Lock()
+	subs := c.wsCancels[userID]
+	delete(c.wsCancels, userID)
+	cancels := make([]func(), 0, len(subs))
+	for _, fn := range subs {
+		cancels = append(cancels, fn)
+	}
+	c.wsMu.Unlock()
+	for _, fn := range cancels {
+		fn()
+	}
+	if closed == 0 {
+		closed = len(cancels)
+	}
+	return closed
+}
+
+func (c *ComputerAPI) registerLocalWS(userID string, cancel func()) func() {
+	c.wsMu.Lock()
+	c.wsNextID++
+	id := c.wsNextID
+	if c.wsCancels == nil {
+		c.wsCancels = map[string]map[uint64]func(){}
+	}
+	if c.wsCancels[userID] == nil {
+		c.wsCancels[userID] = map[uint64]func(){}
+	}
+	c.wsCancels[userID][id] = cancel
+	c.wsMu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			c.wsMu.Lock()
+			if subs := c.wsCancels[userID]; subs != nil {
+				delete(subs, id)
+				if len(subs) == 0 {
+					delete(c.wsCancels, userID)
+				}
+			}
+			c.wsMu.Unlock()
+		})
+	}
+}
+
+func (c *ComputerAPI) billingService() *billing.Service {
+	if c == nil {
+		return nil
+	}
+	if c.Billing != nil {
+		return c.Billing
+	}
+	if c.Manager != nil {
+		return c.Manager.Billing()
+	}
+	return nil
+}
+
+func (c *ComputerAPI) checkDesktopEntitlement(ctx context.Context) (billing.Entitlement, error) {
+	bsvc := c.billingService()
+	if bsvc == nil {
+		return billing.Entitlement{}, nil
+	}
+	ent, err := bsvc.CheckAccess(ctx, c.UserID)
+	if err != nil {
+		return ent, err
+	}
+	bal, err := bsvc.Store.CreditBalance(ctx, c.UserID)
+	if err != nil {
+		return ent, err
+	}
+	if bal.AvailableMicros <= 0 {
+		return ent, billing.ErrCreditExhausted
+	}
+	return ent, nil
+}
+
+func (c *ComputerAPI) maxDesktopWS(ent billing.Entitlement) int {
+	if c.billingService() != nil && ent.Tier != "" {
+		if n := ent.EffectivePolicy().MaxDesktopWS; n > 0 {
+			return n
+		}
+	}
+	return 1
+}
+
+func (c *ComputerAPI) wsMaxLifetime() time.Duration {
+	if c != nil && c.MaxWSLifetime > 0 {
+		return c.MaxWSLifetime
+	}
+	return computer.DefaultDesktopWSMaxLifetime
+}
+
+func (c *ComputerAPI) wsPollInterval() time.Duration {
+	if c != nil && c.WSPollInterval > 0 {
+		return c.WSPollInterval
+	}
+	return computer.DefaultDesktopWSPollInterval
 }
 
 // optionalJSONBody enforces JSON media type only when a non-empty request body is sent,
@@ -335,12 +460,36 @@ func (c *ComputerAPI) proxyDesktopWS(w http.ResponseWriter, r *http.Request) {
 		writeComputerError(w, r, computer.ErrDisabled)
 		return
 	}
+	ent, err := c.checkDesktopEntitlement(r.Context())
+	if err != nil {
+		writeComputerError(w, r, err)
+		return
+	}
+
+	releaseWS := func() {}
+	if c.RateLimiter != nil {
+		maxWS := c.maxDesktopWS(ent)
+		var ok bool
+		releaseWS, ok = c.RateLimiter.AcquireDesktopWS(c.UserID, maxWS)
+		if !ok {
+			w.Header().Set("Retry-After", strconv.Itoa(defaultDesktopWSRetryAfter))
+			writeJSON(w, http.StatusTooManyRequests, apiError{
+				Error:     "Too many concurrent desktop sessions. Close an existing desktop tab to connect.",
+				Code:      desktopWSLimitExceededCode,
+				Retryable: true,
+			})
+			return
+		}
+	}
+	defer releaseWS()
+
 	sessionID := r.PathValue("id")
 	rawToken := strings.TrimSpace(r.URL.Query().Get("token"))
 	if rawToken == "" {
 		rawToken = strings.TrimSpace(r.Header.Get("X-Nori-Computer-Token"))
 	}
-	sess, err := c.Manager.ValidateSession(r.Context(), c.UserID, sessionID, rawToken)
+	// Atomically consume the single-use session token so replayed tokens cannot open a second socket.
+	sess, err := c.Manager.ConsumeSession(r.Context(), c.UserID, sessionID, rawToken)
 	if err != nil {
 		writeComputerError(w, r, err)
 		return
@@ -367,7 +516,7 @@ func (c *ComputerAPI) proxyDesktopWS(w http.ResponseWriter, r *http.Request) {
 
 	clientConn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		Subprotocols:       []string{"binary"},
-		InsecureSkipVerify: true, // Protected by Nori auth + short-lived user-bound session token.
+		InsecureSkipVerify: true, // Protected by Nori auth + single-use short-lived user-bound session token.
 	})
 	if err != nil {
 		slog.WarnContext(r.Context(), "computer desktop client websocket accept failed", "session_id", sessionID, "err", err)
@@ -376,8 +525,16 @@ func (c *ComputerAPI) proxyDesktopWS(w http.ResponseWriter, r *http.Request) {
 	defer clientConn.Close(websocket.StatusNormalClosure, "")
 	clientConn.SetReadLimit(4 << 20)
 
-	proxyCtx, cancel := context.WithCancel(r.Context())
+	// Enforce 2-hour hard maximum WebSocket session lifetime.
+	proxyCtx, cancel := context.WithTimeout(r.Context(), c.wsMaxLifetime())
 	defer cancel()
+
+	// Track active WS connection on both Manager and handler so entitlement:<uid> notify
+	// can immediately close all live desktop sockets for this user.
+	unregMgr := c.Manager.RegisterDesktopSession(c.UserID, cancel)
+	defer unregMgr()
+	unregLocal := c.registerLocalWS(c.UserID, cancel)
+	defer unregLocal()
 
 	var currentMode atomic.Pointer[computer.SessionMode]
 	currentMode.Store(&sess.Mode)
@@ -386,7 +543,7 @@ func (c *ComputerAPI) proxyDesktopWS(w http.ResponseWriter, r *http.Request) {
 	idleCap := c.Manager.SessionIdleCap()
 
 	// Subscribe synchronously so PATCH mode downgrades ("control" -> "view") and DELETE
-	// revocations take effect IMMEDIATELY before the HTTP call returns (zero 300ms window).
+	// revocations take effect IMMEDIATELY before the HTTP call returns (zero wait window).
 	unsub := c.Manager.SubscribeSession(sessionID, func(ev computer.SessionEvent) {
 		currentMode.Store(&ev.Mode)
 		if ev.Revoked {
@@ -395,9 +552,10 @@ func (c *ComputerAPI) proxyDesktopWS(w http.ResponseWriter, r *http.Request) {
 	})
 	defer unsub()
 
-	// Cross-replica poll fallback: enforces DB revocation, TTL expiry, and idle deadline.
+	// Cross-replica poll fallback (5s cadence): enforces DB revocation, TTL/idle deadline,
+	// and live entitlement/suspension/credit checks.
 	go func() {
-		ticker := time.NewTicker(300 * time.Millisecond)
+		ticker := time.NewTicker(c.wsPollInterval())
 		defer ticker.Stop()
 		for {
 			select {
@@ -408,6 +566,10 @@ func (c *ComputerAPI) proxyDesktopWS(w http.ResponseWriter, r *http.Request) {
 				cur, gErr := c.Manager.GetSession(proxyCtx, c.UserID, sessionID)
 				now := time.Now().UTC()
 				if gErr != nil || cur.EndedAt != nil || !cur.ExpiresAt.After(now) || now.Sub(cur.LastActivityAt) > idleCap {
+					cancel()
+					return
+				}
+				if _, entErr := c.checkDesktopEntitlement(proxyCtx); entErr != nil {
 					cancel()
 					return
 				}
@@ -453,8 +615,8 @@ func (c *ComputerAPI) proxyDesktopWS(w http.ResponseWriter, r *http.Request) {
 			if len(filtered) == 0 {
 				continue
 			}
-			// Only real human input (KeyEvent / PointerEvent / ClientCutText) extends session idle TTL;
-			// automatic FramebufferUpdateRequests from an unattended tab never renew the session.
+			// Only real human input (KeyEvent / PointerEvent / ClientCutText) extends session idle TTL
+			// and refreshes computer last_activity_at; unattended FramebufferUpdateRequests do not.
 			if hadHumanInput && mode == computer.SessionModeControl {
 				nowSec := time.Now().Unix()
 				if nowSec-lastTouch.Load() >= 30 {
@@ -593,6 +755,20 @@ func FilterRFBClientMessage(mode computer.SessionMode, payload []byte) ([]byte, 
 func writeComputerError(w http.ResponseWriter, r *http.Request, err error) {
 	status, code, msg, retry := 502, "computer_error", "Could not complete computer action.", true
 	switch {
+	case errors.Is(err, billing.ErrAccountSuspended):
+		status, code, msg, retry = http.StatusForbidden, billing.CodeAccountSuspended, "Your account is currently suspended.", false
+	case errors.Is(err, billing.ErrEntitlementMissing):
+		status, code, msg, retry = http.StatusForbidden, billing.CodeEntitlementMissing, "Account billing entitlement is missing.", false
+	case errors.Is(err, billing.ErrCreditExhausted):
+		status, code, msg, retry = http.StatusPaymentRequired, billing.CodeCreditExhausted, "Hosted credit balance is exhausted.", false
+	case errors.Is(err, billing.ErrSubscriptionInactive):
+		status, code, msg, retry = http.StatusPaymentRequired, billing.CodeSubscriptionInactive, "Subscription is inactive.", false
+	case errors.Is(err, billing.ErrGlobalBudgetExceeded):
+		status, code, msg, retry = http.StatusTooManyRequests, billing.CodeGlobalBudgetExceeded, "Platform daily hosted compute budget has been reached. Try again later.", true
+	case errors.Is(err, computer.ErrFleetCapReached):
+		status, code, msg, retry = http.StatusServiceUnavailable, "computer_fleet_full", "Personal computer capacity is temporarily full. Try again shortly.", true
+	case errors.Is(err, computer.ErrCheckpointLimitReached):
+		status, code, msg, retry = http.StatusForbidden, "checkpoint_limit_reached", "You have reached the maximum number of checkpoints for your plan.", false
 	case errors.Is(err, computer.ErrDisabled):
 		status, code, msg, retry = http.StatusServiceUnavailable, "computer_disabled", "Personal computer is not enabled on this server.", false
 	case errors.Is(err, computer.ErrNotFound), errors.Is(err, computer.ErrNotProvisioned):
@@ -607,8 +783,10 @@ func writeComputerError(w http.ResponseWriter, r *http.Request, err error) {
 		status, code, msg, retry = http.StatusUnauthorized, "session_expired", "Desktop session has expired. Open Desktop again to reconnect.", false
 	case errors.Is(err, computer.ErrSessionRevoked):
 		status, code, msg, retry = http.StatusUnauthorized, "session_revoked", "Desktop session has ended.", false
+	case errors.Is(err, computer.ErrSessionTokenUsed):
+		status, code, msg, retry = http.StatusUnauthorized, "session_token_used", "Desktop session token has already been used. Open Desktop again to reconnect.", false
 	}
-	if status >= 500 && !errors.Is(err, computer.ErrDisabled) {
+	if status >= 500 && !errors.Is(err, computer.ErrDisabled) && !errors.Is(err, computer.ErrFleetCapReached) {
 		ctx := context.Background()
 		method, path := "", ""
 		if r != nil {

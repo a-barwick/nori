@@ -9,7 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"nori/internal/billing"
 	"nori/internal/modelkeys"
+	"nori/internal/settings"
 	"nori/internal/state"
 )
 
@@ -19,9 +21,12 @@ var (
 )
 
 type Account struct {
-	Keys         *modelkeys.Service
-	Store        state.ResourceStore
-	HomeProfiles func(context.Context) ([]Profile, error)
+	Keys          *modelkeys.Service
+	Store         state.ResourceStore
+	HomeProfiles  func(context.Context) ([]Profile, error)
+	HostedEnabled bool
+	AllowBYOK     func(context.Context) (bool, error)
+	AllowHomeAI   func(context.Context) (bool, error)
 }
 
 type AccountView struct {
@@ -93,7 +98,49 @@ func byokRecommendation(provider string) state.ModelSelection {
 	}
 }
 
+// HostedProfiles returns the allowlisted platform-hosted model profiles routed
+// through Nori's Vercel AI Gateway.
+func HostedProfiles() []Profile {
+	profiles := make([]Profile, 0, len(byokFamilies))
+	for _, model := range byokFamilies {
+		if !settings.IsHostedModelAllowed(model.routed) {
+			continue
+		}
+		efforts := model.efforts
+		if model.provider != modelkeys.ProviderAnthropic {
+			efforts = slices.DeleteFunc(slices.Clone(efforts), func(e string) bool { return e == "max" })
+		}
+		profiles = append(profiles, Profile{
+			ID: BackendHosted + "-" + model.id, Label: model.label, Version: "v1", Backend: BackendHosted,
+			Model: model.routed, Lanes: []string{LaneChat, LaneTask}, Paid: true,
+			SupportedReasoning: efforts, DefaultReasoning: "low",
+		})
+	}
+	return profiles
+}
+
+// HostedRecommendation returns the default Chat and Work selection for Nori Hosted models.
+func HostedRecommendation() state.ModelSelection {
+	return state.ModelSelection{
+		ChatProfileID: BackendHosted + "-neon", ChatReasoning: "low",
+		TaskProfileID: BackendHosted + "-hydrogen", TaskReasoning: "low",
+	}
+}
+
+// LookupHostedProfile returns the hosted profile for id when it is on the allowlist.
+func LookupHostedProfile(id string) (Profile, bool) {
+	for _, p := range HostedProfiles() {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return Profile{}, false
+}
+
 func accountProfile(id string) (Profile, bool) {
+	if p, ok := LookupHostedProfile(id); ok {
+		return p, true
+	}
 	for _, provider := range modelkeys.Providers() {
 		for _, p := range byokProfiles(provider.ID) {
 			if p.ID == id {
@@ -117,7 +164,9 @@ func Describe(profileID, backend, model string) (name, provider, location string
 		return model, "Home AI Server", "home_ai"
 	}
 	location = "cloud"
-	if def, ok := modelkeys.LookupProvider(backend); ok {
+	if backend == BackendHosted {
+		provider = "Nori Hosted"
+	} else if def, ok := modelkeys.LookupProvider(backend); ok {
 		provider = def.Label
 	} else {
 		switch backend {
@@ -163,6 +212,20 @@ func (a *Account) write(ctx context.Context, selection state.ModelSelection, rev
 	return rec.Revision, err
 }
 
+func (a *Account) byokAllowed(ctx context.Context) (bool, error) {
+	if a == nil || a.AllowBYOK == nil {
+		return true, nil
+	}
+	return a.AllowBYOK(ctx)
+}
+
+func (a *Account) homeAIAllowed(ctx context.Context) (bool, error) {
+	if a == nil || a.AllowHomeAI == nil {
+		return true, nil
+	}
+	return a.AllowHomeAI(ctx)
+}
+
 // The first key initializes both lanes. Persist the choice so deleting it
 // cannot implicitly switch a lane to another provider.
 func (a *Account) selected(ctx context.Context, keys []modelkeys.ProviderStatus) (state.ModelSelection, int64, error) {
@@ -170,32 +233,43 @@ func (a *Account) selected(ctx context.Context, keys []modelkeys.ProviderStatus)
 	if err != nil || revision != 0 {
 		return sel, revision, err
 	}
-	if keys == nil {
-		if a == nil || a.Keys == nil {
-			return state.ModelSelection{}, 0, nil
+	allowBYOK, err := a.byokAllowed(ctx)
+	if err != nil {
+		return state.ModelSelection{}, 0, err
+	}
+	if allowBYOK {
+		if keys == nil && a != nil && a.Keys != nil {
+			status, err := a.Keys.List(ctx)
+			if err != nil {
+				return state.ModelSelection{}, 0, err
+			}
+			keys = status.Providers
 		}
-		status, err := a.Keys.List(ctx)
-		if err != nil {
-			return state.ModelSelection{}, 0, err
+		var first *modelkeys.ProviderStatus
+		for i := range keys {
+			key := &keys[i]
+			if key.Configured && (first == nil || (key.UpdatedAt != nil && first.UpdatedAt != nil && key.UpdatedAt.Before(*first.UpdatedAt))) {
+				first = key
+			}
 		}
-		keys = status.Providers
-	}
-	var first *modelkeys.ProviderStatus
-	for i := range keys {
-		key := &keys[i]
-		if key.Configured && (first == nil || (key.UpdatedAt != nil && first.UpdatedAt != nil && key.UpdatedAt.Before(*first.UpdatedAt))) {
-			first = key
+		if first != nil {
+			sel = byokRecommendation(first.Provider)
+			revision, err = a.write(ctx, sel, 0)
+			if errors.Is(err, state.ErrRevisionConflict) {
+				return a.stored(ctx)
+			}
+			return sel, revision, err
 		}
 	}
-	if first == nil {
-		return state.ModelSelection{}, 0, nil
+	if a != nil && a.HostedEnabled {
+		sel = HostedRecommendation()
+		revision, err = a.write(ctx, sel, 0)
+		if errors.Is(err, state.ErrRevisionConflict) {
+			return a.stored(ctx)
+		}
+		return sel, revision, err
 	}
-	sel = byokRecommendation(first.Provider)
-	revision, err = a.write(ctx, sel, 0)
-	if errors.Is(err, state.ErrRevisionConflict) {
-		return a.stored(ctx)
-	}
-	return sel, revision, err
+	return state.ModelSelection{}, 0, nil
 }
 
 // PinAccountSelection captures concrete execution details while the account's
@@ -265,8 +339,16 @@ func (a *Account) View(ctx context.Context) (AccountView, error) {
 	if a == nil || a.Store == nil {
 		return AccountView{}, modelkeys.ErrMissingAPIKey
 	}
+	allowBYOK, err := a.byokAllowed(ctx)
+	if err != nil {
+		return AccountView{}, err
+	}
+	allowHome, err := a.homeAIAllowed(ctx)
+	if err != nil {
+		return AccountView{}, err
+	}
 	var providers []modelkeys.ProviderStatus
-	if a.Keys != nil {
+	if allowBYOK && a.Keys != nil {
 		keys, err := a.Keys.List(ctx)
 		if err != nil {
 			return AccountView{}, err
@@ -277,16 +359,23 @@ func (a *Account) View(ctx context.Context) (AccountView, error) {
 	if err != nil {
 		return AccountView{}, err
 	}
-	home, err := a.homeProfiles(ctx)
-	if err != nil {
-		slog.WarnContext(ctx, "failed to load home AI model profiles", "err", err)
+	var home []Profile
+	if allowHome {
+		home, err = a.homeProfiles(ctx)
+		if err != nil {
+			slog.WarnContext(ctx, "failed to load home AI model profiles", "err", err)
+		}
 	}
-	return accountView(providers, home, sel, revision), nil
+	return accountView(providers, home, a.HostedEnabled, sel, revision), nil
 }
 
-func accountView(keys []modelkeys.ProviderStatus, home []Profile, sel state.ModelSelection, revision int64) AccountView {
+func accountView(keys []modelkeys.ProviderStatus, home []Profile, hostedEnabled bool, sel state.ModelSelection, revision int64) AccountView {
 	var cat Catalog
 	out := AccountView{Selection: sel, Revision: revision, Recommendations: map[string]state.ModelSelection{}}
+	if hostedEnabled {
+		cat.Profiles = append(cat.Profiles, HostedProfiles()...)
+		out.Recommendations[BackendHosted] = HostedRecommendation()
+	}
 	for _, key := range keys {
 		if key.Configured {
 			cat.Profiles = append(cat.Profiles, byokProfiles(key.Provider)...)
@@ -302,8 +391,16 @@ func (a *Account) Save(ctx context.Context, update state.ModelSelection, expecte
 	if a == nil || a.Store == nil {
 		return AccountView{}, modelkeys.ErrMissingAPIKey
 	}
+	allowBYOK, err := a.byokAllowed(ctx)
+	if err != nil {
+		return AccountView{}, err
+	}
+	allowHome, err := a.homeAIAllowed(ctx)
+	if err != nil {
+		return AccountView{}, err
+	}
 	var providers []modelkeys.ProviderStatus
-	if a.Keys != nil {
+	if allowBYOK && a.Keys != nil {
 		keys, err := a.Keys.List(ctx)
 		if err != nil {
 			return AccountView{}, err
@@ -325,7 +422,11 @@ func (a *Account) Save(ctx context.Context, update state.ModelSelection, expecte
 	if homeOnly != nil {
 		sel.HomeOnly = *homeOnly
 	}
-	home, homeErr := a.homeProfiles(ctx)
+	var home []Profile
+	var homeErr error
+	if allowHome {
+		home, homeErr = a.homeProfiles(ctx)
+	}
 	check := func(lane, id, effort, oldID, oldEffort string, oldPin *state.PinnedProfile) (*state.PinnedProfile, error) {
 		if id == "" {
 			optionalWork := lane == LaneTask && (oldID == "" || sel.ChatPinned != nil)
@@ -336,6 +437,9 @@ func (a *Account) Save(ctx context.Context, update state.ModelSelection, expecte
 			return nil, fmt.Errorf("%w: Choose a model for %s.", state.ErrInvalidResource, lane)
 		}
 		if idx := slices.IndexFunc(home, func(p Profile) bool { return p.ID == id }); idx >= 0 {
+			if !allowHome {
+				return nil, billing.ErrBYOKNotAllowed
+			}
 			p := home[idx]
 			if !p.SupportsLane(lane) || !p.SupportsReasoning(effort) {
 				return nil, fmt.Errorf("%w: Choose a supported model and reasoning level for %s.", state.ErrInvalidResource, lane)
@@ -343,10 +447,18 @@ func (a *Account) Save(ctx context.Context, update state.ModelSelection, expecte
 			return pinProfile(p, lane), nil
 		}
 		if id == oldID && effort == oldEffort && oldPin != nil && oldPin.Backend == BackendHome {
+			if !allowHome {
+				return nil, billing.ErrBYOKNotAllowed
+			}
 			return oldPin, nil
 		}
-		if homeErr != nil && strings.HasPrefix(id, "home-") {
-			return nil, homeErr
+		if strings.HasPrefix(id, "home-") {
+			if !allowHome {
+				return nil, billing.ErrBYOKNotAllowed
+			}
+			if homeErr != nil {
+				return nil, homeErr
+			}
 		}
 		if sel.HomeOnly {
 			return nil, fmt.Errorf("%w: Choose a home model for %s.", state.ErrInvalidResource, lane)
@@ -357,6 +469,15 @@ func (a *Account) Save(ctx context.Context, update state.ModelSelection, expecte
 		p, ok := accountProfile(id)
 		if !ok || !p.SupportsReasoning(effort) {
 			return nil, fmt.Errorf("%w: Choose a model and a supported reasoning level for %s.", state.ErrInvalidResource, lane)
+		}
+		if p.Backend == BackendHosted {
+			if !a.HostedEnabled {
+				return nil, fmt.Errorf("%w: Hosted models are unavailable for %s.", state.ErrInvalidResource, lane)
+			}
+			return nil, nil
+		}
+		if !allowBYOK {
+			return nil, billing.ErrBYOKNotAllowed
 		}
 		for _, key := range providers {
 			if key.Provider == p.Backend && key.Configured {
@@ -385,7 +506,7 @@ func (a *Account) Save(ctx context.Context, update state.ModelSelection, expecte
 			return AccountView{}, err
 		}
 	}
-	return accountView(providers, home, sel, revision), nil
+	return accountView(providers, home, a.HostedEnabled, sel, revision), nil
 }
 
 func (a *Account) Resolve(ctx context.Context, lane string, selection *state.ModelSelection) (Profile, string, string, error) {
@@ -415,6 +536,13 @@ func (a *Account) Resolve(ctx context.Context, lane string, selection *state.Mod
 		return Profile{}, "", "", fmt.Errorf("%w Choose a model in More → Models.", modelkeys.ErrModelAccess)
 	}
 	if pin.Backend == BackendHome {
+		allowed, err := a.homeAIAllowed(ctx)
+		if err != nil {
+			return Profile{}, "", "", err
+		}
+		if !allowed {
+			return Profile{}, "", "", billing.ErrBYOKNotAllowed
+		}
 		if a.HomeProfiles == nil {
 			return Profile{}, "", "", fmt.Errorf("%w Home AI Server is unavailable.", modelkeys.ErrModelAccess)
 		}
@@ -422,6 +550,26 @@ func (a *Account) Resolve(ctx context.Context, lane string, selection *state.Mod
 	}
 	if err := a.CheckCloudDispatch(ctx); err != nil {
 		return Profile{}, "", "", err
+	}
+	if pin.Backend == BackendHosted {
+		if !a.HostedEnabled || !settings.IsHostedModelAllowed(pin.Model) {
+			return Profile{}, "", "", fmt.Errorf("%w Hosted model is unavailable.", modelkeys.ErrModelAccess)
+		}
+		p := Profile{
+			ID: id, Backend: BackendHosted, Model: pin.Model, Paid: true,
+			SupportedReasoning: pin.SupportedReasoning, DefaultReasoning: pin.DefaultReasoning,
+		}
+		if effort == "" || !p.SupportsReasoning(effort) {
+			effort = p.DefaultReasoning
+		}
+		return p, effort, "", nil
+	}
+	allowed, err := a.byokAllowed(ctx)
+	if err != nil {
+		return Profile{}, "", "", err
+	}
+	if !allowed {
+		return Profile{}, "", "", billing.ErrBYOKNotAllowed
 	}
 	if _, ok := modelkeys.LookupProvider(pin.Backend); !ok {
 		return Profile{}, "", "", fmt.Errorf("%w Choose a model in More → Models.", modelkeys.ErrModelAccess)

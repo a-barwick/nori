@@ -5,6 +5,8 @@ import (
 	"errors"
 	"time"
 
+	"nori/internal/billing"
+	"nori/internal/observability"
 	"nori/internal/state"
 	"nori/internal/state/docstore"
 	"nori/internal/users"
@@ -16,6 +18,8 @@ type Database struct {
 	user                     users.User
 	Now                      func() time.Time
 	PinAccountModelSelection func(*state.ModelSelection) *state.ModelSelection
+	EnforceBilling           bool
+	GlobalBudget             billing.GlobalBudgetConfig
 }
 
 func (d *Database) now() time.Time {
@@ -170,8 +174,59 @@ func (d *Database) Spend(ctx context.Context, update state.SpendUpdate) error {
 }
 
 func (d *Database) RecordUsage(ctx context.Context, usage state.Usage) error {
-	_, err := d.usage().Doc(usage.ID).Set(ctx, usage)
-	return err
+	fields, err := docstore.Encode(usage)
+	if err != nil {
+		return err
+	}
+	reconciled, err := d.db.RecordAndReconcileUsage(ctx, docstore.UsageReconcileRequest{
+		Collection:           d.usage().Path,
+		UsageID:              usage.ID,
+		UsageFields:          fields,
+		Billing:              usage.Billing,
+		Category:             usage.Category,
+		CostStatus:           usage.CostStatus,
+		EstimatedExposureUSD: usage.EstimatedExposureUSD,
+		CostUSD:              usage.CostUSD,
+		RequestStatus:        usage.RequestStatus,
+		CreatedAt:            usage.CreatedAt,
+	})
+	if err != nil {
+		return err
+	}
+	if !reconciled {
+		if _, err := d.usage().Doc(usage.ID).Set(ctx, usage); err != nil {
+			return err
+		}
+	}
+	if usage.RequestStatus != "pending" && usage.RequestStatus != "not_sent" {
+		billingMode := usage.Billing
+		if billingMode == "" {
+			if usage.CostStatus == "local" {
+				billingMode = state.UsageBillingLocal
+			} else {
+				billingMode = state.UsageBillingHosted
+			}
+		}
+		category := usage.Category
+		if category == "" {
+			category = state.UsageCategoryLLM
+		}
+		var costUSD float64
+		if usage.CostUSD != nil && *usage.CostUSD >= 0 {
+			costUSD = *usage.CostUSD
+		}
+		observability.RecordUsage(
+			users.WithID(ctx, d.user.ID),
+			usage.Provider,
+			usage.Model,
+			billingMode,
+			category,
+			usage.CostStatus,
+			usage.RequestStatus,
+			costUSD,
+		)
+	}
+	return nil
 }
 
 func (d *Database) ReadUsageCosts(ctx context.Context, start, end time.Time, visit func(docstore.UsageCostRecord)) error {
@@ -186,12 +241,47 @@ func (d *Database) ReserveUsage(
 	maxUSDPerDay float64,
 	unknownEstimateUSD float64,
 ) (bool, error) {
+	fields, err := docstore.Encode(u)
+	if err != nil {
+		return false, err
+	}
+	now := u.CreatedAt.UTC()
+	if now.IsZero() {
+		now = d.now()
+	}
+	res, supported, err := d.db.ReserveUsageWithBilling(ctx, docstore.UsageReserveRequest{
+		UserID:                   d.user.ID,
+		DataOwner:                d.user.DataOwner(),
+		Collection:               d.usage().Path,
+		UsageID:                  u.ID,
+		UsageFields:              fields,
+		Billing:                  u.Billing,
+		Category:                 u.Category,
+		CostStatus:               u.CostStatus,
+		EstimatedExposureUSD:     u.EstimatedExposureUSD,
+		UnknownEstimateUSD:       unknownEstimateUSD,
+		Now:                      now,
+		HourCutoff:               hourCutoff,
+		DayCutoff:                dayCutoff,
+		FallbackMaxCallsPerHour:  maxCallsPerHour,
+		FallbackMaxUSDPerDay:     maxUSDPerDay,
+		HostedAllMaxMicrosPerDay: d.GlobalBudget.HostedAllMaxMicrosPerDay,
+		HostedExaMaxMicrosPerDay: d.GlobalBudget.HostedExaMaxMicrosPerDay,
+		EnforceEntitlement:       d.EnforceBilling,
+	})
+	if err != nil {
+		return false, err
+	}
+	if supported && res.UsedEntitlement {
+		return res.Allowed, nil
+	}
+
 	since := dayCutoff
 	if hourCutoff.Before(since) {
 		since = hourCutoff
 	}
 	allowed := false
-	err := d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
+	err = d.db.RunTransaction(ctx, func(ctx context.Context, tx *docstore.Transaction) error {
 		allowed = false
 		quotaRef := d.root().Collection("meta").Doc("usage_quota")
 		var quotaDoc struct {

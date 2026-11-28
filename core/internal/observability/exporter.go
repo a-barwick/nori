@@ -42,6 +42,8 @@ var operationalKeys = map[string]bool{
 	"nori.reply.status": true, "nori.output.present": true, "nori.conversation.input_count": true,
 	"nori.reply.receipt_ack":          true,
 	"nori.conversation.restart_count": true, "nori.cost.usd": true, "nori.cost.status": true,
+	"nori.usage.billing": true, "nori.usage.category": true, "nori.usage.provider": true,
+	"nori.usage.model": true, "nori.usage.request_status": true,
 }
 
 func allowedAttribute(kv attribute.KeyValue, content bool) (attribute.KeyValue, bool) {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"nori/internal/billing"
 	"nori/internal/llmguard"
 	"nori/internal/netguard"
 	"nori/internal/serviceauth"
@@ -21,23 +22,38 @@ import (
 )
 
 type Settings struct {
-	Features       Features
-	Cloud          string
-	EnvProfile     string
-	Role           string
-	AWS            AWS
-	ServiceAuth    serviceauth.Config
-	BindHost, Port string
-	Models         Models
-	HomeAI         HomeAI
-	Computer       Computer
-	Metering       usage.Config
-	Store          Store
-	ExaSearchKey   string
-	TimeZone       string
-	TaskBudgetUSD  float64
-	Observability  Observability
-	Connections    Connections
+	Features                 Features
+	Cloud                    string
+	EnvProfile               string
+	Role                     string
+	AWS                      AWS
+	ServiceAuth              serviceauth.Config
+	BindHost, Port           string
+	Models                   Models
+	HomeAI                   HomeAI
+	Computer                 Computer
+	Metering                 usage.Config
+	Store                    Store
+	ExaSearchKey             string
+	PlatformAIGatewayKey     string
+	HostedGlobalMaxUSDPerDay float64
+	ExaGlobalMaxUSDPerDay    float64
+	TrialMaxSignupsPerDay    int
+	ComputerMaxFleet         int
+	SpritesRatePerHourUSD    float64
+	TimeZone                 string
+	TaskBudgetUSD            float64
+	Observability            Observability
+	Connections              Connections
+}
+
+// GlobalBudgetConfig converts Settings' daily fleet limits to billing.GlobalBudgetConfig.
+func (s Settings) GlobalBudgetConfig() billing.GlobalBudgetConfig {
+	return billing.GlobalBudgetConfig{
+		HostedAllMaxMicrosPerDay: billing.USDToMicros(s.HostedGlobalMaxUSDPerDay),
+		HostedExaMaxMicrosPerDay: billing.USDToMicros(s.ExaGlobalMaxUSDPerDay),
+		TrialMaxSignupsPerDay:    s.TrialMaxSignupsPerDay,
+	}
 }
 
 type Connections struct {
@@ -213,6 +229,21 @@ func load(defaultCloud string, simulation bool) (Settings, error) {
 	if math.IsNaN(s.TaskBudgetUSD) || math.IsInf(s.TaskBudgetUSD, 0) || s.TaskBudgetUSD <= 0 {
 		return Settings{}, fmt.Errorf("NORI_TASK_BUDGET_USD must be a positive dollar amount")
 	}
+	if math.IsNaN(s.HostedGlobalMaxUSDPerDay) || math.IsInf(s.HostedGlobalMaxUSDPerDay, 0) || s.HostedGlobalMaxUSDPerDay < 0 {
+		return Settings{}, fmt.Errorf("NORI_HOSTED_GLOBAL_MAX_USD_PER_DAY must be a non-negative dollar amount")
+	}
+	if math.IsNaN(s.ExaGlobalMaxUSDPerDay) || math.IsInf(s.ExaGlobalMaxUSDPerDay, 0) || s.ExaGlobalMaxUSDPerDay < 0 {
+		return Settings{}, fmt.Errorf("NORI_EXA_GLOBAL_MAX_USD_PER_DAY must be a non-negative dollar amount")
+	}
+	if s.TrialMaxSignupsPerDay < 0 {
+		return Settings{}, fmt.Errorf("NORI_TRIAL_MAX_SIGNUPS_PER_DAY must be a non-negative integer")
+	}
+	if s.ComputerMaxFleet < 0 {
+		return Settings{}, fmt.Errorf("NORI_COMPUTER_MAX_FLEET must be a non-negative integer")
+	}
+	if math.IsNaN(s.SpritesRatePerHourUSD) || math.IsInf(s.SpritesRatePerHourUSD, 0) || s.SpritesRatePerHourUSD < 0 {
+		return Settings{}, fmt.Errorf("NORI_SPRITES_RATE_PER_HOUR_USD must be a non-negative dollar amount")
+	}
 	switch s.Store.Backend {
 	case "postgres":
 		if _, err := Required("NORI_POSTGRES_URL", s.Store.PostgresURL); err != nil {
@@ -293,6 +324,7 @@ func fromEnvironment(defaultCloud string, simulation bool) Settings {
 	for _, name := range []string{
 		"JEV_API_KEY",
 		"EXA_API_KEY",
+		"NORI_PLATFORM_AI_GATEWAY_KEY",
 		"SENTRY_AUTH_TOKEN",
 		"ARIZE_API_KEY",
 		"NORI_USAGE_TOKEN",
@@ -325,15 +357,21 @@ func fromEnvironment(defaultCloud string, simulation bool) Settings {
 			GoogleClientIDs: splitCSV(os.Getenv("NORI_GOOGLE_OAUTH_CLIENT_IDS"), false),
 			AllowedEmails:   splitCSV(os.Getenv("NORI_ALLOWED_EMAILS"), true),
 		},
-		BindHost:      get("BIND_HOST", "127.0.0.1"),
-		Port:          os.Getenv("PORT"),
-		HomeAI:        homeAIFromEnvironment(),
-		Computer:      computerFromEnvironment(),
-		Models:        modelsFromEnvironment(envProfile, cloud, simulation),
-		Store:         store,
-		Metering:      usage.Config{Mode: get("NORI_USAGE_METER", "store"), Endpoint: os.Getenv("NORI_USAGE_ENDPOINT"), Token: os.Getenv("NORI_USAGE_TOKEN"), MaxCallsPerHour: int(parseEnvInt32Default("NORI_USER_MAX_CALLS_PER_HOUR", 300)), MaxUSDPerDay: parseOptionalNonNegativeFloatDefault("NORI_USER_MAX_USD_PER_DAY", 15.0)},
-		ExaSearchKey:  strings.TrimSpace(os.Getenv("EXA_API_KEY")),
-		TaskBudgetUSD: taskBudget,
+		BindHost:                 get("BIND_HOST", "127.0.0.1"),
+		Port:                     os.Getenv("PORT"),
+		HomeAI:                   homeAIFromEnvironment(),
+		Computer:                 computerFromEnvironment(),
+		Models:                   modelsFromEnvironment(envProfile, cloud, simulation),
+		Store:                    store,
+		Metering:                 usage.Config{Mode: get("NORI_USAGE_METER", "store"), Endpoint: os.Getenv("NORI_USAGE_ENDPOINT"), Token: os.Getenv("NORI_USAGE_TOKEN"), MaxCallsPerHour: int(parseEnvInt32Default("NORI_USER_MAX_CALLS_PER_HOUR", 300)), MaxUSDPerDay: parseOptionalNonNegativeFloatDefault("NORI_USER_MAX_USD_PER_DAY", 15.0)},
+		ExaSearchKey:             strings.TrimSpace(os.Getenv("EXA_API_KEY")),
+		PlatformAIGatewayKey:     strings.TrimSpace(os.Getenv("NORI_PLATFORM_AI_GATEWAY_KEY")),
+		HostedGlobalMaxUSDPerDay: parseOptionalNonNegativeFloatDefault("NORI_HOSTED_GLOBAL_MAX_USD_PER_DAY", 50.0),
+		ExaGlobalMaxUSDPerDay:    parseOptionalNonNegativeFloatDefault("NORI_EXA_GLOBAL_MAX_USD_PER_DAY", 15.0),
+		TrialMaxSignupsPerDay:    int(parseEnvInt32Default("NORI_TRIAL_MAX_SIGNUPS_PER_DAY", 25)),
+		ComputerMaxFleet:         int(parseEnvInt32Default("NORI_COMPUTER_MAX_FLEET", 10)),
+		SpritesRatePerHourUSD:    parseOptionalNonNegativeFloatDefault("NORI_SPRITES_RATE_PER_HOUR_USD", 0.15),
+		TaskBudgetUSD:            taskBudget,
 		Observability: Observability{
 			SentryDSN: strings.TrimSpace(os.Getenv("SENTRY_DSN")), SentryEnvironment: os.Getenv("SENTRY_ENVIRONMENT"), SentryRelease: os.Getenv("SENTRY_RELEASE"),
 			SampleRate: os.Getenv("SENTRY_TRACES_SAMPLE_RATE"), ErrorsPerHour: os.Getenv("NORI_SENTRY_ERRORS_PER_HOUR"),

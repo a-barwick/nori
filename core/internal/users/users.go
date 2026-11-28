@@ -127,6 +127,12 @@ type Directory interface {
 	Close() error
 }
 
+// TrialCapSetter is an optional extension on Directory / Backend allowing callers
+// to configure the daily new-trial signup cap enforced during atomic user creation.
+type TrialCapSetter interface {
+	SetTrialMaxSignupsPerDay(maxPerDay int)
+}
+
 type contextKey struct{}
 
 func WithID(ctx context.Context, id string) context.Context {

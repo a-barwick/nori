@@ -18,6 +18,7 @@ import (
 	"nori/internal/scheduler"
 	"nori/internal/secret"
 	"nori/internal/secret/rowstore"
+	"nori/internal/servicekeys"
 	"nori/internal/settings"
 	"nori/internal/state"
 	"nori/internal/users"
@@ -30,7 +31,10 @@ type AssistantServices struct {
 	Scheduler   *scheduler.Service
 	MCP         *mcp.Service
 	ModelKeys   *modelkeys.Service
+	ServiceKeys *servicekeys.Service
+	Credentials secret.CredentialStore
 	Tools       extensions.Source
+	Close       func()
 }
 
 func newCredentialKeys(s settings.Settings) (rowstore.KeyWrapper, error) {
@@ -115,7 +119,33 @@ func Assistant(s settings.Settings, user users.User, store AssistantStore) (*Ass
 }
 
 func (p *Storage) Assistant(s settings.Settings, user users.User, store AssistantStore) (*AssistantServices, error) {
-	return openAssistant(s, user, store, p.Credentials)
+	var unregister func()
+	services, err := openAssistant(s, user, store, func(s settings.Settings, user users.User, store state.ResourceStore) (secret.CredentialStore, error) {
+		creds, err := p.Credentials(s, user, store)
+		if err != nil {
+			return nil, err
+		}
+		if rs, ok := creds.(*rowstore.Store); ok {
+			unregister = p.registerRowStore(user.ID, rs)
+		}
+		return creds, nil
+	})
+	if err != nil {
+		if unregister != nil {
+			unregister()
+		}
+		return nil, err
+	}
+	if unregister != nil {
+		prev := services.Close
+		services.Close = func() {
+			unregister()
+			if prev != nil {
+				prev()
+			}
+		}
+	}
+	return services, nil
 }
 
 func openAssistant(
@@ -202,9 +232,20 @@ func openAssistant(
 	if s.Models.BYOKRequired && s.Connections.CredentialStore == "database" {
 		mk = &modelkeys.Service{Store: credentials}
 	}
+	var sk *servicekeys.Service
+	if s.Connections.CredentialStore == "database" {
+		sk = &servicekeys.Service{Store: credentials}
+	}
+	closeFn := func() {
+		if rs, ok := credentials.(*rowstore.Store); ok {
+			rs.EvictAll()
+		}
+	}
 	return &AssistantServices{
-		Connections: conn, Permissions: perms, Adapters: adapters, Scheduler: sched, MCP: servers, ModelKeys: mk,
+		Connections: conn, Permissions: perms, Adapters: adapters, Scheduler: sched, MCP: servers,
+		ModelKeys: mk, ServiceKeys: sk, Credentials: credentials,
 		Tools: extensions.Sources{nori.Source{}, conn, servers},
+		Close: closeFn,
 	}, nil
 }
 

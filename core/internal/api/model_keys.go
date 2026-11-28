@@ -28,6 +28,10 @@ type setModelKeyRequest struct {
 }
 
 func (a *Assistant) setModelKey(w http.ResponseWriter, r *http.Request) {
+	if err := a.checkBYOKAllowed(r.Context()); err != nil {
+		writeAPIError(w, err, "", nil)
+		return
+	}
 	var body setModelKeyRequest
 	if !decode(w, r, &body) {
 		return
@@ -36,6 +40,9 @@ func (a *Assistant) setModelKey(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeAPIError(w, err, "", nil)
 		return
+	}
+	if a.OnKeyMutated != nil {
+		a.OnKeyMutated(r.Context())
 	}
 	if a.Models != nil {
 		if err := a.Models.EnsureSelection(r.Context()); err != nil {
@@ -56,6 +63,9 @@ func (a *Assistant) deleteModelKey(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeAPIError(w, err, "", nil)
 		return
+	}
+	if a.OnKeyMutated != nil {
+		a.OnKeyMutated(r.Context())
 	}
 	writeJSON(w, http.StatusOK, status)
 }

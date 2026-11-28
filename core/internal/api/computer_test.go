@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"nori/internal/billing"
 	"nori/internal/computer"
 	"nori/internal/computer/fake"
+	"nori/internal/settings"
 )
 
 func TestFilterRFBClientMessage(t *testing.T) {
@@ -228,5 +230,160 @@ func TestRFBClientParserFragmentedAndCoalesced(t *testing.T) {
 	outK, droppedK, humanK, errK := p.Feed(computer.SessionModeControl, keyEv)
 	if errK != nil || droppedK || !humanK || !bytes.Equal(outK, keyEv) {
 		t.Fatalf("control keyEv = (%x, dropped=%v, human=%v, err=%v), want human=true", outK, droppedK, humanK, errK)
+	}
+}
+
+func TestDesktopWSHardeningCapsSingleUseLifetimePollAndForceClose(t *testing.T) {
+	upstreamSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"binary"}})
+		if err != nil {
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+		for {
+			if _, _, err := conn.Read(r.Context()); err != nil {
+				return
+			}
+		}
+	}))
+	defer upstreamSrv.Close()
+
+	fp := fake.New()
+	fp.DesktopWSURL = "ws" + strings.TrimPrefix(upstreamSrv.URL, "http") + "/websockify"
+	compStore := computer.NewMemoryStore()
+	bs := billing.NewMemoryStore(nil)
+	bsvc := billing.NewService(bs, false, billing.GlobalBudgetConfig{})
+	_, _ = bs.SetTier(context.Background(), "user-std", billing.TierStandard, billing.SetTierOptions{})
+	_, _ = bs.SetTier(context.Background(), "user-pwr", billing.TierPower, billing.SetTierOptions{})
+
+	mgr := computer.NewManager(fp, compStore, computer.Config{})
+	mgr.SetBilling(bsvc)
+	rl := NewRateLimiter(settings.DefaultRateLimit())
+
+	newServer := func(userID string, maxLife, poll time.Duration) (*ComputerAPI, *httptest.Server) {
+		compAPI := &ComputerAPI{
+			Manager:        mgr,
+			UserID:         userID,
+			RateLimiter:    rl,
+			Billing:        bsvc,
+			MaxWSLifetime:  maxLife,
+			WSPollInterval: poll,
+		}
+		mux := http.NewServeMux()
+		compAPI.register(mux)
+		return compAPI, httptest.NewServer(mux)
+	}
+
+	createSess := func(t *testing.T, baseURL string) createComputerSessionResponse {
+		t.Helper()
+		resp, err := http.Post(baseURL+"/v1/computer/sessions", "application/json", strings.NewReader(`{"mode":"view"}`))
+		if err != nil || resp.StatusCode != http.StatusCreated {
+			t.Fatalf("POST sessions = %v, %v", resp, err)
+		}
+		defer resp.Body.Close()
+		var out createComputerSessionResponse
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return out
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// 1. Standard tier (MaxDesktopWS = 1): single-use token + WS concurrency cap + CloseDesktopSessions.
+	stdAPI, stdSrv := newServer("user-std", 2*time.Hour, 5*time.Second)
+	defer stdSrv.Close()
+
+	s1 := createSess(t, stdSrv.URL)
+	wsURL1 := "ws" + strings.TrimPrefix(stdSrv.URL, "http") + s1.WSPath + "?token=" + s1.Token
+	conn1, _, err := websocket.Dial(ctx, wsURL1, &websocket.DialOptions{Subprotocols: []string{"binary"}})
+	if err != nil {
+		t.Fatalf("dial #1: %v", err)
+	}
+
+	// Second concurrent WS for standard user hits 429 desktop_ws_limit_exceeded!
+	s2 := createSess(t, stdSrv.URL)
+	wsURL2 := "ws" + strings.TrimPrefix(stdSrv.URL, "http") + s2.WSPath + "?token=" + s2.Token
+	_, resp2, err2 := websocket.Dial(ctx, wsURL2, &websocket.DialOptions{Subprotocols: []string{"binary"}})
+	if err2 == nil || resp2 == nil || resp2.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 for 2nd standard WS, got resp=%v err=%v", resp2, err2)
+	}
+	resp2.Body.Close()
+
+	// CloseDesktopSessions immediately closes conn1!
+	closed := stdAPI.CloseDesktopSessions("user-std")
+	if closed < 1 {
+		t.Fatalf("CloseDesktopSessions = %d, want >= 1", closed)
+	}
+	readCtx, readCancel := context.WithTimeout(ctx, 2*time.Second)
+	_, _, readErr := conn1.Read(readCtx)
+	readCancel()
+	if readErr == nil {
+		t.Fatal("expected conn1 to close after CloseDesktopSessions")
+	}
+	_ = conn1.Close(websocket.StatusNormalClosure, "")
+
+	// Wait briefly for server handler defer to release slot, then verify single-use token replay of s1 fails with 401!
+	time.Sleep(50 * time.Millisecond)
+	_, replayResp, replayErr := websocket.Dial(ctx, wsURL1, &websocket.DialOptions{Subprotocols: []string{"binary"}})
+	if replayErr == nil || replayResp == nil || replayResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 on replayed single-use token, got resp=%v err=%v", replayResp, replayErr)
+	}
+	replayResp.Body.Close()
+
+	// 2. Power tier (MaxDesktopWS = 2): 2 concurrent sockets succeed, 3rd returns 429.
+	_, pwrSrv := newServer("user-pwr", 2*time.Hour, 5*time.Second)
+	defer pwrSrv.Close()
+
+	p1 := createSess(t, pwrSrv.URL)
+	p2 := createSess(t, pwrSrv.URL)
+	p3 := createSess(t, pwrSrv.URL)
+	c1, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(pwrSrv.URL, "http")+p1.WSPath+"?token="+p1.Token, &websocket.DialOptions{Subprotocols: []string{"binary"}})
+	if err != nil {
+		t.Fatalf("power dial #1: %v", err)
+	}
+	defer c1.Close(websocket.StatusNormalClosure, "")
+	c2, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(pwrSrv.URL, "http")+p2.WSPath+"?token="+p2.Token, &websocket.DialOptions{Subprotocols: []string{"binary"}})
+	if err != nil {
+		t.Fatalf("power dial #2: %v", err)
+	}
+	defer c2.Close(websocket.StatusNormalClosure, "")
+	_, r3, e3 := websocket.Dial(ctx, "ws"+strings.TrimPrefix(pwrSrv.URL, "http")+p3.WSPath+"?token="+p3.Token, &websocket.DialOptions{Subprotocols: []string{"binary"}})
+	if e3 == nil || r3 == nil || r3.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 for 3rd power WS, got resp=%v err=%v", r3, e3)
+	}
+	r3.Body.Close()
+
+	// 3. Max WS lifetime closes connection automatically.
+	_, shortSrv := newServer("user-std", 80*time.Millisecond, 5*time.Second)
+	defer shortSrv.Close()
+	sShort := createSess(t, shortSrv.URL)
+	cShort, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(shortSrv.URL, "http")+sShort.WSPath+"?token="+sShort.Token, &websocket.DialOptions{Subprotocols: []string{"binary"}})
+	if err != nil {
+		t.Fatalf("short lifetime dial: %v", err)
+	}
+	defer cShort.Close(websocket.StatusNormalClosure, "")
+	lifeCtx, lifeCancel := context.WithTimeout(ctx, 2*time.Second)
+	_, _, lifeErr := cShort.Read(lifeCtx)
+	lifeCancel()
+	if lifeErr == nil {
+		t.Fatal("expected WS connection to close when MaxWSLifetime elapsed")
+	}
+
+	// 4. Periodic entitlement poll closes open WS cleanly when user is suspended mid-session.
+	time.Sleep(50 * time.Millisecond)
+	_, pollSrv := newServer("user-std", 2*time.Hour, 40*time.Millisecond)
+	defer pollSrv.Close()
+	sPoll := createSess(t, pollSrv.URL)
+	cPoll, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(pollSrv.URL, "http")+sPoll.WSPath+"?token="+sPoll.Token, &websocket.DialOptions{Subprotocols: []string{"binary"}})
+	if err != nil {
+		t.Fatalf("poll dial: %v", err)
+	}
+	defer cPoll.Close(websocket.StatusNormalClosure, "")
+	_, _ = bsvc.Suspend(ctx, "user-std", "policy")
+	pollCtx, pollCancel := context.WithTimeout(ctx, 2*time.Second)
+	_, _, pollErr := cPoll.Read(pollCtx)
+	pollCancel()
+	if pollErr == nil {
+		t.Fatal("expected open WS to close on entitlement poll after suspension")
 	}
 }

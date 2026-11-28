@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"nori/internal/billing"
 	"nori/internal/httpjson"
 	"nori/internal/observability"
 	"nori/internal/serviceauth"
@@ -36,6 +37,7 @@ type UserHandlerOptions struct {
 	RateLimiter      *RateLimiter
 	DisableRateLimit bool
 	ProvisioningMode settings.UserProvisioningMode
+	CheckEntitlement func(context.Context, string) (billing.Entitlement, error)
 }
 
 const (
@@ -213,14 +215,38 @@ func (u *userRouter) handleUserResolveOrRedeem(w http.ResponseWriter, r *http.Re
 					r.Header.Get("X-Nori-Identity-Issuer") == "https://accounts.google.com",
 			}
 		}
-		serveIdentityResolve(w, r, u.directory, u.provisioningMode, identity, lookupEmail, body.Name, inviteCode)
+		u.serveIdentityResolve(w, r, identity, lookupEmail, body.Name, inviteCode)
 		return
 	}
 	if r.URL.Path == "/api/users/redeem" {
-		serveUserRedeem(w, r, u.directory, u.provisioningMode, lookupEmail, body.Name, inviteCode)
+		u.serveUserRedeem(w, r, lookupEmail, body.Name, inviteCode)
 		return
 	}
-	serveUserResolve(w, r, u.directory, u.provisioningMode, lookupEmail, body.Name, inviteCode)
+	u.serveUserResolve(w, r, lookupEmail, body.Name, inviteCode)
+}
+
+func (u *userRouter) checkUserAllowed(w http.ResponseWriter, r *http.Request, userID string) bool {
+	if u.opts.CheckEntitlement == nil {
+		return true
+	}
+	ent, err := u.opts.CheckEntitlement(r.Context(), userID)
+	if err != nil {
+		if bStatus, bCode, bMsg, ok := billingErrorDetails(err); ok {
+			writeJSON(w, bStatus, map[string]string{"error": bMsg, "code": bCode})
+			return false
+		}
+		slog.WarnContext(r.Context(), "entitlement check unavailable", "user_id", userID, "err", err)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Nori could not check your account. Try again shortly."})
+		return false
+	}
+	if ent.IsSuspended() {
+		writeJSON(w, http.StatusForbidden, map[string]string{
+			"error": "Your account has been suspended.",
+			"code":  billing.CodeAccountSuspended,
+		})
+		return false
+	}
+	return true
 }
 
 func (u *userRouter) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Request) {
@@ -334,6 +360,9 @@ func (u *userRouter) dispatchUser(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 	ctx := observability.BindHTTPUser(r.Context(), row.ID)
+	if !u.checkUserAllowed(w, r.WithContext(ctx), row.ID) {
+		return
+	}
 	if isService && r.Method == http.MethodPost && r.URL.Path == "/v1/settings/account/delete" {
 		identity := users.Identity{Issuer: r.Header.Get("X-Nori-Identity-Issuer"), Subject: r.Header.Get("X-Nori-Identity-Subject")}
 		email, decodeErr := url.PathUnescape(r.Header.Get("X-Nori-Identity-Email"))
@@ -398,7 +427,8 @@ func (u *userRouter) dispatchUser(w http.ResponseWriter, r *http.Request, id str
 	routes.Handler.ServeHTTP(w, r.WithContext(ctx))
 }
 
-func serveIdentityResolve(w http.ResponseWriter, r *http.Request, directory users.Directory, mode settings.UserProvisioningMode, identity users.Identity, email, name, inviteCode string) {
+func (u *userRouter) serveIdentityResolve(w http.ResponseWriter, r *http.Request, identity users.Identity, email, name, inviteCode string) {
+	directory, mode := u.directory, u.provisioningMode
 	if identity.Validate() != nil {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "A verified sign-in is required."})
 		return
@@ -411,6 +441,8 @@ func serveIdentityResolve(w http.ResponseWriter, r *http.Request, directory user
 	row, err := identities.ResolveIdentity(r.Context(), identity, email, name, string(mode), inviteCode)
 	if err != nil {
 		switch {
+		case errors.Is(err, billing.ErrTrialLimitExceeded):
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "Daily sign-up limit reached. Try again tomorrow.", "code": billing.CodeTrialLimitExceeded})
 		case errors.Is(err, users.ErrInviteRequired):
 			if r.URL.Path == "/api/users/redeem" {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invite code is required.", "code": "invite_code_required"})
@@ -439,14 +471,21 @@ func serveIdentityResolve(w http.ResponseWriter, r *http.Request, directory user
 		}
 		return
 	}
+	if !u.checkUserAllowed(w, r, row.ID) {
+		return
+	}
 	observability.BindHTTPUser(r.Context(), row.ID)
 	w.Header().Set("X-Nori-Identity-Bound", "1")
 	writeJSON(w, http.StatusOK, map[string]string{"id": row.ID})
 }
 
-func serveUserResolve(w http.ResponseWriter, r *http.Request, directory users.Directory, mode settings.UserProvisioningMode, email, name, inviteCode string) {
+func (u *userRouter) serveUserResolve(w http.ResponseWriter, r *http.Request, email, name, inviteCode string) {
+	directory, mode := u.directory, u.provisioningMode
 	row, err := directory.FindEmail(r.Context(), email)
 	if err == nil {
+		if !u.checkUserAllowed(w, r, row.ID) {
+			return
+		}
 		observability.BindHTTPUser(r.Context(), row.ID)
 		writeJSON(w, http.StatusOK, map[string]string{"id": row.ID})
 		return
@@ -457,7 +496,7 @@ func serveUserResolve(w http.ResponseWriter, r *http.Request, directory users.Di
 	}
 	switch mode {
 	case settings.UserProvisioningOpen:
-		provisionOpenUser(w, r, directory, email, name)
+		u.provisionOpenUser(w, r, email, name)
 	case settings.UserProvisioningInvite:
 		if inviteCode == "" {
 			writeJSON(w, http.StatusForbidden, map[string]string{
@@ -466,16 +505,17 @@ func serveUserResolve(w http.ResponseWriter, r *http.Request, directory users.Di
 			})
 			return
 		}
-		redeemInviteForUser(w, r, directory, inviteCode, email, name)
+		u.redeemInviteForUser(w, r, inviteCode, email, name)
 	default:
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "No user for this sign-in."})
 	}
 }
 
-func serveUserRedeem(w http.ResponseWriter, r *http.Request, directory users.Directory, mode settings.UserProvisioningMode, email, name, inviteCode string) {
+func (u *userRouter) serveUserRedeem(w http.ResponseWriter, r *http.Request, email, name, inviteCode string) {
+	mode := u.provisioningMode
 	switch mode {
 	case settings.UserProvisioningOpen:
-		provisionOpenUser(w, r, directory, email, name)
+		u.provisionOpenUser(w, r, email, name)
 	case settings.UserProvisioningInvite:
 		if inviteCode == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{
@@ -484,14 +524,14 @@ func serveUserRedeem(w http.ResponseWriter, r *http.Request, directory users.Dir
 			})
 			return
 		}
-		redeemInviteForUser(w, r, directory, inviteCode, email, name)
+		u.redeemInviteForUser(w, r, inviteCode, email, name)
 	default:
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "Invite sign-up is not enabled."})
 	}
 }
 
-func provisionOpenUser(w http.ResponseWriter, r *http.Request, directory users.Directory, email, name string) {
-	provisioner, ok := directory.(users.AutoProvisioner)
+func (u *userRouter) provisionOpenUser(w http.ResponseWriter, r *http.Request, email, name string) {
+	provisioner, ok := u.directory.(users.AutoProvisioner)
 	if !ok {
 		slog.WarnContext(r.Context(), "auto-provisioning unavailable on user directory")
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Nori could not create your account. Try again shortly."})
@@ -499,6 +539,10 @@ func provisionOpenUser(w http.ResponseWriter, r *http.Request, directory users.D
 	}
 	row, _, err := provisioner.FindOrCreateByEmail(r.Context(), email, name)
 	if err != nil {
+		if errors.Is(err, billing.ErrTrialLimitExceeded) {
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "Daily sign-up limit reached. Try again tomorrow.", "code": billing.CodeTrialLimitExceeded})
+			return
+		}
 		if strings.Contains(err.Error(), "user email must be") {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "A valid sign-in email is required."})
 			return
@@ -507,12 +551,15 @@ func provisionOpenUser(w http.ResponseWriter, r *http.Request, directory users.D
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Nori could not create your account. Try again shortly."})
 		return
 	}
+	if !u.checkUserAllowed(w, r, row.ID) {
+		return
+	}
 	observability.BindHTTPUser(r.Context(), row.ID)
 	writeJSON(w, http.StatusOK, map[string]string{"id": row.ID})
 }
 
-func redeemInviteForUser(w http.ResponseWriter, r *http.Request, directory users.Directory, inviteCode, email, name string) {
-	store, ok := directory.(users.InviteStore)
+func (u *userRouter) redeemInviteForUser(w http.ResponseWriter, r *http.Request, inviteCode, email, name string) {
+	store, ok := u.directory.(users.InviteStore)
 	if !ok {
 		slog.WarnContext(r.Context(), "invite store unavailable on user directory")
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Nori could not verify your invite code. Try again shortly."})
@@ -521,6 +568,8 @@ func redeemInviteForUser(w http.ResponseWriter, r *http.Request, directory users
 	row, _, err := store.RedeemInviteAndCreateUser(r.Context(), inviteCode, email, name)
 	if err != nil {
 		switch {
+		case errors.Is(err, billing.ErrTrialLimitExceeded):
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "Daily sign-up limit reached. Try again tomorrow.", "code": billing.CodeTrialLimitExceeded})
 		case errors.Is(err, users.ErrInviteNotFound):
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "Invalid invite code.", "code": "invalid_invite"})
 		case errors.Is(err, users.ErrInviteExpired):
@@ -537,6 +586,9 @@ func redeemInviteForUser(w http.ResponseWriter, r *http.Request, directory users
 			slog.WarnContext(r.Context(), "invite redemption failed", "err", err)
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Nori could not verify your invite code. Try again shortly."})
 		}
+		return
+	}
+	if !u.checkUserAllowed(w, r, row.ID) {
 		return
 	}
 	observability.BindHTTPUser(r.Context(), row.ID)

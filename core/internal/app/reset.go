@@ -74,7 +74,9 @@ func (s *Service) resetUserData(ctx context.Context, row users.User, resumePendi
 	if err := store.FinishUserDataReset(users.WithID(ctx, row.DataOwner()), row.ID, row.DataOwner()); err != nil {
 		return fmt.Errorf("%w: clear account records: %w", docstore.ErrUserDataResetPending, err)
 	}
+	_ = s.storage.SetUserStorageBytes(ctx, row, 0)
 	s.storage.EvictUserArtifactKey(row)
+	s.storage.EvictUserDEKs(row.ID)
 	release()
 	store.PublishUserDataReset(ctx, row.DataOwner())
 	return nil

@@ -41,8 +41,20 @@ type AnthropicModel struct {
 	TestURL           string
 	ReasoningEffort   string
 	BYOKProviderLabel string
+	BillingMode       string
 	Now               func() time.Time
 	NewID             func() string
+}
+
+func (m *AnthropicModel) billingMode() string {
+	switch m.BillingMode {
+	case state.UsageBillingHosted, state.UsageBillingBYOK, state.UsageBillingLocal:
+		return m.BillingMode
+	}
+	if m.BYOKProviderLabel != "" {
+		return state.UsageBillingBYOK
+	}
+	return state.UsageBillingHosted
 }
 
 func NewAnthropicModel(key, name string) *AnthropicModel {
@@ -76,11 +88,14 @@ func (m *AnthropicModel) guard() *llmguard.Guard {
 }
 
 func (m *AnthropicModel) httpClient() *http.Client {
+	billingMode := m.billingMode()
 	return m.guard().WrapClient(m.Client, 75*time.Second, llmguard.CallMeta{
 		UserID:   m.UserID,
 		Scope:    llmguard.ScopeOuter,
 		Provider: m.provider(),
 		Model:    m.name,
+		Billing:  billingMode,
+		BYOK:     billingMode == state.UsageBillingBYOK,
 	})
 }
 
@@ -120,11 +135,26 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 		attribute.String("llm.model_name", m.name),
 	))
 	var requestStarted time.Time
-	defer func() { observeOuterCall(ctx, span, m.provider(), m.name, m.now(), requestStarted, reply, err) }()
+	defer func() {
+		if reply.Usage.RequestStatus != "not_sent" {
+			cost, costKnown := 0.0, false
+			if reply.Usage.CostUSD != nil {
+				cost, costKnown = *reply.Usage.CostUSD, true
+			}
+			llmguard.ObserveCallCost(ctx, cost, costKnown, true)
+		}
+		observeOuterCall(ctx, span, m.provider(), m.name, m.now(), requestStarted, reply, err)
+	}()
 
-	reply.Usage = state.Usage{
-		ID: m.newID(), Provider: "outer", Model: m.name, CostStatus: "unknown", RequestStatus: "not_sent", CreatedAt: m.now().UTC(),
+	billingMode := m.billingMode()
+	reply.Usage = usage.AttemptWithMeta(ctx, "outer", m.name, billingMode, state.UsageCategoryLLM)
+	if m.NewID != nil {
+		reply.Usage.ID = m.newID()
 	}
+	if m.Now != nil {
+		reply.Usage.CreatedAt = m.now().UTC()
+	}
+	reply.Usage.RequestStatus = "not_sent"
 
 	body, structured, err := m.buildRequestBody(request, 4096)
 	if err != nil {
@@ -143,11 +173,12 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 		Scope:           scope,
 		Provider:        m.provider(),
 		Model:           m.name,
+		Billing:         billingMode,
 		MaxOutputTokens: 4096,
-		BYOK:            m.BYOKProviderLabel != "",
+		BYOK:            billingMode == state.UsageBillingBYOK,
 	}
 	reqCtx := llmguard.WithMeta(ctx, meta)
-	if m.BYOKProviderLabel != "" {
+	if billingMode != state.UsageBillingLocal {
 		reply.Usage.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
 	}
 
@@ -171,20 +202,16 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 			prev.RequestStatus = "unknown"
 		}
 		_ = usage.Finish(ctx, usage.Func(request.RecordUsage), prev)
-		nextUsage := prev
-		nextUsage.ID = m.newID()
-		nextUsage.CreatedAt = m.now().UTC()
-		nextUsage.RequestStatus = "pending"
-		nextUsage.CostStatus = "unknown"
-		nextUsage.CostUSD = nil
-		if m.BYOKProviderLabel == "" {
-			nextUsage.EstimatedExposureUSD = 0
+		nextUsage := usage.AttemptWithMeta(ctx, "outer", m.name, billingMode, state.UsageCategoryLLM)
+		if m.NewID != nil {
+			nextUsage.ID = m.newID()
 		}
-		nextUsage.InputTokens = nil
-		nextUsage.OutputTokens = nil
-		nextUsage.TotalTokens = nil
-		nextUsage.CachedTokens = nil
-		nextUsage.CacheWriteTokens = nil
+		if m.Now != nil {
+			nextUsage.CreatedAt = m.now().UTC()
+		}
+		if billingMode != state.UsageBillingLocal {
+			nextUsage.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
+		}
 		reply.Usage = nextUsage
 		if err := request.RecordUsage(ctx, reply.Usage); err != nil {
 			reply.Usage.RequestStatus = "not_sent"
@@ -239,10 +266,11 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 			Input json.RawMessage `json:"input"`
 		} `json:"content"`
 		Usage *struct {
-			Input      int64 `json:"input_tokens"`
-			Output     int64 `json:"output_tokens"`
-			CacheRead  int64 `json:"cache_read_input_tokens"`
-			CacheWrite int64 `json:"cache_creation_input_tokens"`
+			Input      int64    `json:"input_tokens"`
+			Output     int64    `json:"output_tokens"`
+			CacheRead  int64    `json:"cache_read_input_tokens"`
+			CacheWrite int64    `json:"cache_creation_input_tokens"`
+			Cost       *float64 `json:"cost"`
 		} `json:"usage"`
 	}
 	if err := json.NewDecoder(io.LimitReader(res.Body, 2<<20)).Decode(&response); err != nil {
@@ -262,13 +290,19 @@ func (m *AnthropicModel) Respond(ctx context.Context, request ReplyRequest) (rep
 		reply.Usage.TotalTokens = &total
 		reply.Usage.CachedTokens = &cached
 		reply.Usage.CacheWriteTokens = &written
-		modelName := response.Model
-		if modelName == "" {
-			modelName = m.name
-		}
-		if cost, costErr := usage.AnthropicCost(modelName, response.Usage.Input, response.Usage.Output, cached, written); costErr == nil {
-			reply.Usage.CostUSD, reply.Usage.CostStatus = &cost, "calculated"
-			llmguard.RecordResponseCost(res, cost)
+		if usage.RecordReportedCost(&reply.Usage, response.Usage.Cost) {
+			llmguard.RecordResponseCost(res, *response.Usage.Cost)
+		} else {
+			for _, modelName := range []string{strings.TrimSpace(response.Model), strings.TrimSpace(m.name)} {
+				if modelName == "" {
+					continue
+				}
+				if cost, costErr := usage.AnthropicCost(modelName, response.Usage.Input, response.Usage.Output, cached, written); costErr == nil {
+					reply.Usage.CostUSD, reply.Usage.CostStatus = &cost, "calculated"
+					llmguard.RecordResponseCost(res, cost)
+					break
+				}
+			}
 		}
 	}
 
@@ -330,12 +364,13 @@ func (m *AnthropicModel) decodeAnthropicStream(res *http.Response, reply Reply, 
 		stopReason  string
 		inTok       int64
 		outTok      int64
-		cacheRead   int64
-		cacheWrite  int64
-		hasUsage    bool
-		done        bool
-		rawBuf      strings.Builder
-		lastEmitted string
+		cacheRead    int64
+		cacheWrite   int64
+		reportedCost *float64
+		hasUsage     bool
+		done         bool
+		rawBuf       strings.Builder
+		lastEmitted  string
 	)
 
 	for scanner.Scan() {
@@ -352,10 +387,11 @@ func (m *AnthropicModel) decodeAnthropicStream(res *http.Response, reply Reply, 
 			Message *struct {
 				Model string `json:"model"`
 				Usage *struct {
-					Input      int64 `json:"input_tokens"`
-					Output     int64 `json:"output_tokens"`
-					CacheRead  int64 `json:"cache_read_input_tokens"`
-					CacheWrite int64 `json:"cache_creation_input_tokens"`
+					Input      int64    `json:"input_tokens"`
+					Output     int64    `json:"output_tokens"`
+					CacheRead  int64    `json:"cache_read_input_tokens"`
+					CacheWrite int64    `json:"cache_creation_input_tokens"`
+					Cost       *float64 `json:"cost"`
 				} `json:"usage"`
 			} `json:"message"`
 			Delta *struct {
@@ -364,7 +400,8 @@ func (m *AnthropicModel) decodeAnthropicStream(res *http.Response, reply Reply, 
 				StopReason string `json:"stop_reason"`
 			} `json:"delta"`
 			Usage *struct {
-				Output int64 `json:"output_tokens"`
+				Output int64    `json:"output_tokens"`
+				Cost   *float64 `json:"cost"`
 			} `json:"usage"`
 		}
 		if json.Unmarshal([]byte(data), &evt) != nil {
@@ -383,6 +420,9 @@ func (m *AnthropicModel) decodeAnthropicStream(res *http.Response, reply Reply, 
 					cacheWrite = u.CacheWrite
 					if u.Output > outTok {
 						outTok = u.Output
+					}
+					if u.Cost != nil {
+						reportedCost = u.Cost
 					}
 				}
 			}
@@ -420,6 +460,9 @@ func (m *AnthropicModel) decodeAnthropicStream(res *http.Response, reply Reply, 
 				if evt.Usage.Output > outTok {
 					outTok = evt.Usage.Output
 				}
+				if evt.Usage.Cost != nil {
+					reportedCost = evt.Usage.Cost
+				}
 			}
 		case "message_stop":
 			done = true
@@ -439,12 +482,19 @@ func (m *AnthropicModel) decodeAnthropicStream(res *http.Response, reply Reply, 
 		reply.Usage.TotalTokens = &total
 		reply.Usage.CachedTokens = &cacheRead
 		reply.Usage.CacheWriteTokens = &cacheWrite
-		if modelName == "" {
-			modelName = m.name
-		}
-		if cost, costErr := usage.AnthropicCost(modelName, inTok, outTok, cacheRead, cacheWrite); costErr == nil {
-			reply.Usage.CostUSD, reply.Usage.CostStatus = &cost, "calculated"
-			llmguard.RecordResponseCost(res, cost)
+		if usage.RecordReportedCost(&reply.Usage, reportedCost) {
+			llmguard.RecordResponseCost(res, *reportedCost)
+		} else {
+			for _, candidate := range []string{strings.TrimSpace(modelName), strings.TrimSpace(m.name)} {
+				if candidate == "" {
+					continue
+				}
+				if cost, costErr := usage.AnthropicCost(candidate, inTok, outTok, cacheRead, cacheWrite); costErr == nil {
+					reply.Usage.CostUSD, reply.Usage.CostStatus = &cost, "calculated"
+					llmguard.RecordResponseCost(res, cost)
+					break
+				}
+			}
 		}
 	}
 

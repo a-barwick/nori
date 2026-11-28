@@ -19,7 +19,7 @@ import (
 
 const (
 	Collection         = "credential_rows"
-	DefaultDEKCacheTTL = 5 * time.Second
+	DefaultDEKCacheTTL = 10 * time.Minute
 	maxDEKCacheEntries = 256
 )
 
@@ -60,7 +60,7 @@ type Store struct {
 	Owner     string
 	Now       func() time.Time
 	// CacheTTL sets the in-memory unwrapped DEK cache TTL. Zero uses
-	// DefaultDEKCacheTTL (5s); negative values disable caching.
+	// DefaultDEKCacheTTL (10m); negative values disable caching.
 	CacheTTL time.Duration
 
 	dekMu    sync.RWMutex
@@ -165,14 +165,20 @@ func (s *Store) putCachedGCM(key [32]byte, connectionID string, dek []byte, gcm 
 	}
 }
 
-// Evict immediately zeroes and removes any cached DEKs for connectionID.
-func (s *Store) Evict(connectionID string) {
-	if s == nil || connectionID == "" {
+// Evict immediately zeroes and removes cached DEKs for key.
+// If key matches s.Owner, all cached DEKs in this user's store are evicted;
+// otherwise entries for that connectionID are evicted.
+func (s *Store) Evict(key string) {
+	if s == nil || key == "" {
+		return
+	}
+	if s.Owner != "" && key == s.Owner {
+		s.EvictAll()
 		return
 	}
 	s.dekMu.Lock()
 	for k, entry := range s.dekCache {
-		if entry.connectionID == connectionID {
+		if entry.connectionID == key {
 			clear(entry.dek)
 			delete(s.dekCache, k)
 		}
@@ -180,8 +186,8 @@ func (s *Store) Evict(connectionID string) {
 	s.dekMu.Unlock()
 }
 
-// Close zeroes and removes all cached DEKs.
-func (s *Store) Close() {
+// EvictAll immediately zeroes and removes all cached DEKs.
+func (s *Store) EvictAll() {
 	if s == nil {
 		return
 	}
@@ -191,6 +197,11 @@ func (s *Store) Close() {
 		delete(s.dekCache, k)
 	}
 	s.dekMu.Unlock()
+}
+
+// Close zeroes and removes all cached DEKs.
+func (s *Store) Close() {
+	s.EvictAll()
 }
 
 func (s *Store) now() time.Time {

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, test } from "node:test";
 import { SignJWT } from "jose";
 import { testIdentityKeys } from "./test-keys";
 import { asFetch } from "@/lib/test-fetch";
-import { accessFailureResponse, redeemInvite, resolveUser, sameOrigin, sameOriginRead } from "./auth";
+import { accessFailureResponse, evictResolvedUser, redeemInvite, resolveUser, sameOrigin, sameOriginRead } from "./auth";
 import { oidcIdentity } from "./oidc";
 import { iapIdentity } from "./iap";
 import { GOOGLE_ISSUER } from "./identity";
@@ -504,5 +504,35 @@ describe("oidcIdentity and resolveUser", () => {
     process.env.NORI_LOCAL_AGENT_URL = "http://127.0.0.1:8080";
     const localOk = runtimeTarget("local");
     assert.equal(localOk instanceof Response, false);
+  });
+
+  test("resolveUser preserves 403 account_suspended error code and evictResolvedUser clears cached identity", async () => {
+    const validUUID = "77777777-7777-4777-8777-777777777777";
+    let suspended = false;
+    let resolveCalls = 0;
+
+    await installOIDCFetch(() => {
+      resolveCalls++;
+      if (suspended) {
+        return Response.json({ error: "This account has been suspended.", code: "account_suspended" }, { status: 403 });
+      }
+      return Response.json({ id: validUUID }, { headers: { "X-Nori-Identity-Bound": "1" } });
+    });
+
+    const token = await signIDToken({ sub: "susp-1", email: "suspended@example.test", email_verified: true });
+    const headers = new Headers({ authorization: `Bearer ${token}` });
+
+    const first = await resolveUser(headers);
+    assert.equal("userID" in first && first.userID, validUUID);
+    assert.equal(resolveCalls, 1);
+
+    suspended = true;
+    evictResolvedUser(validUUID);
+
+    const afterEvict = await resolveUser(headers);
+    assert.equal(resolveCalls, 2);
+    assert.equal("status" in afterEvict && afterEvict.status, 403);
+    assert.equal("code" in afterEvict && afterEvict.code, "account_suspended");
+    assert.equal("error" in afterEvict && afterEvict.error, "This account has been suspended.");
   });
 });

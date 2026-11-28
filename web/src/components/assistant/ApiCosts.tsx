@@ -5,12 +5,20 @@ import { Check, ChevronLeft, ChevronRight, CircleHelp, X } from "lucide-react";
 import { Dialog } from "radix-ui";
 import { Button, IconButton } from "@/components/ui/primitives";
 import { APIError, mutate, newRequestID } from "@/lib/assistant/api";
-import type { CostAmount, CostReport, ModelSettings, Preferences, PreferencesEditable } from "@/lib/contracts/assistant";
+import type {
+  BillingTier,
+  CostAmount,
+  CostReport,
+  EntitlementSummary,
+  ModelSettings,
+  Preferences,
+  PreferencesEditable,
+} from "@/lib/contracts/assistant";
 import { money, plural } from "@/lib/assistant/format";
 import { useAction, useResource } from "@/lib/assistant/useResource";
 import { cn } from "@/lib/utils";
 import { ProviderBrandIcon } from "./BrandIcons";
-import { Failure, inputBase, Loading, Notice, Row, Rows, Section, Tabs } from "./ui";
+import { Failure, inputBase, Loading, Notice, Pill, Row, Rows, Section, Tabs, type Tone } from "./ui";
 
 type Range = "1" | "7" | "30";
 
@@ -346,6 +354,103 @@ function BudgetsSection({
   );
 }
 
+const TIER_LABELS: Record<BillingTier, string> = {
+  trial: "Trial",
+  byok: "BYOK",
+  standard: "Standard",
+  power: "Power",
+};
+
+function tierLabel(tier: BillingTier): string {
+  return TIER_LABELS[tier] ?? tier;
+}
+
+function entitlementExceptionPill(entitlement: EntitlementSummary): { label: string; tone: Tone } | undefined {
+  if (entitlement.suspended) return { label: "Suspended", tone: "danger" };
+  if (entitlement.status === "past_due") return { label: "Past due", tone: "warning" };
+  if (entitlement.status === "expired") return { label: "Expired", tone: "warning" };
+  if (entitlement.status === "billing_retry") return { label: "Billing retry", tone: "warning" };
+  if (entitlement.status === "canceled") return { label: "Canceling", tone: "neutral" };
+  return undefined;
+}
+
+function PlanCreditsCard({ entitlement, timeZone }: { entitlement: EntitlementSummary; timeZone: string }) {
+  const pill = entitlementExceptionPill(entitlement);
+  const grant = Math.max(0, entitlement.credit_grant_usd);
+  const remaining = Math.max(0, entitlement.credit_remaining_usd);
+  const usedPct = grant > 0 ? Math.min(100, Math.max(0, ((grant - remaining) / grant) * 100)) : 0;
+  const barColor = remaining <= 0 ? "bg-danger" : usedPct >= 80 ? "bg-warning" : "bg-accent";
+  const periodEndLabel = entitlement.period_end ? dateLabel(entitlement.period_end, timeZone) : undefined;
+  const creditsExhausted = grant > 0 && remaining <= 0;
+  const inactive = entitlement.status === "past_due" || entitlement.status === "expired";
+
+  return (
+    <section aria-label="Plan and credits" className="mb-4 rounded-card border border-card-border bg-surface p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="text-meta font-semibold text-ink-2">Plan</p>
+          <p className="mt-0.5 text-section font-semibold text-ink">{tierLabel(entitlement.tier)}</p>
+          {entitlement.pending_tier && (
+            <p className="mt-0.5 text-caption text-ink-3">
+              Switching to {tierLabel(entitlement.pending_tier)}
+              {periodEndLabel ? ` on ${periodEndLabel}` : ""}
+            </p>
+          )}
+        </div>
+        <div className="flex flex-col items-end gap-1 text-right">
+          {pill && <Pill tone={pill.tone}>{pill.label}</Pill>}
+          {periodEndLabel && !entitlement.pending_tier && (
+            <p className="text-caption text-ink-3">
+              {entitlement.status === "canceled" ? `Ends ${periodEndLabel}` : `Resets ${periodEndLabel}`}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {grant > 0 && (
+        <div className="mt-3">
+          <div
+            role="progressbar"
+            aria-label="Hosted credits used"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(usedPct)}
+            className="h-1.5 w-full overflow-hidden rounded-full bg-fill-1"
+          >
+            <div className={cn("h-full rounded-full transition-[width]", barColor)} style={{ width: `${usedPct}%` }} />
+          </div>
+          <p className="mt-1.5 text-caption tabular-nums text-ink-3">
+            {money(remaining)} remaining of {money(grant)} hosted credits
+            {entitlement.credit_pending_usd > 0 ? ` · ${money(entitlement.credit_pending_usd)} pending` : ""}
+          </p>
+        </div>
+      )}
+
+      {entitlement.suspended ? (
+        <div className="mt-3">
+          <Notice tone="danger">
+            {entitlement.suspended_reason || "This account has been suspended. Your history remains read-only."}
+          </Notice>
+        </div>
+      ) : inactive ? (
+        <div className="mt-3">
+          <Notice tone="warning">
+            Your subscription is inactive. Renew your plan to resume chatting and running tasks.
+          </Notice>
+        </div>
+      ) : creditsExhausted ? (
+        <div className="mt-3">
+          <Notice tone="warning">
+            {entitlement.allow_byok
+              ? "Your hosted credits are used up. Add a provider API key or upgrade your plan to continue."
+              : "Your trial credits are used up. Upgrade your plan to continue."}
+          </Notice>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function CostDetails({
   report,
   selectedModel,
@@ -386,8 +491,18 @@ function CostDetails({
     if (previous !== null) requestAnimationFrame(() => modelButtons.current.get(previous)?.focus());
   }
 
+  const hasBillingBreakdown =
+    selectedModel === null &&
+    !!report.by_billing &&
+    callCount(report.by_billing.hosted) + callCount(report.by_billing.byok) + callCount(report.by_billing.local) > 0;
+  const hasCategoryBreakdown =
+    selectedModel === null &&
+    !!report.by_category &&
+    callCount(report.by_category.llm) + callCount(report.by_category.search) + callCount(report.by_category.computer) > 0;
+
   return (
     <>
+      {report.entitlement && <PlanCreditsCard entitlement={report.entitlement} timeZone={report.timezone} />}
       <section aria-label="Recorded spend" className="rounded-card border border-card-border bg-surface px-4 pt-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -447,6 +562,50 @@ function CostDetails({
         <div className="mt-3">
           <Notice>{plural(total.pending_calls, "call")} in progress.</Notice>
         </div>
+      )}
+
+      {hasBillingBreakdown && report.by_billing && (
+        <Section title="By billing">
+          <Rows label="By billing">
+            <Row
+              title="Hosted"
+              trailing={<span className="text-row font-semibold tabular-nums">{costLabel(report.by_billing.hosted)}</span>}
+            />
+            <Row
+              title="Your API keys"
+              trailing={<span className="text-row font-semibold tabular-nums">{costLabel(report.by_billing.byok)}</span>}
+            />
+            <Row
+              title="Local"
+              trailing={
+                <span className="text-meta font-medium tabular-nums text-ink-2">
+                  {report.by_billing.local.local_calls > 0 && !report.by_billing.local.priced_calls
+                    ? "Local"
+                    : costLabel(report.by_billing.local)}
+                </span>
+              }
+            />
+          </Rows>
+        </Section>
+      )}
+
+      {hasCategoryBreakdown && report.by_category && (
+        <Section title="By category">
+          <Rows label="By category">
+            <Row
+              title="Models"
+              trailing={<span className="text-row font-semibold tabular-nums">{costLabel(report.by_category.llm)}</span>}
+            />
+            <Row
+              title="Web search"
+              trailing={<span className="text-row font-semibold tabular-nums">{costLabel(report.by_category.search)}</span>}
+            />
+            <Row
+              title="Computer"
+              trailing={<span className="text-row font-semibold tabular-nums">{costLabel(report.by_category.computer)}</span>}
+            />
+          </Rows>
+        </Section>
       )}
 
       {currentModels.length > 0 && (

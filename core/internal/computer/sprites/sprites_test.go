@@ -39,6 +39,21 @@ func TestSpritesProviderEnsurePolicyDesktopAndDestroy(t *testing.T) {
 		case strings.HasSuffix(path, "/control"):
 			t.Error("provider opened a pooled Sprite control socket")
 			http.NotFound(w, r)
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/fs/list"):
+			qPath := r.URL.Query().Get("path")
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"path": qPath,
+				"entries": []map[string]any{{
+					"name":  "desktop.token",
+					"path":  qPath,
+					"type":  "file",
+					"size":  43,
+					"mode":  "-rw-------",
+					"isDir": false,
+				}},
+				"count": 1,
+			})
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/fs/read"):
 			_, _ = w.Write([]byte(strings.Repeat("A", 43)))
 		case r.Method == http.MethodGet && strings.HasPrefix(path, "/v1/sprites/nori-cmp-1") && !strings.Contains(path, "/checkpoints"):
@@ -416,5 +431,157 @@ func TestSpritesProviderExecAndBootstrapCanonicalHomeAndNPMPrefix(t *testing.T) 
 	}
 	if !strings.Contains(vmscripts.DesktopStartSH, `NPM_CONFIG_PREFIX="/home/nori/.local/npm"`) {
 		t.Fatal("nori-desktop-start missing NPM_CONFIG_PREFIX")
+	}
+}
+
+func TestSpritesProviderReadFileStatHardening(t *testing.T) {
+	var (
+		mu        sync.Mutex
+		readCalls int
+		statMode  string
+		readBody  []byte
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		mode := statMode
+		body := readBody
+		if strings.HasSuffix(r.URL.Path, "/fs/read") {
+			readCalls++
+		}
+		mu.Unlock()
+
+		qPath := r.URL.Query().Get("path")
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/fs/list"):
+			switch mode {
+			case "error_500":
+				http.Error(w, `{"error":"internal stat failure"}`, http.StatusInternalServerError)
+			case "not_found":
+				http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+			case "too_large":
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"path": qPath,
+					"entries": []map[string]any{{
+						"name": "huge.bin", "path": qPath, "type": "file", "size": 5000, "isDir": false,
+					}},
+					"count": 1,
+				})
+			case "dir":
+				w.Header().Set("Content-Type", "application/json")
+				if qPath == "/home/nori/workspace/mydir" {
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"path": qPath, "entries": []map[string]any{}, "count": 0,
+					})
+				} else {
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"path": qPath,
+						"entries": []map[string]any{{
+							"name": "mydir", "path": "/home/nori/workspace/mydir", "type": "directory", "size": 0, "isDir": true,
+						}},
+						"count": 1,
+					})
+				}
+			case "ok_small":
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"path": qPath,
+					"entries": []map[string]any{{
+						"name": "ok.txt", "path": qPath, "type": "file", "size": 10, "isDir": false,
+					}},
+					"count": 1,
+				})
+			}
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/fs/read"):
+			_, _ = w.Write(body)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer srv.Close()
+
+	p, err := sprites.New(sprites.Config{
+		Token:         "test-token",
+		BaseURL:       srv.URL,
+		HTTPClient:    srv.Client(),
+		SkipBootstrap: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+
+	ctx := context.Background()
+
+	// 1. Stat 500 error MUST fail closed and NEVER call /fs/read.
+	mu.Lock()
+	statMode = "error_500"
+	readCalls = 0
+	mu.Unlock()
+	if _, err := p.ReadFile(ctx, "nori-cmp-1", "/home/nori/workspace/a.txt", 1024); err == nil {
+		t.Fatal("expected ReadFile to fail closed when Stat returns 500")
+	}
+	if readCalls != 0 {
+		t.Fatalf("readCalls = %d after Stat 500, want 0", readCalls)
+	}
+
+	// 2. Stat 404 returns ErrNotFound without calling /fs/read.
+	mu.Lock()
+	statMode = "not_found"
+	readCalls = 0
+	mu.Unlock()
+	if _, err := p.ReadFile(ctx, "nori-cmp-1", "/home/nori/workspace/missing.txt", 1024); err != computer.ErrNotFound {
+		t.Fatalf("ReadFile missing = %v, want ErrNotFound", err)
+	}
+	if readCalls != 0 {
+		t.Fatalf("readCalls = %d after Stat 404, want 0", readCalls)
+	}
+
+	// 3. Stat size > maxBytes returns ErrFileTooLarge without calling /fs/read.
+	mu.Lock()
+	statMode = "too_large"
+	readCalls = 0
+	mu.Unlock()
+	if _, err := p.ReadFile(ctx, "nori-cmp-1", "/home/nori/workspace/huge.bin", 1024); err != computer.ErrFileTooLarge {
+		t.Fatalf("ReadFile oversized = %v, want ErrFileTooLarge", err)
+	}
+	if readCalls != 0 {
+		t.Fatalf("readCalls = %d after oversized Stat, want 0", readCalls)
+	}
+
+	// 4. Stat directory fails closed without calling /fs/read.
+	mu.Lock()
+	statMode = "dir"
+	readCalls = 0
+	mu.Unlock()
+	if _, err := p.ReadFile(ctx, "nori-cmp-1", "/home/nori/workspace/mydir", 1024); err == nil {
+		t.Fatal("expected ReadFile on directory to fail")
+	}
+	if readCalls != 0 {
+		t.Fatalf("readCalls = %d after dir Stat, want 0", readCalls)
+	}
+
+	// 5. Stat ok + body within limit succeeds.
+	mu.Lock()
+	statMode = "ok_small"
+	readBody = []byte("hello-file")
+	readCalls = 0
+	mu.Unlock()
+	got, err := p.ReadFile(ctx, "nori-cmp-1", "/home/nori/workspace/ok.txt", 1024)
+	if err != nil || string(got) != "hello-file" {
+		t.Fatalf("ReadFile ok = (%q, %v), want hello-file", got, err)
+	}
+	if readCalls != 1 {
+		t.Fatalf("readCalls = %d, want 1", readCalls)
+	}
+
+	// 6. Stat reports small size (TOCTOU) but body exceeds maxBytes -> ErrFileTooLarge.
+	mu.Lock()
+	statMode = "ok_small"
+	readBody = []byte(strings.Repeat("x", 2048))
+	mu.Unlock()
+	if _, err := p.ReadFile(ctx, "nori-cmp-1", "/home/nori/workspace/ok.txt", 1024); err != computer.ErrFileTooLarge {
+		t.Fatalf("ReadFile TOCTOU oversized = %v, want ErrFileTooLarge", err)
 	}
 }

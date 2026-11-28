@@ -174,3 +174,23 @@ func TestRuntimeIgnoresDeploymentLLMKeys(t *testing.T) {
 		})
 	}
 }
+
+func TestHostedModelAllowlist(t *testing.T) {
+	allowed := HostedModelAllowlist()
+	if len(allowed) != 9 {
+		t.Fatalf("HostedModelAllowlist len = %d, want 9: %v", len(allowed), allowed)
+	}
+	for _, m := range allowed {
+		if !IsHostedModelAllowed(m) {
+			t.Fatalf("expected %q to be allowed", m)
+		}
+	}
+	if !IsHostedModelAllowed("  GOOGLE/GEMINI-4-NEON ") {
+		t.Fatalf("expected case-insensitive trimmed allowlist match")
+	}
+	for _, rejected := range []string{"", "gpt-6.2-sol", "gemini-4-neon", "openai/gpt-5-unknown", "anthropic/claude-3-5-sonnet", "meta/llama-3"} {
+		if IsHostedModelAllowed(rejected) {
+			t.Fatalf("expected unpriced/non-allowlisted model %q to be rejected", rejected)
+		}
+	}
+}

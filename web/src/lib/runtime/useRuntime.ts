@@ -2,7 +2,15 @@
 
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import * as Sentry from "@sentry/nextjs";
-import { fetchSnapshot, getJSON, postRuntimeOperation } from "@/lib/assistant/api";
+import {
+  billingAccessBlockFromError,
+  billingAccessMessage,
+  fetchSnapshot,
+  getJSON,
+  isBillingAccessBlockCode,
+  postRuntimeOperation,
+  type BillingAccessBlock,
+} from "@/lib/assistant/api";
 import { browserResetChanged, syncBrowserReset } from "@/lib/assistant/resetState";
 import { ResourceCacheContext, useResourceInvalidation } from "@/lib/assistant/useResource";
 import type { Preferences } from "@/lib/contracts/assistant";
@@ -32,6 +40,20 @@ import { usePendingTurns } from "./usePendingTurns";
 import { useReadDeliveryReceipts } from "./useReadDeliveryReceipts";
 
 const subscribeHydration = () => () => {};
+
+function findPendingAccessBlock(pending: Pending[]): BillingAccessBlock | null {
+  for (let i = pending.length - 1; i >= 0; i--) {
+    const item = pending[i];
+    if (isBillingAccessBlockCode(item.errorCode)) {
+      return {
+        code: item.errorCode,
+        message: billingAccessMessage(item.errorCode, item.error),
+        readOnly: true,
+      };
+    }
+  }
+  return null;
+}
 
 function readSavedDraft(scope: string): string {
   try {
@@ -71,10 +93,21 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
   );
 
   const [errorState, setErrorState] = useState<RuntimeErrorState>(NO_RUNTIME_ERROR);
+  const [runtimeAccessBlock, setRuntimeAccessBlock] = useState<BillingAccessBlock | null>(null);
   const outageRef = useRef(false);
   useEffect(() => {
     outageRef.current = errorState.kind === "unavailable";
   }, [errorState.kind]);
+
+  const recordRuntimeError = useCallback((err: unknown, fallback: string) => {
+    const block = billingAccessBlockFromError(err);
+    if (block) {
+      setRuntimeAccessBlock(block);
+      setErrorState({ message: block.message, kind: "error" });
+      return;
+    }
+    setErrorState(toRuntimeError(err, fallback));
+  }, []);
 
   const [streamAwake, setStreamAwake] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -137,6 +170,7 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
       });
       if (!data || signal?.aborted || serial < minimumSerial.current) return;
       applySnapshot(data, serial);
+      setRuntimeAccessBlock(null);
       clearStreamErrorRef.current();
       return data;
     },
@@ -277,7 +311,7 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
     const controller = new AbortController();
     void refreshAndRetry(controller.signal, { reuseCachedPreferences: true })
       .catch((err) => {
-        if (!controller.signal.aborted) setErrorState(toRuntimeError(err, "Unable to reach Nori."));
+        if (!controller.signal.aborted) recordRuntimeError(err, "Unable to reach Nori.");
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -289,10 +323,13 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
       retryReceipts();
       void refreshAndRetry(controller.signal)
         .then(() => {
-          if (!controller.signal.aborted) setErrorState(NO_RUNTIME_ERROR);
+          if (!controller.signal.aborted) {
+            setRuntimeAccessBlock(null);
+            setErrorState(NO_RUNTIME_ERROR);
+          }
         })
         .catch((err) => {
-          if (!controller.signal.aborted) setErrorState(toRuntimeError(err, "Unable to reach Nori."));
+          if (!controller.signal.aborted) recordRuntimeError(err, "Unable to reach Nori.");
         });
     };
     const wake = () => setStreamAwake(true);
@@ -313,10 +350,14 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
       window.removeEventListener("online", reconnect);
       window.removeEventListener("focus", wake);
     };
-  }, [refreshAndRetry, beginTiming, scope, retryReceipts, pendingRef, taskCommandsRef, replyTimings, setPending, setTaskCommands]);
+  }, [refreshAndRetry, beginTiming, recordRuntimeError, scope, retryReceipts, pendingRef, taskCommandsRef, replyTimings, setPending, setTaskCommands]);
+
+  const accessBlock = runtimeAccessBlock ?? findPendingAccessBlock(pending);
+  const readOnly = Boolean(accessBlock);
 
   const refreshHistory = useCallback(async () => {
     setErrorState(NO_RUNTIME_ERROR);
+    setRuntimeAccessBlock(null);
     clearStreamErrorRef.current();
     setLoading(true);
     const controller = new AbortController();
@@ -324,12 +365,12 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
     try {
       await refreshAndRetry(controller.signal);
     } catch (err) {
-      if (!controller.signal.aborted) setErrorState(toRuntimeError(err, "History unavailable."));
+      if (!controller.signal.aborted) recordRuntimeError(err, "History unavailable.");
     } finally {
       controllers.current.delete(controller);
       if (!controller.signal.aborted) setLoading(false);
     }
-  }, [refreshAndRetry]);
+  }, [recordRuntimeError, refreshAndRetry]);
 
   const loadOlder = useCallback(async () => {
     const cursor = session?.next_cursor;
@@ -353,17 +394,17 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
         );
       }
     } catch (err) {
-      if (!controller.signal.aborted) setErrorState(toRuntimeError(err, "Older history unavailable."));
+      if (!controller.signal.aborted) recordRuntimeError(err, "Older history unavailable.");
     } finally {
       controllers.current.delete(controller);
       if (!controller.signal.aborted) setLoadingOlder(false);
     }
-  }, [loadingOlder, session?.next_cursor]);
+  }, [loadingOlder, recordRuntimeError, session?.next_cursor]);
 
   const send = useCallback(async () => {
     const text = draftValue.current.trim();
     const files = draftFilesRef.current;
-    if (replacingSnapshot.current || !hasSubmission(text, files) || !session || loading || session.conversation?.introducing) {
+    if (readOnly || replacingSnapshot.current || !hasSubmission(text, files) || !session || loading || session.conversation?.introducing) {
       return;
     }
     if (messageTooLong(text)) {
@@ -388,19 +429,22 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
     setErrorState(NO_RUNTIME_ERROR);
     clearFiles();
     await submit(item, true);
-  }, [beginTiming, clearFiles, loading, localMode, pendingRef, session, setDraft, submit, updatePending]);
+  }, [beginTiming, clearFiles, loading, localMode, pendingRef, readOnly, session, setDraft, submit, updatePending]);
 
   const upload = useCallback((item: DraftFile, context: UploadContext) => uploadFile(item, context), []);
 
   const attachFiles = useCallback(
-    (files: File[]) => attach(files, upload, (message) => setErrorState(message ? { message, kind: "error" } : NO_RUNTIME_ERROR)),
-    [attach, upload],
+    (files: File[]) => {
+      if (readOnly) return;
+      attach(files, upload, (message) => setErrorState(message ? { message, kind: "error" } : NO_RUNTIME_ERROR));
+    },
+    [attach, readOnly, upload],
   );
   const retryFile = useCallback((item: DraftFile) => retry(item, upload), [retry, upload]);
 
   const commandTask = useCallback(
     async (runId: string, kind: TaskCommand["kind"], text?: string, questionId?: string) => {
-      if (replacingSnapshot.current) return;
+      if (readOnly || replacingSnapshot.current) return;
       if (taskCommandsRef.current.some((item) => item.command.run_id === runId && (kind !== "stop" || item.command.kind === "stop"))) {
         return;
       }
@@ -417,12 +461,12 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
       if (text !== undefined) setTaskDrafts((current) => ({ ...current, [runId]: "" }));
       await submitTaskCommand(item);
     },
-    [submitTaskCommand, taskCommandsRef, updateTaskCommands],
+    [readOnly, submitTaskCommand, taskCommandsRef, updateTaskCommands],
   );
 
   const retryTurn = useCallback(
     async (opts?: { turn_id?: string; message_id?: string }) => {
-      if (replacingSnapshot.current) return;
+      if (readOnly || replacingSnapshot.current) return;
       const key = opts?.message_id ?? opts?.turn_id ?? "retry";
       setRetryingMessageId(key);
       const controller = new AbortController();
@@ -435,24 +479,25 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
         const data = await postRuntimeOperation<Session>("retry", payload, { signal: controller.signal });
         if (!controller.signal.aborted) {
           applySnapshot(data, serial);
+          setRuntimeAccessBlock(null);
           setErrorState(NO_RUNTIME_ERROR);
         }
       } catch (err) {
         if (!controller.signal.aborted) {
-          setErrorState(toRuntimeError(err, "Could not retry that message."));
+          recordRuntimeError(err, "Could not retry that message.");
         }
       } finally {
         controllers.current.delete(controller);
         setRetryingMessageId((current) => (current === key ? undefined : current));
       }
     },
-    [applySnapshot],
+    [applySnapshot, readOnly, recordRuntimeError],
   );
 
   const setTaskDraft = useCallback((id: string, text: string) => setTaskDrafts((current) => ({ ...current, [id]: text })), []);
 
-  const error = errorState.message || streamError;
-  const reconnecting = errorState.kind === "unavailable" || (!errorState.message && streamReconnecting);
+  const error = accessBlock?.message || errorState.message || streamError;
+  const reconnecting = errorState.kind === "unavailable" || (!errorState.message && !accessBlock && streamReconnecting);
 
   const core = useMemo(
     () => ({
@@ -462,6 +507,8 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
       retryFile,
       removeFile,
       error,
+      accessBlock,
+      readOnly,
       reconnecting,
       loading,
       loadingOlder,
@@ -494,6 +541,8 @@ export function useRuntime(localMode = false, scope = "local", refreshCapabiliti
       retryFile,
       removeFile,
       error,
+      accessBlock,
+      readOnly,
       reconnecting,
       loading,
       loadingOlder,

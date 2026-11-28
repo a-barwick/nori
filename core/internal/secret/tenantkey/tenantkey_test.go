@@ -450,3 +450,58 @@ func TestKeyRingRotationWithTenantKey(t *testing.T) {
 		t.Fatalf("Open after master key rotation = (%q, %v)", pt, err)
 	}
 }
+
+func TestDefaultTTL10mAndEvictAll(t *testing.T) {
+	if DefaultCacheTTL != 10*time.Minute {
+		t.Fatalf("DefaultCacheTTL = %v, want 10m", DefaultCacheTTL)
+	}
+	ctx := context.Background()
+	res := newTestResourceStore(t, "evict-all")
+	wrapper := &countingAADKeyWrapper{inner: mustKey(t, 0x61)}
+	cache := NewCache(0)
+	defer cache.Close()
+
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	newMgr := func(scope string) *Manager {
+		m, err := NewManager(res, wrapper, "alice")
+		if err != nil {
+			t.Fatalf("NewManager: %v", err)
+		}
+		m.Cache = cache
+		m.CacheScope = scope
+		m.Now = func() time.Time { return now }
+		return m
+	}
+
+	m1 := newMgr("alice/2026-06-01")
+	ct, err := m1.Seal(ctx, "msg", "1", []byte("secret"))
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	// Still cached after 9 minutes (10m default TTL).
+	now = now.Add(9 * time.Minute)
+	if _, err := newMgr("alice/2026-06-01").Open(ctx, "msg", "1", ct); err != nil {
+		t.Fatalf("Open at 9m: %v", err)
+	}
+	if wrapper.unwrapCalls.Load() != 0 {
+		t.Fatalf("unwrapCalls at 9m = %d, want 0", wrapper.unwrapCalls.Load())
+	}
+
+	// Evict("alice") evicts reset-scoped "alice/2026-06-01" immediately.
+	cache.Evict("alice")
+	if _, err := newMgr("alice/2026-06-01").Open(ctx, "msg", "1", ct); err != nil {
+		t.Fatalf("Open after Evict(alice): %v", err)
+	}
+	if wrapper.unwrapCalls.Load() != 1 {
+		t.Fatalf("unwrapCalls after Evict(alice) = %d, want 1", wrapper.unwrapCalls.Load())
+	}
+
+	// EvictAll drops everything.
+	cache.EvictAll()
+	if _, err := newMgr("alice/2026-06-01").Open(ctx, "msg", "1", ct); err != nil {
+		t.Fatalf("Open after EvictAll: %v", err)
+	}
+	if wrapper.unwrapCalls.Load() != 2 {
+		t.Fatalf("unwrapCalls after EvictAll = %d, want 2", wrapper.unwrapCalls.Load())
+	}
+}

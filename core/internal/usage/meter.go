@@ -68,6 +68,29 @@ func Attempt(ctx context.Context, provider, model string) state.Usage {
 	return s.Attempt(ctx, provider, model)
 }
 
+// AttemptWithMeta constructs a pending state.Usage attempt tagged with billing ("hosted"|"byok"|"local")
+// and category ("llm"|"search"|"computer").
+func AttemptWithMeta(ctx context.Context, provider, model, billingMode, category string) state.Usage {
+	u := Attempt(ctx, provider, model)
+	u.Billing = billingMode
+	u.Category = category
+	return u
+}
+
+// WithObserver wraps a Meter to invoke onRecord after every successful RecordUsage call.
+func WithObserver(local Meter, onRecord func(context.Context, state.Usage)) Meter {
+	if onRecord == nil {
+		return local
+	}
+	return Func(func(ctx context.Context, u state.Usage) error {
+		if err := local.RecordUsage(ctx, u); err != nil {
+			return err
+		}
+		onRecord(ctx, u)
+		return nil
+	})
+}
+
 func RecordReportedCost(record *state.Usage, cost *float64) bool {
 	if cost == nil || *cost < 0 || math.IsNaN(*cost) || math.IsInf(*cost, 0) {
 		return false
@@ -94,13 +117,58 @@ const defaultUnknownCallEstimateUSD = 0.02
 func EstimateExposureUSD(model string) float64 {
 	m := strings.ToLower(strings.TrimSpace(model))
 	switch {
-	case strings.Contains(m, "opus") || strings.Contains(m, "gpt-6.2-sol") || strings.Contains(m, "gpt-6.1-sol"):
+	case strings.Contains(m, "opus") || strings.Contains(m, "gpt-6.2-sol") || strings.Contains(m, "gpt-6.1-sol") || strings.Contains(m, "gemini-4-carbon"):
 		return 0.05
-	case strings.Contains(m, "haiku") || strings.Contains(m, "mini") || strings.Contains(m, "nano") || strings.Contains(m, "terra"):
+	case strings.Contains(m, "haiku") || strings.Contains(m, "mini") || strings.Contains(m, "nano") || strings.Contains(m, "terra") || strings.Contains(m, "gemini-4-hydrogen"):
 		return 0.01
 	default:
 		return defaultUnknownCallEstimateUSD
 	}
+}
+
+// WithBillingAdmission wraps local with atomic entitlement/credit/rate reservation even when
+// static fallback limits are zero (limits come from the user's tier policy in Postgres/memstore).
+func WithBillingAdmission(local Meter, fallbackCallsPerHour int, fallbackUSDPerDay float64, now func() time.Time) Meter {
+	reserver, hasReserver := local.(AtomicReserver)
+	if !hasReserver {
+		return WithAdmission(local, nil, fallbackCallsPerHour, fallbackUSDPerDay, now)
+	}
+	return Func(func(ctx context.Context, u state.Usage) error {
+		if u.RequestStatus == "pending" {
+			var t time.Time
+			switch {
+			case now != nil:
+				t = now().UTC()
+			case !u.CreatedAt.IsZero():
+				t = u.CreatedAt.UTC()
+			default:
+				t = time.Now().UTC()
+			}
+			hourCutoff := t.Add(-time.Hour)
+			dayCutoff := t.Add(-24 * time.Hour)
+			spendLimit := fallbackUSDPerDay
+			if u.CostStatus == "local" || u.Billing == state.UsageBillingLocal {
+				spendLimit = 0
+				u.EstimatedExposureUSD = 0
+			} else if u.EstimatedExposureUSD <= 0 {
+				u.EstimatedExposureUSD = EstimateExposureUSD(u.Model)
+			}
+			allowed, err := reserver.ReserveUsage(ctx, u, hourCutoff, dayCutoff, fallbackCallsPerHour, spendLimit, defaultUnknownCallEstimateUSD)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				slog.WarnContext(ctx, "per-user atomic usage reservation exceeded limit before provider I/O",
+					"model", u.Model, "billing", u.Billing, "category", u.Category, "incoming_exposure_usd", u.EstimatedExposureUSD)
+				return ErrUserQuotaExceeded
+			}
+			return nil
+		}
+		if u.CostUSD != nil || u.RequestStatus == "not_sent" {
+			u.EstimatedExposureUSD = 0
+		}
+		return local.RecordUsage(ctx, u)
+	})
 }
 
 type WindowReader interface {

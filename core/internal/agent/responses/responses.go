@@ -42,12 +42,27 @@ type Client struct {
 	AllowGatewayReasoning bool
 	Byok                  bool
 	BYOKProviderLabel     string
+	BillingMode           string
 	LocalOnly             bool
 	MaxRetries            int
 	RetryBaseDelay        time.Duration
 	MaxRetryAfter         time.Duration
 	Now                   func() time.Time
 	Sleep                 func(context.Context, time.Duration) error
+}
+
+func (c *Client) billingMode() string {
+	switch c.BillingMode {
+	case state.UsageBillingHosted, state.UsageBillingBYOK, state.UsageBillingLocal:
+		return c.BillingMode
+	}
+	if c.ProviderName == llmguard.ProviderHome || c.LocalOnly {
+		return state.UsageBillingLocal
+	}
+	if c.Byok || c.BYOKProviderLabel != "" {
+		return state.UsageBillingBYOK
+	}
+	return state.UsageBillingHosted
 }
 
 func (c *Client) guard() *llmguard.Guard {
@@ -58,11 +73,14 @@ func (c *Client) guard() *llmguard.Guard {
 }
 
 func (c *Client) httpClient() *http.Client {
+	billingMode := c.billingMode()
 	return c.guard().WrapClient(c.HTTP, 2*time.Minute, llmguard.CallMeta{
 		UserID:   c.UserID,
 		Scope:    llmguard.ScopeTask,
 		Provider: c.Provider(),
 		Model:    c.ModelName,
+		Billing:  billingMode,
+		BYOK:     billingMode == state.UsageBillingBYOK,
 	})
 }
 
@@ -224,14 +242,65 @@ func (c *Client) callMeta(ctx context.Context, maxOutputTokens int) llmguard.Cal
 	if scope == "" {
 		scope = llmguard.ScopeTask
 	}
+	billingMode := c.billingMode()
 	return llmguard.CallMeta{
 		UserID:          c.UserID,
 		Scope:           scope,
 		Provider:        c.Provider(),
 		Model:           c.ModelName,
+		Billing:         billingMode,
 		MaxOutputTokens: maxOutputTokens,
-		BYOK:            c.Byok,
+		BYOK:            billingMode == state.UsageBillingBYOK,
 	}
+}
+
+func (c *Client) applyTariffFallback(record *state.Usage, servedModel, tier string, u *responseUsage) (float64, bool) {
+	if u == nil || u.Input == nil || u.Output == nil || c.ProviderName == llmguard.ProviderHome || c.LocalOnly {
+		return 0, false
+	}
+	candidates := []string{strings.TrimSpace(servedModel), strings.TrimSpace(c.ModelName)}
+	cached, written := u.InputDetails.Cached, u.InputDetails.Write
+	effectiveTier := strings.TrimSpace(tier)
+	if effectiveTier == "" {
+		effectiveTier = "default"
+	}
+	total := u.Total
+	if total == nil {
+		sum := *u.Input + *u.Output
+		total = &sum
+	}
+	for _, raw := range candidates {
+		if raw == "" {
+			continue
+		}
+		low := strings.ToLower(raw)
+		if _, _, _, ok := usage.GoogleTariff(low); ok {
+			var cost float64
+			var err error
+			if u.OutputDetails.Reasoning > 0 && *total == *u.Input+*u.Output+u.OutputDetails.Reasoning {
+				cost, err = usage.GoogleCostWithReasoning(low, *u.Input, *u.Output, u.OutputDetails.Reasoning, cached)
+			} else {
+				cost, err = usage.GoogleCost(low, *u.Input, *u.Output, cached)
+			}
+			if err == nil {
+				record.CostUSD, record.CostStatus = &cost, "calculated"
+				return cost, true
+			}
+		}
+		strippedOpenAI := strings.TrimPrefix(low, "openai/")
+		if cost, err := usage.OpenAICostWithWrites(strippedOpenAI, effectiveTier, u.Input, u.Output, total, cached, written); err == nil {
+			record.CostUSD, record.CostStatus = &cost, "calculated"
+			return cost, true
+		}
+		if strings.HasPrefix(low, "anthropic/") || strings.HasPrefix(low, "claude-") {
+			uncached := max(*u.Input-cached-written, 0)
+			if cost, err := usage.AnthropicCost(low, uncached, *u.Output, cached, written); err == nil {
+				record.CostUSD, record.CostStatus = &cost, "calculated"
+				return cost, true
+			}
+		}
+	}
+	return 0, false
 }
 
 func (c *Client) mapHTTPError(res *http.Response) error {
@@ -251,6 +320,11 @@ func (c *Client) mapHTTPError(res *http.Response) error {
 
 func (c *Client) applyResponseUsage(res *http.Response, record *state.Usage, response responsesAPIResponse, out *agent.Response) {
 	out.Cost, out.CostKnown = c.recordCost(record, response.Model, response.Tier, response.Usage)
+	if !out.CostKnown {
+		if cost, ok := c.applyTariffFallback(record, response.Model, response.Tier, response.Usage); ok {
+			out.Cost, out.CostKnown = cost, true
+		}
+	}
 	if c.ProviderName == llmguard.ProviderHome {
 		out.CostLocal = true
 		llmguard.RecordResponseCost(res, 0)
@@ -417,18 +491,22 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 	if _, err := buildReq(); err != nil {
 		return out, err
 	}
-	record := usage.Attempt(ctx, c.Provider(), c.ModelName)
+	billingMode := c.billingMode()
+	record := usage.AttemptWithMeta(ctx, c.Provider(), c.ModelName, billingMode, state.UsageCategoryLLM)
 	if c.ProviderName == llmguard.ProviderHome {
 		c.recordCost(&record, "", "", nil)
 	}
-	if c.Byok {
+	if billingMode != state.UsageBillingLocal {
 		record.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
 	}
 	if err := c.Meter.RecordUsage(ctx, record); err != nil {
 		return out, err
 	}
 	record.RequestStatus = "unknown"
-	defer func() { err = errors.Join(err, usage.Finish(ctx, c.Meter, record)) }()
+	defer func() {
+		llmguard.ObserveCallCost(ctx, out.Cost, out.CostKnown, !out.NotSent)
+		err = errors.Join(err, usage.Finish(ctx, c.Meter, record))
+	}()
 	out.NotSent = false
 	onRetry := func(statusCode int) error {
 		prev := record
@@ -438,8 +516,8 @@ func (c *Client) Respond(ctx context.Context, req agent.Request) (out agent.Resp
 			prev.RequestStatus = "unknown"
 		}
 		_ = usage.Finish(ctx, c.Meter, prev)
-		record = usage.Attempt(ctx, c.Provider(), c.ModelName)
-		if c.Byok {
+		record = usage.AttemptWithMeta(ctx, c.Provider(), c.ModelName, billingMode, state.UsageCategoryLLM)
+		if billingMode != state.UsageBillingLocal {
 			record.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
 		}
 		if err := c.Meter.RecordUsage(ctx, record); err != nil {

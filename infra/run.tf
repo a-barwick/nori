@@ -44,8 +44,10 @@ locals {
       NORI_APNS_KEY_ID                   = lookup(local.private, "apns_key_id", "")
       NORI_APNS_TEAM_ID                  = lookup(local.private, "apns_team_id", "")
       NORI_COMPUTER_MAX_DISK_GB          = "10"
+      NORI_COMPUTER_MAX_FLEET            = "10"
       NORI_COMPUTER_MEMORY_WATCHDOG_MB   = "3072"
       NORI_COMPUTER_PROVIDER             = local.computer_provider
+      NORI_EXA_GLOBAL_MAX_USD_PER_DAY    = "15"
       NORI_GOOGLE_WORKSPACE_CLIENT_ID    = "886773017404-30r5muoab6n8skn4sbkphpi5qkvbj4a4.apps.googleusercontent.com"
       NORI_GOOGLE_WORKSPACE_REDIRECT_URL = "${local.web_origin}/api/v1/connections/oauth/callback"
       NORI_HOME_AI_DOWNLOAD_LINUX_AMD64  = "${local.home_ai_release}/nori-connector-0.1.0-amd64.deb"
@@ -53,7 +55,10 @@ locals {
       NORI_HOME_AI_DOWNLOAD_MACOS        = "${local.home_ai_release}/Nori-0.1.0-arm64.dmg"
       NORI_HOME_AI_VERIFY_URL            = "${local.web_origin}/connector/activate"
       NORI_HOME_AI_WORK_ENABLED          = "true"
+      NORI_HOSTED_GLOBAL_MAX_USD_PER_DAY = "50"
       NORI_SPRITES_ORG                   = "austin-barwick-davis"
+      NORI_SPRITES_RATE_PER_HOUR_USD     = "0.15"
+      NORI_TRIAL_MAX_SIGNUPS_PER_DAY     = "25"
     },
     # An empty tester list offers Google to every user.
     local.private.google_workspace_test_users == "" ? {} : {
@@ -70,6 +75,13 @@ locals {
     } : {},
     local.computer_provider == "sprites" ? {
       NORI_SPRITES_API_TOKEN = "nori-sprites-api-key:latest"
+    } : {},
+    # Deploy ordering safety: populate a secret version before setting
+    # enable_platform_ai_gateway_secret = true in nori-terraform-private so
+    # Cloud Run revision creation never fails on a missing :latest version:
+    #   gcloud secrets versions add nori-vercel-ai-gateway-key --data-file=-
+    try(local.private.enable_platform_ai_gateway_secret, false) == true ? {
+      NORI_PLATFORM_AI_GATEWAY_KEY = "nori-vercel-ai-gateway-key:latest"
     } : {},
   )
 
@@ -375,7 +387,7 @@ resource "google_cloud_run_v2_service" "nori_web_mac" {
   invoker_iam_disabled = true
 
   scaling {
-    max_instance_count = 20
+    max_instance_count = 2
   }
 
   template {
@@ -447,7 +459,7 @@ resource "google_cloud_run_v2_service" "nori_site" {
   ingress  = "INGRESS_TRAFFIC_ALL"
 
   scaling {
-    max_instance_count = 20
+    max_instance_count = 4
   }
 
   template {
@@ -456,7 +468,7 @@ resource "google_cloud_run_v2_service" "nori_site" {
     timeout                          = "300s"
 
     scaling {
-      max_instance_count = 10
+      max_instance_count = 4
     }
 
     containers {

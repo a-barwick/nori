@@ -172,6 +172,9 @@ func (u *Users) ResolveIdentity(ctx context.Context, identity users.Identity, em
 			if err := tx.Create(u.rows().Doc(candidate.ID), candidate); err != nil {
 				return err
 			}
+			if err := tx.ProvisionTrial(candidate.ID, u.now(), u.TrialMaxSignupsPerDay); err != nil {
+				return err
+			}
 			out = candidate
 			return nil
 		})

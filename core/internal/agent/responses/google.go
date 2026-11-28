@@ -14,6 +14,7 @@ import (
 	"nori/internal/agent"
 	"nori/internal/contextview"
 	"nori/internal/llmguard"
+	"nori/internal/state"
 	"nori/internal/transcript"
 	"nori/internal/usage"
 )
@@ -33,37 +34,47 @@ func NewGoogle(baseURL, key, model string, meter usage.Meter) *GoogleClient {
 	client := New(key, model, meter)
 	client.ProviderName = "google"
 	client.BYOKProviderLabel = "Google"
+	client.BillingMode = state.UsageBillingBYOK
 	return &GoogleClient{Client: client, baseURL: strings.TrimRight(baseURL, "/")}
 }
 
 type googleResponse struct {
+	Model   string `json:"model"`
 	Choices []struct {
 		Finish  string          `json:"finish_reason"`
 		Message json.RawMessage `json:"message"`
 	} `json:"choices"`
 	Usage *struct {
-		Input         *int64 `json:"prompt_tokens"`
-		Output        *int64 `json:"completion_tokens"`
-		Total         *int64 `json:"total_tokens"`
+		Input        *int64   `json:"prompt_tokens"`
+		Output       *int64   `json:"completion_tokens"`
+		Total        *int64   `json:"total_tokens"`
+		Cost         *float64 `json:"cost"`
+		InputDetails struct {
+			Cached int64 `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
 		OutputDetails struct {
 			Reasoning int64 `json:"reasoning_tokens"`
 		} `json:"completion_tokens_details"`
 	} `json:"usage"`
 }
 
-func (c *GoogleClient) complete(ctx context.Context, fields map[string]any, maxTokens int) (response googleResponse, sent bool, err error) {
+func (c *GoogleClient) complete(ctx context.Context, fields map[string]any, maxTokens int) (response googleResponse, sent bool, cost float64, costKnown bool, err error) {
 	body, err := json.Marshal(fields)
 	if err != nil {
-		return response, false, errors.New("task request could not be encoded")
+		return response, false, 0, false, errors.New("task request could not be encoded")
 	}
 	if err := contextview.Check(len(body)); err != nil {
-		return response, false, err
+		return response, false, 0, false, err
 	}
 	scope := llmguard.MetaFromContext(ctx).Scope
 	if scope == "" {
 		scope = llmguard.ScopeTask
 	}
-	meta := llmguard.CallMeta{UserID: c.UserID, Scope: scope, Provider: "google", Model: c.ModelName, MaxOutputTokens: maxTokens, BYOK: true}
+	billingMode := c.billingMode()
+	meta := llmguard.CallMeta{
+		UserID: c.UserID, Scope: scope, Provider: "google", Model: c.ModelName,
+		Billing: billingMode, MaxOutputTokens: maxTokens, BYOK: billingMode == state.UsageBillingBYOK,
+	}
 	reqCtx := llmguard.WithMeta(ctx, meta)
 	buildReq := func() (*http.Request, error) {
 		req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
@@ -74,21 +85,28 @@ func (c *GoogleClient) complete(ctx context.Context, fields map[string]any, maxT
 		req.Header.Set("Content-Type", "application/json")
 		return req, nil
 	}
-	record := usage.Attempt(ctx, "google", c.ModelName)
-	record.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
+	record := usage.AttemptWithMeta(ctx, "google", c.ModelName, billingMode, state.UsageCategoryLLM)
+	if billingMode != state.UsageBillingLocal {
+		record.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
+	}
 	if err := c.Meter.RecordUsage(ctx, record); err != nil {
-		return response, false, err
+		return response, false, 0, false, err
 	}
 	record.RequestStatus = "unknown"
-	defer func() { err = errors.Join(err, usage.Finish(ctx, c.Meter, record)) }()
+	defer func() {
+		llmguard.ObserveCallCost(ctx, cost, costKnown, sent)
+		err = errors.Join(err, usage.Finish(ctx, c.Meter, record))
+	}()
 	onRetry := func(status int) error {
 		previous := record
 		if status > 0 {
 			previous.RequestStatus = "received"
 		}
 		_ = usage.Finish(ctx, c.Meter, previous)
-		record = usage.Attempt(ctx, "google", c.ModelName)
-		record.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
+		record = usage.AttemptWithMeta(ctx, "google", c.ModelName, billingMode, state.UsageCategoryLLM)
+		if billingMode != state.UsageBillingLocal {
+			record.EstimatedExposureUSD = llmguard.EstimateCallUSD(meta, len(body))
+		}
 		if err := c.Meter.RecordUsage(ctx, record); err != nil {
 			record.RequestStatus = "not_sent"
 			return err
@@ -100,33 +118,64 @@ func (c *GoogleClient) complete(ctx context.Context, fields map[string]any, maxT
 	if err != nil {
 		if llmguard.IsGuardError(err) || errors.Is(err, usage.ErrUserQuotaExceeded) {
 			record.RequestStatus = "not_sent"
-			return response, false, err
+			return response, false, 0, false, err
 		}
 		if ctx.Err() != nil {
-			return response, true, ctx.Err()
+			return response, true, 0, false, ctx.Err()
 		}
-		return response, true, errors.New("Google model request interrupted or unavailable")
+		return response, true, 0, false, errors.New("Google model request interrupted or unavailable")
 	}
 	defer res.Body.Close()
 	record.RequestStatus = "received"
 	if res.StatusCode != http.StatusOK {
-		if accessErr := llmguard.ModelAccessError(res, "Google"); accessErr != nil {
-			return response, true, accessErr
+		if c.BYOKProviderLabel != "" {
+			if accessErr := llmguard.ModelAccessError(res, c.BYOKProviderLabel); accessErr != nil {
+				return response, true, 0, false, accessErr
+			}
 		}
 		if (res.StatusCode == http.StatusBadRequest || res.StatusCode == http.StatusRequestEntityTooLarge) && contextview.Refusal(res.Body) {
-			return response, true, contextview.ErrOverflow
+			return response, true, 0, false, contextview.ErrOverflow
 		}
-		return response, true, fmt.Errorf("Google model returned HTTP %d", res.StatusCode)
+		return response, true, 0, false, fmt.Errorf("Google model returned HTTP %d", res.StatusCode)
 	}
 	if json.NewDecoder(io.LimitReader(res.Body, 2<<20)).Decode(&response) != nil {
-		return response, true, errors.New("Google model returned an unreadable response")
+		return response, true, 0, false, errors.New("Google model returned an unreadable response")
 	}
 	if response.Usage != nil {
 		record.InputTokens = response.Usage.Input
 		record.OutputTokens = response.Usage.Output
 		record.TotalTokens = response.Usage.Total
+		cached := response.Usage.InputDetails.Cached
+		record.CachedTokens = &cached
+		if usage.RecordReportedCost(&record, response.Usage.Cost) {
+			cost, costKnown = *response.Usage.Cost, true
+		} else if response.Usage.Input != nil && response.Usage.Output != nil {
+			reasoning := response.Usage.OutputDetails.Reasoning
+			separateReasoning := response.Usage.Total != nil && reasoning > 0 &&
+				*response.Usage.Total == *response.Usage.Input+*response.Usage.Output+reasoning
+			for _, candidate := range []string{strings.TrimSpace(response.Model), strings.TrimSpace(c.ModelName)} {
+				if candidate == "" {
+					continue
+				}
+				var calc float64
+				var calcErr error
+				if separateReasoning {
+					calc, calcErr = usage.GoogleCostWithReasoning(candidate, *response.Usage.Input, *response.Usage.Output, reasoning, cached)
+				} else {
+					calc, calcErr = usage.GoogleCost(candidate, *response.Usage.Input, *response.Usage.Output, cached)
+				}
+				if calcErr == nil {
+					record.CostUSD, record.CostStatus = &calc, "calculated"
+					cost, costKnown = calc, true
+					break
+				}
+			}
+		}
+		if costKnown {
+			llmguard.RecordResponseCost(res, cost)
+		}
 	}
-	return response, true, nil
+	return response, true, cost, costKnown, nil
 }
 
 func (c *GoogleClient) Respond(ctx context.Context, req agent.Request) (out agent.Response, err error) {
@@ -161,8 +210,9 @@ func (c *GoogleClient) Respond(ctx context.Context, req agent.Request) (out agen
 	if len(tools) > 0 {
 		fields["tools"] = tools
 	}
-	response, sent, err := c.complete(ctx, fields, maxTokens)
+	response, sent, cost, costKnown, err := c.complete(ctx, fields, maxTokens)
 	out.NotSent = !sent
+	out.Cost, out.CostKnown = cost, costKnown
 	if err != nil {
 		return out, err
 	}
@@ -307,8 +357,8 @@ func (c *GoogleClient) Inspect(ctx context.Context, req agent.InspectRequest) (a
 	if c.DefaultReasoning != "" {
 		fields["reasoning_effort"] = c.DefaultReasoning
 	}
-	response, sent, err := c.complete(ctx, fields, maxTokens)
-	out := agent.Inspection{Sent: sent}
+	response, sent, cost, costKnown, err := c.complete(ctx, fields, maxTokens)
+	out := agent.Inspection{Sent: sent, Cost: cost, CostKnown: costKnown}
 	if err != nil {
 		return out, err
 	}

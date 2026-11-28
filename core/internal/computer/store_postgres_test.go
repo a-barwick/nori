@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"nori/internal/billing"
 	"nori/internal/computer"
 	"nori/internal/computer/fake"
 	"nori/internal/state/postgres"
@@ -90,5 +93,111 @@ func TestPostgresStoreAndAccountDeleteIntegration(t *testing.T) {
 	after, err := store.GetComputer(ctx, userID)
 	if err != nil || after.Status != computer.StatusDeleted {
 		t.Fatalf("after reap = (%+v, %v), want StatusDeleted", after, err)
+	}
+}
+
+func TestPostgresSingleTxAwakeMeteringAndSingleUseToken(t *testing.T) {
+	dsn := os.Getenv("NORI_TEST_POSTGRES_URL")
+	if dsn == "" {
+		t.Skip("NORI_TEST_POSTGRES_URL is unset")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	rawBackend, err := postgres.OpenBackend(ctx, dsn)
+	if err != nil {
+		t.Fatalf("OpenBackend: %v", err)
+	}
+	t.Cleanup(func() { _ = rawBackend.Close() })
+
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	store := computer.NewPostgresStore(pool)
+	bs := billing.NewPostgresStore(pool)
+	bsvc := billing.NewService(bs, false, billing.GlobalBudgetConfig{})
+
+	var clockMu sync.Mutex
+	now := time.Date(2026, 11, 27, 14, 0, 0, 0, time.UTC)
+	nowFn := func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return now
+	}
+	advance := func(d time.Duration) {
+		clockMu.Lock()
+		now = now.Add(d)
+		clockMu.Unlock()
+	}
+	bs.Now = nowFn
+	bsvc.Now = nowFn
+
+	fp := fake.New()
+	fp.Now = nowFn
+	mgr := computer.NewManager(fp, store, computer.Config{
+		RatePerHourUSD: 0.15,
+		IdleAutoSleep:  15 * time.Minute,
+	})
+	mgr.SetClock(nowFn)
+	mgr.SetBilling(bsvc)
+
+	userID := "pg-sprite-" + uuid.NewString()[:8]
+	if _, err := bs.SetTier(ctx, userID, billing.TierStandard, billing.SetTierOptions{}); err != nil {
+		t.Fatalf("SetTier: %v", err)
+	}
+
+	if _, err := mgr.Ensure(ctx, userID); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+
+	// Single-use session token atomicity in Postgres.
+	created, err := mgr.CreateSession(ctx, userID, computer.SessionModeView, "", "")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if _, err := mgr.ConsumeSession(ctx, userID, created.Session.ID, created.RawToken); err != nil {
+		t.Fatalf("ConsumeSession #1: %v", err)
+	}
+	if _, err := mgr.ConsumeSession(ctx, userID, created.Session.ID, created.RawToken); !errors.Is(err, computer.ErrSessionTokenUsed) {
+		t.Fatalf("ConsumeSession replay = %v, want ErrSessionTokenUsed", err)
+	}
+
+	// Advance 12m and race 6 concurrent MeterAwakeTime / Sleep / Janitor calls against Postgres FOR UPDATE.
+	// Exact cost for 12m @ $0.15/hr = $0.03 = 30,000 micros.
+	advance(12 * time.Minute)
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, _ = store.MeterAwakeTime(ctx, computer.MeterAwakeRequest{
+				UserID:         userID,
+				Now:            nowFn(),
+				RatePerHourUSD: 0.15,
+			})
+		}()
+		go func() {
+			defer wg.Done()
+			_ = mgr.Sleep(ctx, userID)
+		}()
+	}
+	wg.Wait()
+
+	bal, err := bs.CreditBalance(ctx, userID)
+	if err != nil {
+		t.Fatalf("CreditBalance: %v", err)
+	}
+	if bal.SpentMicros != 30_000 {
+		t.Fatalf("Postgres spent micros after concurrent metering+Sleep = %d, want exactly 30000", bal.SpentMicros)
+	}
+	gbSprites, err := bs.GetGlobalBudget(ctx, nowFn(), billing.ScopeHostedSprites)
+	if err != nil {
+		t.Fatalf("GetGlobalBudget: %v", err)
+	}
+	if gbSprites.SpentMicros < 30_000 {
+		t.Fatalf("nori_global_budget_daily hosted_sprites = %d, want >= 30000", gbSprites.SpentMicros)
 	}
 }

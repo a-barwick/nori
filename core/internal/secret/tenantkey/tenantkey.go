@@ -12,6 +12,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,7 +27,9 @@ const (
 	// PrimaryKeyID is the resource ID of the user's active DEK row.
 	PrimaryKeyID = "primary"
 	// DefaultCacheTTL is the default TTL for process-wide shared DEK caching.
-	DefaultCacheTTL = 5 * time.Second
+	// Cross-instance LISTEN nori_wake ('entitlement:<uid>') immediately evicts cached DEKs
+	// on key deletion, reset, or account suspension.
+	DefaultCacheTTL = 10 * time.Minute
 
 	dekBytes = 32
 )
@@ -117,21 +120,25 @@ func (c *Cache) put(owner string, dek []byte, aead cipher.AEAD, now time.Time) {
 	c.mu.Unlock()
 }
 
-// Evict immediately zeroes and removes the cached DEK for owner.
+// Evict immediately zeroes and removes cached DEKs for owner (matching both
+// exact scope keys and reset-scoped "<userID>/<resetAt>" keys).
 func (c *Cache) Evict(owner string) {
 	if c == nil || owner == "" {
 		return
 	}
+	prefix := owner + "/"
 	c.mu.Lock()
-	if entry, ok := c.entries[owner]; ok {
-		clear(entry.dek)
-		delete(c.entries, owner)
+	for k, entry := range c.entries {
+		if k == owner || strings.HasPrefix(k, prefix) {
+			clear(entry.dek)
+			delete(c.entries, k)
+		}
 	}
 	c.mu.Unlock()
 }
 
-// Close zeroes and removes all cached DEKs.
-func (c *Cache) Close() {
+// EvictAll immediately zeroes and removes all cached DEKs.
+func (c *Cache) EvictAll() {
 	if c == nil {
 		return
 	}
@@ -141,6 +148,11 @@ func (c *Cache) Close() {
 		delete(c.entries, owner)
 	}
 	c.mu.Unlock()
+}
+
+// Close zeroes and removes all cached DEKs.
+func (c *Cache) Close() {
+	c.EvictAll()
 }
 
 // Manager seals and opens tenant-scoped payloads using a per-user 256-bit DEK

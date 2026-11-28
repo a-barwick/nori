@@ -39,6 +39,7 @@ var eventNames = map[string]bool{
 	"conversation.accepted": true, "conversation.completed": true, "conversation.failed": true,
 	"model.call.completed": true, "model.call.failed": true, "task.completed": true,
 	"task.failed": true, "task.tool.completed": true, "task.tool.failed": true,
+	"usage.recorded": true,
 }
 
 var metricNames = map[string]bool{
@@ -47,6 +48,7 @@ var metricNames = map[string]bool{
 	"nori.model.cache_read_tokens": true, "nori.model.cache_write_tokens": true,
 	"nori.model.cache_hit_ratio": true, "nori.model.cost_usd": true,
 	"nori.model.duration_ms": true, "nori.task.duration_ms": true, "nori.conversation.reply_latency_ms": true,
+	"nori.usage.cost_usd": true,
 }
 
 func Event(ctx context.Context, name string, attrs ...attribute.KeyValue) {
@@ -97,7 +99,26 @@ func Event(ctx context.Context, name string, attrs ...attribute.KeyValue) {
 var metricDimensions = map[string]bool{
 	"gen_ai.provider.name": true, "gen_ai.request.model": true, "http.route": true,
 	"http.response.status_code": true, "nori.task.status": true, "nori.reply.status": true,
-	"nori.metric.sampled": true,
+	"nori.metric.sampled": true, "nori.usage.billing": true, "nori.usage.category": true,
+}
+
+// RecordUsage emits the allowlisted usage.recorded structured event and nori.usage.cost_usd metric.
+func RecordUsage(ctx context.Context, provider, model, billingMode, category, costStatus, requestStatus string, costUSD float64) {
+	attrs := []attribute.KeyValue{
+		attribute.String("nori.usage.provider", provider),
+		attribute.String("nori.usage.model", model),
+		attribute.String("nori.usage.billing", billingMode),
+		attribute.String("nori.usage.category", category),
+		attribute.String("nori.cost.status", costStatus),
+		attribute.String("nori.usage.request_status", requestStatus),
+	}
+	if !math.IsNaN(costUSD) && !math.IsInf(costUSD, 0) && costUSD >= 0 {
+		attrs = append(attrs, attribute.Float64("nori.cost.usd", costUSD))
+	}
+	Event(ctx, "usage.recorded", attrs...)
+	if !math.IsNaN(costUSD) && !math.IsInf(costUSD, 0) && costUSD >= 0 {
+		Metric(ctx, "nori.usage.cost_usd", costUSD)
+	}
 }
 
 func Metric(ctx context.Context, name string, value float64) {

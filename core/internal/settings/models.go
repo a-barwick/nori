@@ -21,9 +21,48 @@ const (
 	DefaultOpenRouterInnerModel = "google/gemini-4-hydrogen"
 	DefaultGatewayOuterModel    = "google/gemini-4-neon"
 	DefaultGatewayInnerModel    = "google/gemini-4-hydrogen"
+	DefaultHostedOuterModel     = DefaultGatewayOuterModel
+	DefaultHostedInnerModel     = DefaultGatewayInnerModel
 	DefaultAnthropicOuterModel  = "claude-opus-5.5"
 	DefaultAnthropicInnerModel  = "claude-haiku-5.5"
 )
+
+// hostedModelAllowlist lists the exact known-tariff routed models permitted on
+// Nori's platform-hosted Vercel AI Gateway. Any model outside this list fails
+// closed so unpriced hosted models can never be silently charged $0.
+var hostedModelAllowlist = []string{
+	"openai/gpt-6.2-sol",
+	"openai/gpt-6.1-terra",
+	"openai/gpt-6-luna",
+	"anthropic/claude-opus-5.5",
+	"anthropic/claude-sonnet-5.5",
+	"anthropic/claude-haiku-5.5",
+	"google/gemini-4-carbon",
+	"google/gemini-4-neon",
+	"google/gemini-4-hydrogen",
+}
+
+var hostedModelAllowSet = func() map[string]bool {
+	m := make(map[string]bool, len(hostedModelAllowlist))
+	for _, model := range hostedModelAllowlist {
+		m[model] = true
+	}
+	return m
+}()
+
+// HostedModelAllowlist returns a copy of the exact model IDs allowed for
+// platform-hosted inference.
+func HostedModelAllowlist() []string {
+	out := make([]string, len(hostedModelAllowlist))
+	copy(out, hostedModelAllowlist)
+	return out
+}
+
+// IsHostedModelAllowed reports whether model is on the strict known-tariff
+// platform-hosted allowlist.
+func IsHostedModelAllowed(model string) bool {
+	return hostedModelAllowSet[strings.ToLower(strings.TrimSpace(model))]
+}
 
 func ValidModelProvider(p string) bool {
 	switch p {

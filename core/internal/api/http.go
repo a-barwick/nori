@@ -117,6 +117,11 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 }
 
 func writeError(w http.ResponseWriter, err error) {
+	if bStatus, bCode, bMsg, ok := billingErrorDetails(err); ok {
+		slog.Warn("request failed", "status", bStatus, "code", bCode, "err", err)
+		writeJSON(w, bStatus, map[string]string{"error": bMsg, "code": bCode})
+		return
+	}
 	status := 502
 	switch {
 	case errors.Is(err, state.ErrUploadType):

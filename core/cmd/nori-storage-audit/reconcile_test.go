@@ -196,3 +196,81 @@ func TestReconcileEnforcesCrossUserPrefixIsolation(t *testing.T) {
 		t.Fatalf("must never delete foreign user's object, deleted %v", store.deleted)
 	}
 }
+
+type fakeFullRefs struct {
+	*fakeRefs
+	expiredKeys  map[string][]string
+	expiredBytes map[string]int64
+	storedQuota  map[string]int64
+}
+
+func (f *fakeFullRefs) ExpireUnattachedUploads(_ context.Context, user users.User, _ time.Time, _ bool) ([]string, int64, error) {
+	return f.expiredKeys[user.ID], f.expiredBytes[user.ID], nil
+}
+
+func (f *fakeFullRefs) ReconcileUserStorageBytes(_ context.Context, user users.User, actual int64) (int64, error) {
+	prev := f.storedQuota[user.ID]
+	f.storedQuota[user.ID] = actual
+	return prev, nil
+}
+
+func TestReconcileExpiresUnattachedUploadsAndReconcilesQuota(t *testing.T) {
+	now := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	alice := users.User{ID: "11111111-1111-4111-8111-111111111111", Email: "alice@example.com", TimeZone: "UTC"}
+	prefix := "artifacts/users/" + alice.ID + "/"
+
+	refs := &fakeFullRefs{
+		fakeRefs: &fakeRefs{
+			users: []users.User{alice},
+			snapshots: map[string]UserSnapshot{
+				alice.ID: {
+					ReferencedKeys: map[string]struct{}{
+						"uploads/11111111-1111-4111-8111-111111111111": {}, // retained
+						"uploads/22222222-2222-4222-8222-222222222222": {}, // >24h unattached, to expire
+					},
+				},
+			},
+		},
+		expiredKeys: map[string][]string{
+			alice.ID: {"uploads/22222222-2222-4222-8222-222222222222"},
+		},
+		expiredBytes: map[string]int64{
+			alice.ID: 4000,
+		},
+		storedQuota: map[string]int64{
+			alice.ID: 9999, // drifted quota
+		},
+	}
+	store := &fakeObjectStore{
+		byPrefix: map[string][]Object{
+			prefix: {
+				{Name: prefix + "uploads/11111111-1111-4111-8111-111111111111", Generation: "1", Size: 1500, Updated: now.Add(-48 * time.Hour)},
+				{Name: prefix + "uploads/22222222-2222-4222-8222-222222222222", Generation: "2", Size: 4000, Updated: now.Add(-25 * time.Hour)},
+			},
+		},
+	}
+
+	report, err := Reconcile(context.Background(), refs, store, Options{
+		Bucket:           "nori-bucket",
+		GraceWindow:      24 * time.Hour,
+		UnattachedTTL:    24 * time.Hour,
+		ExpireUnattached: true,
+		ReconcileQuotas:  true,
+		Delete:           true,
+		Confirm:          true,
+		MaxDelete:        10,
+		Now:              func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if report.ExpiredUploadsCount != 1 || report.ExpiredUploadsBytes != 4000 {
+		t.Fatalf("expired=%d/%d, want 1/4000", report.ExpiredUploadsCount, report.ExpiredUploadsBytes)
+	}
+	if report.DeletedCount != 1 || report.DeletedBytes != 4000 {
+		t.Fatalf("deleted=%d/%d, want 1/4000", report.DeletedCount, report.DeletedBytes)
+	}
+	if report.QuotasReconciled != 1 || refs.storedQuota[alice.ID] != 1500 {
+		t.Fatalf("quota=%d (reconciled=%d), want 1500 (reconciled=1)", refs.storedQuota[alice.ID], report.QuotasReconciled)
+	}
+}

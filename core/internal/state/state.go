@@ -60,11 +60,23 @@ type Artifact struct {
 	Kind string `json:"kind" firestore:"kind"`
 }
 
+const (
+	UsageBillingHosted = "hosted"
+	UsageBillingBYOK   = "byok"
+	UsageBillingLocal  = "local"
+
+	UsageCategoryLLM      = "llm"
+	UsageCategorySearch   = "search"
+	UsageCategoryComputer = "computer"
+)
+
 type Usage struct {
 	ID                   string    `json:"id" firestore:"id"`
 	InputID              string    `json:"input_id" firestore:"input_id"`
 	Provider             string    `json:"provider" firestore:"provider"`
 	Model                string    `json:"model" firestore:"model"`
+	Billing              string    `json:"billing,omitempty" firestore:"billing,omitempty"`
+	Category             string    `json:"category,omitempty" firestore:"category,omitempty"`
 	InputTokens          *int64    `json:"input_tokens,omitempty" firestore:"input_tokens,omitempty"`
 	OutputTokens         *int64    `json:"output_tokens,omitempty" firestore:"output_tokens,omitempty"`
 	TotalTokens          *int64    `json:"total_tokens,omitempty" firestore:"total_tokens,omitempty"`

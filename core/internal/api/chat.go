@@ -11,17 +11,19 @@ import (
 const ChatContract = "nori-chat-2"
 
 type capabilitiesView struct {
-	Contract             string            `json:"contract"`
-	ConversationContract string            `json:"conversationContract,omitempty"`
-	Service              string            `json:"service"`
-	Persistence          string            `json:"persistence,omitempty"`
-	Provider             string            `json:"provider,omitempty"`
-	Model                string            `json:"model,omitempty"`
-	ConversationModes    []string          `json:"conversationModes"`
-	Features             map[string]bool   `json:"features"`
-	AssistantContract    string            `json:"assistant_contract,omitempty"`
-	AssistantFeatures    map[string]bool   `json:"assistant_features,omitempty"`
-	UploadAccept         *uploadAcceptView `json:"upload_accept,omitempty"`
+	Contract             string                   `json:"contract"`
+	ConversationContract string                   `json:"conversationContract,omitempty"`
+	Service              string                   `json:"service"`
+	Persistence          string                   `json:"persistence,omitempty"`
+	Provider             string                   `json:"provider,omitempty"`
+	Model                string                   `json:"model,omitempty"`
+	ConversationModes    []string                 `json:"conversationModes"`
+	Features             map[string]bool          `json:"features"`
+	AssistantContract    string                   `json:"assistant_contract,omitempty"`
+	AssistantFeatures    map[string]bool          `json:"assistant_features,omitempty"`
+	UploadAccept         *uploadAcceptView        `json:"upload_accept,omitempty"`
+	Entitlement          *capabilitiesEntitlement `json:"entitlement,omitempty"`
+	ServiceKeys          *capabilitiesServiceKeys `json:"service_keys,omitempty"`
 }
 
 func (s *server) capabilities(w http.ResponseWriter, r *http.Request) {
@@ -42,6 +44,8 @@ func (s *server) capabilities(w http.ResponseWriter, r *http.Request) {
 		body.AssistantFeatures = s.Assistant.Features
 		accepted := uploadAccept()
 		body.UploadAccept = &accepted
+		body.Entitlement = s.Assistant.buildCapabilitiesEntitlement(r.Context())
+		body.ServiceKeys = s.Assistant.buildCapabilitiesServiceKeys(r.Context())
 	}
 	writeJSON(w, 200, body)
 }
@@ -109,6 +113,12 @@ func (s *server) assistantConversationMessage(w http.ResponseWriter, r *http.Req
 			return
 		}
 	}
+	if s.Assistant != nil {
+		if _, _, err := s.Assistant.checkActiveAccess(r.Context()); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
 	sel, ok := s.resolveModelSelection(w, body.Model)
 	if !ok {
 		return
@@ -154,6 +164,12 @@ func (s *server) assistantConversationRetry(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		writeJSON(w, 400, map[string]string{"error": "Invalid turn or message ID."})
 		return
+	}
+	if s.Assistant != nil {
+		if _, _, err := s.Assistant.checkActiveAccess(r.Context()); err != nil {
+			writeError(w, err)
+			return
+		}
 	}
 	session, err := s.Runner.Retry(r.Context(), turnID, messageID)
 	if err != nil {
