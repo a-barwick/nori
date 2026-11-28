@@ -183,7 +183,7 @@ func runBillingTrackAConformanceSuite(t *testing.T, backend docstore.Backend, pr
 			t.Fatalf("pre-exhaustion BYOK = %v, want ErrBYOKNotAllowed", err)
 		}
 		if err := meter.RecordUsage(ctx, state.Usage{
-			ID: "trial-local-pre", Provider: "home", Model: "inkling-mini-2",
+			ID: "trial-local-pre", Provider: "home", Model: "inkling-2-mini",
 			Billing: state.UsageBillingLocal, Category: state.UsageCategoryLLM,
 			CostStatus: "local", RequestStatus: "pending", CreatedAt: nowFn(),
 		}); !errors.Is(err, billing.ErrBYOKNotAllowed) {
@@ -225,7 +225,7 @@ func runBillingTrackAConformanceSuite(t *testing.T, backend docstore.Backend, pr
 			t.Fatalf("post-exhaustion BYOK = %v, want ErrBYOKNotAllowed", err)
 		}
 		if err := meter.RecordUsage(ctx, state.Usage{
-			ID: "trial-local-post", Provider: "home", Model: "inkling-mini-2",
+			ID: "trial-local-post", Provider: "home", Model: "inkling-2-mini",
 			Billing: state.UsageBillingLocal, Category: state.UsageCategoryLLM,
 			CostStatus: "local", RequestStatus: "pending", CreatedAt: nowFn(),
 		}); !errors.Is(err, billing.ErrBYOKNotAllowed) {

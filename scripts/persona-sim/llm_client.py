@@ -16,7 +16,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_LOCAL_MODEL = "inkling-mini-2"
+DEFAULT_LOCAL_MODEL = "inkling-2-mini"
 
 RAW_PROVIDER_KEY_VARS: tuple[str, ...] = (
     "OPENAI_API_KEY",
@@ -231,18 +231,14 @@ class LLMClient:
         }
         if self.scope:
             headers["X-Nori-Scope"] = self.scope
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers=headers,
-            method="POST",
-        )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            err_body = exc.read().decode("utf-8", errors="replace")[:500]
-            raise RuntimeError(f"LLM API {exc.code}: {err_body}") from exc
+            data = self._post(url, payload, headers)
+        except _StructuredOutputUnavailable:
+            # Some local models (Inkling 2 Mini on Ollama) reject JSON mode with a 501.
+            # Retry with the instruction in the prompt, as core's home connector does.
+            payload.pop("response_format", None)
+            payload["messages"].append({"role": "system", "content": "Return only a JSON object."})
+            data = self._post(url, payload, headers)
 
         choices = data.get("choices") or []
         if not choices:
@@ -257,6 +253,29 @@ class LLMClient:
                 lines = lines[:-1]
             content = "\n".join(lines).strip()
         return json.loads(content)
+
+    def _post(self, url: str, payload: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            err_body = exc.read().decode("utf-8", errors="replace")[:500]
+            if exc.code == 501 and "response_format" in payload and _STRUCTURED_OUTPUT_UNAVAILABLE in err_body:
+                raise _StructuredOutputUnavailable() from exc
+            raise RuntimeError(f"LLM API {exc.code}: {err_body}") from exc
+
+
+_STRUCTURED_OUTPUT_UNAVAILABLE = "structured output is unavailable"
+
+
+class _StructuredOutputUnavailable(Exception):
+    """The local model server does not support response_format (JSON mode)."""
 
 
 _POLITE_CLOSING_OFFER_RE = re.compile(

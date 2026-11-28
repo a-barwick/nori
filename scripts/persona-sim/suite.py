@@ -460,7 +460,7 @@ def resolve_suite_env(
     if not local_url:
         raise SystemExit(
             "[suite] ABORT: persona-sim requires --stub-models or a local loopback model URL "
-            "(NORI_LOCAL_MODEL_URL=http://127.0.0.1:11434, NORI_LOCAL_MODEL_TAG=inkling-mini-2). "
+            "(NORI_LOCAL_MODEL_URL=http://127.0.0.1:11434, NORI_LOCAL_MODEL_TAG=inkling-2-mini). "
             "Operator cloud-LLM API keys are not used."
         )
     if not is_loopback_http_url(local_url):

@@ -356,7 +356,7 @@ func TestDST_BillingTrialCutoffAndBYOKHomeAIBlock(t *testing.T) {
 			t.Fatalf("[%s] BYOK admission err = %v, want ErrBYOKNotAllowed", phase, err)
 		}
 		if err := meter.RecordUsage(ctx, state.Usage{
-			ID: "home-" + phase, Provider: "home", Model: "inkling-mini-2",
+			ID: "home-" + phase, Provider: "home", Model: "inkling-2-mini",
 			Billing: state.UsageBillingLocal, Category: state.UsageCategoryLLM,
 			CostStatus: "local", RequestStatus: "pending", CreatedAt: clock.Now(),
 		}); !errors.Is(err, billing.ErrBYOKNotAllowed) {
