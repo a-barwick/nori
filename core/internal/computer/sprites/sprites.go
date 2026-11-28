@@ -175,7 +175,7 @@ func (p *Provider) Ensure(ctx context.Context, spec computer.Spec) (computer.Ins
 		if spec.CurrentBootstrapVersion != vmscripts.Version {
 			needsBootstrap = true
 		} else {
-			checkCmd := fmt.Sprintf(`[ -f /home/nori/.nori/bootstrap-%s.done ] && [ -x /home/nori/.nori/bin/nori-desktop-start ] && [ -x /home/nori/.nori/bin/nori-browser ] && [ -x /home/nori/.nori/bin/nori-watchdog ]`, vmscripts.Version)
+			checkCmd := fmt.Sprintf(`[ -f /home/nori/.nori/bootstrap-%s.done ] && [ -x /home/nori/.nori/bin/nori-desktop-start ] && [ -x /home/nori/.nori/bin/nori-desktop-gate ] && [ -x /home/nori/.nori/bin/nori-browser ] && [ -x /home/nori/.nori/bin/nori-watchdog ]`, vmscripts.Version)
 			res, checkErr := p.exec(ctx, name, computer.ExecRequest{
 				Command: checkCmd,
 				WorkDir: computer.HomeDir,
@@ -215,17 +215,31 @@ func (p *Provider) Ensure(ctx context.Context, spec computer.Spec) (computer.Ins
 func (p *Provider) ensureCanonicalHome(ctx context.Context, providerID string) error {
 	// Fly Sprites boot as OS user "sprite" with /home/sprite. Symlink /home/nori -> /home/sprite
 	// so HOME, /etc/passwd, computer_files, and interactive desktop terminals share one directory.
-	// If an older bootstrap created a real /home/nori directory, merge its contents into /home/sprite first.
+	// If an older bootstrap created a real /home/nori directory, serialize under flock, stop
+	// running desktop daemons so SQLite profiles aren't copied mid-write, merge into /home/sprite,
+	// and retain the backup directory so any stray process CWDs stay valid.
 	const cmd = `set -euo pipefail
+exec 9>/tmp/nori-home-migrate.lock
+flock 9
 if [ "$(id -un)" = "sprite" ] && [ -d /home/sprite ] && [ ! -L /home/nori ]; then
   SUDO=""
   if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then SUDO="sudo"; fi
   if [ -d /home/nori ]; then
+    /home/nori/.nori/bin/nori-browser close >/dev/null 2>&1 || true
+    sleep 0.5
+    for wpid in $(pgrep -f "[w]ebsockify" 2>/dev/null || true); do pkill -9 -P "$wpid" >/dev/null 2>&1 || true; done
+    pkill -f "[w]ebsockify" >/dev/null 2>&1 || true
+    pkill -x x11vnc >/dev/null 2>&1 || true
+    pkill -f "[d]esktop-gate" >/dev/null 2>&1 || true
+    pkill -f "/home/nori/.nori/[d]esktop.token" >/dev/null 2>&1 || true
+    pkill -x fluxbox >/dev/null 2>&1 || true
+    pkill -x Xvfb >/dev/null 2>&1 || true
+    pkill -f "[n]ori-watchdog" >/dev/null 2>&1 || true
+    pkill -f "[r]emote-debugging-port=" >/dev/null 2>&1 || true
     cp -an /home/nori/. /home/sprite/
     bak="/home/.nori-migrate-$$"
     ${SUDO} mv /home/nori "${bak}"
     ${SUDO} ln -s /home/sprite /home/nori
-    ${SUDO} rm -rf "${bak}"
   else
     ${SUDO} ln -s /home/sprite /home/nori
   fi
@@ -233,7 +247,7 @@ fi`
 	res, err := p.exec(ctx, providerID, computer.ExecRequest{
 		Command: cmd,
 		WorkDir: "/",
-		Timeout: 30 * time.Second,
+		Timeout: 2 * time.Minute,
 	})
 	if err != nil {
 		return fmt.Errorf("link /home/nori on sprite %s: %w", providerID, err)
@@ -255,6 +269,7 @@ func (p *Provider) installScriptsAndBootstrap(ctx context.Context, providerID st
 	}{
 		{"/home/nori/.nori/bootstrap.sh", vmscripts.BootstrapSH, 0o755},
 		{"/home/nori/.nori/bin/nori-desktop-start", vmscripts.DesktopStartSH, 0o755},
+		{"/home/nori/.nori/bin/nori-desktop-gate", vmscripts.DesktopGateJS, 0o755},
 		{"/home/nori/.nori/bin/nori-browser", vmscripts.BrowserJS, 0o755},
 		{"/home/nori/.nori/bin/nori-watchdog", vmscripts.WatchdogSH, 0o755},
 	}
@@ -672,7 +687,7 @@ func (p *Provider) Sleep(ctx context.Context, providerID string) error {
 	// Sprites auto-sleep when no active exec or HTTP/WS services hold the machine awake.
 	// Closing Chromium via CDP commits session cookies cleanly before stopping desktop daemons.
 	_, err := p.Exec(ctx, providerID, computer.ExecRequest{
-		Command: `nori-browser close >/dev/null 2>&1 || true; sleep 1; pkill -f "[w]ebsockify" >/dev/null 2>&1 || true; pkill -x x11vnc >/dev/null 2>&1 || true; pkill -f "[d]esktop-gate" >/dev/null 2>&1 || true; pkill -x fluxbox >/dev/null 2>&1 || true; pkill -x Xvfb >/dev/null 2>&1 || true; pkill -f "[n]ori-watchdog" >/dev/null 2>&1 || true`,
+		Command: `nori-browser close >/dev/null 2>&1 || true; sleep 1; for wpid in $(pgrep -f "[w]ebsockify" 2>/dev/null || true); do pkill -9 -P "$wpid" >/dev/null 2>&1 || true; done; pkill -f "[w]ebsockify" >/dev/null 2>&1 || true; pkill -x x11vnc >/dev/null 2>&1 || true; pkill -f "[d]esktop-gate" >/dev/null 2>&1 || true; pkill -f "/home/nori/.nori/[d]esktop.token" >/dev/null 2>&1 || true; pkill -x fluxbox >/dev/null 2>&1 || true; pkill -x Xvfb >/dev/null 2>&1 || true; pkill -f "[n]ori-watchdog" >/dev/null 2>&1 || true`,
 		WorkDir: computer.HomeDir,
 		Timeout: 15 * time.Second,
 	})

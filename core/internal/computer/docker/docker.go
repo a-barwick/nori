@@ -187,6 +187,7 @@ func (p *Provider) ensureScripts(ctx context.Context, providerID string) error {
 		body string
 	}{
 		{"/home/nori/.nori/bin/nori-desktop-start", vmscripts.DesktopStartSH},
+		{"/home/nori/.nori/bin/nori-desktop-gate", vmscripts.DesktopGateJS},
 		{"/home/nori/.nori/bin/nori-browser", vmscripts.BrowserJS},
 		{"/home/nori/.nori/bin/nori-watchdog", vmscripts.WatchdogSH},
 	}
