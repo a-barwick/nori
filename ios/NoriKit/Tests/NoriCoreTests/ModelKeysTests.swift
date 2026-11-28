@@ -270,4 +270,187 @@ struct ModelKeysTests {
         #expect(!store.hasConfiguredModelKey)
         await store.signOut()
     }
+
+    @Test("Decodes ServiceKeysResponse and ServiceKeyStatus fields cleanly")
+    func decodesServiceKeysContract() throws {
+        let json = """
+        {
+          "services": [
+            {
+              "service": "exa",
+              "label": "Exa Web Search",
+              "configured": true,
+              "last4": "77aa",
+              "masked_key": "••••77aa",
+              "source": "byok",
+              "updated_at": "2026-11-28T01:00:00Z",
+              "validated_at": "2026-11-28T01:00:00Z"
+            },
+            {
+              "service": "custom",
+              "label": "",
+              "configured": false,
+              "source": "none"
+            }
+          ]
+        }
+        """
+
+        let decoded = try JSONDecoder().decode(ServiceKeysResponse.self, from: Data(json.utf8))
+        #expect(decoded.services.count == 2)
+
+        let exa = decoded.services[0]
+        #expect(exa.id == "exa")
+        #expect(exa.displayLabel == "Exa Web Search")
+        #expect(exa.configured == true)
+        #expect(exa.maskedKey == "••••77aa")
+        #expect(exa.maskedKeyDisplay == "••••77aa")
+        #expect(exa.source == "byok")
+        #expect(exa.updatedAt == "2026-11-28T01:00:00Z")
+        #expect(exa.validatedAt == "2026-11-28T01:00:00Z")
+
+        let custom = decoded.services[1]
+        #expect(custom.displayLabel == "Custom")
+        #expect(custom.maskedKeyDisplay == nil)
+
+        let emptyDecoded = try JSONDecoder().decode(ServiceKeysResponse.self, from: Data("{}".utf8))
+        #expect(emptyDecoded.services.isEmpty)
+        #expect(emptyDecoded.allowBYOK == nil)
+
+        let saveReq = SaveServiceKeyRequest(apiKey: "exa_live_77aa")
+        let encoded = try JSONEncoder().encode(saveReq)
+        let obj = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        #expect(obj?["api_key"] as? String == "exa_live_77aa")
+    }
+
+    @Test("NoriStore manages BYOK service keys and respects trial allow_byok gating")
+    @MainActor
+    func storeServiceKeyLifecycleAndTrialGating() async throws {
+        let mock = MockNoriTransport()
+        let store = NoriStore(transport: mock, authProvider: AuthTokenProvider(tokenStore: InMemoryTokenStore()))
+        store.authState = .signedIn(email: "byok@example.com")
+
+        await mock.setCapabilities(
+            Capabilities(
+                entitlement: CapabilitiesEntitlement(
+                    tier: "trial",
+                    status: "active",
+                    allowBYOK: false,
+                    suspended: false,
+                    creditRemainingUSD: 4.5,
+                    creditGrantUSD: 5.0,
+                    storageUsedBytes: 0,
+                    storageLimitBytes: 104_857_600,
+                    maxRoutines: 3,
+                    maxConcurrentTasks: 2,
+                    maxDesktopWs: 1,
+                    maxCheckpoints: 1
+                ),
+                serviceKeys: CapabilitiesServiceKeys(exaConfigured: false, platformExaAvailable: true)
+            )
+        )
+        await store.refreshCapabilities()
+        #expect(store.allowBYOK == false)
+        #expect(store.needsModelKeySetup == false)
+
+        await mock.setNextSaveServiceKeyError(
+            NoriAPIError(message: "", statusCode: 402, code: "byok_not_allowed")
+        )
+        do {
+            _ = try await store.saveServiceKey(service: "exa", apiKey: "exa_trial_1234")
+            Issue.record("Expected 402 byok_not_allowed")
+        } catch let err as NoriAPIError {
+            #expect(err.statusCode == 402)
+            #expect(err.isBYOKNotAllowed)
+            #expect(err.message.contains("paid plans"))
+        }
+
+        await mock.setNextSaveServiceKeyError(nil)
+        await mock.setCapabilities(
+            Capabilities(
+                entitlement: CapabilitiesEntitlement(
+                    tier: "standard",
+                    status: "active",
+                    allowBYOK: true,
+                    suspended: false,
+                    creditRemainingUSD: 10.0,
+                    creditGrantUSD: 10.0,
+                    storageUsedBytes: 0,
+                    storageLimitBytes: 524_288_000,
+                    maxRoutines: 15,
+                    maxConcurrentTasks: 4,
+                    maxDesktopWs: 1,
+                    maxCheckpoints: 3
+                ),
+                serviceKeys: CapabilitiesServiceKeys(exaConfigured: false, platformExaAvailable: true)
+            )
+        )
+        await store.refreshCapabilities()
+        #expect(store.allowBYOK == true)
+
+        try await store.refreshServiceKeysThrowing()
+        #expect(store.serviceKeys.services.first?.configured == false)
+
+        let saved = try await store.saveServiceKey(service: "exa", apiKey: "exa_live_9876")
+        #expect(saved.configured == true)
+        #expect(saved.maskedKeyDisplay == "••••9876")
+        #expect(saved.source == "byok")
+        #expect(store.capabilities?.serviceKeys?.exaConfigured == true)
+
+        let deleted = try await store.deleteServiceKey(service: "exa")
+        #expect(deleted.configured == false)
+        #expect(deleted.source == "platform")
+        #expect(store.capabilities?.serviceKeys?.exaConfigured == false)
+    }
+
+    @Test("Structured 402/403 billing errors enter calm read-only state without signing out")
+    @MainActor
+    func billingAccessErrorsEnterReadOnlyMode() async throws {
+        let exhausted = NoriAPIError(message: "", statusCode: 402, code: "credit_exhausted")
+        #expect(exhausted.isCreditExhausted)
+        #expect(exhausted.isBillingAccessBlock)
+        #expect(!exhausted.isAuthError)
+        #expect(exhausted.message.contains("hosted credits are used up"))
+
+        let inactive = NoriAPIError(message: "Request failed (402).", statusCode: 402, code: "subscription_inactive")
+        #expect(inactive.isSubscriptionInactive)
+        #expect(inactive.isBillingAccessBlock)
+        #expect(inactive.message.contains("subscription is inactive"))
+
+        let byokBlocked = NoriAPIError(message: "", statusCode: 402, code: "byok_not_allowed")
+        #expect(byokBlocked.isBYOKNotAllowed)
+        #expect(!byokBlocked.isBillingAccessBlock)
+        #expect(byokBlocked.message.contains("paid plans"))
+
+        let suspended = NoriAPIError(message: "Account suspended by admin.", statusCode: 403, code: "account_suspended")
+        #expect(suspended.isAccountSuspended)
+        #expect(suspended.isBillingAccessBlock)
+        #expect(!suspended.isAuthError)
+        #expect(suspended.message == "Account suspended by admin.")
+
+        let mock = MockNoriTransport()
+        let store = NoriStore(transport: mock, authProvider: AuthTokenProvider(tokenStore: InMemoryTokenStore()))
+        store.authState = .signedIn(email: "readonly@example.com")
+
+        // 402 credit_exhausted puts store in read-only mode, cleared when user adds a BYOK key
+        await mock.setNextSendTurnError(exhausted)
+        let sentWhileExhausted = await store.sendMessage("Hello")
+        #expect(sentWhileExhausted == false)
+        #expect(store.authState.isSignedIn)
+        #expect(store.isChatReadOnly)
+        #expect(store.activeBillingAccessBlock?.code == .creditExhausted)
+
+        _ = try await store.saveModelKey(provider: "vercel_ai_gateway", apiKey: "vck_live_a1b2")
+        #expect(store.activeBillingAccessBlock == nil)
+        #expect(!store.isChatReadOnly)
+
+        // 403 account_suspended keeps user signed in with read-only banner instead of forcing generic sign-out
+        await mock.setNextSendTurnError(suspended)
+        let sentWhileSuspended = await store.sendMessage("Still there?")
+        #expect(sentWhileSuspended == false)
+        #expect(store.authState.isSignedIn)
+        #expect(store.isChatReadOnly)
+        #expect(store.activeBillingAccessBlock?.code == .accountSuspended)
+        #expect(store.activeBillingAccessBlock?.message == "Account suspended by admin.")
+    }
 }

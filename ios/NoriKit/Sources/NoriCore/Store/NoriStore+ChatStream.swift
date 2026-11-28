@@ -96,7 +96,7 @@ extension NoriStore {
             return
         }
         if snapshot.didLoadCapabilities {
-            self.capabilities = snapshot.capabilities
+            applyCapabilities(snapshot.capabilities)
         }
         self.assistantSummary = nil
         applySession(snapshot.session)
@@ -152,6 +152,9 @@ extension NoriStore {
         if snapshot.didLoadModelKeys {
             self.modelKeys = snapshot.modelKeys
             markRefreshed(.modelKeys)
+        }
+        if snapshot.didLoadServiceKeys {
+            self.serviceKeys = snapshot.serviceKeys
         }
         if hasLoadedPreferences && hasLoadedSession {
             hasLoadedSnapshot = true
@@ -238,15 +241,33 @@ extension NoriStore {
         startChatContextTasks()
     }
 
-    private func refreshCapabilities() async {
+    public func refreshCapabilities() async {
         let generation = sessionGeneration
         do {
             let latest = try await transport.fetchCapabilities()
             guard generation == sessionGeneration, !Task.isCancelled else { return }
-            capabilities = latest
+            applyCapabilities(latest)
         } catch {
             guard generation == sessionGeneration, !Task.isCancelled else { return }
             _ = await handleAuthFailureIfNeeded(error)
+        }
+    }
+
+    func applyCapabilities(_ latest: Capabilities?) {
+        capabilities = latest
+        guard let entitlement = latest?.entitlement else { return }
+        if !entitlement.suspended, billingAccessBlock?.code == .accountSuspended {
+            billingAccessBlock = nil
+        }
+        if !entitlement.isInactive, billingAccessBlock?.code == .subscriptionInactive {
+            billingAccessBlock = nil
+        }
+        if (entitlement.creditRemainingUSD > 0 || entitlement.allowBYOK),
+           billingAccessBlock?.code == .creditExhausted,
+           !entitlement.isTrialCreditsExhausted {
+            if entitlement.creditRemainingUSD > 0 {
+                billingAccessBlock = nil
+            }
         }
     }
 
@@ -524,6 +545,7 @@ extension NoriStore {
             }
             self.session = updated
             modelKeyError = nil
+            billingAccessBlock = nil
             isThinking = updated.conversation?.processing == true || updated.conversation?.pending == true
             finishObservedReplies(in: updated.messages)
             return true

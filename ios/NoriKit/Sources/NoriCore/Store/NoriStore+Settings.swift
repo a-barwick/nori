@@ -248,6 +248,9 @@ extension NoriStore {
             guard generation == sessionGeneration else { throw CancellationError() }
             modelSettings = updated
             modelKeyError = nil
+            if billingAccessBlock?.code == .creditExhausted {
+                billingAccessBlock = nil
+            }
             showToast("Models saved")
         } catch {
             guard generation == sessionGeneration else { throw CancellationError() }
@@ -282,6 +285,9 @@ extension NoriStore {
             guard generation == sessionGeneration else { throw CancellationError() }
             upsertModelKeyProvider(updated)
             modelKeyError = nil
+            if billingAccessBlock?.code == .creditExhausted {
+                billingAccessBlock = nil
+            }
             showToast("\(updated.label) key saved")
             return updated
         } catch {
@@ -318,6 +324,75 @@ extension NoriStore {
             modelKeys.providers[idx] = updated
         } else {
             modelKeys.providers.append(updated)
+        }
+    }
+
+    public func refreshServiceKeysThrowing() async throws {
+        let generation = sessionGeneration
+        do {
+            let latest = try await transport.fetchServiceKeys()
+            guard generation == sessionGeneration else { return }
+            serviceKeys = latest
+        } catch {
+            guard generation == sessionGeneration else { return }
+            if await handleAuthFailureIfNeeded(error) {
+                return
+            }
+            throw error
+        }
+    }
+
+    @discardableResult
+    public func saveServiceKey(service: String, apiKey: String) async throws -> ServiceKeyStatus {
+        let generation = sessionGeneration
+        do {
+            let updated = try await transport.saveServiceKey(service: service, apiKey: apiKey)
+            guard generation == sessionGeneration else { throw CancellationError() }
+            upsertServiceKey(updated)
+            showToast("\(updated.displayLabel) key saved")
+            return updated
+        } catch {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            if await handleAuthFailureIfNeeded(error) {
+                throw error
+            }
+            lastError = error.localizedDescription
+            throw error
+        }
+    }
+
+    @discardableResult
+    public func deleteServiceKey(service: String) async throws -> ServiceKeyStatus {
+        let generation = sessionGeneration
+        do {
+            let updated = try await transport.deleteServiceKey(service: service)
+            guard generation == sessionGeneration else { throw CancellationError() }
+            upsertServiceKey(updated)
+            showToast("\(updated.displayLabel) key removed")
+            return updated
+        } catch {
+            guard generation == sessionGeneration else { throw CancellationError() }
+            if await handleAuthFailureIfNeeded(error) {
+                throw error
+            }
+            lastError = error.localizedDescription
+            throw error
+        }
+    }
+
+    private func upsertServiceKey(_ updated: ServiceKeyStatus) {
+        if let idx = serviceKeys.services.firstIndex(where: { $0.service == updated.service }) {
+            serviceKeys.services[idx] = updated
+        } else {
+            serviceKeys.services.append(updated)
+        }
+        if updated.service == "exa", var caps = capabilities {
+            let platformAvailable = caps.serviceKeys?.platformExaAvailable ?? (updated.source == "platform")
+            caps.serviceKeys = CapabilitiesServiceKeys(
+                exaConfigured: updated.configured,
+                platformExaAvailable: platformAvailable
+            )
+            capabilities = caps
         }
     }
 }

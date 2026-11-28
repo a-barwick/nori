@@ -32,6 +32,16 @@ public struct MoreHubView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
+                if let block = store.activeBillingAccessBlock {
+                    BillingAccessBannerView(block: block, allowBYOK: store.allowBYOK) {
+                        if !block.isSuspended {
+                            NavigationLink("Plan", value: MoreRoute.apiCosts)
+                                .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                        }
+                    }
+                    .padding(.bottom, 12)
+                }
+
                 if store.needsModelKeySetup {
                     NoriNotice(
                         title: "Choose a model to use Nori.",

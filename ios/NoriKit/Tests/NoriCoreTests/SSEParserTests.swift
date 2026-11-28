@@ -89,4 +89,34 @@ struct SSEParserTests {
         let resetFrame = SSEFrame(id: nil, event: "reset", data: #"{"position":55}"#)
         #expect(NoriStreamEvent.decode(from: resetFrame) == .reset(position: 55))
     }
+
+    @Test("SSE reconnect backoff applies bounded randomized jitter and caps at max delay")
+    func sseReconnectBackoffJitter() {
+        // Exact bounds for base=4.0s, jitter=0.25 -> [3.0, 5.0]
+        #expect(SSEReconnectBackoff.jitteredDelay(baseSeconds: 4.0, unitRandom: 0.0) == 3.0)
+        #expect(SSEReconnectBackoff.jitteredDelay(baseSeconds: 4.0, unitRandom: 0.5) == 4.0)
+        #expect(SSEReconnectBackoff.jitteredDelay(baseSeconds: 4.0, unitRandom: 1.0) == 5.0)
+
+        // Max cap respected even at high jitter end
+        #expect(SSEReconnectBackoff.jitteredDelay(baseSeconds: 15.0, unitRandom: 0.0) == 11.25)
+        #expect(SSEReconnectBackoff.jitteredDelay(baseSeconds: 15.0, unitRandom: 1.0) == 15.0)
+        #expect(SSEReconnectBackoff.jitteredDelay(baseSeconds: 60.0, unitRandom: 1.0) == 15.0)
+        #expect(SSEReconnectBackoff.jitteredDelay(baseSeconds: 0.0, unitRandom: 0.5) == 0.0)
+
+        // Exponential progression caps at 15.0s
+        #expect(SSEReconnectBackoff.nextBaseBackoff(currentSeconds: 1.0) == 2.0)
+        #expect(SSEReconnectBackoff.nextBaseBackoff(currentSeconds: 8.0) == 15.0)
+
+        // Rollover delay jitter stays bounded around base
+        let minRollover = SSEReconnectBackoff.jitteredRolloverMilliseconds(baseMilliseconds: 250, unitRandom: 0.0)
+        let maxRollover = SSEReconnectBackoff.jitteredRolloverMilliseconds(baseMilliseconds: 250, unitRandom: 1.0)
+        #expect(minRollover == 188)
+        #expect(maxRollover == 313)
+        #expect(SSEReconnectBackoff.jitteredRolloverMilliseconds(baseMilliseconds: 0, unitRandom: 0.5) == 0)
+
+        // Default system RNG produces bounded non-constant samples across reconnects
+        let samples = (0..<32).map { _ in SSEReconnectBackoff.jitteredDelay(baseSeconds: 4.0) }
+        #expect(samples.allSatisfy { $0 >= 3.0 && $0 <= 5.0 })
+        #expect(Set(samples).count > 1)
+    }
 }

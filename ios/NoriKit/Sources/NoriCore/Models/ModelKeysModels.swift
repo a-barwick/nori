@@ -67,3 +67,47 @@ public struct SaveModelSettingsRequest: Sendable, Codable, Hashable {
         self.expectedRevision = expectedRevision
     }
 }
+
+// MARK: - Service API Keys (BYOK External Services, e.g. Exa)
+
+public typealias ServiceKeyStatus = OpenAPI.ServiceKeyStatus
+public typealias SaveServiceKeyRequest = OpenAPI.SetServiceKeyRequest
+
+extension OpenAPI.ServiceKeyStatus: Identifiable {
+    public var id: String { service }
+
+    public var displayLabel: String {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { return trimmed }
+        if service == "exa" { return "Exa Web Search" }
+        return service.capitalized
+    }
+
+    public var maskedKeyDisplay: String? {
+        guard configured else { return nil }
+        if let maskedKey, !maskedKey.isEmpty { return maskedKey }
+        if let last4, !last4.isEmpty { return "••••\(last4)" }
+        return "Configured"
+    }
+}
+
+public struct ServiceKeysResponse: Sendable, Codable, Hashable {
+    public var allowBYOK: Bool?
+    public var services: [ServiceKeyStatus]
+
+    enum CodingKeys: String, CodingKey {
+        case allowBYOK = "allow_byok"
+        case services
+    }
+
+    public init(allowBYOK: Bool? = nil, services: [ServiceKeyStatus] = []) {
+        self.allowBYOK = allowBYOK
+        self.services = services
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.allowBYOK = try container.decodeIfPresent(Bool.self, forKey: .allowBYOK)
+        self.services = try container.decodeIfPresent([ServiceKeyStatus].self, forKey: .services) ?? []
+    }
+}

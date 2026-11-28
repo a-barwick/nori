@@ -293,4 +293,50 @@ final class ObservabilityTests: XCTestCase {
             XCTAssertTrue(spy.errors.contains { $0.category == "network.decode" && $0.tags["http.route"] == "/v1/capabilities" })
         }
     }
+
+    func testTelemetryQuotaLimiterEnforcesHourlyCapsAndRecoversAfterWindow() {
+        let clockLock = NSLock()
+        nonisolated(unsafe) var currentNow = Date(timeIntervalSince1970: 1_700_000_000)
+        let limiter = NoriTelemetryQuotaLimiter(
+            limits: .init(
+                maxEventsPerHour: 2,
+                maxTransactionsPerHour: 3,
+                maxLogsPerHour: 4,
+                windowSeconds: 3600
+            ),
+            now: { clockLock.withLock { currentNow } }
+        )
+
+        // Events cap at 2/hour
+        XCTAssertTrue(limiter.allowEvent())
+        XCTAssertTrue(limiter.allowEvent())
+        XCTAssertTrue(limiter.isEventCapReached)
+        XCTAssertFalse(limiter.allowEvent())
+
+        // Transactions and logs remain independent of exhausted events
+        XCTAssertTrue(limiter.allowTransaction())
+        XCTAssertTrue(limiter.allowTransaction())
+        XCTAssertTrue(limiter.allowTransaction())
+        XCTAssertFalse(limiter.allowTransaction())
+
+        for _ in 0..<4 {
+            XCTAssertTrue(limiter.allowLog())
+        }
+        XCTAssertTrue(limiter.isLogCapReached)
+        XCTAssertFalse(limiter.allowLog())
+
+        // Still capped 59 minutes later
+        clockLock.withLock { currentNow = currentNow.addingTimeInterval(3540) }
+        XCTAssertFalse(limiter.allowEvent())
+        XCTAssertFalse(limiter.allowTransaction())
+        XCTAssertFalse(limiter.allowLog())
+
+        // Recovers once the 1-hour sliding window passes
+        clockLock.withLock { currentNow = currentNow.addingTimeInterval(61) }
+        XCTAssertFalse(limiter.isEventCapReached)
+        XCTAssertFalse(limiter.isLogCapReached)
+        XCTAssertTrue(limiter.allowEvent())
+        XCTAssertTrue(limiter.allowTransaction())
+        XCTAssertTrue(limiter.allowLog())
+    }
 }

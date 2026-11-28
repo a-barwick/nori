@@ -45,6 +45,9 @@ struct ChatComposerView: View {
             }
         }
         if let apiError = error as? NoriAPIError {
+            if apiError.isBillingAccessBlock || apiError.isBYOKNotAllowed {
+                return apiError.message
+            }
             switch apiError.statusCode {
             case 413:
                 return "That file is too large to upload."
@@ -68,11 +71,15 @@ struct ChatComposerView: View {
         return "Couldn’t upload this file. Please try again."
     }
 
+    private var isComposerDisabled: Bool {
+        store.isLoading || store.isChatReadOnly
+    }
+
     private var canSend: Bool {
         let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasReadyAttachments = draftAttachments.contains { $0.uploaded != nil }
         let anyUploading = draftAttachments.contains { $0.isUploading }
-        return (hasText || hasReadyAttachments) && !anyUploading && !isSending && !store.isLoading
+        return (hasText || hasReadyAttachments) && !anyUploading && !isSending && !isComposerDisabled
     }
 
     var body: some View {
@@ -105,21 +112,21 @@ struct ChatComposerView: View {
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(store.isLoading || isSending ? NoriColors.disabled : NoriColors.ink2)
+                        .foregroundStyle(isComposerDisabled || isSending ? NoriColors.disabled : NoriColors.ink2)
                         .frame(width: 34, height: 34)
                         .background(NoriColors.fill1.opacity(0.001), in: Circle())
                 }
                 .buttonStyle(.plain)
-                .disabled(store.isLoading || isSending)
+                .disabled(isComposerDisabled || isSending)
                 .accessibilityLabel("Attach file or photo")
 
-                TextField("Ask Nori anything…", text: $draft, axis: .vertical)
+                TextField(store.isChatReadOnly ? "Read-only" : "Ask Nori anything…", text: $draft, axis: .vertical)
                     .font(NoriTypography.body)
-                    .foregroundStyle(store.isLoading ? NoriColors.disabled : NoriColors.ink)
+                    .foregroundStyle(isComposerDisabled ? NoriColors.disabled : NoriColors.ink)
                     .tint(NoriColors.accent)
                     .lineLimit(1...5)
                     .focused($isInputFocused)
-                    .disabled(store.isLoading)
+                    .disabled(isComposerDisabled)
                     .padding(.vertical, 7)
                     .padding(.horizontal, 2)
                     .frame(minHeight: 34)

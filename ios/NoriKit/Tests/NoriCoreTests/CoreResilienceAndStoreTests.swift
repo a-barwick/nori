@@ -180,6 +180,150 @@ struct AuthAndLiveTransportTests {
         #expect(response.totals.costUSD == 0.12)
     }
 
+    @Test("Service keys wire endpoints (GET/PUT/DELETE) and 402/403 structured error decoding")
+    func serviceKeysAndBillingErrorWireContract() async throws {
+        let urlSession = StubURLProtocol.makeSession()
+        let provider = makeProvider(session: urlSession)
+        await provider.saveSession(AuthSession(
+            idToken: makeFakeJWT(email: "alex@example.com"),
+            refreshToken: "refresh",
+            expiresAt: Date().addingTimeInterval(3_600),
+            email: "alex@example.com"
+        ))
+        defer { StubURLProtocol.setHandler(nil) }
+
+        let capturedMethods = LockedArray<String>()
+        StubURLProtocol.setHandler { request in
+            let url = try #require(request.url)
+            if url.path == "/api/users/resolve" {
+                return (httpResponse(url: url, statusCode: 200), Data(#"{"id":"usr-1"}"#.utf8))
+            }
+            capturedMethods.append("\(request.httpMethod ?? "GET") \(url.path)")
+            switch (request.httpMethod, url.path) {
+            case ("GET", "/users/usr-1/v1/settings/service-keys"):
+                let json = #"{"services":[{"service":"exa","label":"Exa Web Search","configured":false,"source":"platform"}]}"#
+                return (httpResponse(url: url, statusCode: 200), Data(json.utf8))
+            case ("PUT", "/users/usr-1/v1/settings/service-keys/exa"):
+                let body = try #require(JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any])
+                if body["api_key"] as? String == "trial_blocked" {
+                    return (
+                        httpResponse(url: url, statusCode: 402),
+                        Data(#"{"error":"Bring-your-own API keys require a paid plan.","code":"byok_not_allowed"}"#.utf8)
+                    )
+                }
+                let json = #"{"service":"exa","label":"Exa Web Search","configured":true,"last4":"4321","masked_key":"••••4321","source":"byok","updated_at":"2026-11-28T01:00:00Z","validated_at":"2026-11-28T01:00:00Z"}"#
+                return (httpResponse(url: url, statusCode: 200), Data(json.utf8))
+            case ("DELETE", "/users/usr-1/v1/settings/service-keys/exa"):
+                let json = #"{"service":"exa","label":"Exa Web Search","configured":false,"source":"platform"}"#
+                return (httpResponse(url: url, statusCode: 200), Data(json.utf8))
+            case ("POST", "/users/usr-1/api/turn"):
+                let body = try #require(JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any])
+                switch body["message"] as? String {
+                case "exhausted":
+                    return (httpResponse(url: url, statusCode: 402), Data(#"{"error":"","code":"credit_exhausted"}"#.utf8))
+                case "inactive":
+                    return (httpResponse(url: url, statusCode: 402), Data(#"{"error":"","code":"subscription_inactive"}"#.utf8))
+                default:
+                    return (httpResponse(url: url, statusCode: 403), Data(#"{"error":"Your account has been suspended.","code":"account_suspended"}"#.utf8))
+                }
+            default:
+                return (httpResponse(url: url, statusCode: 404), Data())
+            }
+        }
+
+        let transport = LiveNoriTransport(baseURL: URL(string: "https://nori.test")!, authProvider: provider, urlSession: urlSession)
+
+        let listed = try await transport.fetchServiceKeys()
+        #expect(listed.services.count == 1)
+        #expect(listed.services[0].service == "exa")
+        #expect(listed.services[0].source == "platform")
+
+        do {
+            _ = try await transport.saveServiceKey(service: "exa", apiKey: "trial_blocked")
+            Issue.record("Expected 402 byok_not_allowed")
+        } catch let err as NoriAPIError {
+            #expect(err.statusCode == 402)
+            #expect(err.isBYOKNotAllowed)
+        }
+
+        let saved = try await transport.saveServiceKey(service: "exa", apiKey: "exa_live_4321")
+        #expect(saved.configured == true)
+        #expect(saved.maskedKeyDisplay == "••••4321")
+        #expect(saved.source == "byok")
+
+        let deleted = try await transport.deleteServiceKey(service: "exa")
+        #expect(deleted.configured == false)
+        #expect(deleted.source == "platform")
+
+        do {
+            _ = try await transport.sendTurn(id: "t1", message: "exhausted", attachmentIDs: [])
+            Issue.record("Expected 402 credit_exhausted")
+        } catch let err as NoriAPIError {
+            #expect(err.statusCode == 402)
+            #expect(err.isCreditExhausted)
+            #expect(err.billingAccessBlock?.code == .creditExhausted)
+        }
+
+        do {
+            _ = try await transport.sendTurn(id: "t2", message: "inactive", attachmentIDs: [])
+            Issue.record("Expected 402 subscription_inactive")
+        } catch let err as NoriAPIError {
+            #expect(err.statusCode == 402)
+            #expect(err.isSubscriptionInactive)
+            #expect(err.billingAccessBlock?.code == .subscriptionInactive)
+        }
+
+        do {
+            _ = try await transport.sendTurn(id: "t3", message: "suspended", attachmentIDs: [])
+            Issue.record("Expected 403 account_suspended")
+        } catch let err as NoriAPIError {
+            #expect(err.statusCode == 403)
+            #expect(err.isAccountSuspended)
+            #expect(!err.isAuthError)
+            #expect(err.billingAccessBlock?.code == .accountSuspended)
+        }
+    }
+
+    @Test("SSE preserves 403 account_suspended code and message from server body")
+    func ssePreservesAccountSuspendedCode() async throws {
+        let urlSession = StubURLProtocol.makeSession()
+        let provider = makeProvider(session: urlSession)
+        await provider.saveSession(AuthSession(
+            idToken: "jwt-1",
+            refreshToken: "refresh-1",
+            expiresAt: Date().addingTimeInterval(3600),
+            email: "alex@example.com"
+        ))
+        defer { StubURLProtocol.setHandler(nil) }
+
+        StubURLProtocol.setHandler { req in
+            let url = req.url!
+            if url.path == "/api/users/resolve" {
+                return (httpResponse(url: url, statusCode: 200), Data(#"{"id":"usr-1"}"#.utf8))
+            }
+            return (
+                httpResponse(url: url, statusCode: 403),
+                Data(#"{"error":"Account suspended by admin.","code":"account_suspended"}"#.utf8)
+            )
+        }
+
+        let transport = LiveNoriTransport(
+            baseURL: URL(string: "https://nori.test")!,
+            authProvider: provider,
+            urlSession: urlSession,
+            sseInitialBackoffSeconds: 0.01,
+            sseRolloverDelayMilliseconds: 5
+        )
+        do {
+            for try await _ in transport.eventStream(after: 0) {}
+            Issue.record("Expected 403 account_suspended error")
+        } catch let err as NoriAPIError {
+            #expect(err.statusCode == 403)
+            #expect(err.isAccountSuspended)
+            #expect(err.message == "Account suspended by admin.")
+        }
+    }
+
     @Test("Reset sends confirmation to the authenticated user and accepts an empty response")
     func resetDataWirePayload() async throws {
         let urlSession = StubURLProtocol.makeSession()

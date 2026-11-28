@@ -176,7 +176,8 @@ public struct NoriRootView: View {
                     onOpenDocument: openDocument,
                     onNavigateToNeedsYou: jumpToNeedsYou,
                     onOpenTask: openWorkTask,
-                    onOpenModels: openModels
+                    onOpenModels: openModels,
+                    onOpenUsage: openUsage
                 )
                 .tabItem {
                     NoriMark.tabBarIcon(selected: selectedTab == .chat)
@@ -303,6 +304,12 @@ public struct NoriRootView: View {
         presentedDocument = nil
         selectedTab = .more
         morePath = [.models]
+    }
+
+    private func openUsage() {
+        presentedDocument = nil
+        selectedTab = .more
+        morePath = [.apiCosts]
     }
 
     private func openWorkTask(_ taskID: String) {

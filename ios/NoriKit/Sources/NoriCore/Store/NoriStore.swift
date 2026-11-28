@@ -113,6 +113,7 @@ public final class NoriStore {
     public internal(set) var homeConnectors: HomeConnectorsResponse?
     public internal(set) var computerStatus: ComputerStatus?
     public var modelKeyError: String?
+    public var billingAccessBlock: BillingAccessBlock?
     public internal(set) var dataResetRecoveryRequired = false
     public internal(set) var dataResetStatusRequired = false
     public internal(set) var isResettingData = false
@@ -142,6 +143,7 @@ public final class NoriStore {
     public var preferences: Preferences
     public internal(set) var hasLoadedPreferences = false
     public var modelKeys: ModelKeysResponse
+    public var serviceKeys: ServiceKeysResponse
 
     public var isLoading: Bool = false
     public var isThinking: Bool = false
@@ -265,6 +267,7 @@ public final class NoriStore {
         self.permissions = []
         self.preferences = Preferences()
         self.modelKeys = ModelKeysResponse()
+        self.serviceKeys = ServiceKeysResponse()
     }
 
     var onboardingDoneKey: String? {
@@ -362,12 +365,47 @@ public final class NoriStore {
         min(1.0, Double(coreMemoryUsedBytes) / Double(coreMemoryBudgetBytes))
     }
 
+    public var allowBYOK: Bool {
+        serviceKeys.allowBYOK ?? capabilities?.entitlement?.allowBYOK ?? true
+    }
+
     public var hasConfiguredModelKey: Bool {
         modelKeys.providers.contains(where: \.configured)
     }
 
     public var needsModelKeySetup: Bool {
-        modelKeys.byokRequired && !hasConfiguredModelKey && !hasSelectedHomeChat
+        allowBYOK && modelKeys.byokRequired && !hasConfiguredModelKey && !hasSelectedHomeChat
+    }
+
+    public var activeBillingAccessBlock: BillingAccessBlock? {
+        if let entitlement = capabilities?.entitlement {
+            if entitlement.suspended {
+                let message = billingAccessBlock?.code == .accountSuspended
+                    ? billingAccessBlock!.message
+                    : BillingAccessBlockCode.accountSuspended.defaultMessage
+                return BillingAccessBlock(code: .accountSuspended, message: message)
+            }
+            if entitlement.isInactive {
+                let message = billingAccessBlock?.code == .subscriptionInactive
+                    ? billingAccessBlock!.message
+                    : BillingAccessBlockCode.subscriptionInactive.defaultMessage
+                return BillingAccessBlock(code: .subscriptionInactive, message: message)
+            }
+        }
+        if let billingAccessBlock {
+            return billingAccessBlock
+        }
+        if let entitlement = capabilities?.entitlement, entitlement.isTrialCreditsExhausted {
+            return BillingAccessBlock(
+                code: .creditExhausted,
+                message: "Your trial credits are used up. Upgrade your plan to continue."
+            )
+        }
+        return nil
+    }
+
+    public var isChatReadOnly: Bool {
+        activeBillingAccessBlock != nil
     }
 
     public var hasSelectedHomeChat: Bool {
@@ -411,10 +449,16 @@ public final class NoriStore {
             }()
             _ = await (workTask, libraryTask, automationsTask, computerTask)
         case .more:
+            let shouldRefreshCaps = force || capabilities == nil
             async let summaryTask: Void = refreshSummary(force: force)
             async let modelKeysTask: Void = refreshModelKeys(force: force)
             async let prefsTask: Void = refreshPermissionsAndPreferences(force: force)
-            _ = await (summaryTask, modelKeysTask, prefsTask)
+            async let capsTask: Void = {
+                if shouldRefreshCaps {
+                    await self.refreshCapabilities()
+                }
+            }()
+            _ = await (summaryTask, modelKeysTask, prefsTask, capsTask)
         }
     }
 
@@ -485,6 +529,8 @@ public final class NoriStore {
         preferences = Preferences()
         hasLoadedPreferences = false
         modelKeys = ModelKeysResponse()
+        serviceKeys = ServiceKeysResponse()
+        billingAccessBlock = nil
         isThinking = false
         isLoading = false
         isStreamingAssistant = false
@@ -527,6 +573,13 @@ public final class NoriStore {
             let baselineKnown = hasLoadedPreferences
             enterDataResetRecovery(baseline: baseline, baselineKnown: baselineKnown, confirmed: true)
             _ = try? await refreshDataResetStatus()
+            return true
+        }
+        if let apiErr = error as? NoriAPIError, let block = apiErr.billingAccessBlock {
+            billingAccessBlock = block
+            if block.isSuspended {
+                stopEventStream()
+            }
             return true
         }
         if let apiErr = error as? NoriAPIError, apiErr.isAuthError {

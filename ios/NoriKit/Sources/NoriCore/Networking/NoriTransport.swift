@@ -29,6 +29,8 @@ public struct NoriFullSnapshot: Sendable, Hashable {
     public var didLoadPreferences: Bool
     public var modelKeys: ModelKeysResponse
     public var didLoadModelKeys: Bool
+    public var serviceKeys: ServiceKeysResponse
+    public var didLoadServiceKeys: Bool
     public var partialErrors: [String: String]
 
     public init(
@@ -47,6 +49,7 @@ public struct NoriFullSnapshot: Sendable, Hashable {
         permissions: [PermissionRule] = [],
         preferences: Preferences = Preferences(),
         modelKeys: ModelKeysResponse = ModelKeysResponse(),
+        serviceKeys: ServiceKeysResponse = ServiceKeysResponse(),
         didLoadCapabilities: Bool = true,
         didLoadWorkItems: Bool = true,
         didLoadInteractions: Bool = true,
@@ -60,6 +63,7 @@ public struct NoriFullSnapshot: Sendable, Hashable {
         didLoadPermissions: Bool = true,
         didLoadPreferences: Bool = true,
         didLoadModelKeys: Bool = true,
+        didLoadServiceKeys: Bool = true,
         partialErrors: [String: String] = [:]
     ) {
         self.capabilities = capabilities
@@ -90,6 +94,8 @@ public struct NoriFullSnapshot: Sendable, Hashable {
         self.didLoadPreferences = didLoadPreferences
         self.modelKeys = modelKeys
         self.didLoadModelKeys = didLoadModelKeys
+        self.serviceKeys = serviceKeys
+        self.didLoadServiceKeys = didLoadServiceKeys
         self.partialErrors = partialErrors
     }
 }
@@ -303,6 +309,9 @@ public protocol NoriTransport: Sendable {
     func fetchModelKeys() async throws -> ModelKeysResponse
     func saveModelKey(provider: String, apiKey: String) async throws -> ModelKeyProvider
     func deleteModelKey(provider: String) async throws -> ModelKeyProvider
+    func fetchServiceKeys() async throws -> ServiceKeysResponse
+    func saveServiceKey(service: String, apiKey: String) async throws -> ServiceKeyStatus
+    func deleteServiceKey(service: String) async throws -> ServiceKeyStatus
     func fetchModelSettings() async throws -> ModelSettingsResponse
     func saveModelSettings(_ request: SaveModelSettingsRequest) async throws -> ModelSettingsResponse
     func fetchHomeConnectors() async throws -> HomeConnectorsResponse
@@ -386,6 +395,18 @@ public extension NoriTransport {
 
     func deleteModelKey(provider: String) async throws -> ModelKeyProvider {
         throw NoriAPIError(message: "Model keys are not supported by this transport.")
+    }
+
+    func fetchServiceKeys() async throws -> ServiceKeysResponse {
+        ServiceKeysResponse()
+    }
+
+    func saveServiceKey(service: String, apiKey: String) async throws -> ServiceKeyStatus {
+        throw NoriAPIError(message: "Service keys are not supported by this transport.")
+    }
+
+    func deleteServiceKey(service: String) async throws -> ServiceKeyStatus {
+        throw NoriAPIError(message: "Service keys are not supported by this transport.")
     }
 
     func fetchModelSettings() async throws -> ModelSettingsResponse {

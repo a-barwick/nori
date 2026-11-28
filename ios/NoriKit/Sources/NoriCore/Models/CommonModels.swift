@@ -279,7 +279,40 @@ public struct APIErrorPayload: Sendable, Codable, Hashable {
     }
 }
 
+public enum BillingAccessBlockCode: String, Sendable, Codable, Hashable {
+    case creditExhausted = "credit_exhausted"
+    case subscriptionInactive = "subscription_inactive"
+    case accountSuspended = "account_suspended"
+
+    public var defaultMessage: String {
+        switch self {
+        case .creditExhausted:
+            return "Your hosted credits are used up. Add a provider API key or upgrade your plan to continue."
+        case .subscriptionInactive:
+            return "Your subscription is inactive. Renew your plan to resume chatting and running tasks."
+        case .accountSuspended:
+            return "This account has been suspended. Your history remains read-only."
+        }
+    }
+}
+
+public struct BillingAccessBlock: Sendable, Hashable {
+    public var code: BillingAccessBlockCode
+    public var message: String
+
+    public init(code: BillingAccessBlockCode, message: String) {
+        self.code = code
+        self.message = message
+    }
+
+    public var isSuspended: Bool { code == .accountSuspended }
+    public var isReadOnly: Bool { true }
+}
+
 public struct NoriAPIError: Error, LocalizedError, Sendable, Hashable {
+    public static let byokNotAllowedDefaultMessage =
+        "Bring-your-own API keys are available on paid plans. Your trial includes hosted credits."
+
     public var message: String
     public var statusCode: Int
     public var code: String?
@@ -292,8 +325,50 @@ public struct NoriAPIError: Error, LocalizedError, Sendable, Hashable {
         statusCode == 409 || code == "revision_conflict" || code == "interaction_stale"
     }
 
+    public var isCreditExhausted: Bool {
+        code == BillingAccessBlockCode.creditExhausted.rawValue
+    }
+
+    public var isSubscriptionInactive: Bool {
+        code == BillingAccessBlockCode.subscriptionInactive.rawValue
+    }
+
+    public var isBYOKNotAllowed: Bool {
+        code == "byok_not_allowed"
+    }
+
+    public var isAccountSuspended: Bool {
+        code == BillingAccessBlockCode.accountSuspended.rawValue
+    }
+
+    public var isBillingAccessBlock: Bool {
+        isCreditExhausted || isSubscriptionInactive || isAccountSuspended
+    }
+
+    public var billingAccessBlock: BillingAccessBlock? {
+        guard let code, let blockCode = BillingAccessBlockCode(rawValue: code) else { return nil }
+        return BillingAccessBlock(
+            code: blockCode,
+            message: Self.resolvedBillingMessage(code: code, serverMessage: message) ?? blockCode.defaultMessage
+        )
+    }
+
     public var isAuthError: Bool {
-        statusCode == 401 || statusCode == 403
+        (statusCode == 401 || statusCode == 403) && !isAccountSuspended
+    }
+
+    public static func resolvedBillingMessage(code: String?, serverMessage: String?) -> String? {
+        guard let code else { return nil }
+        let trimmed = serverMessage?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let isGeneric = trimmed.isEmpty
+            || trimmed.range(of: #"^Request failed \(\d+\)\.?$"#, options: .regularExpression) != nil
+        if let blockCode = BillingAccessBlockCode(rawValue: code) {
+            return isGeneric ? blockCode.defaultMessage : trimmed
+        }
+        if code == "byok_not_allowed" {
+            return isGeneric ? byokNotAllowedDefaultMessage : trimmed
+        }
+        return nil
     }
 
     public var errorDescription: String? { message }
@@ -313,7 +388,7 @@ public struct NoriAPIError: Error, LocalizedError, Sendable, Hashable {
         requestID: String? = nil,
         current: AnyJSON? = nil
     ) {
-        self.message = message
+        self.message = Self.resolvedBillingMessage(code: code, serverMessage: message) ?? message
         self.statusCode = statusCode
         self.code = code
         self.retryable = retryable
@@ -519,6 +594,23 @@ public struct ModelSelection: Sendable, Codable, Hashable {
     }
 }
 
+public typealias CapabilitiesEntitlement = OpenAPI.CapabilitiesEntitlement
+public typealias CapabilitiesServiceKeys = OpenAPI.CapabilitiesServiceKeys
+
+public extension OpenAPI.CapabilitiesEntitlement {
+    var tierDisplayName: String {
+        BillingTierLabel.displayName(for: tier)
+    }
+
+    var isInactive: Bool {
+        status == "past_due" || status == "expired"
+    }
+
+    var isTrialCreditsExhausted: Bool {
+        creditGrantUSD > 0 && creditRemainingUSD <= 0 && !allowBYOK
+    }
+}
+
 public struct Capabilities: Sendable, Codable, Hashable {
     public var contract: String
     public var conversationContract: String?
@@ -532,6 +624,8 @@ public struct Capabilities: Sendable, Codable, Hashable {
     public var assistantFeatures: [String: Bool]?
     public var uploadAccept: UploadAccept?
     public var modelProfiles: ModelProfileCatalog?
+    public var entitlement: CapabilitiesEntitlement?
+    public var serviceKeys: CapabilitiesServiceKeys?
 
     enum CodingKeys: String, CodingKey {
         case contract
@@ -546,6 +640,8 @@ public struct Capabilities: Sendable, Codable, Hashable {
         case assistantFeatures = "assistant_features"
         case uploadAccept = "upload_accept"
         case modelProfiles = "model_profiles"
+        case entitlement
+        case serviceKeys = "service_keys"
     }
 
     public init(
@@ -560,7 +656,9 @@ public struct Capabilities: Sendable, Codable, Hashable {
         assistantContract: String? = "nori-assistant-1",
         assistantFeatures: [String: Bool]? = nil,
         uploadAccept: UploadAccept? = nil,
-        modelProfiles: ModelProfileCatalog? = nil
+        modelProfiles: ModelProfileCatalog? = nil,
+        entitlement: CapabilitiesEntitlement? = nil,
+        serviceKeys: CapabilitiesServiceKeys? = nil
     ) {
         self.contract = contract
         self.conversationContract = conversationContract
@@ -574,6 +672,8 @@ public struct Capabilities: Sendable, Codable, Hashable {
         self.assistantFeatures = assistantFeatures
         self.uploadAccept = uploadAccept
         self.modelProfiles = modelProfiles
+        self.entitlement = entitlement
+        self.serviceKeys = serviceKeys
     }
 }
 

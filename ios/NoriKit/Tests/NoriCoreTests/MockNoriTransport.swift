@@ -58,7 +58,20 @@ actor MockNoriTransport: NoriTransport {
             )
         ]
     )
+    var serviceKeysResponse = ServiceKeysResponse(
+        services: [
+            ServiceKeyStatus(
+                service: "exa",
+                label: "Exa Web Search",
+                configured: false,
+                source: "platform"
+            )
+        ]
+    )
+    var mockCapabilities = Capabilities()
     private var nextSaveModelKeyError: Error?
+    private var nextSaveServiceKeyError: Error?
+    private var nextSendTurnError: Error?
     private var models = ModelSettingsResponse(
         modelProfiles: ModelProfileCatalog(),
         selection: ModelSelection(),
@@ -130,6 +143,9 @@ actor MockNoriTransport: NoriTransport {
 
     func setNextDeleteError(_ error: Error?) { nextDeleteError = error }
     func setNextSaveError(_ error: Error?) { nextSaveModelKeyError = error }
+    func setNextSaveServiceKeyError(_ error: Error?) { nextSaveServiceKeyError = error }
+    func setNextSendTurnError(_ error: Error?) { nextSendTurnError = error }
+    func setCapabilities(_ caps: Capabilities) { mockCapabilities = caps }
     func setNextInteractionRespondError(_ error: Error?) { nextInteractionRespondError = error }
     func setFetchedInteraction(_ interaction: Interaction) { fetchedInteractionByID[interaction.id] = interaction }
     func setPermissions(_ rules: [PermissionRule]) { mockPermissions = rules }
@@ -218,7 +234,7 @@ actor MockNoriTransport: NoriTransport {
     // MARK: - NoriTransport
 
     func ping() async -> HealthCheckResult { HealthCheckResult(ok: true, status: "ok", latencyMs: 1) }
-    func fetchCapabilities() async throws -> Capabilities { Capabilities() }
+    func fetchCapabilities() async throws -> Capabilities { mockCapabilities }
 
     func fetchAssistantSummary() async throws -> AssistantSummary {
         fetchSummaryCallCount += 1
@@ -273,6 +289,10 @@ actor MockNoriTransport: NoriTransport {
     }
 
     func sendTurn(id: String, message: String, attachmentIDs: [String], modelSelection: ModelSelection?) async throws -> Session {
+        if let nextSendTurnError {
+            self.nextSendTurnError = nil
+            throw nextSendTurnError
+        }
         if shouldFailSendTurn {
             throw NoriAPIError(message: "Network dropped", statusCode: 503, retryable: true)
         }
@@ -613,6 +633,44 @@ actor MockNoriTransport: NoriTransport {
             validatedAt: nil
         )
         modelKeysResponse.providers = [updated]
+        return updated
+    }
+
+    func fetchServiceKeys() async throws -> ServiceKeysResponse {
+        serviceKeysResponse
+    }
+
+    func saveServiceKey(service: String, apiKey: String) async throws -> ServiceKeyStatus {
+        if let nextSaveServiceKeyError {
+            throw nextSaveServiceKeyError
+        }
+        let suffix = String(apiKey.suffix(4))
+        let updated = ServiceKeyStatus(
+            service: service,
+            label: service == "exa" ? "Exa Web Search" : service.capitalized,
+            configured: true,
+            last4: suffix,
+            maskedKey: "••••\(suffix)",
+            source: "byok",
+            updatedAt: "2026-11-28T01:00:00Z",
+            validatedAt: "2026-11-28T01:00:00Z"
+        )
+        serviceKeysResponse.services = [updated]
+        return updated
+    }
+
+    func deleteServiceKey(service: String) async throws -> ServiceKeyStatus {
+        let updated = ServiceKeyStatus(
+            service: service,
+            label: service == "exa" ? "Exa Web Search" : service.capitalized,
+            configured: false,
+            last4: nil,
+            maskedKey: nil,
+            source: "platform",
+            updatedAt: nil,
+            validatedAt: nil
+        )
+        serviceKeysResponse.services = [updated]
         return updated
     }
 

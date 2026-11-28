@@ -13,6 +13,7 @@ public struct ChatView: View {
     private let onNavigateToNeedsYou: () -> Void
     private let onOpenTask: (String) -> Void
     private let onOpenModels: () -> Void
+    private let onOpenUsage: () -> Void
 
     @State private var retryingMessageIDs: Set<String> = []
     @State private var cancellingReminderIDs: Set<String> = []
@@ -29,7 +30,8 @@ public struct ChatView: View {
         onOpenDocument: @escaping (NoriCore.LibraryItem) -> Void = { _ in },
         onNavigateToNeedsYou: @escaping () -> Void = {},
         onOpenTask: @escaping (String) -> Void = { _ in },
-        onOpenModels: @escaping () -> Void = {}
+        onOpenModels: @escaping () -> Void = {},
+        onOpenUsage: @escaping () -> Void = {}
     ) {
         self.store = store
         self.scrollToBottomTrigger = scrollToBottomTrigger
@@ -38,6 +40,7 @@ public struct ChatView: View {
         self.onNavigateToNeedsYou = onNavigateToNeedsYou
         self.onOpenTask = onOpenTask
         self.onOpenModels = onOpenModels
+        self.onOpenUsage = onOpenUsage
     }
 
     private var effectiveMarkState: MarkState {
@@ -105,7 +108,19 @@ public struct ChatView: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
 
-            if let message = store.modelKeyError {
+            if let block = store.activeBillingAccessBlock {
+                BillingAccessBannerView(block: block, allowBYOK: store.allowBYOK) {
+                    if block.code == .creditExhausted && store.allowBYOK {
+                        Button("Models", action: onOpenModels)
+                            .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                    } else if !block.isSuspended {
+                        Button("Plan", action: onOpenUsage)
+                            .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, 8)
+            } else if let message = store.modelKeyError {
                 NoriNotice(title: "Model key required", detail: message, tone: .warning, systemImage: "key.fill") {
                     Button("Open Models", action: onOpenModels)
                         .buttonStyle(NoriButtonStyle(.quiet, compact: true))

@@ -18,18 +18,39 @@ public struct AccountSettingsView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                if let block = store.activeBillingAccessBlock {
+                    BillingAccessBannerView(block: block, allowBYOK: store.allowBYOK)
+                }
+
                 NoriRows {
                     NoriRow(
                         title: store.authState.email ?? "Signed in",
                         systemImage: "person.crop.circle.fill",
                         iconTone: .accent,
-                        showDivider: false
+                        showDivider: store.capabilities?.entitlement != nil
                     ) {
                         if store.connectionState == .reconnecting {
                             NoriPill("Reconnecting", tone: .warning)
                         } else if store.connectionState == .offline {
                             NoriPill("Offline", tone: .danger)
                         }
+                    }
+
+                    if let entitlement = store.capabilities?.entitlement {
+                        NavigationLink(value: MoreRoute.apiCosts) {
+                            NoriRow(
+                                title: "Plan",
+                                systemImage: "chart.bar",
+                                iconTone: .neutral,
+                                showChevron: true,
+                                showDivider: false
+                            ) {
+                                Text(entitlement.tierDisplayName)
+                                    .font(NoriTypography.meta)
+                                    .foregroundStyle(NoriColors.ink2)
+                            }
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
 

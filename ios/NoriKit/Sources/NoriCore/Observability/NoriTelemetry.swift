@@ -213,6 +213,116 @@ public enum NoriTelemetryRuntime {
     }
 }
 
+// MARK: - Hourly Telemetry Quota Limiter
+
+/// Enforces independent sliding-window hourly caps on Sentry events,
+/// root transactions, and structured logs so a client loop can never flood quota.
+public final class NoriTelemetryQuotaLimiter: @unchecked Sendable {
+    public struct Limits: Sendable, Hashable {
+        public let maxEventsPerHour: Int
+        public let maxTransactionsPerHour: Int
+        public let maxLogsPerHour: Int
+        public let windowSeconds: TimeInterval
+
+        public static let `default` = Limits(
+            maxEventsPerHour: 60,
+            maxTransactionsPerHour: 120,
+            maxLogsPerHour: 300,
+            windowSeconds: 3600
+        )
+
+        public init(
+            maxEventsPerHour: Int = 60,
+            maxTransactionsPerHour: Int = 120,
+            maxLogsPerHour: Int = 300,
+            windowSeconds: TimeInterval = 3600
+        ) {
+            self.maxEventsPerHour = max(0, maxEventsPerHour)
+            self.maxTransactionsPerHour = max(0, maxTransactionsPerHour)
+            self.maxLogsPerHour = max(0, maxLogsPerHour)
+            self.windowSeconds = max(1, windowSeconds)
+        }
+    }
+
+    public let limits: Limits
+    private let lock = NSLock()
+    private let nowProvider: @Sendable () -> Date
+    private var eventTimestamps: [TimeInterval] = []
+    private var transactionTimestamps: [TimeInterval] = []
+    private var logTimestamps: [TimeInterval] = []
+
+    public init(
+        limits: Limits = .default,
+        now: @escaping @Sendable () -> Date = { Date() }
+    ) {
+        self.limits = limits
+        self.nowProvider = now
+    }
+
+    public func allowEvent() -> Bool {
+        allow(in: \.eventTimestamps, limit: limits.maxEventsPerHour)
+    }
+
+    public func allowTransaction() -> Bool {
+        allow(in: \.transactionTimestamps, limit: limits.maxTransactionsPerHour)
+    }
+
+    public func allowLog() -> Bool {
+        allow(in: \.logTimestamps, limit: limits.maxLogsPerHour)
+    }
+
+    public var isEventCapReached: Bool {
+        isAtCap(in: \.eventTimestamps, limit: limits.maxEventsPerHour)
+    }
+
+    public var isLogCapReached: Bool {
+        isAtCap(in: \.logTimestamps, limit: limits.maxLogsPerHour)
+    }
+
+    public func reset() {
+        lock.withLock {
+            eventTimestamps.removeAll()
+            transactionTimestamps.removeAll()
+            logTimestamps.removeAll()
+        }
+    }
+
+    private func allow(
+        in keyPath: ReferenceWritableKeyPath<NoriTelemetryQuotaLimiter, [TimeInterval]>,
+        limit: Int
+    ) -> Bool {
+        guard limit > 0 else { return false }
+        let now = nowProvider().timeIntervalSinceReferenceDate
+        let cutoff = now - limits.windowSeconds
+        return lock.withLock {
+            var list = self[keyPath: keyPath]
+            list.removeAll { $0 <= cutoff }
+            guard list.count < limit else {
+                self[keyPath: keyPath] = list
+                return false
+            }
+            list.append(now)
+            self[keyPath: keyPath] = list
+            return true
+        }
+    }
+
+    private func isAtCap(
+        in keyPath: ReferenceWritableKeyPath<NoriTelemetryQuotaLimiter, [TimeInterval]>,
+        limit: Int
+    ) -> Bool {
+        guard limit > 0 else { return true }
+        let now = nowProvider().timeIntervalSinceReferenceDate
+        let cutoff = now - limits.windowSeconds
+        return lock.withLock {
+            var list = self[keyPath: keyPath]
+            list.removeAll { $0 <= cutoff }
+            self[keyPath: keyPath] = list
+            return list.count >= limit
+        }
+    }
+}
+
 // MARK: - Safe Error Metadata Extraction
 
 public enum NoriErrorDiagnostics {

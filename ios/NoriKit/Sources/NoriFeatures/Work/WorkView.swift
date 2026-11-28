@@ -257,6 +257,11 @@ public struct WorkView: View {
 
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
+                if let block = store.activeBillingAccessBlock {
+                    BillingAccessBannerView(block: block, allowBYOK: store.allowBYOK)
+                        .padding(.bottom, 12)
+                }
+
                 if !visibleApprovals.isEmpty {
                     NoriSectionHeader(actionable.count > 1 ? "Action needed · \(actionable.count)" : "Action needed")
 

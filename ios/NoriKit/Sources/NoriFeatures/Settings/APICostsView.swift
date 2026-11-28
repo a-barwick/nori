@@ -128,6 +128,7 @@ public struct APICostsView: View {
         .refreshable {
             await load()
             await loadPreferences()
+            await store.refreshCapabilities()
         }
         .sheet(isPresented: $showingCostInfo) {
             NavigationStack {
@@ -163,6 +164,9 @@ public struct APICostsView: View {
     @ViewBuilder
     private func costContent(_ response: APICostResponse) -> some View {
         let amount = response.amount(for: selectedModel)
+        if let entitlement = response.entitlement {
+            planCreditsCard(entitlement, timezone: response.timezone)
+        }
         NoriCard {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .top, spacing: 8) {
@@ -276,6 +280,59 @@ public struct APICostsView: View {
             )
         }
 
+        if selectedModel == nil, let byBilling = response.byBilling, byBilling.totalCalls > 0 {
+            VStack(alignment: .leading, spacing: 0) {
+                NoriSectionHeader("By billing")
+                NoriRows {
+                    NoriRow(title: "Hosted", showDivider: true) {
+                        Text(summaryCost(byBilling.hosted))
+                            .font(.system(size: 14.5, weight: .semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(NoriColors.ink)
+                    }
+                    NoriRow(title: "Your API keys", showDivider: true) {
+                        Text(summaryCost(byBilling.byok))
+                            .font(.system(size: 14.5, weight: .semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(NoriColors.ink)
+                    }
+                    let localOnly = byBilling.local.localCalls > 0 && byBilling.local.pricedCalls == 0
+                    NoriRow(title: "Local", showDivider: false) {
+                        Text(localOnly ? "Local" : summaryCost(byBilling.local))
+                            .font(NoriTypography.meta)
+                            .monospacedDigit()
+                            .foregroundStyle(NoriColors.ink2)
+                    }
+                }
+            }
+        }
+
+        if selectedModel == nil, let byCategory = response.byCategory, byCategory.totalCalls > 0 {
+            VStack(alignment: .leading, spacing: 0) {
+                NoriSectionHeader("By category")
+                NoriRows {
+                    NoriRow(title: "Models", showDivider: true) {
+                        Text(summaryCost(byCategory.llm))
+                            .font(.system(size: 14.5, weight: .semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(NoriColors.ink)
+                    }
+                    NoriRow(title: "Web search", showDivider: true) {
+                        Text(summaryCost(byCategory.search))
+                            .font(.system(size: 14.5, weight: .semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(NoriColors.ink)
+                    }
+                    NoriRow(title: "Computer", showDivider: false) {
+                        Text(summaryCost(byCategory.computer))
+                            .font(.system(size: 14.5, weight: .semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(NoriColors.ink)
+                    }
+                }
+            }
+        }
+
         if !response.models.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 NoriSectionHeader("By model")
@@ -315,6 +372,112 @@ public struct APICostsView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func planCreditsCard(_ entitlement: EntitlementCostSummary, timezone: String) -> some View {
+        let exceptionPill = entitlementExceptionPill(entitlement)
+        let grant = max(0, entitlement.creditGrantUSD)
+        let remaining = max(0, entitlement.creditRemainingUSD)
+        let usedRatio = entitlement.creditsUsedRatio
+        let barColor: Color = remaining <= 0 ? NoriColors.danger : usedRatio >= 0.8 ? NoriColors.warning : NoriColors.brandPrimary
+        let periodEndLabel = entitlement.periodEnd.map { formattedDate($0, timezone: timezone) }
+
+        NoriCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Plan")
+                            .font(NoriTypography.metaSemibold)
+                            .foregroundStyle(NoriColors.ink2)
+                        Text(entitlement.tierDisplayName)
+                            .font(NoriTypography.section)
+                            .foregroundStyle(NoriColors.ink)
+                        if let pendingTierName = entitlement.pendingTierDisplayName {
+                            Text("Switching to \(pendingTierName)\(periodEndLabel.map { " on \($0)" } ?? "")")
+                                .font(NoriTypography.caption)
+                                .foregroundStyle(NoriColors.ink3)
+                        }
+                    }
+
+                    Spacer(minLength: 8)
+
+                    VStack(alignment: .trailing, spacing: 4) {
+                        if let exceptionPill {
+                            NoriPill(exceptionPill.label, tone: exceptionPill.tone)
+                        }
+                        if let periodEndLabel, entitlement.pendingTier == nil {
+                            Text(entitlement.status == "canceled" ? "Ends \(periodEndLabel)" : "Resets \(periodEndLabel)")
+                                .font(NoriTypography.caption)
+                                .foregroundStyle(NoriColors.ink3)
+                        }
+                    }
+                }
+
+                if grant > 0 {
+                    VStack(alignment: .leading, spacing: 6) {
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(NoriColors.fill1)
+                                Capsule().fill(barColor).frame(width: geo.size.width * usedRatio)
+                            }
+                        }
+                        .frame(height: 5)
+                        .accessibilityLabel("Hosted credits used, \(Int((usedRatio * 100).rounded())) percent")
+
+                        let pendingSuffix = entitlement.creditPendingUSD > 0
+                            ? " · \(costString(entitlement.creditPendingUSD)) pending"
+                            : ""
+                        Text("\(costString(remaining)) remaining of \(costString(grant)) hosted credits\(pendingSuffix)")
+                            .font(NoriTypography.caption)
+                            .monospacedDigit()
+                            .foregroundStyle(NoriColors.ink3)
+                    }
+                }
+
+                if entitlement.suspended {
+                    let detail = (entitlement.suspendedReason?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+                        ? entitlement.suspendedReason!
+                        : BillingAccessBlockCode.accountSuspended.defaultMessage
+                    NoriNotice(title: "Account suspended", detail: detail, tone: .danger, systemImage: "exclamationmark.octagon")
+                } else if entitlement.isInactive {
+                    NoriNotice(
+                        title: "Subscription inactive",
+                        detail: BillingAccessBlockCode.subscriptionInactive.defaultMessage,
+                        tone: .warning,
+                        systemImage: "exclamationmark.circle"
+                    )
+                } else if entitlement.isCreditsExhausted {
+                    let detail = entitlement.allowBYOK
+                        ? BillingAccessBlockCode.creditExhausted.defaultMessage
+                        : "Your trial credits are used up. Upgrade your plan to continue."
+                    NoriNotice(
+                        title: entitlement.allowBYOK ? "Hosted credits used up" : "Trial credits used up",
+                        detail: detail,
+                        tone: .warning,
+                        systemImage: "creditcard"
+                    )
+                }
+            }
+        }
+    }
+
+    private func entitlementExceptionPill(_ entitlement: EntitlementCostSummary) -> (label: String, tone: NoriTone)? {
+        if entitlement.suspended { return ("Suspended", .danger) }
+        switch entitlement.status {
+        case "past_due": return ("Past due", .warning)
+        case "expired": return ("Expired", .warning)
+        case "billing_retry": return ("Billing retry", .warning)
+        case "canceled": return ("Canceling", .neutral)
+        default: return nil
+        }
+    }
+
+    private func summaryCost(_ amount: APICostAmount) -> String {
+        if amount.hasKnownCost || amount.totalCalls == 0 {
+            return costString(amount.costUSD)
+        }
+        return "—"
     }
 
     private var budgetsSection: some View {

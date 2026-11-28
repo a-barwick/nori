@@ -55,6 +55,47 @@ private struct MutationEnvelope<Value: Encodable>: Encodable {
 
 private struct EmptyBody: Encodable {}
 
+public enum SSEReconnectBackoff {
+    public static let maxDelaySeconds: Double = 15.0
+    public static let jitterFraction: Double = 0.25
+
+    /// Computes a bounded randomized backoff delay in
+    /// `[base * (1 - jitterFraction), min(maxSeconds, base * (1 + jitterFraction))]`.
+    public static func jitteredDelay(
+        baseSeconds: Double,
+        maxSeconds: Double = maxDelaySeconds,
+        jitterFraction: Double = jitterFraction,
+        unitRandom: Double = Double.random(in: 0...1)
+    ) -> Double {
+        let clampedMax = max(0.0, maxSeconds)
+        let clampedBase = max(0.0, min(baseSeconds, clampedMax))
+        guard clampedBase > 0 else { return 0 }
+        let clampedJitter = max(0.0, min(jitterFraction, 1.0))
+        let clampedRandom = max(0.0, min(unitRandom, 1.0))
+        let multiplier = (1.0 - clampedJitter) + (2.0 * clampedJitter * clampedRandom)
+        return min(clampedMax, max(0.0, clampedBase * multiplier))
+    }
+
+    public static func jitteredRolloverMilliseconds(
+        baseMilliseconds: Int,
+        jitterFraction: Double = jitterFraction,
+        unitRandom: Double = Double.random(in: 0...1)
+    ) -> Int {
+        guard baseMilliseconds > 0 else { return 0 }
+        let jitteredSeconds = jitteredDelay(
+            baseSeconds: Double(baseMilliseconds) / 1000.0,
+            maxSeconds: Double(baseMilliseconds) / 1000.0 * (1.0 + max(0.0, min(jitterFraction, 1.0))),
+            jitterFraction: jitterFraction,
+            unitRandom: unitRandom
+        )
+        return max(1, Int((jitteredSeconds * 1000.0).rounded()))
+    }
+
+    public static func nextBaseBackoff(currentSeconds: Double, maxSeconds: Double = maxDelaySeconds) -> Double {
+        min(max(0.01, currentSeconds) * 2.0, maxSeconds)
+    }
+}
+
 public actor LiveNoriTransport: NoriTransport {
     public let baseURL: URL
     private let router: NoriEndpointRouter
@@ -68,6 +109,7 @@ public actor LiveNoriTransport: NoriTransport {
 
     private let sseInitialBackoffSeconds: Double
     private let sseRolloverDelayMilliseconds: Int
+    private let sseJitterProvider: @Sendable () -> Double
     private let localEmail: String?
     private nonisolated(unsafe) let userDefaults: UserDefaults?
     private var resolvedUserID: String?
@@ -82,6 +124,7 @@ public actor LiveNoriTransport: NoriTransport {
         urlSession: URLSession? = nil,
         sseInitialBackoffSeconds: Double = 1.0,
         sseRolloverDelayMilliseconds: Int = 250,
+        sseJitterProvider: @escaping @Sendable () -> Double = { Double.random(in: 0...1) },
         localEmail: String? = nil,
         userDefaultsSuiteName: String? = nil
     ) {
@@ -121,6 +164,7 @@ public actor LiveNoriTransport: NoriTransport {
         self.decoder = JSONDecoder()
         self.sseInitialBackoffSeconds = max(0.01, sseInitialBackoffSeconds)
         self.sseRolloverDelayMilliseconds = max(0, sseRolloverDelayMilliseconds)
+        self.sseJitterProvider = sseJitterProvider
     }
 
     private func userIDCacheKey(for email: String) -> String {
@@ -432,7 +476,7 @@ public actor LiveNoriTransport: NoriTransport {
             if parts.count > 3 { parts[3] = ":id" }
         case "memory" where parts[2] == "search":
             break
-        case "settings" where parts.count > 3 && (parts[2] == "model-keys" || parts[2] == "home-connectors"):
+        case "settings" where parts.count > 3 && (parts[2] == "model-keys" || parts[2] == "service-keys" || parts[2] == "home-connectors"):
             if parts[3] != "pairing" {
                 parts[3] = ":id"
             }
@@ -465,6 +509,7 @@ public actor LiveNoriTransport: NoriTransport {
             let fallback: String
             switch http.statusCode {
             case 401, 403: fallback = "Authentication required or user not recognized (\(http.statusCode))."
+            case 402: fallback = "Your plan or hosted credits need attention before continuing."
             case 404: fallback = "This resource is no longer available."
             case 409: fallback = "This item changed on the server. Refresh and try again."
             default: fallback = http.statusCode >= 500 ? "Nori could not be reached (\(http.statusCode))." : "Request failed (\(http.statusCode))."
@@ -484,6 +529,9 @@ public actor LiveNoriTransport: NoriTransport {
         let usedDiskCache = resolvedUserIDFromDiskCache
         do {
             return try await operation(userID)
+        } catch let apiError as NoriAPIError where apiError.isAccountSuspended {
+            invalidateDiskCachedUserID()
+            throw apiError
         } catch let apiError as NoriAPIError
             where usedDiskCache && (apiError.statusCode == 401 || apiError.statusCode == 403 || apiError.statusCode == 404) {
             invalidateDiskCachedUserID()
@@ -648,6 +696,7 @@ public actor LiveNoriTransport: NoriTransport {
         async let permissionsResult = captureSnapshotDomain { try await self.fetchPermissions() }
         async let preferencesResult = captureSnapshotDomain { try await self.fetchPreferences() }
         async let modelKeysResult = captureSnapshotDomain { try await self.fetchModelKeys() }
+        async let serviceKeysResult = captureSnapshotDomain { try await self.fetchServiceKeys() }
 
         let (
             capsRes,
@@ -672,14 +721,16 @@ public actor LiveNoriTransport: NoriTransport {
             automationsRes,
             permissionsRes,
             preferencesRes,
-            modelKeysRes
+            modelKeysRes,
+            serviceKeysRes
         ) = await (
             logsResult,
             workingResult,
             automationsResult,
             permissionsResult,
             preferencesResult,
-            modelKeysResult
+            modelKeysResult,
+            serviceKeysResult
         )
 
         var partialErrors: [String: String] = [:]
@@ -709,6 +760,7 @@ public actor LiveNoriTransport: NoriTransport {
         let permissions = try unwrap(permissionsRes, domain: "permissions", fallback: [])
         let preferences = try unwrap(preferencesRes, domain: "preferences", fallback: Preferences())
         let modelKeys = try unwrap(modelKeysRes, domain: "model_keys", fallback: ModelKeysResponse())
+        let serviceKeys = try unwrap(serviceKeysRes, domain: "service_keys", fallback: ServiceKeysResponse())
 
         let toolsByServer: [String: [MCPServerTool]]
         if mcp.loaded {
@@ -751,6 +803,7 @@ public actor LiveNoriTransport: NoriTransport {
             permissions: permissions.value,
             preferences: preferences.value,
             modelKeys: modelKeys.value,
+            serviceKeys: serviceKeys.value,
             didLoadCapabilities: caps.loaded,
             didLoadWorkItems: work.loaded,
             didLoadInteractions: interactions.loaded,
@@ -764,6 +817,7 @@ public actor LiveNoriTransport: NoriTransport {
             didLoadPermissions: permissions.loaded,
             didLoadPreferences: preferences.loaded,
             didLoadModelKeys: modelKeys.loaded,
+            didLoadServiceKeys: serviceKeys.loaded,
             partialErrors: partialErrors
         )
     }
@@ -855,11 +909,23 @@ public actor LiveNoriTransport: NoriTransport {
                         }
 
                         if http.statusCode == 403 {
+                            var errorBytes: [UInt8] = []
+                            errorBytes.reserveCapacity(512)
+                            do {
+                                for try await byte in bytes {
+                                    errorBytes.append(byte)
+                                    if errorBytes.count >= 4096 { break }
+                                }
+                            } catch {}
+                            let payload = try? JSONDecoder().decode(APIErrorPayload.self, from: Data(errorBytes))
+                            if payload?.code == BillingAccessBlockCode.accountSuspended.rawValue {
+                                await self.invalidateDiskCachedUserID()
+                            }
                             continuation.finish(
                                 throwing: NoriAPIError(
-                                    message: "Event stream forbidden (403).",
+                                    message: payload?.error ?? "Event stream forbidden (403).",
                                     statusCode: 403,
-                                    code: "forbidden",
+                                    code: payload?.code ?? "forbidden",
                                     retryable: false
                                 )
                             )
@@ -919,7 +985,11 @@ public actor LiveNoriTransport: NoriTransport {
                         }
 
                         if !Task.isCancelled && rolloverDelayMs > 0 {
-                            try? await Task.sleep(for: .milliseconds(rolloverDelayMs))
+                            let jitteredRollover = SSEReconnectBackoff.jitteredRolloverMilliseconds(
+                                baseMilliseconds: rolloverDelayMs,
+                                unitRandom: self.sseJitterProvider()
+                            )
+                            try? await Task.sleep(for: .milliseconds(jitteredRollover))
                         }
                     } catch is CancellationError {
                         break
@@ -951,8 +1021,11 @@ public actor LiveNoriTransport: NoriTransport {
                         if forceNextTokenRefresh {
                             retriedAuthOnCurrentCycle = false
                         }
-                        let delay = min(backoffSeconds, 15.0)
-                        backoffSeconds = min(backoffSeconds * 2.0, 15.0)
+                        let delay = SSEReconnectBackoff.jitteredDelay(
+                            baseSeconds: backoffSeconds,
+                            unitRandom: self.sseJitterProvider()
+                        )
+                        backoffSeconds = SSEReconnectBackoff.nextBaseBackoff(currentSeconds: backoffSeconds)
                         try? await Task.sleep(for: .seconds(delay))
                     }
                 }
@@ -1713,6 +1786,22 @@ public actor LiveNoriTransport: NoriTransport {
 
     public func deleteModelKey(provider: String) async throws -> ModelKeyProvider {
         try await deleteJSON(OpenAPI.Path.settingsModelKeysByProvider(provider: provider))
+    }
+
+    public func fetchServiceKeys() async throws -> ServiceKeysResponse {
+        try await getJSON(OpenAPI.Path.settingsServiceKeys)
+    }
+
+    public func saveServiceKey(service: String, apiKey: String) async throws -> ServiceKeyStatus {
+        try await sendJSON(
+            OpenAPI.Path.settingsServiceKeysByService(service: service),
+            method: "PUT",
+            body: SaveServiceKeyRequest(apiKey: apiKey)
+        )
+    }
+
+    public func deleteServiceKey(service: String) async throws -> ServiceKeyStatus {
+        try await deleteJSON(OpenAPI.Path.settingsServiceKeysByService(service: service))
     }
 
     public func fetchHomeConnectors() async throws -> HomeConnectorsResponse {

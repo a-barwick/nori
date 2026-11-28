@@ -12,10 +12,30 @@ public struct ModelsSettingsView: View {
     @State private var isSaving = false
     @State private var modelLoadError: String?
     @State private var keyLoadError: String?
+    @State private var serviceKeyLoadError: String?
     @State private var homeLoadError: String?
     @State private var saveError: String?
     @State private var suggestedProvider: String?
     @State private var showingSuggestion = false
+
+    private static let trialBYOKNotice =
+        "Bring-your-own API keys are available on paid plans. Your trial includes hosted credits."
+
+    private var resolvedServices: [ServiceKeyStatus] {
+        if !store.serviceKeys.services.isEmpty {
+            return store.serviceKeys.services
+        }
+        let exaConfigured = store.capabilities?.serviceKeys?.exaConfigured ?? false
+        let platformAvailable = store.capabilities?.serviceKeys?.platformExaAvailable ?? false
+        return [
+            ServiceKeyStatus(
+                service: "exa",
+                label: "Exa Web Search",
+                configured: exaConfigured,
+                source: exaConfigured ? "byok" : (platformAvailable ? "platform" : "none")
+            )
+        ]
+    }
 
     public init(store: NoriStore) {
         self.store = store
@@ -24,6 +44,10 @@ public struct ModelsSettingsView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
+                if let block = store.activeBillingAccessBlock {
+                    BillingAccessBannerView(block: block, allowBYOK: store.allowBYOK)
+                }
+
                 VStack(alignment: .leading, spacing: 0) {
                     NoriSectionHeader("Default models")
                     if let settings = store.modelSettings {
@@ -47,6 +71,14 @@ public struct ModelsSettingsView: View {
 
                 VStack(alignment: .leading, spacing: 0) {
                     NoriSectionHeader("Providers")
+                    if !store.allowBYOK {
+                        NoriNotice(
+                            title: Self.trialBYOKNotice,
+                            tone: .neutral,
+                            systemImage: "info.circle"
+                        )
+                        .padding(.bottom, 10)
+                    }
                     if store.needsModelKeySetup && !hasPairedHomeDevice {
                         NoriNotice(
                             title: "Add a provider API key to use Chat and Work.",
@@ -71,28 +103,47 @@ public struct ModelsSettingsView: View {
                         NoriRows {
                             ForEach(Array(store.modelKeys.providers.enumerated()), id: \.element.id) { index, provider in
                                 let isLast = index == store.modelKeys.providers.count - 1
-                                NavigationLink {
-                                    ProviderKeyDetailView(
-                                        store: store,
-                                        provider: provider,
-                                        onSaved: { savedID in Task { await didSaveKey(savedID) } },
-                                        onRemoved: { Task { await reloadModels() } }
-                                    )
-                                } label: {
-                                    NoriBrandRow(
-                                        title: provider.label,
-                                        brand: NoriBrandKind.forProvider(provider: provider.provider),
-                                        showChevron: true,
-                                        showDivider: !isLast
-                                    ) {
-                                        if provider.configured, let masked = provider.maskedKeyDisplay {
-                                            Text(masked)
-                                                .font(NoriTypography.monoSmall)
-                                                .foregroundStyle(NoriColors.ink2)
-                                        }
+                                if store.allowBYOK {
+                                    NavigationLink {
+                                        ProviderKeyDetailView(
+                                            store: store,
+                                            provider: provider,
+                                            onSaved: { savedID in Task { await didSaveKey(savedID) } },
+                                            onRemoved: { Task { await reloadModels() } }
+                                        )
+                                    } label: {
+                                        providerRow(provider, showChevron: true, showDivider: !isLast)
                                     }
+                                    .buttonStyle(.plain)
+                                } else {
+                                    providerRow(provider, showChevron: false, showDivider: !isLast)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 0) {
+                    NoriSectionHeader("Web search")
+                    if let serviceKeyLoadError, store.serviceKeys.services.isEmpty {
+                        NoriNotice(title: "Could not load web search keys", detail: serviceKeyLoadError, tone: .danger) {
+                            Button("Retry") { Task { await reloadServiceKeys() } }
+                                .buttonStyle(NoriButtonStyle(.quiet, compact: true))
+                        }
+                        .padding(.bottom, 10)
+                    }
+                    NoriRows {
+                        ForEach(Array(resolvedServices.enumerated()), id: \.element.id) { index, service in
+                            let isLast = index == resolvedServices.count - 1
+                            if store.allowBYOK {
+                                NavigationLink {
+                                    ServiceKeyDetailView(store: store, service: service)
+                                } label: {
+                                    serviceKeyRow(service, showChevron: true, showDivider: !isLast)
                                 }
                                 .buttonStyle(.plain)
+                            } else {
+                                serviceKeyRow(service, showChevron: false, showDivider: !isLast)
                             }
                         }
                     }
@@ -267,18 +318,71 @@ public struct ModelsSettingsView: View {
         }
     }
 
+    @ViewBuilder
+    private func providerRow(_ provider: ModelKeyProvider, showChevron: Bool, showDivider: Bool) -> some View {
+        NoriBrandRow(
+            title: provider.label,
+            brand: NoriBrandKind.forProvider(provider: provider.provider),
+            showChevron: showChevron,
+            showDivider: showDivider
+        ) {
+            if provider.configured, let masked = provider.maskedKeyDisplay {
+                Text(masked)
+                    .font(NoriTypography.monoSmall)
+                    .foregroundStyle(NoriColors.ink2)
+            } else if !store.allowBYOK {
+                Text("Paid plans")
+                    .font(NoriTypography.meta)
+                    .foregroundStyle(NoriColors.disabled)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func serviceKeyRow(_ service: ServiceKeyStatus, showChevron: Bool, showDivider: Bool) -> some View {
+        NoriRow(
+            title: service.displayLabel,
+            systemImage: "globe",
+            iconTone: .neutral,
+            showChevron: showChevron,
+            showDivider: showDivider
+        ) {
+            if service.configured, let masked = service.maskedKeyDisplay {
+                Text(masked)
+                    .font(NoriTypography.monoSmall)
+                    .foregroundStyle(NoriColors.ink2)
+            } else if !store.allowBYOK {
+                Text("Paid plans")
+                    .font(NoriTypography.meta)
+                    .foregroundStyle(NoriColors.disabled)
+            }
+        }
+    }
+
     private func load() async {
         isLoading = true
         defer { isLoading = false }
         modelLoadError = nil
         keyLoadError = nil
+        serviceKeyLoadError = nil
         homeLoadError = nil
         async let keys: Void = store.refreshModelKeysThrowing()
+        async let serviceKeys: Void = store.refreshServiceKeysThrowing()
         async let models: Void = store.refreshModelSettings()
         async let home: Void = store.refreshHomeConnectors()
+        async let caps: Void = store.refreshCapabilities()
         do { try await models } catch { modelLoadError = error.localizedDescription }
         do { try await keys } catch { keyLoadError = error.localizedDescription }
+        do { try await serviceKeys } catch is CancellationError { return } catch { serviceKeyLoadError = error.localizedDescription }
         do { try await home } catch is CancellationError { return } catch { homeLoadError = error.localizedDescription }
+        _ = await caps
+    }
+
+    private func reloadServiceKeys() async {
+        serviceKeyLoadError = nil
+        do { try await store.refreshServiceKeysThrowing() }
+        catch is CancellationError { return }
+        catch { serviceKeyLoadError = error.localizedDescription }
     }
 
     private func reloadHomeConnectors() async {
@@ -692,6 +796,178 @@ private struct ProviderKeyDetailView: View {
                 keyInput = ""
                 triggerNotificationHaptic(.success)
                 onRemoved()
+                dismiss()
+            } catch {
+                errorMessage = error.localizedDescription
+                triggerNotificationHaptic(.error)
+            }
+        }
+    }
+
+    #if canImport(UIKit)
+    private func triggerNotificationHaptic(_ type: UINotificationFeedbackGenerator.FeedbackType) {
+        UINotificationFeedbackGenerator().notificationOccurred(type)
+    }
+    #else
+    private enum StubHapticType { case success, error }
+    private func triggerNotificationHaptic(_ type: StubHapticType) {}
+    #endif
+}
+
+// MARK: - Service Key Detail (BYOK Web Search, e.g. Exa)
+
+private struct ServiceKeyDetailView: View {
+    @Bindable var store: NoriStore
+    let service: ServiceKeyStatus
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var keyInput = ""
+    @State private var isSaving = false
+    @State private var isRemoving = false
+    @State private var errorMessage: String?
+    @State private var showingRemoveConfirmation = false
+
+    private var liveService: ServiceKeyStatus {
+        store.serviceKeys.services.first { $0.service == service.service } ?? service
+    }
+
+    private var trimmedKey: String {
+        keyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isBusy: Bool { isSaving || isRemoving }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                if !store.allowBYOK {
+                    NoriNotice(
+                        title: "Bring-your-own API keys are available on paid plans. Your trial includes hosted credits.",
+                        tone: .neutral,
+                        systemImage: "info.circle"
+                    )
+                }
+
+                NoriCard(padding: 16) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        if liveService.configured, let masked = liveService.maskedKeyDisplay {
+                            HStack {
+                                Text("Current key")
+                                    .font(NoriTypography.rowTitle)
+                                    .foregroundStyle(NoriColors.ink)
+                                Spacer()
+                                Text(masked)
+                                    .font(NoriTypography.monoSmall)
+                                    .foregroundStyle(NoriColors.ink2)
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(liveService.configured ? "Replace \(liveService.displayLabel) API key" : "\(liveService.displayLabel) API key")
+                                .font(NoriTypography.metaSemibold)
+                                .foregroundStyle(NoriColors.ink2)
+
+                            SecureField("Paste your Exa API key", text: $keyInput)
+                                .textFieldStyle(.plain)
+                                .font(NoriTypography.mono)
+                                .foregroundStyle(NoriColors.ink)
+                                .tint(NoriColors.accent)
+                                .autocorrectionDisabled()
+                                #if os(iOS)
+                                .textInputAutocapitalization(.never)
+                                #endif
+                                .disabled(isBusy || !store.allowBYOK)
+                                .padding(.horizontal, 12)
+                                .frame(height: 42)
+                                .background(NoriColors.elevated, in: RoundedRectangle(cornerRadius: NoriRadius.tile, style: .continuous))
+                        }
+
+                        Text("Encrypted at rest and never shown again after saving. Uses your own Exa key instead of hosted credits.")
+                            .font(NoriTypography.caption)
+                            .foregroundStyle(NoriColors.ink3)
+
+                        if let errorMessage, !errorMessage.isEmpty {
+                            NoriNotice(title: "Could not update key", detail: errorMessage, tone: .danger)
+                        }
+
+                        Button {
+                            saveKey()
+                        } label: {
+                            if isSaving {
+                                HStack(spacing: 8) {
+                                    ProgressView().tint(NoriColors.onAccent)
+                                    Text("Validating…")
+                                }
+                            } else {
+                                Text("Save")
+                            }
+                        }
+                        .buttonStyle(NoriButtonStyle(.primary, fullWidth: true))
+                        .disabled(trimmedKey.isEmpty || isBusy || !store.allowBYOK)
+                    }
+                }
+
+                if liveService.configured {
+                    Button {
+                        showingRemoveConfirmation = true
+                    } label: {
+                        if isRemoving {
+                            ProgressView().tint(NoriColors.danger)
+                        } else {
+                            Text("Remove \(liveService.displayLabel) key")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .buttonStyle(NoriButtonStyle(.danger, fullWidth: true))
+                    .disabled(isBusy)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 96)
+        }
+        .background(NoriColors.canvas)
+        .navigationTitle(liveService.displayLabel)
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+        .alert("Remove \(liveService.displayLabel) key?", isPresented: $showingRemoveConfirmation) {
+            Button("Remove", role: .destructive) { removeKey() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Web search will use hosted credits when available.")
+        }
+    }
+
+    private func saveKey() {
+        let keyToSave = trimmedKey
+        guard !keyToSave.isEmpty, !isBusy, store.allowBYOK else { return }
+        isSaving = true
+        errorMessage = nil
+        Task {
+            defer { isSaving = false }
+            do {
+                _ = try await store.saveServiceKey(service: liveService.service, apiKey: keyToSave)
+                keyInput = ""
+                triggerNotificationHaptic(.success)
+                dismiss()
+            } catch {
+                errorMessage = error.localizedDescription
+                triggerNotificationHaptic(.error)
+            }
+        }
+    }
+
+    private func removeKey() {
+        guard !isBusy else { return }
+        isRemoving = true
+        errorMessage = nil
+        Task {
+            defer { isRemoving = false }
+            do {
+                _ = try await store.deleteServiceKey(service: liveService.service)
+                keyInput = ""
+                triggerNotificationHaptic(.success)
                 dismiss()
             } catch {
                 errorMessage = error.localizedDescription

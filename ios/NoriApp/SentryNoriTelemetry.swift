@@ -11,13 +11,19 @@ final class SentryNoriTelemetry: NoriTelemetry, @unchecked Sendable {
     private let lock = NSLock()
     private var _lastTraceID: String?
     private var _currentUserID: String?
+    private let quotaLimiter: NoriTelemetryQuotaLimiter
 
     let isEnabled: Bool
     let environmentName: String
 
-    private init(isEnabled: Bool, environmentName: String) {
+    private init(
+        isEnabled: Bool,
+        environmentName: String,
+        quotaLimiter: NoriTelemetryQuotaLimiter = NoriTelemetryQuotaLimiter()
+    ) {
         self.isEnabled = isEnabled
         self.environmentName = environmentName
+        self.quotaLimiter = quotaLimiter
     }
 
     var lastTraceID: String? {
@@ -52,10 +58,11 @@ final class SentryNoriTelemetry: NoriTelemetry, @unchecked Sendable {
         #if canImport(Sentry)
         let sampleRateRaw = (info["SENTRY_TRACES_SAMPLE_RATE"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let sampleRate = Double(sampleRateRaw).flatMap { ($0 >= 0 && $0 <= 1) ? $0 : nil } ?? 0.2
+        let sampleRate = Double(sampleRateRaw).flatMap { ($0 >= 0 && $0 <= 1) ? $0 : nil } ?? 0.05
         let shortVersion = (info["CFBundleShortVersionString"] as? String) ?? "1.0"
         let buildNumber = (info["CFBundleVersion"] as? String) ?? "1"
         let releaseName = "com.nori.ios@\(shortVersion)+\(buildNumber)"
+        let quotaLimiter = NoriTelemetryQuotaLimiter()
 
         SentrySDK.start { options in
             options.dsn = rawDSN
@@ -80,6 +87,7 @@ final class SentryNoriTelemetry: NoriTelemetry, @unchecked Sendable {
 
             options.experimental.enableLogs = true
             options.beforeSendLog = { log in
+                guard quotaLimiter.allowLog() else { return nil }
                 if let traceID = NoriTelemetryRuntime.parentSpan?.traceContext.traceID {
                     log.traceId = SentryId(uuidString: traceID)
                 }
@@ -92,7 +100,8 @@ final class SentryNoriTelemetry: NoriTelemetry, @unchecked Sendable {
             options.attachViewHierarchy = false
 
             options.beforeSend = { event in
-                Self.sanitizeEvent(event)
+                guard quotaLimiter.allowEvent() else { return nil }
+                return Self.sanitizeEvent(event)
             }
 
             options.beforeBreadcrumb = { crumb in
@@ -105,7 +114,11 @@ final class SentryNoriTelemetry: NoriTelemetry, @unchecked Sendable {
             NoriLogger.telemetry.warning("sentry.start_failed", remote: false)
             return
         }
-        let backend = SentryNoriTelemetry(isEnabled: true, environmentName: resolvedEnv)
+        let backend = SentryNoriTelemetry(
+            isEnabled: true,
+            environmentName: resolvedEnv,
+            quotaLimiter: quotaLimiter
+        )
         NoriTelemetryRuntime.configure(backend)
         NoriLogger.telemetry.info(
             "sentry.initialized",
@@ -153,6 +166,11 @@ final class SentryNoriTelemetry: NoriTelemetry, @unchecked Sendable {
         if let parent = NoriTelemetryRuntime.parentSpan as? SentrySpanAdapter {
             span = parent.span.startChild(operation: operation, description: name)
         } else {
+            guard quotaLimiter.allowTransaction() else {
+                let ctx = NoriTraceContext.random(sampled: false)
+                recordTraceID(ctx.traceID)
+                return NoopNoriTelemetrySpan(traceContext: ctx)
+            }
             span = SentrySDK.startTransaction(name: name, operation: operation, bindToScope: false)
         }
         span.setTag(value: "ios", key: "nori.client.platform")
@@ -198,7 +216,7 @@ final class SentryNoriTelemetry: NoriTelemetry, @unchecked Sendable {
 
     func log(level: NoriLogLevel, message: String, attributes: [String: String]) {
         #if canImport(Sentry)
-        guard isEnabled else { return }
+        guard isEnabled, !quotaLimiter.isLogCapReached else { return }
         let safeMessage = OSLogDiagnosticExporter.redactSecrets(message)
         var attrs: [String: Any] = attributes.mapValues { OSLogDiagnosticExporter.redactSecrets($0) }
         attrs["nori.client.platform"] = "ios"
@@ -220,7 +238,7 @@ final class SentryNoriTelemetry: NoriTelemetry, @unchecked Sendable {
 
     func captureError(_ error: Error, category: String, tags: [String: String]) {
         #if canImport(Sentry)
-        guard isEnabled else { return }
+        guard isEnabled, !quotaLimiter.isEventCapReached else { return }
         // Build an error from operational metadata so the SDK never serializes
         // arbitrary NSError userInfo, underlying errors, or server responses.
         let diagnosticError = NSError(
